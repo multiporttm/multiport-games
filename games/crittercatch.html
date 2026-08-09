@@ -9,7 +9,7 @@ body{background:#08080f}
 .dex-slot.caught{opacity:1;background:rgba(165,214,167,.15)}
 .dex-slot .count{position:absolute;bottom:-2px;right:-2px;font-size:.55rem;background:#2e7d32;color:#fff;border-radius:50%;width:14px;height:14px;display:flex;align-items:center;justify-content:center}
 #encounter{display:none;flex-direction:column;align-items:center;gap:10px;padding:16px;background:rgba(0,0,0,.5);border-radius:14px;max-width:320px;margin:10px auto}
-#encounter .emoji{font-size:3rem}
+#encounter canvas.sprite{image-rendering:pixelated}
 #catch-bar{width:260px;height:20px;background:rgba(255,255,255,.12);border-radius:10px;position:relative;overflow:hidden}
 #catch-zone{position:absolute;top:0;height:100%;background:rgba(105,240,174,.5)}
 #catch-pointer{position:absolute;top:0;width:4px;height:100%;background:#fff}
@@ -30,7 +30,7 @@ body{background:#08080f}
     <div id="ui">🎾 Balls: 5 | Caught: 0/8</div>
     <canvas id="c" width="560" height="360"></canvas>
     <div id="encounter">
-      <div class="emoji" id="enc-emoji">🐲</div>
+      <canvas class="sprite" id="enc-emoji" width="96" height="96"></canvas>
       <div id="enc-name">A wild critter appeared!</div>
       <div id="catch-bar"><div id="catch-zone"></div><div id="catch-pointer"></div></div>
       <button id="throw-btn">🎾 Throw Ball</button>
@@ -48,16 +48,72 @@ body{background:#08080f}
 </div>
 <script>
 const W=560,H=360,SIZE=28;
+
+// 8x8 pixel-art templates. o=outline, b=body, e=eye, l=belly highlight, w=wing/ear accent, .=transparent
+const PIXEL_TEMPLATES={
+  round:[
+    '..oooo..',
+    '.obbbbo.',
+    'obbbbbbo',
+    'obebbebo',
+    'obbbbbbo',
+    'obllllbo',
+    '.obbbbo.',
+    '..oooo..',
+  ],
+  spiky:[
+    'o.oo.oo.',
+    '.obbbbo.',
+    'obbbbbbo',
+    'obebbebo',
+    'obbbbbbo',
+    'obllllbo',
+    '.obbbbo.',
+    '..oooo..',
+  ],
+  winged:[
+    '..oooo..',
+    '.obbbbo.',
+    'wbbbbbbw',
+    'obebbebo',
+    'obbbbbbo',
+    'obllllbo',
+    '.obbbbo.',
+    '..oooo..',
+  ],
+};
+
 const SPECIES=[
-  {emoji:'🐲',name:'Drakel',rarity:.5},
-  {emoji:'🦎',name:'Lizburn',rarity:.6},
-  {emoji:'🐦',name:'Windle',rarity:.6},
-  {emoji:'🐢',name:'Shellow',rarity:.6},
-  {emoji:'🦋',name:'Mothine',rarity:.5},
-  {emoji:'🐛',name:'Grubby',rarity:.8},
-  {emoji:'🦔',name:'Spikit',rarity:.4},
-  {emoji:'🐿️',name:'Chippa',rarity:.7},
+  {name:'Drakel',shape:'spiky',body:'#43a047',outline:'#1b5e20',belly:'#a5d6a7',rarity:.5},
+  {name:'Lizburn',shape:'spiky',body:'#ff7043',outline:'#bf360c',belly:'#ffccbc',rarity:.6},
+  {name:'Windle',shape:'winged',body:'#64b5f6',outline:'#1565c0',belly:'#e3f2fd',wing:'#90caf9',rarity:.6},
+  {name:'Shellow',shape:'round',body:'#8d6e63',outline:'#4e342e',belly:'#d7ccc8',rarity:.6},
+  {name:'Mothine',shape:'winged',body:'#ba68c8',outline:'#6a1b9a',belly:'#e1bee7',wing:'#ce93d8',rarity:.5},
+  {name:'Grubby',shape:'round',body:'#cddc39',outline:'#827717',belly:'#f0f4c3',rarity:.8},
+  {name:'Spikit',shape:'spiky',body:'#ffb300',outline:'#e65100',belly:'#ffe0b2',rarity:.4},
+  {name:'Chippa',shape:'round',body:'#a1887f',outline:'#4e342e',belly:'#efebe9',rarity:.7},
 ];
+
+const spriteCache={};
+function getSprite(species,px){
+  const key=species.name+'_'+px;
+  if(spriteCache[key])return spriteCache[key];
+  const grid=PIXEL_TEMPLATES[species.shape];
+  const canvas=document.createElement('canvas');
+  canvas.width=canvas.height=8*px;
+  const g=canvas.getContext('2d');
+  const colorFor={o:species.outline,b:species.body,e:'#1a1a2e',l:species.belly,w:species.wing||species.body};
+  for(let r=0;r<8;r++){
+    for(let c=0;c<8;c++){
+      const ch=grid[r][c];
+      if(ch==='.')continue;
+      g.fillStyle=colorFor[ch];
+      g.fillRect(c*px,r*px,px,px);
+    }
+  }
+  spriteCache[key]=canvas;
+  return canvas;
+}
 let player,critters,drops,balls,dex,keys={},encounterTarget,pointerX,pointerDir,catchZone;
 
 function init(){
@@ -129,7 +185,11 @@ function startEncounter(critter,idx){
   }
   encounterTarget={critter,idx};
   document.getElementById('encounter').style.display='flex';
-  document.getElementById('enc-emoji').textContent=critter.species.emoji;
+  const encCanvas=document.getElementById('enc-emoji');
+  const encCtx=encCanvas.getContext('2d');
+  encCtx.clearRect(0,0,96,96);
+  encCtx.imageSmoothingEnabled=false;
+  encCtx.drawImage(getSprite(critter.species,4),0,0,32,32,0,0,96,96);
   document.getElementById('enc-name').textContent=`A wild ${critter.species.name} appeared!`;
   const zoneW=critter.species.rarity*100;
   catchZone=zoneW;
@@ -183,8 +243,20 @@ function renderDex(){
     const n=dex[sp.name]||0;
     const d=document.createElement('div');
     d.className='dex-slot'+(n>0?' caught':'');
-    d.innerHTML=`${sp.emoji}${n>0?`<div class="count">${n}</div>`:''}`;
     d.title=sp.name;
+    const img=document.createElement('canvas');
+    img.width=img.height=32;
+    img.style.imageRendering='pixelated';
+    const g=img.getContext('2d');
+    g.imageSmoothingEnabled=false;
+    g.drawImage(getSprite(sp,4),0,0);
+    d.appendChild(img);
+    if(n>0){
+      const badge=document.createElement('div');
+      badge.className='count';
+      badge.textContent=n;
+      d.appendChild(badge);
+    }
     el.appendChild(d);
   });
 }
@@ -202,7 +274,11 @@ function draw(){
   for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
 
   drops.forEach(d=>{ctx.font='24px Arial';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('🎁',d.x,d.y);});
-  critters.forEach(cr=>{ctx.font='26px Arial';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(cr.species.emoji,cr.x,cr.y);});
+  ctx.imageSmoothingEnabled=false;
+  critters.forEach(cr=>{
+    const sprite=getSprite(cr.species,4);
+    ctx.drawImage(sprite,cr.x-SIZE/2,cr.y-SIZE/2,SIZE,SIZE);
+  });
 
   ctx.font='28px Arial';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('🧑',player.x,player.y);
 
