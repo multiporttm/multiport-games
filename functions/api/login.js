@@ -1,4 +1,4 @@
-import { verifyTurnstile } from '../_lib/turnstile.js';
+import { verifyToken } from '../_lib/humanverify.js';
 
 async function sha256(str) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
@@ -8,15 +8,14 @@ async function sha256(str) {
 export async function onRequestPost({ request, env }) {
   const headers = { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' };
   try {
-    const { username, password, turnstileToken } = await request.json();
+    const { username, password, humanToken } = await request.json();
     if (!username || !password) return Response.json({ error: 'Please fill in all fields.' }, { status: 400, headers });
 
-    const ip = request.headers.get('CF-Connecting-IP');
-    const verify = await verifyTurnstile(turnstileToken, env.TURNSTILE_SECRET_KEY, ip);
-    if (!verify.success) {
+    const verify = await verifyToken(env.HUMAN_VERIFY_SECRET, humanToken);
+    if (!verify.valid || verify.payload.purpose !== 'human-verified') {
       const msg = verify.reason === 'not-configured'
         ? 'Human verification is not configured on the server. Please contact support.'
-        : `Human verification failed (${verify.reason}). Please try again.`;
+        : 'Human verification failed. Please complete the puzzle again.';
       return Response.json({ error: msg }, { status: 400, headers });
     }
 
