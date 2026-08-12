@@ -5,6 +5,8 @@
 // service like Cloudflare Turnstile (no device fingerprinting, no threat
 // intelligence network) — it mainly filters out naive/scripted bots.
 
+// Requires HUMAN_VERIFY_SECRET set as a Cloudflare Pages environment
+// variable (Production environment) to function.
 async function getKey(secret) {
   return crypto.subtle.importKey(
     'raw',
