@@ -1,0 +1,289 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Critter Quest</title><meta name="description" content="Play Critter Quest free online — Walk around the map, find wild critters, and throw balls to catch them. Collect supply drops for more balls and fill your Critterdex!"><link rel="canonical" href="https://games.multiportllc.com/games/crittercatch"><meta property="og:title" content="Critter Quest - Multiport Games"><meta property="og:description" content="Play Critter Quest free online — Walk around the map, find wild critters, and throw balls to catch them. Collect supply drops for more balls and fill your Critterdex!"><meta property="og:url" content="https://games.multiportllc.com/games/crittercatch"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Critter Quest","description":"Play Critter Quest free online instantly. Walk around the map, find wild critters, and throw balls to catch them. Collect supply drops for more balls and fill your Critterdex! No download or signup required.","genre":"Adventure","url":"https://games.multiportllc.com/games/crittercatch","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=7">
+<style>
+body{background:#08080f}
+#c{display:block;border-radius:8px;margin:0 auto;background:#1b5e20}
+#ui{color:#a5d6a7;text-align:center;padding:8px;font-size:1.05rem;font-weight:700}
+#dex{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;max-width:480px;margin:10px auto;padding:10px;background:rgba(255,255,255,.05);border-radius:12px}
+.dex-slot{width:38px;height:38px;border-radius:8px;background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center;font-size:1.3rem;position:relative;opacity:.25}
+.dex-slot.caught{opacity:1;background:rgba(165,214,167,.15)}
+.dex-slot .count{position:absolute;bottom:-2px;right:-2px;font-size:.55rem;background:#2e7d32;color:#fff;border-radius:50%;width:14px;height:14px;display:flex;align-items:center;justify-content:center}
+#encounter{display:none;flex-direction:column;align-items:center;gap:10px;padding:16px;background:rgba(0,0,0,.5);border-radius:14px;max-width:320px;margin:10px auto}
+#encounter canvas.sprite{image-rendering:pixelated}
+#catch-bar{width:260px;height:20px;background:rgba(255,255,255,.12);border-radius:10px;position:relative;overflow:hidden}
+#catch-zone{position:absolute;top:0;height:100%;background:rgba(105,240,174,.5)}
+#catch-pointer{position:absolute;top:0;width:4px;height:100%;background:#fff}
+#throw-btn{padding:10px 24px;background:rgba(233,69,96,.2);border:1px solid rgba(233,69,96,.4);border-radius:50px;color:#ff8fa3;font-family:inherit;font-weight:700;cursor:pointer}
+#msg{text-align:center;font-weight:700;min-height:22px}
+#dpad{display:grid;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(3,52px);gap:4px;justify-content:center;margin:14px auto 4px;user-select:none;-webkit-user-select:none}
+#dpad button{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:12px;color:#fff;font-size:1.3rem;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#dpad button:active{background:rgba(255,255,255,.2)}
+#dpad .up{grid-column:2;grid-row:1}
+#dpad .left{grid-column:1;grid-row:2}
+#dpad .right{grid-column:3;grid-row:2}
+#dpad .down{grid-column:2;grid-row:3}
+</style></head><body>
+<div class="game-page">
+  <a href="../" class="back-btn">← Back</a>
+  <div class="game-title">Critter Quest</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="ui">🎾 Balls: 5 | Caught: 0/8</div>
+    <canvas id="c" width="560" height="360"></canvas>
+    <div id="encounter">
+      <canvas class="sprite" id="enc-emoji" width="96" height="96"></canvas>
+      <div id="enc-name">A wild critter appeared!</div>
+      <div id="catch-bar"><div id="catch-zone"></div><div id="catch-pointer"></div></div>
+      <button id="throw-btn">🎾 Throw Ball</button>
+    </div>
+    <div id="msg"></div>
+    <div id="dpad">
+      <button class="up">⬆️</button>
+      <button class="left">⬅️</button>
+      <button class="right">➡️</button>
+      <button class="down">⬇️</button>
+    </div>
+    <div id="dex"></div>
+  </div>
+  <div class="game-instructions">Use <b>Arrow keys / WASD</b> (or the on-screen D-pad on mobile) to walk around. Bump into a wild critter to start an encounter, then tap <b>Throw Ball</b> when the moving line is inside the green zone to catch it. Walk over 🎁 supply drops for more balls!</div>
+</div>
+<script>
+const W=560,H=360,SIZE=28;
+
+// 8x8 pixel-art templates. o=outline, b=body, e=eye, l=belly highlight, w=wing/ear accent, .=transparent
+const PIXEL_TEMPLATES={
+  round:[
+    '..oooo..',
+    '.obbbbo.',
+    'obbbbbbo',
+    'obebbebo',
+    'obbbbbbo',
+    'obllllbo',
+    '.obbbbo.',
+    '..oooo..',
+  ],
+  spiky:[
+    'o.oo.oo.',
+    '.obbbbo.',
+    'obbbbbbo',
+    'obebbebo',
+    'obbbbbbo',
+    'obllllbo',
+    '.obbbbo.',
+    '..oooo..',
+  ],
+  winged:[
+    '..oooo..',
+    '.obbbbo.',
+    'wbbbbbbw',
+    'obebbebo',
+    'obbbbbbo',
+    'obllllbo',
+    '.obbbbo.',
+    '..oooo..',
+  ],
+};
+
+const SPECIES=[
+  {name:'Drakel',shape:'spiky',body:'#43a047',outline:'#1b5e20',belly:'#a5d6a7',rarity:.5},
+  {name:'Lizburn',shape:'spiky',body:'#ff7043',outline:'#bf360c',belly:'#ffccbc',rarity:.6},
+  {name:'Windle',shape:'winged',body:'#64b5f6',outline:'#1565c0',belly:'#e3f2fd',wing:'#90caf9',rarity:.6},
+  {name:'Shellow',shape:'round',body:'#8d6e63',outline:'#4e342e',belly:'#d7ccc8',rarity:.6},
+  {name:'Mothine',shape:'winged',body:'#ba68c8',outline:'#6a1b9a',belly:'#e1bee7',wing:'#ce93d8',rarity:.5},
+  {name:'Grubby',shape:'round',body:'#cddc39',outline:'#827717',belly:'#f0f4c3',rarity:.8},
+  {name:'Spikit',shape:'spiky',body:'#ffb300',outline:'#e65100',belly:'#ffe0b2',rarity:.4},
+  {name:'Chippa',shape:'round',body:'#a1887f',outline:'#4e342e',belly:'#efebe9',rarity:.7},
+];
+
+const spriteCache={};
+function getSprite(species,px){
+  const key=species.name+'_'+px;
+  if(spriteCache[key])return spriteCache[key];
+  const grid=PIXEL_TEMPLATES[species.shape];
+  const canvas=document.createElement('canvas');
+  canvas.width=canvas.height=8*px;
+  const g=canvas.getContext('2d');
+  const colorFor={o:species.outline,b:species.body,e:'#1a1a2e',l:species.belly,w:species.wing||species.body};
+  for(let r=0;r<8;r++){
+    for(let c=0;c<8;c++){
+      const ch=grid[r][c];
+      if(ch==='.')continue;
+      g.fillStyle=colorFor[ch];
+      g.fillRect(c*px,r*px,px,px);
+    }
+  }
+  spriteCache[key]=canvas;
+  return canvas;
+}
+let player,critters,drops,balls,dex,keys={},encounterTarget,pointerX,pointerDir,catchZone;
+
+function init(){
+  player={x:W/2,y:H/2};
+  critters=[];
+  drops=[];
+  balls=5;
+  dex={};
+  for(let i=0;i<4;i++)spawnCritter();
+  for(let i=0;i<3;i++)spawnDrop();
+  updateUI();renderDex();
+}
+
+function rand(min,max){return min+Math.random()*(max-min);}
+
+function spawnCritter(){
+  if(critters.length>=5)return;
+  const sp=SPECIES[Math.floor(Math.random()*SPECIES.length)];
+  critters.push({x:rand(30,W-30),y:rand(30,H-30),species:sp});
+}
+function spawnDrop(){
+  if(drops.length>=4)return;
+  drops.push({x:rand(30,W-30),y:rand(30,H-30)});
+}
+
+document.addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+// Touch/click D-pad for mobile — sets the same keys map the movement code reads.
+const DPAD_KEYS={up:'arrowup',down:'arrowdown',left:'arrowleft',right:'arrowright'};
+document.querySelectorAll('#dpad button').forEach(btn=>{
+  const dir=btn.className;
+  const key=DPAD_KEYS[dir];
+  const press=e=>{e.preventDefault();keys[key]=true;};
+  const release=e=>{e.preventDefault();keys[key]=false;};
+  btn.addEventListener('touchstart',press,{passive:false});
+  btn.addEventListener('touchend',release,{passive:false});
+  btn.addEventListener('touchcancel',release,{passive:false});
+  btn.addEventListener('mousedown',press);
+  btn.addEventListener('mouseup',release);
+  btn.addEventListener('mouseleave',release);
+});
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function update(){
+  if(encounterTarget)return;
+  const spd=3;
+  if(keys['arrowup']||keys['w'])player.y-=spd;
+  if(keys['arrowdown']||keys['s'])player.y+=spd;
+  if(keys['arrowleft']||keys['a'])player.x-=spd;
+  if(keys['arrowright']||keys['d'])player.x+=spd;
+  player.x=Math.max(SIZE/2,Math.min(W-SIZE/2,player.x));
+  player.y=Math.max(SIZE/2,Math.min(H-SIZE/2,player.y));
+
+  for(let i=drops.length-1;i>=0;i--){
+    if(dist(player,drops[i])<24){balls+=3;drops.splice(i,1);updateUI();setTimeout(spawnDrop,4000);}
+  }
+  for(let i=critters.length-1;i>=0;i--){
+    if(dist(player,critters[i])<26){startEncounter(critters[i],i);break;}
+  }
+}
+
+function startEncounter(critter,idx){
+  if(balls<=0){
+    document.getElementById('msg').textContent="You're out of balls! Find a 🎁 supply drop.";
+    document.getElementById('msg').style.color='#ff8a80';
+    return;
+  }
+  encounterTarget={critter,idx};
+  document.getElementById('encounter').style.display='flex';
+  const encCanvas=document.getElementById('enc-emoji');
+  const encCtx=encCanvas.getContext('2d');
+  encCtx.clearRect(0,0,96,96);
+  encCtx.imageSmoothingEnabled=false;
+  encCtx.drawImage(getSprite(critter.species,4),0,0,32,32,0,0,96,96);
+  document.getElementById('enc-name').textContent=`A wild ${critter.species.name} appeared!`;
+  const zoneW=critter.species.rarity*100;
+  catchZone=zoneW;
+  document.getElementById('catch-zone').style.width=zoneW+'%';
+  document.getElementById('catch-zone').style.left=(100-zoneW)/2+'%';
+  pointerX=0;pointerDir=1;
+}
+
+function catchLoop(){
+  if(encounterTarget){
+    pointerX+=pointerDir*3.2;
+    if(pointerX>=100){pointerX=100;pointerDir=-1;}
+    if(pointerX<=0){pointerX=0;pointerDir=1;}
+    document.getElementById('catch-pointer').style.left=pointerX+'%';
+  }
+  requestAnimationFrame(catchLoop);
+}
+catchLoop();
+
+document.getElementById('throw-btn').addEventListener('click',()=>{
+  if(!encounterTarget)return;
+  balls--;
+  const zoneStart=(100-catchZone)/2,zoneEnd=zoneStart+catchZone;
+  const hit=pointerX>=zoneStart&&pointerX<=zoneEnd;
+  const {critter,idx}=encounterTarget;
+  if(hit){
+    dex[critter.species.name]=(dex[critter.species.name]||0)+1;
+    critters.splice(idx,1);
+    document.getElementById('msg').textContent=`🎉 Caught ${critter.species.name}!`;
+    document.getElementById('msg').style.color='#69f0ae';
+    setTimeout(spawnCritter,3000+Math.random()*3000);
+    endEncounter();
+  } else {
+    document.getElementById('msg').textContent=`💨 ${critter.species.name} broke free! Try again.`;
+    document.getElementById('msg').style.color='#ffca28';
+    if(Math.random()<.4){critters.splice(idx,1);setTimeout(spawnCritter,3000);}
+    endEncounter();
+  }
+  renderDex();updateUI();
+});
+
+function endEncounter(){
+  encounterTarget=null;
+  document.getElementById('encounter').style.display='none';
+}
+
+function renderDex(){
+  const el=document.getElementById('dex');
+  el.innerHTML='';
+  SPECIES.forEach(sp=>{
+    const n=dex[sp.name]||0;
+    const d=document.createElement('div');
+    d.className='dex-slot'+(n>0?' caught':'');
+    d.title=sp.name;
+    const img=document.createElement('canvas');
+    img.width=img.height=32;
+    img.style.imageRendering='pixelated';
+    const g=img.getContext('2d');
+    g.imageSmoothingEnabled=false;
+    g.drawImage(getSprite(sp,4),0,0);
+    d.appendChild(img);
+    if(n>0){
+      const badge=document.createElement('div');
+      badge.className='count';
+      badge.textContent=n;
+      d.appendChild(badge);
+    }
+    el.appendChild(d);
+  });
+}
+
+function updateUI(){
+  const caughtTypes=Object.keys(dex).length;
+  document.getElementById('ui').textContent=`🎾 Balls: ${balls} | Caught: ${caughtTypes}/${SPECIES.length}`;
+}
+
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+function draw(){
+  ctx.fillStyle='#1b5e20';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,.06)';ctx.lineWidth=1;
+  for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+  drops.forEach(d=>{ctx.font='24px Arial';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('🎁',d.x,d.y);});
+  ctx.imageSmoothingEnabled=false;
+  critters.forEach(cr=>{
+    const sprite=getSprite(cr.species,4);
+    ctx.drawImage(sprite,cr.x-SIZE/2,cr.y-SIZE/2,SIZE,SIZE);
+  });
+
+  ctx.font='28px Arial';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('🧑',player.x,player.y);
+
+  update();
+  requestAnimationFrame(draw);
+}
+init();draw();
+</script></body></html>

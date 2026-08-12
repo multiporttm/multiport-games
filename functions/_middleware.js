@@ -24,13 +24,13 @@ export async function onRequest(context) {
 
   const csp = [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'unsafe-hashes' ${HANDLER_HASHES} https://challenges.cloudflare.com`,
+    `script-src 'self' 'nonce-${nonce}' 'unsafe-hashes' ${HANDLER_HASHES}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://files.scamadviser.com",
     "font-src 'self' data:",
     "media-src 'self'",
     "connect-src 'self'",
-    "frame-src https://challenges.cloudflare.com",
+    "frame-src 'none'",
     "worker-src 'self'",
     "manifest-src 'self'",
     "object-src 'none'",
