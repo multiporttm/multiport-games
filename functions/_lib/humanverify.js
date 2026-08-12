@@ -37,6 +37,28 @@ export async function signToken(secret, payload) {
   return `${payloadB64}.${toB64url(sig)}`;
 }
 
+// Simple sliding-window rate limit per IP, backed by D1. Real bot mitigation
+// needs a global traffic view (which is what Cloudflare's own network gives
+// Turnstile) — this only stops one IP from hammering the endpoint.
+export async function checkRateLimit(env, ip, maxAttempts, windowMs) {
+  if (!ip || !env.DB) return { allowed: true };
+  const now = Date.now();
+  const row = await env.DB.prepare('SELECT attempts, window_start FROM verify_rate_limit WHERE ip=?1').bind(ip).first();
+
+  if (!row || now - row.window_start > windowMs) {
+    await env.DB.prepare(
+      `INSERT INTO verify_rate_limit (ip, attempts, window_start) VALUES (?1,1,?2)
+       ON CONFLICT(ip) DO UPDATE SET attempts=1, window_start=?2`
+    ).bind(ip, now).run();
+    return { allowed: true };
+  }
+
+  if (row.attempts >= maxAttempts) return { allowed: false };
+
+  await env.DB.prepare('UPDATE verify_rate_limit SET attempts = attempts + 1 WHERE ip=?1').bind(ip).run();
+  return { allowed: true };
+}
+
 export async function verifyToken(secret, token) {
   if (!secret) return { valid: false, reason: 'not-configured' };
   if (!token || typeof token !== 'string' || !token.includes('.')) return { valid: false, reason: 'malformed' };

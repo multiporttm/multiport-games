@@ -28,6 +28,7 @@
 
     let challenge = null;
     let dragging = false, dragBase = 0, moveCount = 0, startTime = 0, lastPct = 0;
+    let deltas = [], prevPct = 0;
 
     async function loadChallenge() {
       if (onCleared) onCleared();
@@ -61,6 +62,7 @@
     function startDrag(e) {
       if (handle.classList.contains('verified')) return;
       dragging = true; moveCount = 0; startTime = Date.now();
+      deltas = []; prevPct = 0;
       dragBase = pointerX(e) - handle.offsetLeft;
     }
     function moveDrag(e) {
@@ -68,16 +70,25 @@
       e.preventDefault();
       moveCount++;
       lastPct = setHandlePx(pointerX(e) - dragBase);
+      deltas.push(lastPct - prevPct);
+      prevPct = lastPct;
     }
     async function endDrag() {
       if (!dragging) return;
       dragging = false;
       const elapsedMs = Date.now() - startTime;
       if (!challenge) return;
+      // A scripted drag that jumps straight to the target tends to move in
+      // suspiciously uniform steps; real drags have some jitter. This is a
+      // heuristic, not real bot detection — easy for a determined script to
+      // fake, but it filters naive automation that just sets the position.
+      const meanDelta = deltas.reduce((a, b) => a + b, 0) / (deltas.length || 1);
+      const moveVariance = deltas.reduce((a, d) => a + (d - meanDelta) ** 2, 0) / (deltas.length || 1);
+      const webdriver = !!navigator.webdriver;
       try {
         const res = await fetch('/api/verify-human', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ challengeToken: challenge.token, finalPos: lastPct, moveCount, elapsedMs }),
+          body: JSON.stringify({ challengeToken: challenge.token, finalPos: lastPct, moveCount, elapsedMs, moveVariance, webdriver }),
         });
         const data = await res.json();
         if (res.ok && data.verifiedToken) {
