@@ -14,8 +14,28 @@
   }
 
   ['pointerdown','keydown','touchstart'].forEach(evt=>{
-    document.addEventListener(evt,()=>{ getCtx(); },{once:true,passive:true});
+    document.addEventListener(evt,()=>{
+      const c=getCtx();
+      // iOS (especially standalone "Add to Home Screen" web apps) needs an actual
+      // node played through the context — not just resume() — to fully unlock audio.
+      if(c){
+        try{
+          const buf=c.createBuffer(1,1,22050);
+          const src=c.createBufferSource();
+          src.buffer=buf;
+          src.connect(c.destination);
+          src.start(0);
+        }catch(e){}
+      }
+    },{once:true,passive:true});
   });
+
+  // iOS standalone web apps can silently re-suspend the AudioContext when the app
+  // is backgrounded; resume it as soon as the page is visible/focused again.
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='visible'&&ctx&&ctx.state==='suspended')ctx.resume();
+  });
+  window.addEventListener('focus',()=>{ if(ctx&&ctx.state==='suspended')ctx.resume(); });
 
   function tone(freq,dur,type,startGain,when){
     if(muted)return;
