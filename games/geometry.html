@@ -70,15 +70,16 @@ function jump(){
 }
 
 // ── Background music — an original, fast arpeggiated synth loop (respects the mute toggle) ──
-// Uses a look-ahead scheduler (all oscillators are created up-front for a window of
-// upcoming beats) instead of setInterval, because some browsers silently drop audio
-// scheduled from a timer callback even on an already-unlocked AudioContext — but they
-// have no problem with audio scheduled for a future time via start(when), as long as
-// the scheduling *call* itself happens from a place they trust (a rAF-driven loop that
-// traces back to the original user gesture works reliably where setInterval did not).
+// Notes always start at t0 = actx.currentTime (i.e. "now"), exactly like the one-shot SFX
+// calls (SFX.jump() etc) that are confirmed to play reliably everywhere, including iOS
+// standalone "Add to Home Screen" web apps. Earlier versions pre-scheduled notes into the
+// future (start(when) with when up to 0.5s ahead), which is the textbook fix for the
+// setInterval-drops-audio problem in most browsers — but some iOS WebKit builds apparently
+// don't honor a future-scheduled start time reliably even on an unlocked/running context.
+// Timing instead comes from checking elapsed AudioContext clock time once per already-running
+// rAF frame, and firing a note immediately the moment a step is due.
 const STEP_SEC=0.105; // ~16th notes at ~143bpm — driving, energetic arcade feel
-const SCHEDULE_AHEAD_SEC=0.5;
-let musicPlaying=false,musicStep=0,nextNoteTime=0;
+let musicPlaying=false,musicStep=0,lastNoteTime=0;
 // Four-chord progression (Am - F - C - G), each held for one bar of 8 steps.
 const MUSIC_CHORDS=[
   [220.00,261.63,329.63,440.00],   // A minor
@@ -88,9 +89,10 @@ const MUSIC_CHORDS=[
 ];
 const ARP_PATTERN=[0,1,2,3,2,1,2,3]; // up-down arpeggio shape within each chord
 
-function scheduleNote(t0,idx){
+function scheduleNote(idx){
   const actx=SFX.getContext();
   if(!actx)return;
+  const t0=actx.currentTime;
   const barLen=ARP_PATTERN.length;
   const chord=MUSIC_CHORDS[Math.floor(idx/barLen)%MUSIC_CHORDS.length];
   const stepInBar=idx%barLen;
@@ -117,15 +119,15 @@ function musicScheduler(){
   if(!actx)return;
   if(actx.state!=='running'){
     // iOS can silently re-suspend the AudioContext mid-session (notably in standalone
-    // "Add to Home Screen" web apps); wait for it to actually resume before scheduling,
-    // and resync the clock so we don't dump a burst of backlogged notes once it does.
-    nextNoteTime=actx.currentTime+0.05;
+    // "Add to Home Screen" web apps); wait for it to actually resume, and resync the
+    // clock so we don't fire a burst of backlogged notes the instant it does.
+    lastNoteTime=actx.currentTime;
     return;
   }
-  while(nextNoteTime<actx.currentTime+SCHEDULE_AHEAD_SEC){
-    scheduleNote(nextNoteTime,musicStep);
+  if(actx.currentTime-lastNoteTime>=STEP_SEC){
+    lastNoteTime=actx.currentTime;
+    scheduleNote(musicStep);
     musicStep++;
-    nextNoteTime+=STEP_SEC;
   }
 }
 
@@ -135,8 +137,8 @@ function startMusic(){
   if(!actx)return;
   musicPlaying=true;
   musicStep=0;
-  nextNoteTime=actx.currentTime+0.05;
-  musicScheduler(); // schedule the first batch of notes synchronously, right in this gesture-triggered call
+  lastNoteTime=actx.currentTime-STEP_SEC; // due immediately
+  musicScheduler(); // fire the first note synchronously, right in this gesture-triggered call
 }
 function stopMusic(){
   musicPlaying=false;
