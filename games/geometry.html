@@ -10,7 +10,7 @@
   </div>
   <div class="game-title">Cube Runner</div>
   <div class="game-frame"><canvas id="c" width="480" height="380"></canvas></div>
-  <div class="game-instructions">Press <b>Space</b>, click, or tap the canvas to jump. Land on platforms, dodge the spikes!<br><a href="https://www.geometrydash.com/" target="_blank" rel="noopener noreferrer" style="color:#e94560;font-weight:600;text-decoration:none">🎮 Play the original Geometry Dash →</a></div>
+  <div class="game-instructions">Press <b>Space</b>, click, or tap the canvas to jump. Land on platforms, dodge the spikes, and tap again near a glowing orb for a second jump mid-air! Clear the progress bar at the top to complete each level — levels get faster and trickier as you go.<br><a href="https://www.geometrydash.com/" target="_blank" rel="noopener noreferrer" style="color:#e94560;font-weight:600;text-decoration:none">🎮 Play the original Geometry Dash →</a></div>
 </div>
 <script>
 const c=document.getElementById('c'),ctx=c.getContext('2d');
@@ -20,8 +20,9 @@ const W=480,H=380,GND=H-60,CUBE=28;
 let state='idle',score=0,hi=+(localStorage.getItem('geo_hi')||0),frame=0,speed=4;
 let lastTime=null,spawnTimer=0;
 let cube={x:80,y:GND-CUBE,vy:0,rot:0,dead:false,jumped:false};
-let obstacles=[],platforms=[],particles=[];
-const GRAV=0.55,JUMP=-11.5;
+let obstacles=[],platforms=[],particles=[],orbs=[];
+let attempts=0,level=1,levelLength=100,levelTimer=0;
+const GRAV=0.55,JUMP=-11.5,ORB_JUMP=-12.5;
 
 // ── Colour palette ────────────────────────────────────
 const COLORS=['#e94560','#5e72eb','#00d2c6','#f7c948','#a855f7','#22c55e'];
@@ -34,16 +35,35 @@ const stars=Array.from({length:60},()=>({
 }));
 
 function reset(){
+  attempts++;
+  level=1;levelLength=100;
   score=0;frame=0;speed=4;spawnTimer=0;lastTime=null;
   cube={x:80,y:GND-CUBE,vy:0,rot:0,dead:false,jumped:false};
   cubeColor=COLORS[Math.floor(Math.random()*COLORS.length)];
-  obstacles=[];platforms=[];particles=[];
+  obstacles=[];platforms=[];particles=[];orbs=[];
+  state='play';
+  startMusic();
+}
+
+function nextLevel(){
+  level++;
+  levelLength=100+level*30;
+  score=0;spawnTimer=0;
+  obstacles=[];platforms=[];orbs=[];
   state='play';
   startMusic();
 }
 
 function jump(){
   if(state==='idle'||state==='dead'){reset();return;}
+  if(state!=='play')return;
+  const orb=orbs.find(o=>!o.used&&Math.hypot(cube.x+CUBE/2-o.x,cube.y+CUBE/2-o.y)<26);
+  if(orb){
+    orb.used=true;
+    cube.vy=ORB_JUMP;cube.jumped=true;
+    SFX.powerup();
+    return;
+  }
   if(cube.y>=GND-CUBE-2){cube.vy=JUMP;cube.jumped=true;SFX.jump();}
 }
 
@@ -117,6 +137,10 @@ const PATTERNS=[
   [{type:'platform',ox:0,oy:-80,pw:100,ph:14},{type:'spike',ox:30,oy:-80,sOnPlat:true}],
   // gap hint — just a spike in the middle
   [{type:'spike',ox:0,oy:0},{type:'spike',ox:100,oy:0}],
+  // orb-assisted double-tall gap — tap the orb mid-air for a second jump
+  [{type:'spike_tall',ox:0,oy:0},{type:'orb',ox:50,oy:-75},{type:'spike_tall',ox:110,oy:0}],
+  // orb lifting onto a high platform
+  [{type:'orb',ox:10,oy:-70},{type:'platform',ox:40,oy:-130,pw:70,ph:14}],
 ];
 
 function spawnPattern(){
@@ -133,6 +157,8 @@ function spawnPattern(){
         obstacles.push({x:baseX+item.ox+30,y:GND+item.oy,tall:false,scored:false,onPlatform:true,
           color:COLORS[Math.floor(Math.random()*COLORS.length)]});
       }
+    } else if(item.type==='orb'){
+      orbs.push({x:baseX+item.ox,y:GND+item.oy,used:false});
     }
   });
 }
@@ -261,6 +287,19 @@ function drawSpike(sp){
   ctx.restore();
 }
 
+function drawOrb(o){
+  if(o.used)return;
+  ctx.save();
+  const pulse=1+0.15*Math.sin(frame*0.15);
+  ctx.shadowBlur=16;ctx.shadowColor='#f7c948';
+  ctx.strokeStyle='#f7c948';ctx.lineWidth=4;
+  ctx.beginPath();ctx.arc(o.x,o.y,13*pulse,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='rgba(247,201,72,0.35)';
+  ctx.beginPath();ctx.arc(o.x,o.y,8*pulse,0,Math.PI*2);ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.restore();
+}
+
 function drawPlatform(plat){
   ctx.save();
   const g=ctx.createLinearGradient(plat.x,plat.y,plat.x,plat.y+plat.h);
@@ -289,6 +328,21 @@ function drawHUD(){
   ctx.fillText(score,14,32);
   ctx.font='13px Arial';ctx.fillStyle='rgba(255,255,255,0.4)';
   ctx.fillText('BEST '+hi,14,50);
+  ctx.textAlign='right';
+  ctx.fillStyle='rgba(255,255,255,0.55)';
+  ctx.fillText('LEVEL '+level,W-10,32);
+  ctx.fillStyle='rgba(255,255,255,0.35)';
+  ctx.fillText('Attempt '+attempts,W-10,50);
+  ctx.textAlign='left';
+
+  // Level progress bar (Geometry-Dash-style % across the top)
+  const pct=Math.min(1,score/levelLength);
+  ctx.fillStyle='rgba(255,255,255,0.12)';
+  ctx.fillRect(0,0,W,5);
+  const pg=ctx.createLinearGradient(0,0,W,0);
+  pg.addColorStop(0,'#5e72eb');pg.addColorStop(1,'#f7c948');
+  ctx.fillStyle=pg;
+  ctx.fillRect(0,0,W*pct,5);
 }
 
 function drawOverlay(title,sub1,sub2){
@@ -310,17 +364,27 @@ function loop(){
 
   if(state==='idle'){
     drawCube();
-    drawOverlay('CUBE RUNNER','Dodge the spikes!','Space / Tap to start');
+    drawOverlay('CUBE RUNNER','Dodge spikes, grab orbs for a 2nd jump!','Space / Tap to start');
     requestAnimationFrame(loop);return;
   }
 
   if(state==='dead'){
     platforms.forEach(drawPlatform);
     obstacles.forEach(drawSpike);
+    orbs.forEach(drawOrb);
     drawParticles();
     drawCube();
     drawHUD();
-    drawOverlay('DEAD','Score: '+score+'   Best: '+hi,'Tap or Space to retry');
+    drawOverlay('DEAD','Level '+level+' · Score: '+score+'   Best: '+hi,'Tap or Space to retry · Attempt '+attempts);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(state==='levelcomplete'){
+    platforms.forEach(drawPlatform);
+    drawParticles();
+    drawCube();
+    drawHUD();
+    drawOverlay('LEVEL '+(level-1)+' COMPLETE!','Score: '+hi,'Next level starting...');
     requestAnimationFrame(loop);return;
   }
 
@@ -371,12 +435,25 @@ function loop(){
   // move & cull obstacles
   obstacles=obstacles.filter(sp=>{
     sp.x-=speed*dt;
-    if(!sp.scored&&sp.x+20<cube.x){sp.scored=true;score++;SFX.point();if(score>hi){hi=score;localStorage.setItem('geo_hi',hi);}}
+    if(!sp.scored&&sp.x+20<cube.x){
+      sp.scored=true;score++;SFX.point();
+      if(score>hi){hi=score;localStorage.setItem('geo_hi',hi);}
+      if(score>=levelLength&&state==='play'){
+        state='levelcomplete';
+        stopMusic();
+        SFX.win();
+        setTimeout(nextLevel,1600);
+      }
+    }
     return sp.x>-60;
   });
   platforms=platforms.filter(plat=>{
     plat.x-=speed*dt;
     return plat.x>-200;
+  });
+  orbs=orbs.filter(o=>{
+    o.x-=speed*dt;
+    return o.x>-40;
   });
 
   // update particles
@@ -397,6 +474,7 @@ function loop(){
 
   // draw
   platforms.forEach(drawPlatform);
+  orbs.forEach(drawOrb);
   obstacles.forEach(drawSpike);
   drawParticles();
   if(state!=='dead')drawCube();
