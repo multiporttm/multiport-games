@@ -70,6 +70,7 @@
     isMuted(){ return muted; },
     setMuted(v){ muted=!!v; localStorage.setItem('sfx_muted',muted?'1':'0'); },
     toggleMute(){ SFX.setMuted(!muted); return muted; },
+    getContext(){ return getCtx(); },
   };
 
   window.SFX=SFX;

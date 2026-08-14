@@ -18,6 +18,7 @@ const W=480,H=380,GND=H-60,CUBE=28;
 
 // ── State ──────────────────────────────────────────────
 let state='idle',score=0,hi=+(localStorage.getItem('geo_hi')||0),frame=0,speed=4;
+let lastTime=null,spawnTimer=0;
 let cube={x:80,y:GND-CUBE,vy:0,rot:0,dead:false,jumped:false};
 let obstacles=[],platforms=[],particles=[];
 const GRAV=0.55,JUMP=-11.5;
@@ -33,16 +34,48 @@ const stars=Array.from({length:60},()=>({
 }));
 
 function reset(){
-  score=0;frame=0;speed=4;
+  score=0;frame=0;speed=4;spawnTimer=0;lastTime=null;
   cube={x:80,y:GND-CUBE,vy:0,rot:0,dead:false,jumped:false};
   cubeColor=COLORS[Math.floor(Math.random()*COLORS.length)];
   obstacles=[];platforms=[];particles=[];
   state='play';
+  startMusic();
 }
 
 function jump(){
   if(state==='idle'||state==='dead'){reset();return;}
-  if(cube.y>=GND-CUBE-2){cube.vy=JUMP;cube.jumped=true;}
+  if(cube.y>=GND-CUBE-2){cube.vy=JUMP;cube.jumped=true;SFX.jump();}
+}
+
+// ── Background music — a short looping synth riff, respects the mute toggle ──
+let musicTimer=null,musicStep=0;
+const MUSIC_BASS=[110,110,146.83,130.81];
+const MUSIC_LEAD=[440,523.25,587.33,659.25,587.33,523.25,440,392];
+function playMusicStep(){
+  if(!window.SFX||SFX.isMuted())return;
+  const actx=SFX.getContext();
+  if(!actx)return;
+  const t0=actx.currentTime;
+  const bass=MUSIC_BASS[musicStep%MUSIC_BASS.length];
+  const bo=actx.createOscillator(),bg=actx.createGain();
+  bo.type='triangle';bo.frequency.setValueAtTime(bass,t0);
+  bg.gain.setValueAtTime(0.05,t0);bg.gain.exponentialRampToValueAtTime(0.0001,t0+0.35);
+  bo.connect(bg);bg.connect(actx.destination);bo.start(t0);bo.stop(t0+0.36);
+  if(musicStep%2===0){
+    const lead=MUSIC_LEAD[Math.floor(musicStep/2)%MUSIC_LEAD.length];
+    const lo=actx.createOscillator(),lg=actx.createGain();
+    lo.type='square';lo.frequency.setValueAtTime(lead,t0);
+    lg.gain.setValueAtTime(0.03,t0);lg.gain.exponentialRampToValueAtTime(0.0001,t0+0.3);
+    lo.connect(lg);lg.connect(actx.destination);lo.start(t0);lo.stop(t0+0.31);
+  }
+  musicStep++;
+}
+function startMusic(){
+  if(musicTimer)return;
+  musicTimer=setInterval(playMusicStep,180);
+}
+function stopMusic(){
+  clearInterval(musicTimer);musicTimer=null;musicStep=0;
 }
 
 document.addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();jump();}});
@@ -278,13 +311,17 @@ function loop(){
     requestAnimationFrame(loop);return;
   }
 
-  frame++;
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  frame+=dt;
   // speed ramp
   speed=4+Math.floor(score/5)*0.4;
 
   // physics
-  cube.vy+=GRAV;
-  cube.y+=cube.vy;
+  cube.vy+=GRAV*dt;
+  cube.y+=cube.vy*dt;
 
   // platform collision
   let onPlat=false;
@@ -304,39 +341,42 @@ function loop(){
   }
 
   // ceiling death
-  if(cube.y<0){state='dead';burst(cube.x+CUBE/2,cube.y,cubeColor);}
+  if(cube.y<0){state='dead';stopMusic();SFX.lose();burst(cube.x+CUBE/2,cube.y,cubeColor);}
 
   // rotation
   if(onPlat){
     cube.rot=Math.round(cube.rot/90)*90; // snap to 90°
   } else {
-    cube.rot+=speed*1.8;
+    cube.rot+=speed*1.8*dt;
   }
 
-  // spawn pattern every ~90 frames (adjusted by speed)
+  // spawn pattern every ~90 "frames" of real time (accumulator, not raw rAF call count)
   const spawnInterval=Math.max(55,90-score*2);
-  if(frame%spawnInterval===0)spawnPattern();
+  spawnTimer+=dt;
+  if(spawnTimer>=spawnInterval){spawnTimer-=spawnInterval;spawnPattern();}
 
   // move & cull obstacles
   obstacles=obstacles.filter(sp=>{
-    sp.x-=speed;
-    if(!sp.scored&&sp.x+20<cube.x){sp.scored=true;score++;if(score>hi){hi=score;localStorage.setItem('geo_hi',hi);}}
+    sp.x-=speed*dt;
+    if(!sp.scored&&sp.x+20<cube.x){sp.scored=true;score++;SFX.point();if(score>hi){hi=score;localStorage.setItem('geo_hi',hi);}}
     return sp.x>-60;
   });
   platforms=platforms.filter(plat=>{
-    plat.x-=speed;
+    plat.x-=speed*dt;
     return plat.x>-200;
   });
 
   // update particles
   particles=particles.filter(p=>{
-    p.x+=p.vx;p.y+=p.vy;p.vy+=0.1;p.life-=0.04;return p.life>0;
+    p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=0.1*dt;p.life-=0.04*dt;return p.life>0;
   });
 
   // collision check
   obstacles.forEach(sp=>{
     if(cubeHitsSpike(sp)&&state!=='dead'){
       state='dead';
+      stopMusic();
+      SFX.lose();
       burst(cube.x+CUBE/2,cube.y+CUBE/2,cubeColor);
       burst(cube.x+CUBE/2,cube.y+CUBE/2,sp.color);
     }
