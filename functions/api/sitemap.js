@@ -17,6 +17,7 @@ const SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
   <url><loc>https://games.multiportllc.com/games/bingo</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/birdfly</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/blackjack</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://games.multiportllc.com/games/blockbuilder</loc><lastmod>2026-08-14</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/blockslide</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/bowling</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/breakout</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
@@ -46,10 +47,13 @@ const SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
   <url><loc>https://games.multiportllc.com/games/flags</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/flappy</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/flappydunk</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://games.multiportllc.com/games/freezetag</loc><lastmod>2026-08-14</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/gardengrow</loc><lastmod>2026-08-13</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/geometry</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/gravity</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://games.multiportllc.com/games/greatescape</loc><lastmod>2026-08-14</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/hangman</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://games.multiportllc.com/games/heistrun</loc><lastmod>2026-08-14</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/honeyrush</loc><lastmod>2026-08-13</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/hovercraft</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/icebreak</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
@@ -75,6 +79,7 @@ const SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
   <url><loc>https://games.multiportllc.com/games/pianotiles</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/powerduel</loc><lastmod>2026-08-09</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/pinball</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://games.multiportllc.com/games/pizzarush</loc><lastmod>2026-08-14</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/platformer</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/plinko</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/pong</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
@@ -83,6 +88,7 @@ const SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
   <url><loc>https://games.multiportllc.com/games/reversi</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/rps</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/scramble</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://games.multiportllc.com/games/sharkwaters</loc><lastmod>2026-08-14</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/shooter</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/simon</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/skyrace</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
@@ -93,16 +99,20 @@ const SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
   <url><loc>https://games.multiportllc.com/games/soccer</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/solitaire</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/spaceinvaders</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://games.multiportllc.com/games/speeddash</loc><lastmod>2026-08-14</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/spelling</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/stackfall</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/strands</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://games.multiportllc.com/games/stylestudio</loc><lastmod>2026-08-14</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/sudoku</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://games.multiportllc.com/games/survivestorm</loc><lastmod>2026-08-14</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/swords</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/tetris</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/tictactoe</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/timestable</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/towerdefense</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/trivia</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://games.multiportllc.com/games/turfwars</loc><lastmod>2026-08-14</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/typing</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/videopoker</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
   <url><loc>https://games.multiportllc.com/games/whackamole</loc><lastmod>2026-07-19</lastmod><changefreq>monthly</changefreq><priority>0.7</priority></url>
