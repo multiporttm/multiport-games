@@ -70,8 +70,15 @@ function jump(){
 }
 
 // ── Background music — an original, fast arpeggiated synth loop (respects the mute toggle) ──
-let musicTimer=null,musicStep=0;
-const STEP_MS=105; // ~16th notes at ~143bpm — driving, energetic arcade feel
+// Uses a look-ahead scheduler (all oscillators are created up-front for a window of
+// upcoming beats) instead of setInterval, because some browsers silently drop audio
+// scheduled from a timer callback even on an already-unlocked AudioContext — but they
+// have no problem with audio scheduled for a future time via start(when), as long as
+// the scheduling *call* itself happens from a place they trust (a rAF-driven loop that
+// traces back to the original user gesture works reliably where setInterval did not).
+const STEP_SEC=0.105; // ~16th notes at ~143bpm — driving, energetic arcade feel
+const SCHEDULE_AHEAD_SEC=0.5;
+let musicPlaying=false,musicStep=0,nextNoteTime=0;
 // Four-chord progression (Am - F - C - G), each held for one bar of 8 steps.
 const MUSIC_CHORDS=[
   [220.00,261.63,329.63,440.00],   // A minor
@@ -80,38 +87,52 @@ const MUSIC_CHORDS=[
   [196.00,246.94,293.66,392.00],   // G major
 ];
 const ARP_PATTERN=[0,1,2,3,2,1,2,3]; // up-down arpeggio shape within each chord
-function playMusicStep(){
-  if(!window.SFX||SFX.isMuted())return;
+
+function scheduleNote(t0,idx){
   const actx=SFX.getContext();
   if(!actx)return;
-  const t0=actx.currentTime;
   const barLen=ARP_PATTERN.length;
-  const chord=MUSIC_CHORDS[Math.floor(musicStep/barLen)%MUSIC_CHORDS.length];
-  const stepInBar=musicStep%barLen;
+  const chord=MUSIC_CHORDS[Math.floor(idx/barLen)%MUSIC_CHORDS.length];
+  const stepInBar=idx%barLen;
 
   // Driving bass pulse on the root — kept in a mid range so phone speakers can actually reproduce it
   const bo=actx.createOscillator(),bg=actx.createGain();
   bo.type='triangle';bo.frequency.setValueAtTime(chord[0],t0);
-  bg.gain.setValueAtTime(0.16,t0);bg.gain.exponentialRampToValueAtTime(0.0001,t0+STEP_MS/1000*1.4);
-  bo.connect(bg);bg.connect(actx.destination);bo.start(t0);bo.stop(t0+STEP_MS/1000*1.5);
+  bg.gain.setValueAtTime(0.16,t0);bg.gain.exponentialRampToValueAtTime(0.0001,t0+STEP_SEC*1.4);
+  bo.connect(bg);bg.connect(actx.destination);bo.start(t0);bo.stop(t0+STEP_SEC*1.5);
 
   // Fast arpeggiated lead, accented on the first step of each bar
   const lead=chord[ARP_PATTERN[stepInBar]];
   const accent=stepInBar===0;
   const lo=actx.createOscillator(),lg=actx.createGain();
   lo.type='square';lo.frequency.setValueAtTime(lead*2,t0);
-  lg.gain.setValueAtTime(accent?0.13:0.09,t0);lg.gain.exponentialRampToValueAtTime(0.0001,t0+STEP_MS/1000*1.1);
-  lo.connect(lg);lg.connect(actx.destination);lo.start(t0);lo.stop(t0+STEP_MS/1000*1.2);
-
-  musicStep++;
+  lg.gain.setValueAtTime(accent?0.13:0.09,t0);lg.gain.exponentialRampToValueAtTime(0.0001,t0+STEP_SEC*1.1);
+  lo.connect(lg);lg.connect(actx.destination);lo.start(t0);lo.stop(t0+STEP_SEC*1.2);
 }
+
+function musicScheduler(){
+  if(!musicPlaying)return;
+  if(!window.SFX||SFX.isMuted())return;
+  const actx=SFX.getContext();
+  if(!actx)return;
+  while(nextNoteTime<actx.currentTime+SCHEDULE_AHEAD_SEC){
+    scheduleNote(nextNoteTime,musicStep);
+    musicStep++;
+    nextNoteTime+=STEP_SEC;
+  }
+}
+
 function startMusic(){
-  if(musicTimer)return;
-  playMusicStep(); // play the first beat immediately instead of waiting for the first interval tick
-  musicTimer=setInterval(playMusicStep,STEP_MS);
+  if(musicPlaying)return;
+  const actx=SFX.getContext();
+  if(!actx)return;
+  musicPlaying=true;
+  musicStep=0;
+  nextNoteTime=actx.currentTime+0.05;
+  musicScheduler(); // schedule the first batch of notes synchronously, right in this gesture-triggered call
 }
 function stopMusic(){
-  clearInterval(musicTimer);musicTimer=null;musicStep=0;
+  musicPlaying=false;
 }
 
 document.addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();jump();}});
@@ -363,6 +384,7 @@ function drawOverlay(title,sub1,sub2){
 
 // ── Main loop ─────────────────────────────────────────
 function loop(){
+  musicScheduler();
   drawBG();
 
   if(state==='idle'){
