@@ -1,0 +1,233 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Junkyard Derby</title><meta name="description" content="Play Junkyard Derby free online — Use Arrow Keys or WASD (or the on-screen D-pad) to drive. Ram the rival cars to knock out their HP before they wreck yours!"><link rel="canonical" href="https://games.multiportllc.com/games/junkyardderby"><meta property="og:title" content="Junkyard Derby - Multiport Games"><meta property="og:description" content="Play Junkyard Derby free online — Use Arrow Keys or WASD (or the on-screen D-pad) to drive. Ram the rival cars to knock out their HP before they wreck yours!"><meta property="og:url" content="https://games.multiportllc.com/games/junkyardderby"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Junkyard Derby","description":"Play Junkyard Derby free online instantly. Use Arrow Keys or WASD (or the on-screen D-pad) to drive. Ram the rival cars to knock out their HP before they wreck yours! No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/junkyardderby","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3e2723;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ff7043;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#dpad{display:flex;justify-content:center;gap:10px;margin:10px 0;user-select:none}
+#dpad .row{display:flex;gap:10px}
+.dbtn{width:56px;height:56px;border-radius:12px;background:#5d4037;color:#fff;font-size:1.4rem;display:flex;align-items:center;justify-content:center;border:2px solid #ff7043;touch-action:none}
+.dbtn:active{background:#ff7043}
+#dpadWrap{display:flex;flex-direction:column;align-items:center;gap:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Junkyard Derby</div>
+  <div class="game-frame">
+    <div id="score-display">HP: 100 | Wins: 0 | Best: 0</div>
+    <canvas id="c" width="800" height="500"></canvas>
+    <div id="dpadWrap">
+      <div class="row"><div class="dbtn" id="btnUp">▲</div></div>
+      <div class="row">
+        <div class="dbtn" id="btnLeft">◀</div>
+        <div class="dbtn" id="btnDown">▼</div>
+        <div class="dbtn" id="btnRight">▶</div>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> or <b>WASD</b> (or the on-screen D-pad) to drive and turn. Ram the rival cars to damage them — avoid getting rammed yourself. Wreck all rivals to win!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+let hi=parseInt(localStorage.getItem('junkyardderby_hi')||'0',10);
+let wins=0,gameOver=false,win=false,started=false;
+const keys={};
+
+function makeCar(x,y,angle,color,isPlayer){
+  return {x,y,angle,speed:0,color,isPlayer,hp:100,alive:true,turnCd:0};
+}
+let player,ais,particles;
+
+function reset(){
+  player=makeCar(W/2,H/2,0,'#ff7043',true);
+  ais=[
+    makeCar(150,120,Math.PI/2,'#42a5f5',false),
+    makeCar(650,120,Math.PI,'#ab47bc',false),
+    makeCar(400,400,-Math.PI/2,'#66bb6a',false)
+  ];
+  particles=[];
+  gameOver=false;win=false;started=false;
+}
+reset();
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  if(!started)started=true;
+  if(gameOver && (e.key===' '||e.key==='Enter')){reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function bindBtn(id,key){
+  const el=document.getElementById(id);
+  const on=e=>{e.preventDefault();keys[key]=true;if(!started)started=true;if(gameOver)reset();};
+  const off=e=>{e.preventDefault();keys[key]=false;};
+  el.addEventListener('touchstart',on,{passive:false});
+  el.addEventListener('touchend',off,{passive:false});
+  el.addEventListener('mousedown',on);
+  el.addEventListener('mouseup',off);
+  el.addEventListener('mouseleave',off);
+}
+bindBtn('btnUp','arrowup');
+bindBtn('btnDown','arrowdown');
+bindBtn('btnLeft','arrowleft');
+bindBtn('btnRight','arrowright');
+
+function up(k1,k2){return keys[k1]||keys[k2];}
+
+function updateCarPhysics(car,accel,turn,dt){
+  if(!car.alive)return;
+  if(turn!==0)car.angle+=turn*0.045*dt;
+  if(accel>0)car.speed+=0.18*dt;
+  else if(accel<0)car.speed-=0.14*dt;
+  else car.speed*=Math.pow(0.96,dt);
+  car.speed=Math.max(-3,Math.min(5,car.speed));
+  car.x+=Math.cos(car.angle)*car.speed*dt;
+  car.y+=Math.sin(car.angle)*car.speed*dt;
+  const r=16;
+  if(car.x<r){car.x=r;car.speed*=-0.4;}
+  if(car.x>W-r){car.x=W-r;car.speed*=-0.4;}
+  if(car.y<r){car.y=r;car.speed*=-0.4;}
+  if(car.y>H-r){car.y=H-r;car.speed*=-0.4;}
+}
+
+function aiThink(car,dt){
+  if(!car.alive)return;
+  const dx=player.x-car.x,dy=player.y-car.y;
+  const targetAngle=Math.atan2(dy,dx);
+  let diff=targetAngle-car.angle;
+  while(diff>Math.PI)diff-=Math.PI*2;
+  while(diff<-Math.PI)diff+=Math.PI*2;
+  const turn=diff>0.05?1:diff<-0.05?-1:0;
+  updateCarPhysics(car,1,turn,dt);
+}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function handleCollisions(){
+  const all=[player,...ais].filter(c=>c.alive);
+  for(let i=0;i<all.length;i++){
+    for(let j=i+1;j<all.length;j++){
+      const a=all[i],b=all[j];
+      const d=dist(a,b);
+      if(d<32){
+        const relSpeed=Math.abs(a.speed)+Math.abs(b.speed);
+        const dmg=Math.max(4,relSpeed*6);
+        // whichever is moving faster toward the other deals more damage
+        if(a.speed>=b.speed){b.hp-=dmg;a.hp-=dmg*0.4;}
+        else{a.hp-=dmg;b.hp-=dmg*0.4;}
+        // push apart
+        const angle=Math.atan2(b.y-a.y,b.x-a.x);
+        const push=(32-d)/2+1;
+        a.x-=Math.cos(angle)*push;a.y-=Math.sin(angle)*push;
+        b.x+=Math.cos(angle)*push;b.y+=Math.sin(angle)*push;
+        const tmp=a.speed;a.speed=-b.speed*0.5;b.speed=-tmp*0.5;
+        SFX.hit();
+        for(let k=0;k<8;k++)particles.push({x:(a.x+b.x)/2,y:(a.y+b.y)/2,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:20});
+        if(a.hp<=0&&a.alive){a.alive=false;SFX.fail();}
+        if(b.hp<=0&&b.alive){b.alive=false;SFX.fail();}
+      }
+    }
+  }
+}
+
+function drawCar(car){
+  if(!car.alive)return;
+  ctx.save();
+  ctx.translate(car.x,car.y);
+  ctx.rotate(car.angle);
+  ctx.fillStyle=car.color;
+  ctx.fillRect(-16,-10,32,20);
+  ctx.fillStyle='#222';
+  ctx.fillRect(-10,-12,10,4);
+  ctx.fillRect(-10,8,10,4);
+  ctx.fillRect(2,-12,10,4);
+  ctx.fillRect(2,8,10,4);
+  ctx.fillStyle='#ffe082';
+  ctx.fillRect(12,-6,4,4);
+  ctx.fillRect(12,2,4,4);
+  ctx.restore();
+  // hp bar
+  ctx.fillStyle='#000a';
+  ctx.fillRect(car.x-18,car.y-26,36,6);
+  ctx.fillStyle=car.hp>50?'#66bb6a':car.hp>20?'#ffca28':'#e53935';
+  ctx.fillRect(car.x-18,car.y-26,36*Math.max(0,car.hp)/100,6);
+}
+
+function drawArena(){
+  ctx.fillStyle='#4e342e';
+  ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#6d4c41';
+  ctx.lineWidth=4;
+  for(let i=0;i<10;i++){
+    ctx.beginPath();
+    ctx.arc(80+i*70%W,60+((i*130)%H),3,0,Math.PI*2);
+    ctx.fillStyle='#3e2723';ctx.fill();
+  }
+  ctx.strokeRect(4,4,W-8,H-8);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawArena();
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press an Arrow Key or D-pad to start'),W/2,H/2);
+    ais.forEach(drawCar);drawCar(player);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(!gameOver&&!win){
+    const dt=1;
+    const turn=(up('arrowright','d')?1:0)-(up('arrowleft','a')?1:0);
+    const accel=up('arrowup','w')?1:(up('arrowdown','s')?-1:0);
+    updateCarPhysics(player,accel,turn,dt);
+    ais.forEach(a=>aiThink(a,dt));
+    handleCollisions();
+
+    if(player.hp<=0){player.alive=false;gameOver=true;SFX.lose();}
+    else if(ais.every(a=>!a.alive)){
+      win=true;wins++;
+      if(wins>hi){hi=wins;localStorage.setItem('junkyardderby_hi',hi);}
+      SFX.win();
+    }
+  }
+
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.life--;
+    ctx.fillStyle='#ffb74d';ctx.fillRect(p.x,p.y,3,3);
+  });
+
+  ais.forEach(drawCar);
+  drawCar(player);
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press Space to restart'),W/2,H/2+28);
+  }
+  if(win){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('win_title','DERBY WON!'),W/2,H/2-10);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press Space to restart'),W/2,H/2+28);
+  }
+
+  document.getElementById('score-display').textContent=
+    I18N.t('hp_wins_label','HP: {hp} | Wins: {w} | Best: {b}')
+      .replace('{hp}',Math.max(0,Math.round(player.hp)))
+      .replace('{w}',wins).replace('{b}',hi);
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

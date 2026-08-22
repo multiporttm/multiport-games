@@ -1,0 +1,272 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Catapult King</title><meta name="description" content="Play Catapult King free online — Drag back from the projectile to aim, release to fire. Knock down castle blocks and smash the targets before you run out of shots across increasingly distant levels."><link rel="canonical" href="https://games.multiportllc.com/games/catapultking"><meta property="og:title" content="Catapult King - Multiport Games"><meta property="og:description" content="Play Catapult King free online — Drag back from the projectile to aim, release to fire. Knock down castle blocks and smash the targets before you run out of shots across increasingly distant levels."><meta property="og:url" content="https://games.multiportllc.com/games/catapultking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Catapult King","description":"Play Catapult King free online instantly. Drag back from the projectile to aim, release to fire. Knock down castle blocks and smash the targets before you run out of shots across increasingly distant levels. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/catapultking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(#4e342e,#a1887f);display:block;border-radius:8px;cursor:crosshair;touch-action:none}
+#score-display{color:#ffcc80;font-size:1.15rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Catapult King</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Shots: 0 | Level: 1 | Hi: 0</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click/tap and <b>drag back</b> from the catapult's ball to aim, then <b>release</b> to fire. Knock down all the castle blocks before you run out of shots. Each level adds distance and difficulty.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420,GROUND=380;
+let hi=parseInt(localStorage.getItem('catapultking_hi')||'0');
+let score=0,level=1,shotsLeft=5,gameState='aim'; // aim, flying, resolved, over
+let blocks=[],proj=null,particles=[];
+const catapultBase={x:80,y:GROUND};
+let ball={x:80,y:GROUND-40};
+let drag=null,gravity=0.42;
+
+function scoreDisplay(){
+  document.getElementById('score-display').textContent=
+    I18N.t('catapult_status','Score: {s} | Shots: {n} | Level: {l} | Hi: {h}')
+      .replace('{s}',score).replace('{n}',shotsLeft).replace('{l}',level).replace('{h}',hi);
+}
+
+function buildLevel(lv){
+  blocks=[];
+  const baseX=520+Math.min(lv-1,6)*18;
+  const cols=3+Math.min(Math.floor((lv-1)/2),3);
+  const rows=3+Math.min(lv-1,4);
+  const bw=26,bh=26,gap=2;
+  for(let r=0;r<rows;r++){
+    for(let cIdx=0;cIdx<cols;cIdx++){
+      // pyramid-ish: fewer blocks near top
+      if(r>0 && (cIdx<Math.floor((r)/2) || cIdx>=cols-Math.floor(r/2)))continue;
+      blocks.push({
+        x:baseX+cIdx*(bw+gap),
+        y:GROUND-(rows-r)*(bh+gap),
+        w:bw,h:bh,alive:true,
+        target:Math.random()<0.25
+      });
+    }
+  }
+  shotsLeft=5+Math.floor((lv-1)/3);
+  ball={x:catapultBase.x,y:catapultBase.y-40};
+  proj=null;
+  drag=null;
+  gameState='aim';
+  scoreDisplay();
+}
+
+function resetGame(){
+  score=0;level=1;
+  buildLevel(level);
+}
+
+function dist(x1,y1,x2,y2){return Math.hypot(x2-x1,y2-y1);}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  let cx,cy;
+  if(e.touches&&e.touches.length){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else{cx=e.clientX;cy=e.clientY;}
+  return {x:(cx-rect.left)*scaleX,y:(cy-rect.top)*scaleY};
+}
+
+function onDown(e){
+  e.preventDefault();
+  if(gameState==='over'){resetGame();return;}
+  if(gameState!=='aim')return;
+  const p=pointerPos(e);
+  if(dist(p.x,p.y,ball.x,ball.y)<60){
+    drag={x:p.x,y:p.y};
+  }
+}
+function onMove(e){
+  if(!drag)return;
+  e.preventDefault();
+  const p=pointerPos(e);
+  drag.x=p.x;drag.y=p.y;
+}
+function onUp(e){
+  if(!drag)return;
+  e.preventDefault();
+  const dx=catapultBase.x-drag.x, dy=(catapultBase.y-40)-drag.y;
+  const power=Math.min(dist(0,0,dx,dy),140);
+  if(power>10){
+    const angle=Math.atan2(dy,dx);
+    const speed=power*0.24;
+    proj={x:ball.x,y:ball.y,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,r:9,trail:[]};
+    gameState='flying';
+    shotsLeft--;
+    SFX.swoosh();
+  }
+  drag=null;
+}
+
+c.addEventListener('mousedown',onDown);
+c.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+c.addEventListener('touchstart',onDown,{passive:false});
+c.addEventListener('touchmove',onMove,{passive:false});
+c.addEventListener('touchend',onUp,{passive:false});
+
+function rectHit(px,py,pr,b){
+  const cx=Math.max(b.x,Math.min(px,b.x+b.w));
+  const cy=Math.max(b.y,Math.min(py,b.y+b.h));
+  return dist(px,py,cx,cy)<pr;
+}
+
+function spawnDebris(x,y,color){
+  for(let i=0;i<8;i++){
+    particles.push({x,y,vx:(Math.random()-0.5)*6,vy:-Math.random()*5,life:30,color});
+  }
+}
+
+function updatePhysics(){
+  if(gameState!=='flying'||!proj)return;
+  proj.trail.push({x:proj.x,y:proj.y});
+  if(proj.trail.length>18)proj.trail.shift();
+  proj.vy+=gravity;
+  proj.x+=proj.vx;
+  proj.y+=proj.vy;
+
+  let hitSomething=false;
+  blocks.forEach(b=>{
+    if(!b.alive)return;
+    if(rectHit(proj.x,proj.y,proj.r,b)){
+      b.alive=false;
+      hitSomething=true;
+      score+=b.target?250:100;
+      SFX.hit();
+      spawnDebris(b.x+b.w/2,b.y+b.h/2,b.target?'#ffd54f':'#8d6e63');
+    }
+  });
+  if(hitSomething){
+    proj.vx*=0.4;proj.vy*=0.4;
+  }
+
+  if(proj.y>GROUND+20||proj.x>W+40||proj.x<-40){
+    endShot();
+  }
+}
+
+function endShot(){
+  proj=null;
+  gameState='aim';
+  ball={x:catapultBase.x,y:catapultBase.y-40};
+  const remaining=blocks.some(b=>b.alive);
+  if(!remaining){
+    score+=500;
+    SFX.win();
+    level++;
+    setTimeout(()=>buildLevel(level),700);
+  } else if(shotsLeft<=0){
+    gameState='over';
+    if(score>hi){hi=score;localStorage.setItem('catapultking_hi',hi);}
+    SFX.lose();
+  }
+  scoreDisplay();
+}
+
+function updateParticles(){
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=0.3;p.life--;});
+  particles=particles.filter(p=>p.life>0);
+}
+
+function drawCatapult(){
+  ctx.fillStyle='#5d4037';
+  ctx.fillRect(catapultBase.x-30,catapultBase.y-6,60,14);
+  ctx.fillRect(catapultBase.x-18,catapultBase.y-60,10,60);
+  ctx.fillRect(catapultBase.x+8,catapultBase.y-60,10,60);
+  ctx.strokeStyle='#3e2723';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(catapultBase.x-14,catapultBase.y-8);ctx.lineTo(catapultBase.x-14,catapultBase.y-52);ctx.stroke();
+}
+
+function drawCastle(){
+  blocks.forEach(b=>{
+    if(!b.alive)return;
+    ctx.fillStyle=b.target?'#ffd54f':'#8d6e63';
+    ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.strokeStyle='#3e2723';ctx.lineWidth=1;
+    ctx.strokeRect(b.x,b.y,b.w,b.h);
+    if(b.target){
+      ctx.fillStyle='#e65100';
+      ctx.beginPath();ctx.arc(b.x+b.w/2,b.y+b.h/2,5,0,Math.PI*2);ctx.fill();
+    }
+  });
+}
+
+function drawBall(x,y){
+  ctx.fillStyle='#37474f';
+  ctx.beginPath();ctx.arc(x,y,9,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#607d8b';
+  ctx.beginPath();ctx.arc(x-3,y-3,3,0,Math.PI*2);ctx.fill();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,GROUND);
+  sky.addColorStop(0,'#78909c');sky.addColorStop(1,'#cfd8dc');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,GROUND);
+  ctx.fillStyle='#4e342e';ctx.fillRect(0,GROUND,W,H-GROUND);
+  ctx.fillStyle='#6d4c41';ctx.fillRect(0,GROUND,W,6);
+
+  drawCastle();
+  drawCatapult();
+
+  if(gameState==='flying'&&proj){
+    ctx.strokeStyle='rgba(255,255,255,0.5)';
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    proj.trail.forEach((t,i)=>{i===0?ctx.moveTo(t.x,t.y):ctx.lineTo(t.x,t.y);});
+    ctx.stroke();
+    drawBall(proj.x,proj.y);
+    updatePhysics();
+  } else {
+    drawBall(ball.x,ball.y);
+  }
+
+  if(drag){
+    ctx.strokeStyle='#ffab00';
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    ctx.moveTo(ball.x,ball.y);
+    ctx.lineTo(drag.x,drag.y);
+    ctx.stroke();
+    const dx=catapultBase.x-drag.x, dy=(catapultBase.y-40)-drag.y;
+    const power=Math.min(dist(0,0,dx,dy),140);
+    ctx.fillStyle='#fff';
+    ctx.font='14px Arial';ctx.textAlign='left';
+    ctx.fillText('Power: '+Math.round(power/1.4)+'%',10,20);
+  }
+
+  updateParticles();
+  particles.forEach(p=>{
+    ctx.fillStyle=p.color;
+    ctx.globalAlpha=Math.max(0,p.life/30);
+    ctx.fillRect(p.x,p.y,4,4);
+    ctx.globalAlpha=1;
+  });
+
+  ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('catapult_hint_gold','Gold blocks = bonus targets'),10,H-10);
+
+  if(gameState==='over'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint_tap','Tap or click to restart'),W/2,H/2+20);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+buildLevel(level);
+loop();
+</script></body></html>
