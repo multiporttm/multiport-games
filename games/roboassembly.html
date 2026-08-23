@@ -1,0 +1,181 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Robo Assembly</title><meta name="description" content="Play Robo Assembly free online — Click the part in the tray that matches a chassis on the belt, then click that chassis before it rolls off screen."><link rel="canonical" href="https://games.multiportllc.com/games/roboassembly"><meta property="og:title" content="Robo Assembly - Multiport Games"><meta property="og:description" content="Play Robo Assembly free online — Click the part in the tray that matches a chassis on the belt, then click that chassis before it rolls off screen."><meta property="og:url" content="https://games.multiportllc.com/games/roboassembly"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Robo Assembly","description":"Play Robo Assembly free online instantly. Click the part in the tray that matches a chassis on the belt, then click that chassis before it rolls off screen. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/roboassembly","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#161a2e;border-radius:14px;padding:16px;text-align:center}
+#status{color:#fff;font-size:1.1rem;font-weight:800;margin:4px 0 10px;min-height:1.6em}
+#belt-wrap{position:relative;width:100%;max-width:720px;height:150px;margin:0 auto;background:repeating-linear-gradient(90deg,#2a2f4a,#2a2f4a 28px,#232744 28px,#232744 56px);border-radius:10px;overflow:hidden;border:3px solid #3d4270}
+.chassis{position:absolute;top:35px;width:80px;height:80px;background:#4a5080;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:2.2rem;box-shadow:0 4px 8px rgba(0,0,0,.4);cursor:pointer;transition:outline .1s}
+.chassis.selected-target{outline:3px solid #ffd54f}
+.chassis.wrong{background:#e94560}
+.chassis.correct{background:#4caf50}
+#tray{display:flex;justify-content:center;gap:14px;margin:16px 0;flex-wrap:wrap}
+.part{width:64px;height:64px;background:#232744;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:2rem;cursor:pointer;border:3px solid transparent;transition:transform .1s,border-color .1s}
+.part:hover{transform:scale(1.06)}
+.part.chosen{border-color:#ffd54f}
+#hud{display:flex;justify-content:center;gap:24px;color:#fff;font-weight:800;font-size:1.05rem;margin-bottom:6px}
+#lives{color:#e94560}
+#gscore{color:#4caf50}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Robo Assembly</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="hud"><span id="gscore">Score: 0</span><span id="lives">Lives: 3</span></div>
+      <div id="status">Click a part, then click the matching chassis on the belt!</div>
+      <div id="belt-wrap"></div>
+      <div id="tray"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a <b>part icon</b> in the tray to select it, then click the <b>chassis</b> on the belt that needs that part before it rolls off the right edge. Wrong parts or missed chassis cost a life — the belt speeds up as you score!</div>
+</div>
+<script>
+const PARTS=[
+  {key:'wrench',icon:'🔧'},
+  {key:'battery',icon:'⚡'},
+  {key:'wheel',icon:'🛞'},
+  {key:'gear',icon:'⚙️'},
+];
+let score=0,lives=3,gameOver=false,started=false;
+let selectedPart=null;
+let chassisList=[];
+let beltSpeed=0.6; // px per ms baseline
+let spawnInterval=2200,spawnTimer=0;
+let lastTime=null;
+let idCounter=0;
+
+const beltEl=document.getElementById('belt-wrap');
+const trayEl=document.getElementById('tray');
+const statusEl=document.getElementById('status');
+
+function renderTray(){
+  trayEl.innerHTML='';
+  PARTS.forEach(p=>{
+    const el=document.createElement('div');
+    el.className='part'+(selectedPart===p.key?' chosen':'');
+    el.textContent=p.icon;
+    el.title=p.key;
+    el.onclick=()=>{
+      if(gameOver||!started){startGame();return;}
+      selectedPart=(selectedPart===p.key)?null:p.key;
+      renderTray();
+    };
+    trayEl.appendChild(el);
+  });
+}
+
+function spawnChassis(){
+  const need=PARTS[Math.floor(Math.random()*PARTS.length)];
+  const id=idCounter++;
+  const el=document.createElement('div');
+  el.className='chassis';
+  el.textContent='🤖';
+  el.style.left='-90px';
+  el.dataset.need=need.key;
+  el.onclick=()=>handleChassisClick(id);
+  beltEl.appendChild(el);
+  chassisList.push({id,need:need.key,x:-90,el,resolved:false});
+}
+
+function handleChassisClick(id){
+  if(gameOver||!started)return;
+  const c=chassisList.find(c=>c.id===id);
+  if(!c||c.resolved)return;
+  if(!selectedPart){
+    statusEl.textContent=I18N.t('pick_part_first','Pick a part from the tray first!');
+    return;
+  }
+  if(selectedPart===c.need){
+    c.resolved=true;
+    c.el.classList.add('correct');
+    c.el.textContent='✅';
+    score++;
+    SFX.success();
+    statusEl.textContent=I18N.t('good_match','Nice match! +1');
+    setTimeout(()=>{ if(c.el.parentNode)c.el.remove(); },300);
+    chassisList=chassisList.filter(x=>x.id!==id);
+    if(score>0 && score%5===0)beltSpeed+=0.08;
+  } else {
+    c.resolved=true;
+    c.el.classList.add('wrong');
+    c.el.textContent='❌';
+    loseLife();
+    setTimeout(()=>{ if(c.el.parentNode)c.el.remove(); },300);
+    chassisList=chassisList.filter(x=>x.id!==id);
+  }
+  selectedPart=null;
+  renderTray();
+  updateHud();
+}
+
+function loseLife(){
+  lives--;
+  SFX.hit();
+  updateHud();
+  if(lives<=0){
+    endGame();
+  }
+}
+
+function updateHud(){
+  document.getElementById('gscore').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('lives').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}',Math.max(0,lives));
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  statusEl.textContent=I18N.t('game_over_click_restart','GAME OVER — click any part to restart');
+  const hi=Math.max(score,parseInt(localStorage.getItem('roboassembly_best')||'0',10));
+  localStorage.setItem('roboassembly_best',String(hi));
+  statusEl.textContent=I18N.t('game_over_score_best','GAME OVER — Score: {s} | Best: {b} — click a part to restart').replace('{s}',score).replace('{b}',hi);
+}
+
+function startGame(){
+  score=0;lives=3;gameOver=false;started=true;selectedPart=null;beltSpeed=0.6;spawnInterval=2200;spawnTimer=0;lastTime=null;
+  chassisList.forEach(c=>{if(c.el.parentNode)c.el.remove();});
+  chassisList=[];
+  statusEl.textContent=I18N.t('game_status_hint','Click a part, then click the matching chassis on the belt!');
+  updateHud();
+  renderTray();
+}
+
+function loop(ts){
+  if(!started){requestAnimationFrame(loop);return;}
+  if(gameOver){requestAnimationFrame(loop);return;}
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min(ts-lastTime,50);
+  lastTime=ts;
+
+  spawnTimer+=dt;
+  if(spawnTimer>=spawnInterval){
+    spawnTimer=0;
+    spawnChassis();
+    spawnInterval=Math.max(900,spawnInterval-30);
+  }
+
+  const beltW=beltEl.clientWidth;
+  chassisList=chassisList.filter(c=>{
+    c.x+=beltSpeed*dt*0.12;
+    c.el.style.left=c.x+'px';
+    if(c.x>beltW+10){
+      c.el.remove();
+      loseLife();
+      return false;
+    }
+    return true;
+  });
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+renderTray();
+updateHud();
+statusEl.textContent=I18N.t('click_part_to_start','Click a part in the tray to start!');
+</script></body></html>

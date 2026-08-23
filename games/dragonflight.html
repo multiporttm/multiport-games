@@ -1,0 +1,261 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Dragon Flight</title><meta name="description" content="Play Dragon Flight free online — Use Arrow Keys/WASD or drag on touch to fly your dragon through the cave, dodging stalactites and rivals while collecting gold and gems."><link rel="canonical" href="https://games.multiportllc.com/games/dragonflight"><meta property="og:title" content="Dragon Flight - Multiport Games"><meta property="og:description" content="Play Dragon Flight free online — Use Arrow Keys/WASD or drag on touch to fly your dragon through the cave, dodging stalactites and rivals while collecting gold and gems."><meta property="og:url" content="https://games.multiportllc.com/games/dragonflight"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Dragon Flight","description":"Play Dragon Flight free online instantly. Use Arrow Keys/WASD or drag on touch to fly your dragon through the cave, dodging stalactites and rivals while collecting gold and gems. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/dragonflight","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a0f2e;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffca28;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Dragon Flight</div>
+  <div class="game-frame">
+    <div id="score-display">Coins: 0 | Distance: 0m | Hi: 0</div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> / <b>WASD</b> or <b>drag</b> on touch to steer your dragon up, down, left and right. Dodge the stalactites and rival flying creatures while collecting gold coins and gems for score. One hit ends the run!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+let hi=0;
+try{hi=parseInt(localStorage.getItem('dragon_hi')||'0');}catch(e){}
+
+const dragon={x:120,y:200,w:50,h:36,vx:0,vy:0};
+let keys={};
+let obstacles=[],coins=[];
+let distance=0,coinCount=0,gameOver=false,started=false;
+let spd=4,frame=0,obsTimer=0,coinTimer=0;
+let lastTime=null;
+let pointerActive=false,pointerY=200,pointerX=120;
+
+function reset(){
+  dragon.x=120;dragon.y=200;dragon.vx=0;dragon.vy=0;
+  obstacles=[];coins=[];distance=0;coinCount=0;gameOver=false;started=false;
+  spd=4;frame=0;obsTimer=0;coinTimer=0;lastTime=null;
+}
+reset();
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','KeyW','KeyA','KeyS','KeyD'].includes(e.code))e.preventDefault();
+  if(!started){started=true;}
+  if(gameOver){reset();started=true;}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function startFromPointer(px,py){
+  if(!started){started=true;}
+  if(gameOver){reset();started=true;}
+  pointerActive=true;pointerX=px;pointerY=py;
+}
+c.addEventListener('mousedown',e=>{
+  const r=c.getBoundingClientRect();
+  startFromPointer((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));
+});
+c.addEventListener('mousemove',e=>{
+  if(!pointerActive)return;
+  const r=c.getBoundingClientRect();
+  pointerX=(e.clientX-r.left)*(W/r.width);pointerY=(e.clientY-r.top)*(H/r.height);
+});
+window.addEventListener('mouseup',()=>{pointerActive=false;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const r=c.getBoundingClientRect();
+  const t=e.touches[0];
+  startFromPointer((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(!pointerActive)return;
+  const r=c.getBoundingClientRect();
+  const t=e.touches[0];
+  pointerX=(t.clientX-r.left)*(W/r.width);pointerY=(t.clientY-r.top)*(H/r.height);
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerActive=false;},{passive:false});
+
+function spawnObstacle(){
+  const type=Math.random()<0.5?'stalactite':(Math.random()<0.5?'stalagmite':'rival');
+  if(type==='stalactite'){
+    const h=60+Math.random()*100;
+    obstacles.push({type,x:W+20,y:0,w:36,h});
+  }else if(type==='stalagmite'){
+    const h=60+Math.random()*100;
+    obstacles.push({type,x:W+20,y:H-h,w:36,h});
+  }else{
+    const y=60+Math.random()*(H-140);
+    obstacles.push({type,x:W+20,y,w:40,h:28,phase:Math.random()*10});
+  }
+}
+function spawnCoin(){
+  const y=40+Math.random()*(H-80);
+  const kind=Math.random()<0.25?'gem':'coin';
+  coins.push({x:W+20,y,r:kind==='gem'?11:9,kind});
+}
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function drawDragon(){
+  ctx.save();
+  ctx.translate(dragon.x,dragon.y);
+  ctx.fillStyle='#7c4dff';
+  ctx.beginPath();
+  ctx.ellipse(0,0,26,15,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#651fff';
+  ctx.beginPath();
+  ctx.moveTo(-24,0);ctx.lineTo(-42,-10+Math.sin(frame/4)*8);ctx.lineTo(-42,10+Math.sin(frame/4)*8);
+  ctx.closePath();ctx.fill();
+  ctx.fillStyle='#7c4dff';
+  ctx.beginPath();ctx.ellipse(24,-2,12,9,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffca28';
+  ctx.beginPath();ctx.arc(30,-4,2.5,0,7);ctx.fill();
+  ctx.fillStyle='#ff6f00';
+  ctx.beginPath();ctx.moveTo(34,-2);ctx.lineTo(44,-4);ctx.lineTo(34,2);ctx.closePath();ctx.fill();
+  const wingY=Math.sin(frame/3)*10;
+  ctx.fillStyle='rgba(179,136,255,.8)';
+  ctx.beginPath();ctx.ellipse(-4,-6+wingY,18,8,0.4,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawObstacle(o){
+  if(o.type==='stalactite'){
+    ctx.fillStyle='#5d4a66';
+    ctx.beginPath();ctx.moveTo(o.x,0);ctx.lineTo(o.x+o.w,0);ctx.lineTo(o.x+o.w/2,o.h);ctx.closePath();ctx.fill();
+  }else if(o.type==='stalagmite'){
+    ctx.fillStyle='#5d4a66';
+    ctx.beginPath();ctx.moveTo(o.x,H);ctx.lineTo(o.x+o.w,H);ctx.lineTo(o.x+o.w/2,H-o.h);ctx.closePath();ctx.fill();
+  }else{
+    ctx.fillStyle='#e57373';
+    ctx.beginPath();ctx.ellipse(o.x+o.w/2,o.y+Math.sin(frame/6+o.phase)*10,o.w/2,o.h/2,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#b71c1c';
+    ctx.beginPath();ctx.moveTo(o.x,o.y+o.h/2+Math.sin(frame/6+o.phase)*10);ctx.lineTo(o.x-14,o.y+o.h/2+Math.sin(frame/6+o.phase)*10-6);ctx.lineTo(o.x-14,o.y+o.h/2+Math.sin(frame/6+o.phase)*10+6);ctx.closePath();ctx.fill();
+  }
+}
+function obsBox(o){
+  if(o.type==='rival')return{x:o.x,y:o.y-o.h/2+Math.sin(frame/6+o.phase)*10,w:o.w,h:o.h};
+  if(o.type==='stalactite')return{x:o.x,y:0,w:o.w,h:o.h};
+  return{x:o.x,y:H-o.h,w:o.w,h:o.h};
+}
+
+function drawCoin(o){
+  ctx.fillStyle=o.kind==='gem'?'#42a5f5':'#ffd54f';
+  ctx.beginPath();ctx.arc(o.x,o.y,o.r,0,7);ctx.fill();
+  ctx.strokeStyle=o.kind==='gem'?'#1565c0':'#f57f17';
+  ctx.lineWidth=2;ctx.stroke();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0d0620');sky.addColorStop(1,'#2a1450');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  for(let i=0;i<30;i++){
+    const sx=(i*137+frame*0.3)%W;
+    const sy=(i*57)%H;
+    ctx.fillStyle='rgba(255,255,255,'+(0.1+0.3*((i*13)%5)/5)+')';
+    ctx.fillRect(sx,sy,2,2);
+  }
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Arrow Keys / Drag to start'),W/2,H/2);
+    drawDragon();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    obstacles.forEach(drawObstacle);
+    coins.forEach(drawCoin);
+    drawDragon();
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,150);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press a key to restart'),W/2,188);
+    document.getElementById('score-display').textContent=
+      I18N.t('dragon_score_label','Coins: {c} | Distance: {d}m | Hi: {h}')
+        .replace('{c}',coinCount).replace('{d}',Math.floor(distance)).replace('{h}',hi);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frame+=dt;
+  distance+=spd*dt*0.05;
+  spd=4+distance/200;
+
+  // Controls
+  const accel=0.9;
+  if(keys['ArrowUp']||keys['KeyW'])dragon.vy-=accel*dt;
+  if(keys['ArrowDown']||keys['KeyS'])dragon.vy+=accel*dt;
+  if(keys['ArrowLeft']||keys['KeyA'])dragon.vx-=accel*dt;
+  if(keys['ArrowRight']||keys['KeyD'])dragon.vx+=accel*dt;
+  if(pointerActive){
+    dragon.vx+=(pointerX-dragon.x)*0.02*dt;
+    dragon.vy+=(pointerY-dragon.y)*0.02*dt;
+  }
+  dragon.vx*=0.9;dragon.vy*=0.9;
+  dragon.x+=dragon.vx*dt;dragon.y+=dragon.vy*dt;
+  dragon.x=Math.max(30,Math.min(W-200,dragon.x));
+  dragon.y=Math.max(20,Math.min(H-20,dragon.y));
+
+  obsTimer+=dt;
+  const obsInterval=Math.max(35,70-distance/20);
+  if(obsTimer>=obsInterval){obsTimer-=obsInterval;spawnObstacle();}
+  coinTimer+=dt;
+  if(coinTimer>=45){coinTimer-=45;spawnCoin();}
+
+  const dragonHit={x:dragon.x-20,y:dragon.y-12,w:40,h:24};
+
+  obstacles=obstacles.filter(o=>o.x>-60);
+  obstacles.forEach(o=>{
+    o.x-=spd*dt;
+    drawObstacle(o);
+    if(rectsOverlap(dragonHit,obsBox(o))){gameOver=true;SFX.lose();}
+  });
+
+  coins=coins.filter(o=>o.x>-30);
+  coins.forEach(o=>{
+    o.x-=spd*dt;
+    drawCoin(o);
+    const dx=o.x-dragon.x,dy=o.y-dragon.y;
+    if(!o.taken&&Math.sqrt(dx*dx+dy*dy)<26){
+      o.taken=true;
+      coinCount+=o.kind==='gem'?5:1;
+      SFX.coin();
+    }
+  });
+  coins=coins.filter(o=>!o.taken);
+
+  drawDragon();
+
+  if(distance>hi){hi=Math.floor(distance);}
+  if(Math.floor(distance)>hi)hi=Math.floor(distance);
+
+  document.getElementById('score-display').textContent=
+    I18N.t('dragon_score_label','Coins: {c} | Distance: {d}m | Hi: {h}')
+      .replace('{c}',coinCount).replace('{d}',Math.floor(distance)).replace('{h}',hi);
+
+  requestAnimationFrame(loop);
+}
+
+function onGameOver(){
+  const hiStored=parseInt(localStorage.getItem('dragon_hi')||'0');
+  if(Math.floor(distance)>hiStored){
+    try{localStorage.setItem('dragon_hi',Math.floor(distance));}catch(e){}
+  }
+}
+const origLoop=loop;
+let wasOver=false;
+function loopWrapper(){
+  if(gameOver&&!wasOver){wasOver=true;onGameOver();}
+  if(!gameOver)wasOver=false;
+  origLoop();
+}
+requestAnimationFrame(function tick(){loopWrapper();});
+</script></body></html>

@@ -1,0 +1,235 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Windmill Farm</title><meta name="description" content="Play Windmill Farm free online — Use the +/- buttons or drag each windmill's slider to adjust its rotation speed so the combined power output matches the target demand before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/windmillfarm"><meta property="og:title" content="Windmill Farm - Multiport Games"><meta property="og:description" content="Play Windmill Farm free online — Use the +/- buttons or drag each windmill's slider to adjust its rotation speed so the combined power output matches the target demand before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/windmillfarm"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Windmill Farm","description":"Play Windmill Farm free online instantly. Use the +/- buttons or drag each windmill's slider to adjust its rotation speed so the combined power output matches the target demand before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/windmillfarm","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:linear-gradient(135deg,#00695c,#4db6ac);border-radius:14px;padding:18px;text-align:center}
+#status{color:#fff;font-size:1.1rem;font-weight:800;margin:4px 0;min-height:1.6em}
+#hud{display:flex;justify-content:center;gap:18px;color:#fff;font-weight:700;margin-bottom:8px;flex-wrap:wrap}
+#target{font-size:1.6rem;font-weight:900;color:#fff176;margin:4px 0}
+#meter{width:min(92vw,520px);height:22px;background:rgba(0,0,0,.3);border-radius:11px;margin:8px auto;overflow:hidden;position:relative}
+#meterFill{height:100%;background:#26a69a;width:0%;transition:width .1s linear}
+#meterZone{position:absolute;top:0;bottom:0;background:rgba(255,255,255,.35);border-left:2px dashed #fff;border-right:2px dashed #fff}
+#timerBar{width:min(92vw,520px);height:8px;background:rgba(0,0,0,.3);border-radius:4px;margin:6px auto 14px;overflow:hidden}
+#timerFill{height:100%;background:#ffd54f;width:100%}
+#mills{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;margin:10px 0}
+.mill{background:rgba(0,0,0,.25);border-radius:12px;padding:10px 12px;width:120px}
+.mill canvas{background:#0d3b36;border-radius:8px}
+.mill .out{color:#fff176;font-weight:800;margin:4px 0}
+.mill .ctrl{display:flex;justify-content:center;align-items:center;gap:6px}
+.mill button{width:32px;height:32px;border-radius:8px;border:none;background:#e0f2f1;color:#00695c;font-weight:900;font-size:1.1rem;cursor:pointer}
+.mill input[type=range]{width:100%;margin-top:6px}
+#controls{margin:10px 0}
+#controls button{padding:9px 22px;background:#004d40;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:0 5px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Windmill Farm</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="hud"><span id="roundLabel">Round: 1</span><span id="livesLabel">Lives: 3</span><span id="hiLabel">Best: 0</span></div>
+      <div id="status">Match the total output to the target!</div>
+      <div id="target">Target: 0 MW</div>
+      <div id="meter"><div id="meterZone"></div><div id="meterFill"></div></div>
+      <div id="timerBar"><div id="timerFill"></div></div>
+      <div id="mills"></div>
+      <div id="controls"><button id="startBtn">Start</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use the <b>+/-</b> buttons or drag each windmill's <b>slider</b> to adjust its rotation speed so the combined power output matches the flashing <b>target</b> number before the timer runs out. Missing the target costs a life — run out of lives and the farm shuts down!</div>
+</div>
+<script>
+const millsEl=document.getElementById('mills');
+const statusEl=document.getElementById('status');
+const targetEl=document.getElementById('target');
+const meterFill=document.getElementById('meterFill');
+const meterZone=document.getElementById('meterZone');
+const timerFill=document.getElementById('timerFill');
+const roundLabel=document.getElementById('roundLabel');
+const livesLabel=document.getElementById('livesLabel');
+const hiLabel=document.getElementById('hiLabel');
+const startBtn=document.getElementById('startBtn');
+
+let hi=parseInt(localStorage.getItem('windmillfarm_hi')||'0',10);
+hiLabel.textContent=I18N.t('best_label','Best: {n}').replace('{n}',hi);
+
+let round=1,lives=3,target=0,timeLeft=0,timeTotal=0,running=false,mills=[],raf=null,lastT=null,tolerance=8,gameOver=true;
+
+function millCount(){return Math.min(2+Math.floor((round-1)/2),6);}
+function maxOutputPer(){return 20;}
+
+function newRound(){
+  const n=millCount();
+  mills=[];
+  for(let i=0;i<n;i++)mills.push({speed:5+Math.random()*5,angle:Math.random()*Math.PI*2});
+  const maxTotal=n*maxOutputPer();
+  target=Math.round((maxTotal*0.3)+Math.random()*(maxTotal*0.5));
+  tolerance=Math.max(4,10-Math.floor(round/3));
+  timeTotal=Math.max(9,16-round*0.4);
+  timeLeft=timeTotal;
+  statusEl.textContent=I18N.t('match_hint','Adjust speeds to match the target!');
+  targetEl.textContent=I18N.t('target_label','Target: {n} MW').replace('{n}',target);
+  buildMillUI();
+  updateMeter();
+}
+
+function buildMillUI(){
+  millsEl.innerHTML='';
+  mills.forEach((m,i)=>{
+    const div=document.createElement('div');
+    div.className='mill';
+    div.innerHTML=`<canvas width="90" height="70" id="mc${i}"></canvas>
+      <div class="out" id="mo${i}"></div>
+      <div class="ctrl">
+        <button data-i="${i}" data-d="-1">-</button>
+        <button data-i="${i}" data-d="1">+</button>
+      </div>
+      <input type="range" min="0" max="20" step="0.5" value="${m.speed}" data-i="${i}" class="slider">`;
+    millsEl.appendChild(div);
+  });
+  millsEl.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click',()=>{
+      if(!running)return;
+      const i=+b.dataset.i,d=+b.dataset.d;
+      mills[i].speed=Math.max(0,Math.min(20,mills[i].speed+d));
+      millsEl.querySelector(`.slider[data-i="${i}"]`).value=mills[i].speed;
+      SFX.click();
+      updateMeter();
+    });
+  });
+  millsEl.querySelectorAll('.slider').forEach(s=>{
+    s.addEventListener('input',()=>{
+      if(!running)return;
+      const i=+s.dataset.i;
+      mills[i].speed=parseFloat(s.value);
+      updateMeter();
+    });
+  });
+}
+
+function totalOutput(){return mills.reduce((s,m)=>s+m.speed,0);}
+
+function updateMeter(){
+  const n=mills.length||1;
+  const maxTotal=n*maxOutputPer();
+  const cur=totalOutput();
+  mills.forEach((m,i)=>{
+    const el=document.getElementById(`mo${i}`);
+    if(el)el.textContent=Math.round(m.speed*4)+' MW';
+  });
+  const pct=Math.min(100,(cur/maxTotal)*100);
+  meterFill.style.width=pct+'%';
+  const targetPct=Math.min(100,(target/maxTotal)*100);
+  const tolPct=(tolerance/maxTotal)*100;
+  meterZone.style.left=Math.max(0,targetPct-tolPct)+'%';
+  meterZone.style.width=(tolPct*2)+'%';
+  const curTotal=Math.round(cur*4);
+  if(Math.abs(curTotal-target)<=tolerance*4){
+    meterFill.style.background='#66bb6a';
+  }else{
+    meterFill.style.background='#26a69a';
+  }
+}
+
+function drawMills(){
+  mills.forEach((m,i)=>{
+    const cv=document.getElementById(`mc${i}`);
+    if(!cv)return;
+    const ctx=cv.getContext('2d');
+    ctx.clearRect(0,0,90,70);
+    ctx.fillStyle='#d7ccc8';
+    ctx.fillRect(42,30,6,40);
+    ctx.save();
+    ctx.translate(45,30);
+    ctx.rotate(m.angle);
+    ctx.fillStyle='#fff';
+    for(let k=0;k<3;k++){
+      ctx.save();
+      ctx.rotate(k*Math.PI*2/3);
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.lineTo(4,-2);
+      ctx.lineTo(2,-22);
+      ctx.lineTo(-2,-22);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.fillStyle='#8d6e63';
+    ctx.beginPath();ctx.arc(0,0,4,0,7);ctx.fill();
+    ctx.restore();
+  });
+}
+
+function checkMatch(){
+  const curTotal=Math.round(totalOutput()*4);
+  return Math.abs(curTotal-target)<=tolerance*4;
+}
+
+function endRoundSuccess(){
+  round++;
+  SFX.success();
+  statusEl.textContent=I18N.t('matched_msg','Matched! Advancing to round {n}.').replace('{n}',round);
+  roundLabel.textContent=I18N.t('round_label','Round: {n}').replace('{n}',round);
+  if(round-1>hi){hi=round-1;localStorage.setItem('windmillfarm_hi',hi);hiLabel.textContent=I18N.t('best_label','Best: {n}').replace('{n}',hi);}
+  running=false;
+  setTimeout(()=>{ if(!gameOver){newRound();running=true;lastT=null;} },1200);
+}
+
+function loseLife(){
+  lives--;
+  livesLabel.textContent=I18N.t('lives_label','Lives: {n}').replace('{n}',lives);
+  SFX.hit();
+  if(lives<=0){
+    endGame();
+  }else{
+    statusEl.textContent=I18N.t('missed_msg','Missed the target! Lives left: {n}').replace('{n}',lives);
+    running=false;
+    setTimeout(()=>{ if(!gameOver){newRound();running=true;lastT=null;} },1200);
+  }
+}
+
+function endGame(){
+  gameOver=true;running=false;
+  SFX.lose();
+  statusEl.textContent=I18N.t('game_over_msg','GAME OVER — the farm shut down. Tap Start to try again.');
+  startBtn.textContent=I18N.t('restart_btn','Start');
+  if(round-1>hi){hi=round-1;localStorage.setItem('windmillfarm_hi',hi);}
+  hiLabel.textContent=I18N.t('best_label','Best: {n}').replace('{n}',hi);
+}
+
+function startGame(){
+  round=1;lives=3;gameOver=false;running=true;lastT=null;
+  roundLabel.textContent=I18N.t('round_label','Round: {n}').replace('{n}',round);
+  livesLabel.textContent=I18N.t('lives_label','Lives: {n}').replace('{n}',lives);
+  startBtn.textContent=I18N.t('restart_btn','Restart');
+  newRound();
+  if(!raf)raf=requestAnimationFrame(tick);
+}
+
+startBtn.addEventListener('click',startGame);
+
+function tick(ts){
+  if(lastT===null)lastT=ts;
+  const dt=Math.min((ts-lastT)/1000,0.1);
+  lastT=ts;
+  if(running&&!gameOver){
+    mills.forEach(m=>{m.angle+=m.speed*dt*0.3;});
+    timeLeft-=dt;
+    timerFill.style.width=Math.max(0,(timeLeft/timeTotal)*100)+'%';
+    if(checkMatch()){
+      endRoundSuccess();
+    }else if(timeLeft<=0){
+      loseLife();
+      timeLeft=timeTotal;
+    }
+  }
+  drawMills();
+  raf=requestAnimationFrame(tick);
+}
+raf=requestAnimationFrame(tick);
+</script></body></html>
