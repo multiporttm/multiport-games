@@ -1,0 +1,299 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Drag Racer</title><meta name="description" content="Play Drag Racer free online — React the instant the tree turns green, then shift gears at the perfect RPM to post your best quarter-mile time. Jump early and it's a false start!"><link rel="canonical" href="https://games.multiportllc.com/games/dragracer"><meta property="og:title" content="Drag Racer - Multiport Games"><meta property="og:description" content="Play Drag Racer free online — React the instant the tree turns green, then shift gears at the perfect RPM to post your best quarter-mile time. Jump early and it's a false start!"><meta property="og:url" content="https://games.multiportllc.com/games/dragracer"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Drag Racer","description":"Play Drag Racer free online instantly. React the instant the tree turns green, then shift gears at the perfect RPM to post your best quarter-mile time. Jump early and it's a false start! No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/dragracer","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#1a1a2e,#e94560);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffd54f;font-size:1.15rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Drag Racer</div>
+  <div class="game-frame">
+    <div id="score-display">Best 1/4 mile: --</div>
+    <canvas id="c" width="800" height="380"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press <b>Space</b>, <b>click</b>, or <b>tap</b> the instant the light turns <b>green</b> to launch. Jumping early is a <b>false start</b>! Then press <b>Space/Click/Tap</b> again at the right moment in the redline zone to <b>shift gears</b> down the quarter mile.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=380;
+let hi=parseFloat(localStorage.getItem('dragracer_best')||'0')||0;
+
+// state: 'tree' (countdown lights), 'go' (waiting for reaction after green), 'race' (shifting), 'result'
+let state='tree';
+let treeStep=-1; // -1 = not started, 0..3 = lights, 4 = green
+let treeTimer=0;
+let nextLightAt=0;
+let falseStart=false;
+let reactionStart=0;
+let reactionTime=0;
+
+// race/shift state
+let distance=0; // 0..1320 ft (quarter mile)
+let speed=0; // arbitrary units
+let gear=1;
+let rpm=0; // 0..100
+let rpmDir=1;
+let raceTime=0;
+let lastTime=null;
+let shiftFeedback=null; // {text,color,timer}
+let finished=false;
+let resultTime=0;
+let missedShiftPenalty=0;
+
+const GEARS=6;
+const REDLINE_LO=78,REDLINE_HI=92; // sweet zone for shifting
+
+function updateScoreDisplay(){
+  document.getElementById('score-display').textContent =
+    (hi>0? I18N.t('best_quarter_label','Best 1/4 mile: {t}s').replace('{t}',hi.toFixed(2)) : I18N.t('best_quarter_none','Best 1/4 mile: --'));
+}
+updateScoreDisplay();
+
+function resetAll(){
+  state='tree';treeStep=-1;treeTimer=0;falseStart=false;reactionTime=0;
+  distance=0;speed=0;gear=1;rpm=0;rpmDir=1;raceTime=0;lastTime=null;shiftFeedback=null;finished=false;resultTime=0;missedShiftPenalty=0;
+  startTree();
+}
+
+function startTree(){
+  state='tree';
+  treeStep=0;
+  treeTimer=0;
+  nextLightAt=0.6+Math.random()*0.9;
+}
+
+function action(){
+  if(state==='tree'){
+    if(treeStep<4){
+      // pressed before green = false start
+      falseStart=true;
+      state='result';
+      SFX.error();
+      return;
+    }
+  } else if(state==='go'){
+    reactionTime=(performance.now()-reactionStart)/1000;
+    state='race';
+    SFX.jump();
+  } else if(state==='race'){
+    tryShift();
+  } else if(state==='result'){
+    resetAll();
+  }
+}
+
+function tryShift(){
+  if(gear>=GEARS){return;}
+  if(rpm>=REDLINE_LO&&rpm<=REDLINE_HI){
+    gear++;
+    rpm=35;
+    shiftFeedback={text:I18N.t('perfect_shift','PERFECT SHIFT!'),color:'#4caf50',timer:0.6};
+    SFX.success();
+  } else if(rpm>REDLINE_HI){
+    gear++;
+    rpm=20;
+    speed*=0.85;
+    missedShiftPenalty+=0.15;
+    shiftFeedback={text:I18N.t('redlined','REDLINED!'),color:'#e94560',timer:0.6};
+    SFX.hit();
+  } else {
+    gear++;
+    rpm=25;
+    speed*=0.92;
+    missedShiftPenalty+=0.08;
+    shiftFeedback={text:I18N.t('early_shift','EARLY SHIFT'),color:'#ffd54f',timer:0.6};
+    SFX.click();
+  }
+}
+
+document.addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();action();}});
+c.addEventListener('mousedown',e=>{e.preventDefault();action();});
+c.addEventListener('touchstart',e=>{e.preventDefault();action();},{passive:false});
+
+function drawLights(){
+  const cx=W/2;
+  ctx.fillStyle='rgba(0,0,0,0.4)';
+  ctx.fillRect(cx-90,20,180,150);
+  const colors=['#ff3b30','#ff3b30','#ffcc00','#33cc33'];
+  for(let i=0;i<4;i++){
+    let lit = i<3 ? treeStep>i : treeStep>=4;
+    ctx.beginPath();
+    ctx.arc(cx,45+i*35,15,0,Math.PI*2);
+    ctx.fillStyle = lit? colors[i] : 'rgba(255,255,255,0.12)';
+    ctx.fill();
+    if(lit){
+      ctx.shadowColor=colors[i];ctx.shadowBlur=20;ctx.fill();ctx.shadowBlur=0;
+    }
+  }
+}
+
+function drawCar(x,y){
+  ctx.fillStyle='#0f0f1e';
+  ctx.fillRect(x,y,70,26);
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(x+14,y-14,32,16);
+  ctx.fillStyle='#222';
+  ctx.beginPath();ctx.arc(x+14,y+26,9,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x+56,y+26,9,0,Math.PI*2);ctx.fill();
+}
+
+function drawRpmGauge(){
+  const gx=60,gy=320,gw=W-120,gh=26;
+  ctx.fillStyle='rgba(0,0,0,0.5)';
+  ctx.fillRect(gx,gy,gw,gh);
+  // redline zone
+  const rl0=gx+gw*(REDLINE_LO/100), rl1=gx+gw*(REDLINE_HI/100);
+  ctx.fillStyle='rgba(76,175,80,0.5)';
+  ctx.fillRect(rl0,gy,rl1-rl0,gh);
+  ctx.fillStyle='rgba(233,69,96,0.5)';
+  ctx.fillRect(gx+gw*(REDLINE_HI/100),gy,gx+gw-(gx+gw*(REDLINE_HI/100)),gh);
+  // needle
+  const nx=gx+gw*(rpm/100);
+  ctx.fillStyle='#fff';
+  ctx.fillRect(nx-2,gy-6,4,gh+12);
+  ctx.strokeStyle='rgba(255,255,255,0.3)';
+  ctx.strokeRect(gx,gy,gw,gh);
+  ctx.fillStyle='#fff';ctx.font='14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('rpm_label','RPM'),gx,gy-12);
+  ctx.fillText(I18N.t('gear_label','Gear {g}/{n}').replace('{g}',gear).replace('{n}',GEARS),W-gx,gy-12);
+}
+
+function loop(ts){
+  ctx.clearRect(0,0,W,H);
+  // background gradient handled by CSS on canvas element (transparent draws show it), but need explicit fill for canvas pixels
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#1a1a2e');bg.addColorStop(1,'#e94560');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // road
+  ctx.fillStyle='#2a2a3a';
+  ctx.fillRect(0,H-70,W,70);
+  ctx.strokeStyle='#ffd54f';
+  ctx.setLineDash([20,16]);
+  ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(0,H-35);ctx.lineTo(W,H-35);ctx.stroke();
+  ctx.setLineDash([]);
+
+  if(state==='tree'){
+    treeTimer+=1/60;
+    if(treeStep<4 && treeTimer>=nextLightAt){
+      treeStep++;
+      treeTimer=0;
+      SFX.tick();
+      if(treeStep<3){nextLightAt=0.5+Math.random()*0.5;}
+      else{nextLightAt=0.4+Math.random()*0.7;}
+      if(treeStep===4){
+        state='go';
+        reactionStart=performance.now();
+      }
+    }
+    drawLights();
+    drawCar(60,H-96);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('wait_green','Wait for GREEN...'),W/2,220);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(state==='go'){
+    drawLights();
+    drawCar(60,H-96);
+    ctx.fillStyle='#33cc33';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('go_now','GO!!'),W/2,220);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(state==='result'){
+    drawCar(60,H-96);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    if(falseStart){
+      ctx.fillStyle='#e94560';
+      ctx.fillText(I18N.t('false_start','FALSE START!'),W/2,150);
+      ctx.font='18px Arial';ctx.fillStyle='#fff';
+      ctx.fillText(I18N.t('false_start_hint','You jumped the light. Race disqualified.'),W/2,185);
+    } else {
+      ctx.fillText(I18N.t('finish_title','FINISH!'),W/2,120);
+      ctx.font='22px Arial';
+      ctx.fillText(I18N.t('quarter_time_label','1/4 Mile: {t}s').replace('{t}',resultTime.toFixed(2)),W/2,160);
+      ctx.font='16px Arial';
+      ctx.fillText(I18N.t('reaction_time_label','Reaction: {t}s').replace('{t}',reactionTime.toFixed(3)),W/2,188);
+      if(resultTime===hi){
+        ctx.fillStyle='#ffd54f';
+        ctx.fillText(I18N.t('new_best','New Best Time!'),W/2,214);
+      }
+    }
+    ctx.fillStyle='#fff';ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap / Click / Space to race again'),W/2,H-90);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // state==='race'
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  raceTime+=dt/60;
+
+  // rpm rises with gear-dependent rate, resets on shift
+  const rpmRate=0.9+gear*0.15;
+  rpm+=rpmRate*dt;
+  if(rpm>100){
+    // over-revved without shifting: forced bad shift
+    if(gear<GEARS){
+      gear++;rpm=15;speed*=0.7;missedShiftPenalty+=0.25;
+      shiftFeedback={text:I18N.t('over_revved','OVER-REVVED!'),color:'#e94560',timer:0.6};
+      SFX.error();
+    } else {
+      rpm=100;
+    }
+  }
+
+  // speed increases based on gear
+  const targetSpeed=2+gear*1.8;
+  speed += (targetSpeed-speed)*0.02*dt;
+  distance += speed*dt*1.1;
+
+  const finishDist=660; // arbitrary track units representing 1320 ft
+  if(distance>=finishDist && !finished){
+    finished=true;
+    resultTime=raceTime+missedShiftPenalty+ (reactionTime>0.15? (reactionTime-0.15):0);
+    if(hi===0||resultTime<hi){hi=resultTime;localStorage.setItem('dragracer_best',hi.toFixed(3));}
+    updateScoreDisplay();
+    SFX.win();
+    state='result';
+  }
+
+  // draw car moving with a little bounce, track scroll via stripes
+  const carX=60+Math.min(distance/finishDist,1)*600;
+  drawCar(carX,H-96);
+
+  drawRpmGauge();
+
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('distance_label','{p}%').replace('{p}',Math.min(100,Math.floor(distance/finishDist*100))),20,30);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('time_label','Time: {t}s').replace('{t}',raceTime.toFixed(2)),W-20,30);
+
+  if(shiftFeedback){
+    shiftFeedback.timer-=dt/60;
+    if(shiftFeedback.timer>0){
+      ctx.fillStyle=shiftFeedback.color;ctx.font='bold 24px Arial';ctx.textAlign='center';
+      ctx.fillText(shiftFeedback.text,W/2,240);
+    } else {
+      shiftFeedback=null;
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+
+resetAll();
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,191 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Spin the Wheel</title><meta name="description" content="Play Spin the Wheel free online — Click Spin to send the prize wheel spinning fast, then click Stop at the right moment as it slows down to land on a high-value segment."><link rel="canonical" href="https://games.multiportllc.com/games/spinthewheel"><meta property="og:title" content="Spin the Wheel - Multiport Games"><meta property="og:description" content="Play Spin the Wheel free online — Click Spin to send the prize wheel spinning fast, then click Stop at the right moment as it slows down to land on a high-value segment."><meta property="og:url" content="https://games.multiportllc.com/games/spinthewheel"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Spin the Wheel","description":"Play Spin the Wheel free online instantly. Click Spin to send the prize wheel spinning fast, then click Stop at the right moment as it slows down to land the pointer on a high-value segment. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/spinthewheel","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#16213e;display:block;border-radius:8px;margin:0 auto}
+#score-display{color:#ffd54f;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#btnRow{text-align:center;margin:10px 0}
+#btnRow button{padding:11px 30px;background:#e94560;border:none;border-radius:22px;color:#fff;cursor:pointer;font-size:1.05rem;margin:0 6px;font-weight:700}
+#btnRow button:disabled{opacity:.35;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Spin the Wheel</div>
+  <div class="game-frame">
+    <div id="score-display">Total: 0 | Best Spin: 0</div>
+    <canvas id="c" width="420" height="420"></canvas>
+    <div id="btnRow">
+      <button id="spinBtn">Spin</button>
+      <button id="stopBtn" disabled>Stop</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click <b>Spin</b> to send the prize wheel spinning fast, then click <b>Stop</b> at the right moment as it slows down to land the pointer on a high-value segment. Small slices are worth the most!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const cx=210,cy=210,R=190;
+
+// Uneven segments: small slices = big prizes, big slices = small prizes
+const segments=[
+  {label:'500',value:500,angle:18,color:'#ffd54f'},
+  {label:'50',value:50,angle:70,color:'#3d5a80'},
+  {label:'1000',value:1000,angle:10,color:'#e94560'},
+  {label:'20',value:20,angle:80,color:'#2d5a27'},
+  {label:'200',value:200,angle:30,color:'#f77f00'},
+  {label:'10',value:10,angle:90,color:'#4a4a6a'},
+  {label:'100',value:100,angle:40,color:'#7ec850'},
+  {label:'0',value:0,angle:22,color:'#333'},
+];
+// normalize angles to sum 360
+(function normalize(){
+  const total=segments.reduce((s,seg)=>s+seg.angle,0);
+  segments.forEach(seg=>seg.angle=seg.angle/total*360);
+})();
+
+let total=parseInt(localStorage.getItem('spinwheel_total')||'0',10);
+let best=parseInt(localStorage.getItem('spinwheel_best')||'0',10);
+
+let angle=0;         // current wheel rotation (radians)
+let velocity=0;       // rad/frame
+let spinning=false;   // true from Spin click until fully stopped
+let stopping=false;   // Stop clicked, decelerating harder
+let lastResult=null;
+
+function drawWheel(){
+  ctx.clearRect(0,0,420,420);
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.rotate(angle);
+  let a=-Math.PI/2;
+  segments.forEach(seg=>{
+    const rad=seg.angle*Math.PI/180;
+    ctx.beginPath();
+    ctx.moveTo(0,0);
+    ctx.arc(0,0,R,a,a+rad);
+    ctx.closePath();
+    ctx.fillStyle=seg.color;
+    ctx.fill();
+    ctx.strokeStyle='#08080f';ctx.lineWidth=2;ctx.stroke();
+    // label
+    ctx.save();
+    ctx.rotate(a+rad/2);
+    ctx.textAlign='right';
+    ctx.fillStyle='#fff';
+    ctx.font='bold 15px Arial';
+    ctx.fillText(seg.label,R-14,5);
+    ctx.restore();
+    a+=rad;
+  });
+  ctx.restore();
+  // hub
+  ctx.beginPath();ctx.arc(cx,cy,22,0,Math.PI*2);ctx.fillStyle='#16213e';ctx.fill();
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;ctx.stroke();
+  // pointer (fixed, top, pointing down into wheel)
+  ctx.beginPath();
+  ctx.moveTo(cx-14,8);
+  ctx.lineTo(cx+14,8);
+  ctx.lineTo(cx,34);
+  ctx.closePath();
+  ctx.fillStyle='#ffd54f';
+  ctx.fill();
+  ctx.strokeStyle='#08080f';ctx.lineWidth=2;ctx.stroke();
+}
+
+function segmentAtPointer(){
+  // pointer points straight down (angle = PI/2 in screen terms) into the wheel at top,
+  // wheel segments start at -PI/2 (top) before rotation. Find which segment sits at
+  // the top (-PI/2) after subtracting current rotation.
+  let target=(-Math.PI/2 - angle) % (Math.PI*2);
+  target=((target%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+  let a=0;
+  for(const seg of segments){
+    const rad=seg.angle*Math.PI/180;
+    if(target>=a&&target<a+rad)return seg;
+    a+=rad;
+  }
+  return segments[0];
+}
+
+function setDisplay(msg){
+  document.getElementById('score-display').textContent=msg;
+}
+
+function updateScoreDisplay(){
+  setDisplay(I18N.t('sw_total_best','Total: {t} | Best Spin: {b}').replace('{t}',total).replace('{b}',best));
+}
+
+function frame(){
+  if(spinning){
+    angle+=velocity;
+    const decel=stopping?0.0022:0.00035;
+    velocity=Math.max(0,velocity-decel);
+    if(velocity<=0.0005){
+      velocity=0;
+      spinning=false;
+      finishSpin();
+    }
+    drawWheel();
+    requestAnimationFrame(frame);
+  }
+}
+
+function finishSpin(){
+  const seg=segmentAtPointer();
+  lastResult=seg;
+  total+=seg.value;
+  if(seg.value>best)best=seg.value;
+  localStorage.setItem('spinwheel_total',total);
+  localStorage.setItem('spinwheel_best',best);
+  updateScoreDisplay();
+  if(seg.value>=200){SFX.win();}
+  else if(seg.value>0){SFX.coin();}
+  else {SFX.fail();}
+  document.getElementById('spinBtn').disabled=false;
+  document.getElementById('stopBtn').disabled=true;
+  document.getElementById('spinBtn').textContent=I18N.t('sw_spin_again','Spin Again');
+  drawResult(seg);
+}
+
+function drawResult(seg){
+  drawWheel();
+  ctx.fillStyle='rgba(0,0,0,.55)';
+  ctx.fillRect(0,170,420,80);
+  ctx.fillStyle='#fff';
+  ctx.textAlign='center';
+  ctx.font='bold 26px Arial';
+  const wonText=seg.value>0
+    ? I18N.t('sw_won','You won {v}!').replace('{v}',seg.value)
+    : I18N.t('sw_bust','Better luck next spin!');
+  ctx.fillText(wonText,210,210);
+  ctx.textAlign='left';
+}
+
+function startSpin(){
+  if(spinning)return;
+  angle=angle%(Math.PI*2);
+  velocity=0.35+Math.random()*0.1;
+  spinning=true;
+  stopping=false;
+  document.getElementById('spinBtn').disabled=true;
+  document.getElementById('stopBtn').disabled=false;
+  SFX.swoosh();
+  requestAnimationFrame(frame);
+}
+
+function stopSpin(){
+  if(!spinning||stopping)return;
+  stopping=true;
+  document.getElementById('stopBtn').disabled=true;
+}
+
+document.getElementById('spinBtn').addEventListener('click',startSpin);
+document.getElementById('stopBtn').addEventListener('click',stopSpin);
+
+updateScoreDisplay();
+drawWheel();
+</script></body></html>
