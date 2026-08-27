@@ -1,0 +1,272 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Garden Maze</title><meta name="description" content="Play Garden Maze free online — Use Arrow Keys or WASD (or the on-screen D-pad / swipe) to navigate a randomly-generated hedge maze from entrance to glowing exit. Collect flowers along the way for bonus points."><link rel="canonical" href="https://games.multiportllc.com/games/gardenmaze"><meta property="og:title" content="Garden Maze - Multiport Games"><meta property="og:description" content="Play Garden Maze free online — Use Arrow Keys or WASD (or the on-screen D-pad / swipe) to navigate a randomly-generated hedge maze from entrance to glowing exit. Collect flowers along the way for bonus points."><meta property="og:url" content="https://games.multiportllc.com/games/gardenmaze"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Garden Maze","description":"Play Garden Maze free online instantly. Use Arrow Keys or WASD (or the on-screen D-pad / swipe) to navigate a randomly-generated hedge maze from entrance to glowing exit. Collect flowers along the way for bonus points. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/gardenmaze","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#1b4332,#95d5b2);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#95d5b2;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#dpad{display:grid;grid-template-columns:repeat(3,44px);grid-template-rows:repeat(3,44px);gap:4px;justify-content:center;margin:10px auto 0}
+#dpad button{background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);border-radius:8px;color:#fff;font-size:1.1rem;cursor:pointer}
+#dpad button:active{background:rgba(255,255,255,0.3)}
+.dpad-empty{visibility:hidden}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Garden Maze</div>
+  <div class="game-frame">
+    <div id="score-display">Mazes Solved: 0 | Flowers: 0 | Time: 0.0s</div>
+    <canvas id="c" width="640" height="640"></canvas>
+    <div id="dpad">
+      <div class="dpad-empty"></div><button id="up">▲</button><div class="dpad-empty"></div>
+      <button id="left">◀</button><div class="dpad-empty"></div><button id="right">▶</button>
+      <div class="dpad-empty"></div><button id="down">▼</button><div class="dpad-empty"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> or <b>WASD</b> (or the on-screen <b>D-pad</b> / swipe on the maze) to navigate from the entrance to the glowing exit. Collect <b>flowers 🌸</b> along the way for bonus points. A fresh random maze awaits each time you finish!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=640,H=640;
+let hiSolved=parseInt(localStorage.getItem('gardenmaze_solved')||'0',10);
+let mazesSolved=hiSolved;
+let flowersTotal=parseInt(localStorage.getItem('gardenmaze_flowers')||'0',10);
+
+let COLS=11,ROWS=11;
+let cellSize;
+let grid; // grid[r][c] = {n,s,e,w visited walls}
+let player,exitCell,flowers;
+let flowersCaught=0;
+let elapsed=0,lastTime=null,solvedThisRound=false;
+let moveCooldown=0;
+
+function makeMaze(cols,rows){
+  const g=[];
+  for(let r=0;r<rows;r++){
+    const row=[];
+    for(let cIdx=0;cIdx<cols;cIdx++)row.push({n:true,s:true,e:true,w:true,visited:false});
+    g.push(row);
+  }
+  const stack=[[0,0]];
+  g[0][0].visited=true;
+  while(stack.length){
+    const [r,cIdx]=stack[stack.length-1];
+    const neighbors=[];
+    if(r>0 && !g[r-1][cIdx].visited)neighbors.push(['n',r-1,cIdx]);
+    if(r<rows-1 && !g[r+1][cIdx].visited)neighbors.push(['s',r+1,cIdx]);
+    if(cIdx>0 && !g[r][cIdx-1].visited)neighbors.push(['w',r,cIdx-1]);
+    if(cIdx<cols-1 && !g[r][cIdx+1].visited)neighbors.push(['e',r,cIdx+1]);
+    if(neighbors.length===0){stack.pop();continue;}
+    const [dir,nr,nc]=neighbors[Math.floor(Math.random()*neighbors.length)];
+    const opp={n:'s',s:'n',e:'w',w:'e'};
+    g[r][cIdx][dir]=false;
+    g[nr][nc][opp[dir]]=false;
+    g[nr][nc].visited=true;
+    stack.push([nr,nc]);
+  }
+  return g;
+}
+
+function bfsPath(g,cols,rows,start,end){
+  const q=[start];
+  const prev={};
+  const key=(r,c)=>r+','+c;
+  const seen=new Set([key(start[0],start[1])]);
+  while(q.length){
+    const [r,cIdx]=q.shift();
+    if(r===end[0]&&cIdx===end[1])break;
+    const cell=g[r][cIdx];
+    const dirs=[];
+    if(!cell.n)dirs.push([r-1,cIdx]);
+    if(!cell.s)dirs.push([r+1,cIdx]);
+    if(!cell.e)dirs.push([r,cIdx+1]);
+    if(!cell.w)dirs.push([r,cIdx-1]);
+    for(const [nr,nc] of dirs){
+      const k=key(nr,nc);
+      if(!seen.has(k)){seen.add(k);prev[k]=[r,cIdx];q.push([nr,nc]);}
+    }
+  }
+  const path=[];
+  let cur=end;
+  while(cur[0]!==start[0]||cur[1]!==start[1]){
+    path.push(cur);
+    const k=key(cur[0],cur[1]);
+    if(!prev[k])break;
+    cur=prev[k];
+  }
+  path.push(start);
+  path.reverse();
+  return path;
+}
+
+function newMaze(){
+  COLS=9+Math.min(6,Math.floor(mazesSolved/2));
+  ROWS=COLS;
+  cellSize=Math.floor(W/COLS);
+  grid=makeMaze(COLS,ROWS);
+  player={r:0,c:0,x:0,y:0};
+  exitCell={r:ROWS-1,c:COLS-1};
+  const path=bfsPath(grid,COLS,ROWS,[0,0],[ROWS-1,COLS-1]);
+  flowers=[];
+  const flowerCount=Math.min(5,Math.max(2,Math.floor(path.length/6)));
+  const usedIdx=new Set();
+  let tries=0;
+  while(flowers.length<flowerCount && tries<50){
+    tries++;
+    const idx=1+Math.floor(Math.random()*(path.length-2));
+    if(usedIdx.has(idx))continue;
+    usedIdx.add(idx);
+    const [r,cIdx]=path[idx];
+    flowers.push({r,c:cIdx,taken:false});
+  }
+  flowersCaught=0;
+  elapsed=0;lastTime=null;solvedThisRound=false;
+}
+
+function tryMove(dr,dc){
+  if(solvedThisRound)return;
+  const cell=grid[player.r][player.c];
+  if(dr===-1 && cell.n)return;
+  if(dr===1 && cell.s)return;
+  if(dc===-1 && cell.w)return;
+  if(dc===1 && cell.e)return;
+  const nr=player.r+dr, nc=player.c+dc;
+  if(nr<0||nr>=ROWS||nc<0||nc>=COLS)return;
+  player.r=nr;player.c=nc;
+  SFX.click();
+  flowers.forEach(f=>{
+    if(!f.taken && f.r===nr && f.c===nc){
+      f.taken=true;flowersCaught++;flowersTotal++;
+      localStorage.setItem('gardenmaze_flowers',flowersTotal);
+      SFX.coin();
+    }
+  });
+  if(nr===exitCell.r && nc===exitCell.c){
+    solvedThisRound=true;
+    mazesSolved++;
+    if(mazesSolved>hiSolved){hiSolved=mazesSolved;localStorage.setItem('gardenmaze_solved',hiSolved);}
+    SFX.win();
+  }
+}
+
+const keyMap={ArrowUp:[-1,0],ArrowDown:[1,0],ArrowLeft:[0,-1],ArrowRight:[0,1],
+  KeyW:[-1,0],KeyS:[1,0],KeyA:[0,-1],KeyD:[0,1]};
+document.addEventListener('keydown',e=>{
+  if(keyMap[e.code]){
+    e.preventDefault();
+    if(solvedThisRound){newMaze();return;}
+    const [dr,dc]=keyMap[e.code];
+    tryMove(dr,dc);
+  }
+  if(e.code==='Space' && solvedThisRound){newMaze();}
+});
+
+document.getElementById('up').addEventListener('click',()=>{if(solvedThisRound)newMaze();else tryMove(-1,0);});
+document.getElementById('down').addEventListener('click',()=>{if(solvedThisRound)newMaze();else tryMove(1,0);});
+document.getElementById('left').addEventListener('click',()=>{if(solvedThisRound)newMaze();else tryMove(0,-1);});
+document.getElementById('right').addEventListener('click',()=>{if(solvedThisRound)newMaze();else tryMove(0,1);});
+
+// swipe support on canvas
+let touchStart=null;
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.touches[0];
+  touchStart={x:t.clientX,y:t.clientY};
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  e.preventDefault();
+  if(!touchStart)return;
+  const t=e.changedTouches[0];
+  const dx=t.clientX-touchStart.x, dy=t.clientY-touchStart.y;
+  touchStart=null;
+  if(solvedThisRound){newMaze();return;}
+  if(Math.abs(dx)<20 && Math.abs(dy)<20)return;
+  if(Math.abs(dx)>Math.abs(dy)){
+    tryMove(0,dx>0?1:-1);
+  } else {
+    tryMove(dy>0?1:-1,0);
+  }
+},{passive:false});
+c.addEventListener('click',()=>{ if(solvedThisRound)newMaze(); });
+
+function drawMaze(){
+  ctx.fillStyle='#1b4332';
+  ctx.fillRect(0,0,W,H);
+  const wallColor='#0b2818';
+  ctx.strokeStyle=wallColor;
+  ctx.lineWidth=Math.max(3,cellSize*0.12);
+  ctx.lineCap='round';
+  for(let r=0;r<ROWS;r++){
+    for(let cIdx=0;cIdx<COLS;cIdx++){
+      const cell=grid[r][cIdx];
+      const x=cIdx*cellSize, y=r*cellSize;
+      ctx.beginPath();
+      if(cell.n){ctx.moveTo(x,y);ctx.lineTo(x+cellSize,y);}
+      if(cell.w){ctx.moveTo(x,y);ctx.lineTo(x,y+cellSize);}
+      if(r===ROWS-1 && cell.s){ctx.moveTo(x,y+cellSize);ctx.lineTo(x+cellSize,y+cellSize);}
+      if(cIdx===COLS-1 && cell.e){ctx.moveTo(x+cellSize,y);ctx.lineTo(x+cellSize,y+cellSize);}
+      ctx.stroke();
+    }
+  }
+  // exit glow
+  const ex=exitCell.c*cellSize+cellSize/2, ey=exitCell.r*cellSize+cellSize/2;
+  const glow=ctx.createRadialGradient(ex,ey,2,ex,ey,cellSize*0.9);
+  glow.addColorStop(0,'rgba(255,214,10,0.9)');
+  glow.addColorStop(1,'rgba(255,214,10,0)');
+  ctx.fillStyle=glow;
+  ctx.fillRect(ex-cellSize,ey-cellSize,cellSize*2,cellSize*2);
+
+  // flowers
+  flowers.forEach(f=>{
+    if(f.taken)return;
+    const fx=f.c*cellSize+cellSize/2, fy=f.r*cellSize+cellSize/2;
+    ctx.font=(cellSize*0.6)+'px Arial';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText('🌸',fx,fy);
+  });
+
+  // player
+  const px=player.c*cellSize+cellSize/2, py=player.r*cellSize+cellSize/2;
+  ctx.beginPath();
+  ctx.arc(px,py,cellSize*0.32,0,Math.PI*2);
+  ctx.fillStyle='#e94560';
+  ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+}
+
+function updateScore(){
+  document.getElementById('score-display').textContent =
+    I18N.t('maze_score_label','Mazes Solved: {m} | Flowers: {f} | Time: {t}s')
+      .replace('{m}',mazesSolved).replace('{f}',flowersCaught).replace('{t}',elapsed.toFixed(1));
+}
+
+function loop(ts){
+  ctx.clearRect(0,0,W,H);
+  drawMaze();
+
+  if(!solvedThisRound){
+    const now=performance.now();
+    const dt=lastTime===null?0:(now-lastTime)/1000;
+    lastTime=now;
+    elapsed+=dt;
+  } else {
+    ctx.fillStyle='rgba(0,0,0,0.55)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('maze_solved_title','MAZE SOLVED!'),W/2,H/2-40);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('maze_time_label','Time: {t}s | Flowers: {f}').replace('{t}',elapsed.toFixed(1)).replace('{f}',flowersCaught),W/2,H/2);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('maze_next_hint','Tap / Click / Space for a new maze'),W/2,H/2+38);
+  }
+
+  updateScore();
+  requestAnimationFrame(loop);
+}
+
+newMaze();
+loop();
+</script></body></html>

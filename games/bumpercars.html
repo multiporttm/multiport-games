@@ -1,0 +1,241 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bumper Cars</title><meta name="description" content="Play Bumper Cars free online — Use Arrow Keys or WASD (or the on-screen D-pad) to drive your bumper car around the rink. Smash into rival cars for points — harder hits score more! Rack up the highest score before the 60-second timer runs out."><link rel="canonical" href="https://games.multiportllc.com/games/bumpercars"><meta property="og:title" content="Bumper Cars - Multiport Games"><meta property="og:description" content="Play Bumper Cars free online — Use Arrow Keys or WASD (or the on-screen D-pad) to drive your bumper car around the rink. Smash into rival cars for points — harder hits score more! Rack up the highest score before the 60-second timer runs out."><meta property="og:url" content="https://games.multiportllc.com/games/bumpercars"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bumper Cars","description":"Play Bumper Cars free online instantly. Use Arrow Keys or WASD (or the on-screen D-pad) to drive your bumper car around the rink. Smash into rival cars for points — harder hits score more! Rack up the highest score before the 60-second timer runs out. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/bumpercars","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b2140;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffd54f;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#dpadWrap{display:flex;flex-direction:column;align-items:center;gap:8px;margin:10px 0}
+#dpad .row{display:flex;gap:10px;justify-content:center}
+.dbtn{width:56px;height:56px;border-radius:12px;background:#3d2c63;color:#fff;font-size:1.4rem;display:flex;align-items:center;justify-content:center;border:2px solid #ffd54f;touch-action:none;user-select:none}
+.dbtn:active{background:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bumper Cars</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Time: 60 | Best: 0</div>
+    <canvas id="c" width="800" height="500"></canvas>
+    <div id="dpadWrap">
+      <div class="row"><div class="dbtn" id="btnUp">▲</div></div>
+      <div class="row">
+        <div class="dbtn" id="btnLeft">◀</div>
+        <div class="dbtn" id="btnDown">▼</div>
+        <div class="dbtn" id="btnRight">▶</div>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> or <b>WASD</b> (or the on-screen D-pad) to drive your bumper car around the rink. Smash into rival cars — the harder the collision, the more points you score! Bounce off the walls and other cars, and rack up the highest score you can before the 60-second timer runs out.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+const cx=W/2,cy=H/2,rinkRx=380,rinkRy=230;
+let hi=parseInt(localStorage.getItem('bumpercars_hi')||'0',10);
+const keys={};
+let score=0,timeLeft=60,gameOver=false,started=false,lastTime=null,particles=[];
+
+function makeCar(x,y,angle,color,isPlayer){
+  return {x,y,vx:0,vy:0,angle,color,isPlayer,speed:0};
+}
+let player,ais;
+
+function reset(){
+  player=makeCar(cx,cy+120,-Math.PI/2,'#ff477e',true);
+  ais=[
+    makeCar(cx-180,cy-60,0,'#42a5f5',false),
+    makeCar(cx+180,cy-60,Math.PI,'#66bb6a',false),
+    makeCar(cx,cy-160,Math.PI/2,'#ab47bc',false),
+    makeCar(cx-120,cy+80,Math.PI/4,'#ffca28',false)
+  ];
+  score=0;timeLeft=60;gameOver=false;started=false;lastTime=null;particles=[];
+}
+reset();
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  if(!started)started=true;
+  if(gameOver&&(e.key===' '||e.key==='Enter'))reset();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+c.addEventListener('click',()=>{if(!started)started=true;if(gameOver)reset();});
+
+function bindBtn(id,key){
+  const el=document.getElementById(id);
+  const on=e=>{e.preventDefault();keys[key]=true;if(!started)started=true;if(gameOver)reset();};
+  const off=e=>{e.preventDefault();keys[key]=false;};
+  el.addEventListener('touchstart',on,{passive:false});
+  el.addEventListener('touchend',off,{passive:false});
+  el.addEventListener('mousedown',on);
+  el.addEventListener('mouseup',off);
+  el.addEventListener('mouseleave',off);
+}
+bindBtn('btnUp','arrowup');
+bindBtn('btnDown','arrowdown');
+bindBtn('btnLeft','arrowleft');
+bindBtn('btnRight','arrowright');
+
+function up(k1,k2){return keys[k1]||keys[k2];}
+
+function insideRink(x,y){
+  const dx=(x-cx)/rinkRx,dy=(y-cy)/rinkRy;
+  return dx*dx+dy*dy<=1;
+}
+
+function wallBounce(car,r){
+  const dx=(car.x-cx)/rinkRx,dy=(car.y-cy)/rinkRy;
+  const d2=dx*dx+dy*dy;
+  if(d2>1){
+    const ang=Math.atan2(dy/rinkRy,dx/rinkRx);
+    car.x=cx+Math.cos(ang)*(rinkRx-r)*0.998;
+    car.y=cy+Math.sin(ang)*(rinkRy-r)*0.998;
+    const nx=Math.cos(Math.atan2(car.y-cy,car.x-cx)),ny=Math.sin(Math.atan2(car.y-cy,car.x-cx));
+    const dot=car.vx*nx+car.vy*ny;
+    car.vx=(car.vx-2*dot*nx)*0.6;
+    car.vy=(car.vy-2*dot*ny)*0.6;
+    return true;
+  }
+  return false;
+}
+
+function updateCarPhysics(car,accel,turn,dt){
+  if(turn!==0)car.angle+=turn*0.06*dt;
+  if(accel>0)car.speed+=0.2*dt;
+  else if(accel<0)car.speed-=0.16*dt;
+  else car.speed*=Math.pow(0.97,dt);
+  car.speed=Math.max(-3,Math.min(5.5,car.speed));
+  car.vx=car.vx*0.9+Math.cos(car.angle)*car.speed*0.1;
+  car.vy=car.vy*0.9+Math.sin(car.angle)*car.speed*0.1;
+  car.x+=car.vx*dt;
+  car.y+=car.vy*dt;
+  if(wallBounce(car,18))SFX.land();
+}
+
+function aiThink(car,dt){
+  const dx=cx-car.x,dy=cy-car.y;
+  let targetAngle;
+  if(Math.random()<0.02)car._wander=(Math.random()-0.5)*Math.PI;
+  targetAngle=Math.atan2(dy,dx)+(car._wander||0);
+  let diff=targetAngle-car.angle;
+  while(diff>Math.PI)diff-=Math.PI*2;
+  while(diff<-Math.PI)diff+=Math.PI*2;
+  const turn=diff>0.1?1:diff<-0.1?-1:0;
+  updateCarPhysics(car,1,turn,dt);
+}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function handleCollisions(dt){
+  const all=[player,...ais];
+  for(let i=0;i<all.length;i++){
+    for(let j=i+1;j<all.length;j++){
+      const a=all[i],b=all[j];
+      const d=dist(a,b);
+      if(d<34){
+        const relSpeed=Math.hypot(a.vx-b.vx,a.vy-b.vy);
+        if(a.isPlayer||b.isPlayer){
+          const pts=Math.round(relSpeed*40);
+          if(pts>2){
+            score+=pts;
+            SFX.hit();
+            for(let k=0;k<8;k++)particles.push({x:(a.x+b.x)/2,y:(a.y+b.y)/2,vx:(Math.random()-0.5)*4,vy:(Math.random()-0.5)*4,life:20});
+          }
+        }
+        const angle=Math.atan2(b.y-a.y,b.x-a.x)||0.001;
+        const push=(34-d)/2+0.5;
+        a.x-=Math.cos(angle)*push;a.y-=Math.sin(angle)*push;
+        b.x+=Math.cos(angle)*push;b.y+=Math.sin(angle)*push;
+        const tvx=a.vx,tvy=a.vy;
+        a.vx=b.vx*0.85;a.vy=b.vy*0.85;
+        b.vx=tvx*0.85;b.vy=tvy*0.85;
+      }
+    }
+  }
+}
+
+function drawCar(car){
+  ctx.save();
+  ctx.translate(car.x,car.y);
+  ctx.rotate(car.angle);
+  ctx.fillStyle=car.color;
+  ctx.beginPath();ctx.ellipse(0,0,18,13,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#222';
+  ctx.beginPath();ctx.ellipse(2,0,9,7,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffe082';
+  ctx.fillRect(13,-5,4,4);
+  ctx.fillRect(13,1,4,4);
+  ctx.restore();
+}
+
+function drawRink(){
+  ctx.fillStyle='#2b2140';ctx.fillRect(0,0,W,H);
+  ctx.save();
+  ctx.beginPath();ctx.ellipse(cx,cy,rinkRx,rinkRy,0,0,Math.PI*2);
+  ctx.fillStyle='#3d2c63';ctx.fill();
+  ctx.lineWidth=8;ctx.strokeStyle='#ffd54f';ctx.stroke();
+  ctx.clip();
+  ctx.strokeStyle='#4d3a78';ctx.lineWidth=2;
+  for(let i=-3;i<=3;i++){
+    ctx.beginPath();ctx.ellipse(cx,cy,rinkRx*Math.abs(i)/4+40,rinkRy*Math.abs(i)/4+24,0,0,Math.PI*2);ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  drawRink();
+
+  if(!started){
+    ais.forEach(drawCar);drawCar(player);
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press an Arrow Key or D-pad to start'),W/2,H/2);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(!gameOver){
+    timeLeft-=dt/60;
+    if(timeLeft<=0){timeLeft=0;gameOver=true;
+      if(score>hi){hi=score;localStorage.setItem('bumpercars_hi',hi);}
+      SFX.win();
+    }
+    const turn=(up('arrowright','d')?1:0)-(up('arrowleft','a')?1:0);
+    const accel=up('arrowup','w')?1:(up('arrowdown','s')?-1:0);
+    updateCarPhysics(player,accel,turn,dt);
+    ais.forEach(a=>aiThink(a,dt));
+    handleCollisions(dt);
+  }
+
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.life--;
+    ctx.fillStyle='#ffd54f';ctx.fillRect(p.x,p.y,3,3);
+  });
+
+  ais.forEach(drawCar);
+  drawCar(player);
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('times_up_title','TIME\'S UP!'),W/2,H/2-10);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press Space to restart'),W/2,H/2+28);
+  }
+
+  document.getElementById('score-display').textContent=
+    I18N.t('score_time_label','Score: {s} | Time: {t} | Best: {b}')
+      .replace('{s}',score).replace('{t}',Math.ceil(timeLeft)).replace('{b}',hi);
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

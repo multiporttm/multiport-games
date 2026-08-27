@@ -1,0 +1,284 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bike Courier</title><meta name="description" content="Play Bike Courier free online — Steer your bike with Arrow Keys, WASD, or drag to dodge traffic and potholes while racing to the delivery marker before the timer runs out."><link rel="canonical" href="https://games.multiportllc.com/games/bikecourier"><meta property="og:title" content="Bike Courier - Multiport Games"><meta property="og:description" content="Play Bike Courier free online — Steer your bike with Arrow Keys, WASD, or drag to dodge traffic and potholes while racing to the delivery marker before the timer runs out."><meta property="og:url" content="https://games.multiportllc.com/games/bikecourier"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bike Courier","description":"Play Bike Courier free online instantly. Steer your bike with Arrow Keys, WASD, or drag to dodge traffic and potholes while racing to the delivery marker before the timer runs out. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/bikecourier","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a3a44;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffb347;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bike Courier</div>
+  <div class="game-frame">
+    <div id="score-display">Deliveries: 0 | Lives: 3 | Best: 0</div>
+    <canvas id="c" width="420" height="560"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> / <b>WASD</b> or <b>drag</b> to steer your bike up the street, dodging traffic, pedestrians and potholes to reach the glowing dropoff marker before the delivery timer expires.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=420,H=560;
+const LANES=4;
+const roadX=30,roadW=W-60;
+const laneW=roadW/LANES;
+
+let bike={x:W/2,y:H-90,w:28,h:44,vx:0};
+let obstacles=[];
+let dropoff=null;
+let scrollY=0;
+let speed=3.2;
+let deliveries=0,lives=3,best=0,gameOver=false,started=false;
+let timeLeft=0,timeMax=0;
+let elapsed=0;
+let lastTime=null;
+let flashMsg='',flashUntil=0,flashColor='#fff';
+let dragging=false,dragX=0;
+let keys={};
+
+best=parseInt(localStorage.getItem('bikecourier_best')||'0',10);
+
+function reset(){
+  deliveries=0;lives=3;gameOver=false;started=false;elapsed=0;
+  bike.x=W/2;bike.vx=0;
+  obstacles=[];
+  speed=3.2;
+  lastTime=null;
+  startDelivery();
+}
+
+function startDelivery(){
+  timeMax=Math.max(6,11-deliveries*0.4);
+  timeLeft=timeMax;
+  dropoff={y:-400-Math.random()*200,x:roadX+laneW*(0.5+Math.floor(Math.random()*LANES)),reached:false};
+  scrollY=0;
+}
+reset();
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS','Space'].includes(e.code))e.preventDefault();
+  if(!started){started=true;}
+  if(gameOver){reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function pointerX(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  return cx*(W/r.width);
+}
+c.addEventListener('mousedown',e=>{
+  if(gameOver){reset();return;}
+  started=true;dragging=true;dragX=pointerX(e);
+});
+window.addEventListener('mousemove',e=>{
+  if(!dragging)return;
+  const nx=pointerX(e);
+  bike.vx=(nx-dragX)*0.3;
+  dragX=nx;
+});
+window.addEventListener('mouseup',()=>{dragging=false;bike.vx=0;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){reset();return;}
+  started=true;dragging=true;dragX=pointerX(e);
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(!dragging)return;
+  const nx=pointerX(e);
+  bike.vx=(nx-dragX)*0.3;
+  dragX=nx;
+},{passive:false});
+c.addEventListener('touchend',e=>{dragging=false;bike.vx=0;});
+
+function spawnObstacle(){
+  const types=['car','pothole','cone','ped'];
+  const type=types[Math.floor(Math.random()*types.length)];
+  const lane=Math.floor(Math.random()*LANES);
+  const x=roadX+laneW*(lane+0.5);
+  obstacles.push({x,y:-40-Math.random()*60,type,w:type==='car'?30:20,h:type==='car'?46:20,scored:false});
+}
+
+function rectHit(ax,ay,aw,ah,bx,by,bw,bh){
+  return Math.abs(ax-bx)<(aw+bw)/2 && Math.abs(ay-by)<(ah+bh)/2;
+}
+
+function drawRoad(){
+  ctx.fillStyle='#3a3a44';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#2c2c34';ctx.fillRect(roadX,0,roadW,H);
+  ctx.strokeStyle='rgba(255,255,255,0.35)';
+  ctx.setLineDash([18,16]);
+  ctx.lineWidth=3;
+  for(let l=1;l<LANES;l++){
+    const x=roadX+laneW*l;
+    ctx.beginPath();
+    ctx.moveTo(x,(scrollY%34));
+    ctx.lineTo(x,H);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.fillStyle='#f4d35e';
+  ctx.fillRect(roadX-8,0,6,H);
+  ctx.fillRect(roadX+roadW+2,0,6,H);
+}
+
+function drawBike(){
+  ctx.save();
+  ctx.translate(bike.x,bike.y);
+  ctx.fillStyle='#ffb347';
+  ctx.fillRect(-bike.w/2,-bike.h/2,bike.w,bike.h);
+  ctx.fillStyle='#222';
+  ctx.beginPath();ctx.arc(-bike.w/2+4,bike.h/2-4,6,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(bike.w/2-4,-bike.h/2+4,6,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.fillRect(-6,-bike.h/2-2,12,8);
+  ctx.restore();
+}
+
+function drawObstacle(o){
+  if(o.type==='car'){
+    ctx.fillStyle='#e94560';
+    ctx.fillRect(o.x-o.w/2,o.y-o.h/2,o.w,o.h);
+    ctx.fillStyle='#a3d9ff';
+    ctx.fillRect(o.x-o.w/2+4,o.y-o.h/2+6,o.w-8,10);
+  }else if(o.type==='pothole'){
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath();ctx.ellipse(o.x,o.y,o.w/2,o.h/2.6,0,0,Math.PI*2);ctx.fill();
+  }else if(o.type==='cone'){
+    ctx.fillStyle='#ff7b00';
+    ctx.beginPath();
+    ctx.moveTo(o.x,o.y-o.h/2);
+    ctx.lineTo(o.x+o.w/2,o.y+o.h/2);
+    ctx.lineTo(o.x-o.w/2,o.y+o.h/2);
+    ctx.closePath();ctx.fill();
+    ctx.fillStyle='#fff';ctx.fillRect(o.x-o.w/2,o.y+o.h/2-6,o.w,3);
+  }else{
+    ctx.fillStyle='#ffd54f';
+    ctx.beginPath();ctx.arc(o.x,o.y-6,6,0,Math.PI*2);ctx.fill();
+    ctx.fillRect(o.x-6,o.y,12,16);
+  }
+}
+
+function drawDropoff(){
+  if(!dropoff)return;
+  ctx.save();
+  ctx.translate(dropoff.x,dropoff.y);
+  const pulse=6+Math.sin(performance.now()/150)*3;
+  ctx.strokeStyle='#7ee787';
+  ctx.lineWidth=3;
+  ctx.beginPath();ctx.arc(0,0,20+pulse,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='#7ee787';
+  ctx.font='bold 22px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('📦',0,2);
+  ctx.restore();
+}
+
+function updateScoreDisplay(){
+  document.getElementById('score-display').textContent=
+    I18N.t('deliveries_lives_best','Deliveries: {d} | Lives: {l} | Best: {b}')
+      .replace('{d}',deliveries).replace('{l}',Math.max(0,lives)).replace('{b}',best);
+}
+
+let spawnTimer=0;
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawRoad();
+
+  if(!started){
+    ctx.fillStyle='#ffb347cc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint4','Move / drag to start riding'),W/2,H/2);
+    drawBike();
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(!gameOver){
+    elapsed+=dt;
+    let steer=0;
+    if(keys['ArrowLeft']||keys['KeyA'])steer-=1;
+    if(keys['ArrowRight']||keys['KeyD'])steer+=1;
+    if(steer!==0){bike.vx+=steer*0.9*dt;}
+    bike.vx*=0.85;
+    bike.x+=bike.vx*dt;
+    bike.x=Math.max(roadX+bike.w/2,Math.min(roadX+roadW-bike.w/2,bike.x));
+
+    scrollY+=speed*dt;
+    dropoff.y+=speed*dt;
+
+    spawnTimer+=dt;
+    const spawnInterval=Math.max(22,55-elapsed*0.15);
+    if(spawnTimer>=spawnInterval){spawnTimer=0;spawnObstacle();}
+
+    obstacles.forEach(o=>{o.y+=speed*dt;});
+    obstacles=obstacles.filter(o=>o.y<H+60);
+
+    obstacles.forEach(o=>{
+      if(!o.scored&&rectHit(bike.x,bike.y,bike.w,bike.h,o.x,o.y,o.w,o.h)){
+        o.scored=true;
+        lives--;
+        SFX.hit();
+        flashMsg=I18N.t('crash_msg','Crash!');flashColor='#ff6b6b';flashUntil=performance.now()+500;
+        if(lives<=0){gameOver=true;SFX.lose();}
+      }
+    });
+
+    timeLeft-=dt/60;
+    if(timeLeft<=0&&!gameOver){
+      lives--;
+      SFX.error();
+      flashMsg=I18N.t('too_late','Too Late!');flashColor='#ff6b6b';flashUntil=performance.now()+600;
+      if(lives<=0){gameOver=true;SFX.lose();}
+      else startDelivery();
+    }
+
+    if(!dropoff.reached&&rectHit(bike.x,bike.y,bike.w,bike.h,dropoff.x,dropoff.y,36,36)){
+      dropoff.reached=true;
+      deliveries++;
+      speed=Math.min(9,speed+0.35);
+      if(deliveries>best){best=deliveries;localStorage.setItem('bikecourier_best',String(best));}
+      SFX.coin();
+      flashMsg=I18N.t('delivered_msg','Delivered!');flashColor='#7ee787';flashUntil=performance.now()+500;
+      startDelivery();
+    }
+  }else{
+    lastTime=now;
+  }
+
+  obstacles.forEach(drawObstacle);
+  drawDropoff();
+  drawBike();
+
+  // timer bar
+  ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(0,0,W,10);
+  const pct=Math.max(0,timeLeft/timeMax);
+  ctx.fillStyle=pct>0.3?'#7ee787':'#ff6b6b';
+  ctx.fillRect(0,0,W*pct,10);
+
+  if(performance.now()<flashUntil){
+    ctx.fillStyle=flashColor;ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,40);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('shift_done','SHIFT DONE'),W/2,H/2-24);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('deliveries_final','Deliveries: {d}').replace('{d}',deliveries),W/2,H/2+10);
+    ctx.fillText(I18N.t('restart_hint2','Tap to try again'),W/2,H/2+40);
+  }
+
+  updateScoreDisplay();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
