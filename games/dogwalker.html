@@ -1,0 +1,234 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Dog Walker</title><meta name="description" content="Play Dog Walker free online — Guide your walker and their leashed dogs down the park path with Arrow Keys, WASD, or touch-drag. Collect treats, dodge puddles, other dogs and squirrels, and don't let the leashes tangle!"><link rel="canonical" href="https://games.multiportllc.com/games/dogwalker"><meta property="og:title" content="Dog Walker - Multiport Games"><meta property="og:description" content="Play Dog Walker free online — Guide your walker and their leashed dogs down the park path with Arrow Keys, WASD, or touch-drag. Collect treats, dodge puddles, other dogs and squirrels, and don't let the leashes tangle!"><meta property="og:url" content="https://games.multiportllc.com/games/dogwalker"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Dog Walker","description":"Play Dog Walker free online instantly. Guide your walker and their leashed dogs down the park path with Arrow Keys, WASD, or touch-drag. Collect treats, dodge puddles, other dogs and squirrels, and don't let the leashes tangle! No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/dogwalker","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{display:block;border-radius:8px;margin:0 auto;background:#2d6a4f;touch-action:none}
+#score-display{color:#d8f3dc;font-size:1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Dog Walker</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="score-display">Treats: 0 | Lives: 3 | Score: 0 | Best: 0</div>
+    <canvas id="c" width="360" height="520"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b>/<b>WASD</b> or <b>touch-drag</b> to move the walker down the park path. Collect treats for points and dodge puddles and other dogs. Squirrels will make a dog pull on its leash — if the leashes cross too much they'll tangle and cost you a life. Lose all 3 lives and the walk is over!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=360,H=520;
+let walker,dogs,history,obstacles,tangleMeter,spawnTimer,spawnInterval,scrollSpeed;
+let treats=0,lives=3,score=0,state='play';
+let hi=+(localStorage.getItem('dogwalker_hi')||0);
+let keys={},dragPos=null,dragging=false,lastTime=null;
+
+function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+
+function reset(){
+  walker={x:W/2,y:H-90};
+  dogs=[
+    {id:0,baseOffset:-32,delay:14,pull:0,pullOffset:0,x:W/2-32,y:walker.y+30},
+    {id:1,baseOffset:0,delay:24,pull:0,pullOffset:0,x:W/2,y:walker.y+60},
+    {id:2,baseOffset:32,delay:34,pull:0,pullOffset:0,x:W/2+32,y:walker.y+90}
+  ];
+  history=[];
+  obstacles=[];
+  tangleMeter=0;
+  spawnTimer=0;spawnInterval=50;
+  scrollSpeed=2.2;
+  treats=0;lives=3;score=0;state='play';
+}
+
+function spawnObstacle(){
+  const roll=Math.random();
+  let type;
+  if(roll<0.5)type='treat';
+  else if(roll<0.7)type='puddle';
+  else if(roll<0.87)type='dog';
+  else type='squirrel';
+  const r=type==='treat'?8:type==='puddle'?20:type==='dog'?15:10;
+  const x=30+Math.random()*(W-60);
+  obstacles.push({type,x,y:-20,r,hit:false});
+}
+
+function loseLife(){
+  lives--;
+  if(lives<=0)gameOver();
+}
+function gameOver(){
+  state='over';
+  SFX.lose();
+  const finalScore=Math.floor(score);
+  if(finalScore>hi){hi=finalScore;localStorage.setItem('dogwalker_hi',hi);}
+}
+function onTangle(){
+  tangleMeter=0;
+  dogs.forEach(d=>{d.pull=0;});
+  SFX.error();
+  loseLife();
+}
+
+function update(dt){
+  if(state!=='play')return;
+  if(keys['arrowleft']||keys['a'])walker.x-=3*dt;
+  if(keys['arrowright']||keys['d'])walker.x+=3*dt;
+  if(keys['arrowup']||keys['w'])walker.y-=3*dt;
+  if(keys['arrowdown']||keys['s'])walker.y+=3*dt;
+  if(dragPos){
+    walker.x+=(dragPos.x-walker.x)*0.25;
+    walker.y+=(dragPos.y-walker.y)*0.25;
+  }
+  walker.x=clamp(walker.x,30,W-30);
+  walker.y=clamp(walker.y,200,H-40);
+
+  history.push({x:walker.x,y:walker.y});
+  if(history.length>300)history.shift();
+
+  dogs.forEach((dog,i)=>{
+    const idx=Math.max(0,history.length-1-dog.delay);
+    const h=history[idx]||walker;
+    const tx=h.x+(dog.pull>0?dog.pullOffset:dog.baseOffset);
+    const ty=h.y+30*(i+1);
+    dog.x+=(tx-dog.x)*0.18*Math.min(dt,2);
+    dog.y+=(ty-dog.y)*0.18*Math.min(dt,2);
+    if(dog.pull>0)dog.pull-=dt;
+  });
+
+  const naturalOrder=[...dogs].sort((a,b)=>a.baseOffset-b.baseOffset).map(d=>d.id).join(',');
+  const currentOrder=[...dogs].sort((a,b)=>a.x-b.x).map(d=>d.id).join(',');
+  const crossed=naturalOrder!==currentOrder;
+  tangleMeter+=crossed?dt*2.2:-dt*3;
+  tangleMeter=clamp(tangleMeter,0,100);
+  if(tangleMeter>=100)onTangle();
+
+  spawnTimer+=dt;
+  spawnInterval=Math.max(28,55-score/50);
+  if(spawnTimer>=spawnInterval){spawnTimer-=spawnInterval;spawnObstacle();}
+
+  obstacles.forEach(o=>{
+    o.y+=scrollSpeed*dt;
+    if(o.hit)return;
+    const d=Math.hypot(o.x-walker.x,o.y-walker.y);
+    if(d<o.r+16){
+      o.hit=true;
+      if(o.type==='treat'){treats++;score+=10;SFX.coin();}
+      else if(o.type==='puddle'){SFX.hit();loseLife();}
+      else if(o.type==='dog'){SFX.hit();loseLife();}
+      else if(o.type==='squirrel'){
+        const target=dogs[Math.floor(Math.random()*dogs.length)];
+        target.pull=70;
+        target.pullOffset=(Math.random()<0.5?-1:1)*(60+Math.random()*30);
+        SFX.point();
+      }
+    }
+  });
+  obstacles=obstacles.filter(o=>!o.hit&&o.y<H+40);
+
+  score+=dt*0.05;
+}
+
+function drawDog(dog,color){
+  ctx.fillStyle='#8d5524';
+  ctx.strokeStyle=color;
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(walker.x,walker.y-10);ctx.lineTo(dog.x,dog.y-6);ctx.stroke();
+  ctx.beginPath();ctx.ellipse(dog.x,dog.y,13,9,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(dog.x,dog.y-10,7,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#2b1a0e';
+  ctx.beginPath();ctx.arc(dog.x-3,dog.y-11,1.5,0,Math.PI*2);ctx.arc(dog.x+3,dog.y-11,1.5,0,Math.PI*2);ctx.fill();
+}
+
+function drawObstacle(o){
+  ctx.save();
+  ctx.translate(o.x,o.y);
+  if(o.type==='treat'){
+    ctx.fillStyle='#ffb703';
+    ctx.beginPath();ctx.arc(-5,0,6,0,Math.PI*2);ctx.arc(5,0,6,0,Math.PI*2);ctx.fill();
+  }else if(o.type==='puddle'){
+    ctx.fillStyle='rgba(79,184,232,.65)';
+    ctx.beginPath();ctx.ellipse(0,0,o.r,o.r*0.55,0,0,Math.PI*2);ctx.fill();
+  }else if(o.type==='dog'){
+    ctx.fillStyle='#5c4033';
+    ctx.beginPath();ctx.ellipse(0,0,14,10,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(10,-6,7,0,Math.PI*2);ctx.fill();
+  }else if(o.type==='squirrel'){
+    ctx.fillStyle='#a0522d';
+    ctx.beginPath();ctx.arc(0,0,8,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(9,-6,7,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#2d6a4f';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,.12)';ctx.lineWidth=2;ctx.setLineDash([14,16]);
+  ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke();
+  ctx.setLineDash([]);
+
+  const order=[...dogs].sort((a,b)=>a.id-b.id);
+  const colors=['#ffd166','#06d6a0','#ef476f'];
+  order.forEach((d,i)=>drawDog(d,colors[i]));
+
+  obstacles.forEach(drawObstacle);
+
+  ctx.fillStyle='#f4a261';
+  ctx.beginPath();ctx.arc(walker.x,walker.y,15,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#264653';
+  ctx.beginPath();ctx.arc(walker.x,walker.y-16,9,0,Math.PI*2);ctx.fill();
+
+  if(tangleMeter>10){
+    ctx.fillStyle='rgba(233,69,96,'+(tangleMeter/140)+')';
+    ctx.fillRect(10,10,(W-20)*(tangleMeter/100),8);
+    ctx.strokeStyle='#fff';ctx.strokeRect(10,10,W-20,8);
+  }
+
+  if(state==='over'){
+    ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('walk_over_title','WALK OVER!'),W/2,H/2-16);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('dw_restart_hint','Tap or press R to walk again'),W/2,H/2+18);
+  }
+}
+
+function updateScoreDisplay(){
+  document.getElementById('score-display').textContent=I18N.t('dw_score_label','Treats: {t} | Lives: {l} | Score: {s} | Best: {b}').replace('{t}',treats).replace('{l}',Math.max(0,lives)).replace('{s}',Math.floor(score)).replace('{b}',hi);
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=c.width/rect.width,scaleY=c.height/rect.height;
+  const cx=e.touches?e.touches[0].clientX:e.clientX;
+  const cy=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(cx-rect.left)*scaleX,y:(cy-rect.top)*scaleY};
+}
+c.addEventListener('mousedown',e=>{dragging=true;dragPos=pointerPos(e);if(state==='over')reset();});
+c.addEventListener('mousemove',e=>{if(dragging)dragPos=pointerPos(e);});
+window.addEventListener('mouseup',()=>{dragging=false;dragPos=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();dragging=true;dragPos=pointerPos(e);if(state==='over')reset();},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(dragging)dragPos=pointerPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragging=false;dragPos=null;},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(e.key.toLowerCase()==='r'&&state==='over')reset();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  update(dt);
+  draw();
+  updateScoreDisplay();
+  requestAnimationFrame(loop);
+}
+reset();loop();
+</script></body></html>

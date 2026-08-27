@@ -1,0 +1,221 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Morse Code</title><meta name="description" content="Play Morse Code free online — Watch and listen to the blinking light spell a word in Morse code, then click the letters on the keyboard to decode it before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/morsecode"><meta property="og:title" content="Morse Code - Multiport Games"><meta property="og:description" content="Play Morse Code free online — Watch and listen to the blinking light spell a word in Morse code, then click the letters on the keyboard to decode it before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/morsecode"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Morse Code","description":"Play Morse Code free online instantly. Watch and listen to the blinking light spell a word in Morse code, then click the letters on the keyboard to decode it before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/morsecode","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:linear-gradient(135deg,#0d1b2a,#1b5e73);border-radius:14px;padding:18px;text-align:center}
+#status{color:#fff;font-size:1.1rem;font-weight:800;margin:6px 0;min-height:1.6em}
+#lampWrap{display:flex;justify-content:center;align-items:center;margin:14px 0}
+#lamp{width:70px;height:70px;border-radius:50%;background:#222;box-shadow:0 0 10px rgba(0,0,0,.6);transition:background .05s,box-shadow .05s}
+#lamp.on{background:#ffe082;box-shadow:0 0 40px 12px #ffe082}
+#wordDisplay{color:#80deea;font-size:1.4rem;font-weight:900;letter-spacing:.4rem;margin:10px 0;min-height:1.6rem}
+#stats{color:#e0f7fa;font-size:1rem;margin:6px 0}
+#timerBarWrap{width:280px;height:10px;background:rgba(255,255,255,.15);border-radius:6px;margin:8px auto;overflow:hidden}
+#timerBar{height:100%;background:#4caf50;width:100%;transition:width .1s linear}
+#keyboard{display:grid;grid-template-columns:repeat(7,40px);gap:6px;justify-content:center;margin:14px auto;max-width:340px}
+.key{width:40px;height:40px;border-radius:8px;background:#e0f2f1;color:#083344;font-weight:800;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none}
+.key:active{transform:scale(.92)}
+.key.correct{background:#4caf50;color:#fff}
+.key.wrong{background:#e53935;color:#fff}
+#playBtn{padding:9px 22px;background:#0288d1;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:8px 4px}
+@media(max-width:420px){
+  #keyboard{grid-template-columns:repeat(6,36px)}
+  .key{width:36px;height:36px;font-size:.9rem}
+}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Morse Code</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="status">Click "Play Word" to start</div>
+      <div id="lampWrap"><div id="lamp"></div></div>
+      <div id="wordDisplay">_ _ _</div>
+      <div id="timerBarWrap"><div id="timerBar"></div></div>
+      <div id="stats">Words: 0 | Lives: 3 | Hi: 0</div>
+      <div><button id="playBtn" onclick="playCurrentWord()">Play Word</button></div>
+      <div id="keyboard"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch the blinking <b>lamp</b> (and listen for the tone) spell out a word in Morse code, then click each <b>letter</b> on the keyboard in order to spell it before the timer runs out. Decode it correctly to score and get a new word — three wrong or missed answers ends the game!</div>
+</div>
+<script>
+const MORSE={
+A:'.-',B:'-...',C:'-.-.',D:'-..',E:'.',F:'..-.',G:'--.',H:'....',I:'..',J:'.---',
+K:'-.-',L:'.-..',M:'--',N:'-.',O:'---',P:'.--.',Q:'--.-',R:'.-.',S:'...',T:'-',
+U:'..-',V:'...-',W:'.--',X:'-..-',Y:'-.--',Z:'--..'
+};
+const LETTERS=Object.keys(MORSE);
+const WORDS=['CAT','DOG','SUN','SEA','BOX','KEY','MAP','FOX','ICE','JAM',
+  'STAR','MOON','FISH','BIRD','TREE','LAMP','SHIP','GOLD','WIND','RAIN',
+  'CLOUD','LIGHT','OCEAN','PLANT','MUSIC','HOUSE'];
+
+let wordsDone=0,lives=3,hi=0,gameOver=false,currentWord=null,typed='',playing=false;
+let timeLeft=0,maxTime=9000,timerRAF=null,lastTick=null,answered=false;
+
+hi=parseInt(localStorage.getItem('morsecode_hi')||'0',10);
+
+function buildKeyboard(){
+  const kb=document.getElementById('keyboard');
+  kb.innerHTML='';
+  LETTERS.forEach(l=>{
+    const k=document.createElement('div');
+    k.className='key';
+    k.textContent=l;
+    k.dataset.letter=l;
+    k.onclick=()=>guess(l,k);
+    kb.appendChild(k);
+  });
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+function updateStats(){
+  document.getElementById('stats').textContent=
+    I18N.t('morse_stats_label','Words: {w} | Lives: {l} | Hi: {h}')
+      .replace('{w}',wordsDone).replace('{l}',lives).replace('{h}',hi);
+}
+
+function wordPool(){
+  // words grow longer as the player progresses
+  const maxLen=Math.min(9,3+Math.floor(wordsDone/2));
+  const pool=WORDS.filter(w=>w.length<=maxLen);
+  return pool.length?pool:WORDS;
+}
+
+function renderWordDisplay(){
+  const disp=currentWord.split('').map((ch,i)=>i<typed.length?typed[i]:'_').join(' ');
+  document.getElementById('wordDisplay').textContent=disp;
+}
+
+function nextLetter(){
+  const pool=wordPool();
+  currentWord=pool[Math.floor(Math.random()*pool.length)];
+  typed='';
+  renderWordDisplay();
+  answered=false;
+  document.querySelectorAll('.key').forEach(k=>k.classList.remove('correct','wrong'));
+  maxTime=Math.max(2500,9000-wordsDone*250);
+  document.getElementById('playBtn').disabled=false;
+  setStatus(I18N.t('morse_ready','Click "Play Word" to hear/see the word, then spell it'));
+}
+
+function sleep(ms){return new Promise(res=>setTimeout(res,ms));}
+
+async function playCurrentWord(){
+  if(gameOver){reset();return;}
+  if(playing)return;
+  playing=true;
+  document.getElementById('playBtn').disabled=true;
+  const lamp=document.getElementById('lamp');
+  const unit=130;
+  for(const letter of currentWord){
+    const pattern=MORSE[letter];
+    for(const sym of pattern){
+      lamp.classList.add('on');
+      if(sym==='.'){SFX.tick();await sleep(unit);}
+      else{SFX.click();await sleep(unit*3);}
+      lamp.classList.remove('on');
+      await sleep(unit);
+    }
+    await sleep(unit*2); // letter gap
+  }
+  playing=false;
+  startTimer();
+}
+
+function startTimer(){
+  timeLeft=maxTime;
+  lastTick=performance.now();
+  const bar=document.getElementById('timerBar');
+  bar.style.width='100%';
+  function tick(now){
+    if(answered||gameOver)return;
+    const dt=now-lastTick;lastTick=now;
+    timeLeft-=dt;
+    const pct=Math.max(0,timeLeft/maxTime*100);
+    bar.style.width=pct+'%';
+    bar.style.background=pct<30?'#e53935':pct<60?'#ffb300':'#4caf50';
+    if(timeLeft<=0){
+      answered=true;
+      loseLife(I18N.t('morse_timeout','Time\'s up!'));
+      return;
+    }
+    timerRAF=requestAnimationFrame(tick);
+  }
+  timerRAF=requestAnimationFrame(tick);
+}
+
+function loseLife(msg){
+  lives--;
+  SFX.error();
+  updateStats();
+  document.getElementById('wordDisplay').textContent=currentWord;
+  if(lives<=0){
+    endGame();
+  }else{
+    setStatus(msg+' '+I18N.t('morse_answer_was','The word was ')+currentWord);
+    setTimeout(()=>{ if(!gameOver) nextLetter(); },1500);
+  }
+}
+
+function guess(letter,el){
+  if(answered||gameOver||playing)return;
+  if(timeLeft<=0)return;
+  const expected=currentWord[typed.length];
+  if(letter===expected){
+    el.classList.add('correct');
+    SFX.point();
+    typed+=letter;
+    renderWordDisplay();
+    setTimeout(()=>el.classList.remove('correct'),300);
+    if(typed.length===currentWord.length){
+      answered=true;
+      cancelAnimationFrame(timerRAF);
+      wordsDone++;
+      if(wordsDone>hi){hi=wordsDone;localStorage.setItem('morsecode_hi',hi);}
+      SFX.success();
+      setStatus(I18N.t('morse_correct','Word decoded!'));
+      updateStats();
+      setTimeout(()=>{ if(!gameOver) nextLetter(); },900);
+    }
+  }else{
+    el.classList.add('wrong');
+    setTimeout(()=>el.classList.remove('wrong'),300);
+    answered=true;
+    cancelAnimationFrame(timerRAF);
+    loseLife(I18N.t('morse_wrong','Wrong letter!'));
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  cancelAnimationFrame(timerRAF);
+  document.getElementById('playBtn').disabled=true;
+  setStatus(I18N.t('game_over_title','GAME OVER')+' — '+I18N.t('restart_hint','Tap or Space to restart'));
+  SFX.lose();
+}
+
+function reset(){
+  wordsDone=0;lives=3;gameOver=false;playing=false;answered=false;
+  cancelAnimationFrame(timerRAF);
+  updateStats();
+  nextLetter();
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space')){e.preventDefault();reset();return;}
+  const k=e.key.toUpperCase();
+  if(LETTERS.includes(k)){
+    const el=document.querySelector('.key[data-letter="'+k+'"]');
+    if(el)guess(k,el);
+  }
+  if(e.code==='Space'){e.preventDefault();playCurrentWord();}
+});
+
+buildKeyboard();
+reset();
+</script></body></html>

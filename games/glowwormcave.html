@@ -1,0 +1,334 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Glow Worm Cave</title><meta name="description" content="Play Glow Worm Cave free online — Guide your glowing worm through the dark cave with Arrow Keys/WASD or touch-drag, lighting the path as you go, avoiding bats, to reach the exit crystal."><link rel="canonical" href="https://games.multiportllc.com/games/glowwormcave"><meta property="og:title" content="Glow Worm Cave - Multiport Games"><meta property="og:description" content="Play Glow Worm Cave free online — Guide your glowing worm through the dark cave with Arrow Keys/WASD or touch-drag, lighting the path as you go, avoiding bats, to reach the exit crystal."><meta property="og:url" content="https://games.multiportllc.com/games/glowwormcave"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Glow Worm Cave","description":"Play Glow Worm Cave free online instantly. Guide your glowing worm through the dark cave with Arrow Keys/WASD or touch-drag, lighting the path as you go, avoiding bats, to reach the exit crystal. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/glowwormcave","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#0d0221,#1b0e3d);display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#score-display{color:#b39ddb;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Glow Worm Cave</div>
+  <div class="game-frame">
+    <div id="score-display">Level: 1 | Lives: 3 | Best: 1</div>
+    <canvas id="c" width="600" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> or <b>WASD</b> (or <b>drag/tap</b> on touch) to move your glow worm through the dark cave. Your light only reveals what's nearby — watch for bats lurking in the shadows! Reach the glowing exit crystal to advance to a new, larger cave. Touching a bat costs a life.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=600,H=500;
+let best=parseInt(localStorage.getItem('glowwormcave_best')||'1');
+
+const CELL=30;
+let cols,rows,grid,worm,bats,exit,level,lives,gameState,lastTime,visited;
+
+function statusDisplay(){
+  document.getElementById('score-display').textContent=
+    I18N.t('glow_status','Level: {l} | Lives: {v} | Best: {b}')
+      .replace('{l}',level).replace('{v}',lives).replace('{b}',best);
+}
+
+function genMaze(cw,ch){
+  // simple randomized DFS maze on a grid; walls between cells
+  const g=[];
+  for(let y=0;y<ch;y++){
+    const row=[];
+    for(let x=0;x<cw;x++)row.push({visited:false,walls:{n:true,s:true,e:true,w:true}});
+    g.push(row);
+  }
+  const stack=[{x:0,y:0}];
+  g[0][0].visited=true;
+  while(stack.length){
+    const cur=stack[stack.length-1];
+    const neighbors=[];
+    const dirs=[['n',0,-1,'s'],['s',0,1,'n'],['e',1,0,'w'],['w',-1,0,'e']];
+    dirs.forEach(([d,dx,dy,opp])=>{
+      const nx=cur.x+dx,ny=cur.y+dy;
+      if(nx>=0&&nx<cw&&ny>=0&&ny<ch&&!g[ny][nx].visited)neighbors.push({x:nx,y:ny,d,opp});
+    });
+    if(neighbors.length){
+      const n=neighbors[Math.floor(Math.random()*neighbors.length)];
+      g[cur.y][cur.x].walls[n.d]=false;
+      g[n.y][n.x].walls[n.opp]=false;
+      g[n.y][n.x].visited=true;
+      stack.push({x:n.x,y:n.y});
+    } else {
+      stack.pop();
+    }
+  }
+  // knock down a handful of extra walls for looser, cave-like paths
+  for(let i=0;i<Math.floor(cw*ch*0.08);i++){
+    const rx=Math.floor(Math.random()*cw),ry=Math.floor(Math.random()*ch);
+    const dirs=[['n',0,-1,'s'],['s',0,1,'n'],['e',1,0,'w'],['w',-1,0,'e']];
+    const [d,dx,dy,opp]=dirs[Math.floor(Math.random()*4)];
+    const nx=rx+dx,ny=ry+dy;
+    if(nx>=0&&nx<cw&&ny>=0&&ny<ch){
+      g[ry][rx].walls[d]=false;
+      g[ny][nx].walls[opp]=false;
+    }
+  }
+  return g;
+}
+
+function buildLevel(lv){
+  cols=Math.min(10+lv,20);
+  rows=Math.min(8+lv,16);
+  grid=genMaze(cols,rows);
+  worm={x:CELL/2+2,y:CELL/2+2,cx:0,cy:0,vx:0,vy:0,glow:70+Math.min(lv*2,40)};
+  exit={cx:cols-1,cy:rows-1};
+  bats=[];
+  const nBats=Math.min(2+lv,10);
+  for(let i=0;i<nBats;i++){
+    let bx,by;
+    do{
+      bx=Math.floor(Math.random()*cols);
+      by=Math.floor(Math.random()*rows);
+    } while((bx<2&&by<2) || (bx>cols-3&&by>rows-3));
+    bats.push({cx:bx,cy:by,x:bx*CELL+CELL/2,y:by*CELL+CELL/2,dir:Math.random()*Math.PI*2,speed:0.6+Math.random()*0.5,timer:Math.random()*60});
+  }
+  visited=new Set();
+  gameState='playing';
+}
+
+function newGame(){
+  level=1;lives=3;
+  buildLevel(level);
+  statusDisplay();
+}
+
+function cellAt(px,py){ return {cx:Math.floor(px/CELL),cy:Math.floor(py/CELL)}; }
+
+function canMove(fromCx,fromCy,dx,dy){
+  if(fromCx<0||fromCy<0||fromCx>=cols||fromCy>=rows)return false;
+  const cell=grid[fromCy][fromCx];
+  if(dx===1)return !cell.walls.e;
+  if(dx===-1)return !cell.walls.w;
+  if(dy===1)return !cell.walls.s;
+  if(dy===-1)return !cell.walls.n;
+  return false;
+}
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyW','KeyA','KeyS','KeyD'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let dragTarget=null;
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+c.addEventListener('mousedown',e=>{ if(gameState==='over')newGame(); dragTarget=getPos(e); });
+c.addEventListener('mousemove',e=>{ if(dragTarget)dragTarget=getPos(e); });
+window.addEventListener('mouseup',()=>{dragTarget=null;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameState==='over'){newGame();return;}
+  dragTarget=getPos(e);
+},{passive:false});
+c.addEventListener('touchmove',e=>{ e.preventDefault(); if(dragTarget)dragTarget=getPos(e); },{passive:false});
+c.addEventListener('touchend',e=>{ e.preventDefault(); dragTarget=null; },{passive:false});
+
+function update(dt){
+  if(gameState!=='playing')return;
+
+  let mx=0,my=0;
+  if(keys.ArrowLeft||keys.KeyA)mx-=1;
+  if(keys.ArrowRight||keys.KeyD)mx+=1;
+  if(keys.ArrowUp||keys.KeyW)my-=1;
+  if(keys.ArrowDown||keys.KeyS)my+=1;
+  if(dragTarget){
+    const ddx=dragTarget.x-worm.x, ddy=dragTarget.y-worm.y;
+    const d=Math.hypot(ddx,ddy);
+    if(d>6){mx=ddx/d;my=ddy/d;}
+  }
+  const len=Math.hypot(mx,my)||1;
+  mx/=len;my/=len;
+
+  const speed=2.6;
+  const nx=worm.x+mx*speed*dt;
+  const ny=worm.y+my*speed*dt;
+
+  // wall collision using current cell walls (approx via margin check)
+  const {cx,cy}=cellAt(worm.x,worm.y);
+  const margin=6;
+  let blockedX=false,blockedY=false;
+
+  // check horizontal move
+  const testCx=cellAt(nx,worm.y).cx;
+  if(testCx!==cx){
+    const dx=testCx>cx?1:-1;
+    if(!canMove(cx,cy,dx,0))blockedX=true;
+  }
+  // check vertical move
+  const testCy=cellAt(worm.x,ny).cy;
+  if(testCy!==cy){
+    const dy=testCy>cy?1:-1;
+    if(!canMove(cx,cy,0,dy))blockedY=true;
+  }
+
+  if(!blockedX)worm.x=Math.max(margin,Math.min(cols*CELL-margin,nx));
+  if(!blockedY)worm.y=Math.max(margin,Math.min(rows*CELL-margin,ny));
+
+  const cell2=cellAt(worm.x,worm.y);
+  visited.add(cell2.cx+','+cell2.cy);
+
+  // bats patrol
+  bats.forEach(b=>{
+    b.timer-=dt;
+    if(b.timer<=0){
+      b.dir=Math.random()*Math.PI*2;
+      b.timer=40+Math.random()*40;
+    }
+    const bnx=b.x+Math.cos(b.dir)*b.speed*dt;
+    const bny=b.y+Math.sin(b.dir)*b.speed*dt;
+    if(bnx>10&&bnx<cols*CELL-10)b.x=bnx; else b.dir=Math.PI-b.dir;
+    if(bny>10&&bny<rows*CELL-10)b.y=bny; else b.dir=-b.dir;
+
+    const dist=Math.hypot(worm.x-b.x,worm.y-b.y);
+    if(dist<16 && !b.justHit){
+      b.justHit=true;
+      lives--;
+      SFX.hit();
+      // knockback
+      const ang=Math.atan2(worm.y-b.y,worm.x-b.x);
+      worm.x+=Math.cos(ang)*30;
+      worm.y+=Math.sin(ang)*30;
+      if(lives<=0){
+        gameState='over';
+        SFX.lose();
+      }
+      setTimeout(()=>{b.justHit=false;},1000);
+    }
+  });
+
+  // reached exit
+  const exitPx=exit.cx*CELL+CELL/2,exitPy=exit.cy*CELL+CELL/2;
+  if(Math.hypot(worm.x-exitPx,worm.y-exitPy)<18){
+    level++;
+    if(level>best){best=level;localStorage.setItem('glowwormcave_best',best);}
+    SFX.levelup();
+    buildLevel(level);
+  }
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.fillStyle='#08040f';
+  ctx.fillRect(0,0,W,H);
+
+  update(dt);
+
+  // clip to a lit region for cave walls/exit; but draw walls only within light radius for perf simplicity draw all, masked by radial gradient overlay
+  ctx.save();
+
+  // draw maze walls (dim, only meaningfully visible near light due to overlay after)
+  ctx.strokeStyle='#4a3a7a';
+  ctx.lineWidth=3;
+  ctx.lineCap='round';
+  for(let y=0;y<rows;y++){
+    for(let x=0;x<cols;x++){
+      const cell=grid[y][x];
+      const px=x*CELL,py=y*CELL;
+      ctx.beginPath();
+      if(cell.walls.n){ctx.moveTo(px,py);ctx.lineTo(px+CELL,py);}
+      if(cell.walls.w){ctx.moveTo(px,py);ctx.lineTo(px,py+CELL);}
+      if(x===cols-1&&cell.walls.e){ctx.moveTo(px+CELL,py);ctx.lineTo(px+CELL,py+CELL);}
+      if(y===rows-1&&cell.walls.s){ctx.moveTo(px,py+CELL);ctx.lineTo(px+CELL,py+CELL);}
+      ctx.stroke();
+    }
+  }
+
+  // exit crystal
+  const exitPx=exit.cx*CELL+CELL/2,exitPy=exit.cy*CELL+CELL/2;
+  const pulse=4*Math.sin(performance.now()/200);
+  ctx.save();
+  ctx.translate(exitPx,exitPy);
+  ctx.rotate(performance.now()/900);
+  ctx.fillStyle='#4dd0e1';
+  ctx.beginPath();
+  ctx.moveTo(0,-12-pulse*0.3);ctx.lineTo(8,0);ctx.lineTo(0,12+pulse*0.3);ctx.lineTo(-8,0);
+  ctx.closePath();ctx.fill();
+  ctx.restore();
+
+  // bats (only rendered where light will reveal them via overlay compositing trick below)
+  bats.forEach(b=>{
+    ctx.save();
+    ctx.translate(b.x,b.y);
+    ctx.fillStyle='#212121';
+    ctx.beginPath();ctx.arc(0,0,6,0,Math.PI*2);ctx.fill();
+    const wing=Math.sin(performance.now()/80)*6;
+    ctx.beginPath();ctx.moveTo(-6,0);ctx.lineTo(-16,wing-4);ctx.lineTo(-6,4);ctx.fill();
+    ctx.beginPath();ctx.moveTo(6,0);ctx.lineTo(16,wing-4);ctx.lineTo(6,4);ctx.fill();
+    ctx.restore();
+  });
+
+  // worm
+  ctx.save();
+  ctx.translate(worm.x,worm.y);
+  ctx.fillStyle='#aef78e';
+  ctx.beginPath();ctx.arc(0,0,9,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#e1ffcf';
+  ctx.beginPath();ctx.arc(0,0,4,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+
+  ctx.restore();
+
+  // darkness overlay with radial light cutout around worm
+  ctx.save();
+  ctx.globalCompositeOperation='destination-in';
+  const grad=ctx.createRadialGradient(worm.x,worm.y,0,worm.x,worm.y,worm.glow);
+  grad.addColorStop(0,'rgba(255,255,255,1)');
+  grad.addColorStop(0.7,'rgba(255,255,255,0.9)');
+  grad.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=grad;
+  ctx.fillRect(0,0,W,H);
+  ctx.restore();
+
+  // re-fill background behind the masked scene (since destination-in cleared outside light)
+  ctx.globalCompositeOperation='destination-over';
+  ctx.fillStyle='#08040f';
+  ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation='source-over';
+
+  // glow ring around worm's light for atmosphere
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(worm.x,worm.y,worm.glow*0.95,0,Math.PI*2);
+  ctx.strokeStyle='rgba(174,247,142,0.15)';
+  ctx.lineWidth=2;
+  ctx.stroke();
+  ctx.restore();
+
+  if(gameState==='over'){
+    ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('glow_game_over','LOST IN THE DARK'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('glow_final_level','Reached Level {l}').replace('{l}',level),W/2,H/2+10);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+38);
+  }
+
+  statusDisplay();
+  requestAnimationFrame(loop);
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&gameState==='over')newGame();
+});
+
+newGame();
+loop();
+</script></body></html>

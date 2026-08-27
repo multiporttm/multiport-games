@@ -1,0 +1,248 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Unicycle Race</title><meta name="description" content="Play Unicycle Race free online — Use Left/Right Arrow keys to balance your lean and Up Arrow (or tap) to pedal forward, racing an AI opponent to the finish line without falling over."><link rel="canonical" href="https://games.multiportllc.com/games/unicyclerace"><meta property="og:title" content="Unicycle Race - Multiport Games"><meta property="og:description" content="Play Unicycle Race free online — Use Left/Right Arrow keys to balance your lean and Up Arrow (or tap) to pedal forward, racing an AI opponent to the finish line without falling over."><meta property="og:url" content="https://games.multiportllc.com/games/unicyclerace"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Unicycle Race","description":"Play Unicycle Race free online instantly. Use Left/Right Arrow keys to balance your lean and Up Arrow (or tap) to pedal forward, racing an AI opponent to the finish line without falling over. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/unicyclerace","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#01579b,#4fc3f7);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#e1f5fe;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#pedalBtn{display:inline-block;margin:8px auto;padding:10px 26px;background:#0288d1;color:#fff;border:none;border-radius:22px;font-size:1rem;font-weight:700;cursor:pointer}
+#controlsRow{text-align:center}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Unicycle Race</div>
+  <div class="game-frame">
+    <div id="score-display">Wins: 0 | Best Time: —</div>
+    <canvas id="c" width="800" height="380"></canvas>
+    <div id="controlsRow"><button id="pedalBtn">PEDAL</button></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Left/Right Arrow</b> (or A/D) to correct your lean and stay balanced. Tap <b>Up Arrow</b>, <b>Space</b>, or the <b>PEDAL</b> button repeatedly to pedal forward. Lean too far for too long and you'll stumble and lose time — reach the finish line before the AI to win!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=380;
+const TRACK_LEN=3000;
+let wins=parseInt(localStorage.getItem('unicyclerace_wins')||'0');
+let bestTime=parseFloat(localStorage.getItem('unicyclerace_best')||'0');
+
+let player,ai,gameState,raceTime,lastTime;
+
+function statusDisplay(txt){
+  document.getElementById('score-display').textContent=txt!==undefined?txt:
+    I18N.t('uni_status','Wins: {w} | Best Time: {t}')
+      .replace('{w}',wins)
+      .replace('{t}',bestTime>0?bestTime.toFixed(1)+'s':'—');
+}
+
+function resetRace(){
+  player={dist:0,lean:0,leanVel:0,fallTimer:0,falling:false,speed:0,pedalPulse:0};
+  ai={dist:0,speed:2.6+Math.random()*0.6};
+  gameState='ready'; // ready, racing, finished
+  raceTime=0;
+  lastTime=null;
+  statusDisplay();
+}
+
+function pedal(){
+  if(gameState==='finished'){resetRace();return;}
+  if(gameState==='ready')gameState='racing';
+  if(player.falling)return;
+  player.pedalPulse=1;
+  player.speed=Math.min(player.speed+1.1,6);
+  SFX.click();
+}
+
+function leanLeft(dt){ if(!player.falling) player.leanVel-=0.9*dt; }
+function leanRight(dt){ if(!player.falling) player.leanVel+=0.9*dt; }
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowLeft','ArrowRight','Space','KeyA','KeyD'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='ArrowUp'||e.code==='Space')pedal();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+document.getElementById('pedalBtn').addEventListener('click',pedal);
+document.getElementById('pedalBtn').addEventListener('touchstart',e=>{e.preventDefault();pedal();},{passive:false});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const r=c.getBoundingClientRect();
+  const x=e.touches[0].clientX-r.left;
+  if(x<r.width/2)leanLeft(3); else leanRight(3);
+},{passive:false});
+c.addEventListener('click',()=>{ if(gameState==='finished')resetRace(); });
+
+function updatePhysics(dt){
+  if(gameState!=='racing')return;
+  raceTime+=dt/60;
+
+  if(keys.ArrowLeft||keys.KeyA)leanLeft(dt);
+  if(keys.ArrowRight||keys.KeyD)leanRight(dt);
+
+  if(!player.falling){
+    // lean physics - unicycle wants to tip further once leaning (unstable equilibrium)
+    player.leanVel+=player.lean*0.015*dt;
+    player.leanVel*=0.94; // damping
+    player.lean+=player.leanVel*dt;
+    if(Math.abs(player.lean)>38){
+      player.falling=true;
+      player.fallTimer=70;
+      player.speed=0;
+      SFX.fail();
+    }
+    // friction on speed
+    player.speed=Math.max(0,player.speed-0.03*dt);
+    // leaning too much slows you
+    const leanPenalty=Math.max(0,1-Math.abs(player.lean)/60);
+    player.dist+=player.speed*leanPenalty*dt;
+  } else {
+    player.fallTimer-=dt;
+    if(player.fallTimer<=0){
+      player.falling=false;
+      player.lean=0;player.leanVel=0;
+    }
+  }
+  player.pedalPulse=Math.max(0,player.pedalPulse-0.05*dt);
+
+  // AI moves steadily with slight variance, occasional stumble
+  ai.dist+=ai.speed*dt;
+  if(Math.random()<0.003*dt)ai.speed=2.4+Math.random()*0.8;
+
+  if(player.dist>=TRACK_LEN && gameState==='racing'){
+    finishRace(true);
+  } else if(ai.dist>=TRACK_LEN && gameState==='racing'){
+    finishRace(false);
+  }
+}
+
+function finishRace(playerWon){
+  gameState='finished';
+  if(playerWon){
+    wins++;
+    localStorage.setItem('unicyclerace_wins',wins);
+    if(bestTime===0||raceTime<bestTime){
+      bestTime=raceTime;
+      localStorage.setItem('unicyclerace_best',bestTime);
+    }
+    SFX.win();
+  } else {
+    SFX.lose();
+  }
+}
+
+function drawUnicycle(x,y,lean,falling,pulse,color){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(falling? Math.PI/2.2 : lean*Math.PI/180);
+  // wheel
+  ctx.beginPath();ctx.arc(0,0,22,0,Math.PI*2);
+  ctx.strokeStyle='#212121';ctx.lineWidth=5;ctx.stroke();
+  ctx.fillStyle='#424242';ctx.beginPath();ctx.arc(0,0,6,0,Math.PI*2);ctx.fill();
+  // spokes
+  const spin=performance.now()/60+pulse*10;
+  ctx.strokeStyle='#616161';ctx.lineWidth=2;
+  for(let i=0;i<6;i++){
+    const a=spin+i*Math.PI/3;
+    ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(a)*20,Math.sin(a)*20);ctx.stroke();
+  }
+  // seat post
+  ctx.strokeStyle=color;ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(0,-6);ctx.lineTo(0,-40);ctx.stroke();
+  // rider body
+  ctx.fillStyle=color;
+  ctx.fillRect(-8,-62,16,26);
+  ctx.beginPath();ctx.arc(0,-72,10,0,Math.PI*2);ctx.fill();
+  // legs (pedal motion)
+  ctx.strokeStyle=color;ctx.lineWidth=4;
+  const legA=Math.sin(spin/8)*14;
+  ctx.beginPath();ctx.moveTo(0,-36);ctx.lineTo(10+legA,-14);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-36);ctx.lineTo(-10-legA,-14);ctx.stroke();
+  // arms
+  ctx.beginPath();ctx.moveTo(0,-58);ctx.lineTo(16,-46);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-58);ctx.lineTo(-16,-46);ctx.stroke();
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  // sky gradient handled by CSS background; draw track
+  const groundY=300;
+  ctx.fillStyle='rgba(255,255,255,0.15)';
+  ctx.fillRect(0,groundY,W,H-groundY);
+  ctx.strokeStyle='rgba(255,255,255,0.4)';
+  ctx.setLineDash([16,14]);
+  ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(0,groundY+40);ctx.lineTo(W,groundY+40);ctx.stroke();
+  ctx.setLineDash([]);
+
+  updatePhysics(dt);
+
+  // camera follows player's progress along a fixed viewport window
+  const camDist=Math.max(0,player.dist-200);
+  const px=100+(player.dist-camDist);
+  const aix=100+(ai.dist-camDist);
+
+  // finish line
+  const finishScreenX=100+(TRACK_LEN-camDist);
+  if(finishScreenX>-50&&finishScreenX<W+50){
+    ctx.fillStyle='#fff';
+    for(let i=0;i<8;i++){
+      ctx.fillStyle=i%2===0?'#fff':'#222';
+      ctx.fillRect(finishScreenX,groundY-30+i*10,14,10);
+    }
+  }
+
+  drawUnicycle(aix,groundY,0,false,0.3,'#ffb74d');
+  drawUnicycle(px,groundY,player.lean,player.falling,player.pedalPulse,'#ffffff');
+
+  // lean meter
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.fillRect(W/2-100,20,200,16);
+  ctx.strokeStyle='#fff';ctx.strokeRect(W/2-100,20,200,16);
+  const leanClamped=Math.max(-38,Math.min(38,player.lean));
+  ctx.fillStyle=Math.abs(leanClamped)>28?'#e53935':'#4caf50';
+  ctx.fillRect(W/2+leanClamped*2.4-4,20,8,16);
+  ctx.fillStyle='#fff';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('uni_balance_label','BALANCE'),W/2,15);
+
+  // progress bars
+  function progBar(y,dist,color,label){
+    ctx.fillStyle='rgba(0,0,0,0.3)';ctx.fillRect(20,y,W-40,10);
+    ctx.fillStyle=color;ctx.fillRect(20,y,(W-40)*Math.min(1,dist/TRACK_LEN),10);
+  }
+  progBar(50,player.dist,'#29b6f6');
+  progBar(64,ai.dist,'#ffb74d');
+
+  if(gameState==='ready'){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('uni_start_hint','Pedal to start the race!'),W/2,150);
+  }
+
+  if(player.falling){
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('uni_stumble','STUMBLE!'),px,groundY-70);
+  }
+
+  if(gameState==='finished'){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 38px Arial';ctx.textAlign='center';
+    const playerWon=player.dist>=TRACK_LEN;
+    ctx.fillText(playerWon?I18N.t('uni_win','YOU WIN!'):I18N.t('uni_lose','AI WINS'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+20);
+  }
+
+  statusDisplay();
+  requestAnimationFrame(loop);
+}
+resetRace();
+loop();
+</script></body></html>
