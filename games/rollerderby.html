@@ -1,0 +1,224 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Roller Derby</title><meta name="description" content="Play Roller Derby free online — Use Arrow Keys or WASD (or drag) to steer your skater around the oval track, weave past blockers to score passes, and rack up laps before time or your lives run out."><link rel="canonical" href="https://games.multiportllc.com/games/rollerderby"><meta property="og:title" content="Roller Derby - Multiport Games"><meta property="og:description" content="Play Roller Derby free online — Use Arrow Keys or WASD (or drag) to steer your skater around the oval track, weave past blockers to score passes, and rack up laps before time or your lives run out."><meta property="og:url" content="https://games.multiportllc.com/games/rollerderby"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Roller Derby","description":"Play Roller Derby free online instantly. Use Arrow Keys or WASD (or drag) to steer your skater around the oval track, weave past blockers to score passes, and rack up laps before time or your lives run out. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/rollerderby","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#263238;display:block;border-radius:8px;margin:0 auto;touch-action:none}
+#score-display{color:#ffca28;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Roller Derby</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="480" height="430"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> (or drag) to steer your skater's lane, hold <b>Up</b> to sprint. Weave around opposing blockers to lap past them for points — a hard hit from a blocker costs you a life. Rack up laps before time runs out or your lives are gone!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=480,H=430;
+const CX=W/2, CY=H/2+10;
+const RX_OUT=200, RY_OUT=160, BAND=70;
+const RX_IN=RX_OUT-BAND, RY_IN=RY_OUT-BAND;
+let hi=parseInt(localStorage.getItem('derby_hi')||'0',10);
+let bestLaps=parseInt(localStorage.getItem('derby_laps')||'0',10);
+
+let player, opps, laps, passes, lives, timeLeft, score, gameOver, started, invuln, msg, msgTimer, sprint;
+
+function trackPos(angle,radialT){
+  const rx=RX_IN+(RX_OUT-RX_IN)*radialT;
+  const ry=RY_IN+(RY_OUT-RY_IN)*radialT;
+  return {x:CX+Math.cos(angle)*rx, y:CY+Math.sin(angle)*ry};
+}
+
+function reset(){
+  player={angle:-Math.PI/2, radialT:0.5, speed:0.014, totalAngle:0};
+  opps=[];
+  const n=5;
+  for(let i=0;i<n;i++){
+    opps.push({
+      angle:-Math.PI/2 + (i+1)*(Math.PI*2/(n+1)),
+      radialT:0.2+Math.random()*0.6,
+      speed:0.008+Math.random()*0.006,
+      blockCooldown:0,
+      passedFlag:false,
+      dir: Math.random()<0.5?1:-1
+    });
+  }
+  laps=0;passes=0;lives=3;timeLeft=90;score=0;gameOver=false;started=false;
+  invuln=0;msg='';msgTimer=0;sprint=false;
+}
+reset();
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','w','a','s','d','W','A','S','D'].includes(e.key)) e.preventDefault();
+  keys[e.key]=true;
+  if(!started)started=true;
+  if(gameOver && (e.key===' '||e.key==='Enter')) reset();
+});
+document.addEventListener('keyup',e=>{keys[e.key]=false;});
+
+let dragStartY=null;
+c.addEventListener('touchstart',e=>{e.preventDefault();if(!started)started=true;if(gameOver){reset();return;}dragStartY=e.touches[0].clientY;},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(dragStartY===null)return;
+  const y=e.touches[0].clientY;
+  const dy=y-dragStartY;
+  player.radialT=Math.max(0,Math.min(1,player.radialT+dy*0.004));
+  dragStartY=y;
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragStartY=null;},{passive:false});
+c.addEventListener('click',()=>{ if(!started)started=true; if(gameOver)reset(); });
+
+function drawTrack(){
+  ctx.fillStyle='#37474f';
+  ctx.beginPath();ctx.ellipse(CX,CY,RX_OUT+18,RY_OUT+18,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#455a64';
+  ctx.beginPath();ctx.ellipse(CX,CY,RX_OUT,RY_OUT,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#263238';
+  ctx.beginPath();ctx.ellipse(CX,CY,RX_IN,RY_IN,0,0,Math.PI*2);ctx.fill();
+  // lane lines
+  ctx.strokeStyle='rgba(255,255,255,.25)';ctx.lineWidth=1;
+  for(let t=0.25;t<1;t+=0.25){
+    ctx.beginPath();
+    ctx.ellipse(CX,CY,RX_IN+(RX_OUT-RX_IN)*t,RY_IN+(RY_OUT-RY_IN)*t,0,0,Math.PI*2);ctx.stroke();
+  }
+  // start/finish line
+  const p1=trackPos(-Math.PI/2,0), p2=trackPos(-Math.PI/2,1);
+  ctx.strokeStyle='#fff';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
+}
+
+function drawSkater(pos,color,label){
+  ctx.save();
+  ctx.translate(pos.x,pos.y);
+  ctx.fillStyle=color;
+  ctx.beginPath();ctx.arc(0,0,11,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 10px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+  if(label)ctx.fillText(label,0,0);
+  ctx.restore();
+}
+
+function angDiff(a,b){
+  let d=(a-b)%(Math.PI*2);
+  if(d>Math.PI)d-=Math.PI*2;
+  if(d<-Math.PI)d+=Math.PI*2;
+  return d;
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0d1417';ctx.fillRect(0,0,W,H);
+  drawTrack();
+
+  if(!started){
+    ctx.fillStyle='rgba(255,255,255,.9)';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('derby_start','Arrow Keys / WASD / Drag to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(!gameOver){
+    sprint = keys['ArrowUp']||keys['w']||keys['W'];
+    const spd = player.speed*(sprint?1.7:1);
+    player.angle+=spd;
+    player.totalAngle+=spd;
+    if(keys['ArrowLeft']||keys['a']||keys['A'])player.radialT-=0.018;
+    if(keys['ArrowRight']||keys['d']||keys['D'])player.radialT+=0.018;
+    if(keys['ArrowDown']||keys['s']||keys['S'])player.radialT+=0; // no-op, reserved
+    player.radialT=Math.max(0,Math.min(1,player.radialT));
+
+    if(player.totalAngle>=Math.PI*2){
+      player.totalAngle-=Math.PI*2;
+      laps++;
+      score+=100;
+      SFX.levelup();
+      msg=I18N.t('derby_lap','Lap {n} complete!').replace('{n}',laps);
+      msgTimer=80;
+    }
+
+    if(invuln>0)invuln--;
+
+    opps.forEach(o=>{
+      o.angle+=o.speed*o.dir;
+      // occasional lane drift to block
+      o.blockCooldown-=1;
+      if(o.blockCooldown<=0 && Math.abs(angDiff(o.angle,player.angle))<0.5){
+        o.radialT+=(player.radialT-o.radialT>0?0.02:-0.02);
+        o.blockCooldown=30;
+      }
+      o.radialT=Math.max(0,Math.min(1,o.radialT));
+
+      const ad=angDiff(player.angle,o.angle);
+      const closeAngle=Math.abs(ad)<0.09;
+      const closeRadial=Math.abs(player.radialT-o.radialT)<0.14;
+      if(closeAngle && closeRadial && invuln<=0){
+        lives--;
+        invuln=90;
+        SFX.hit();
+        msg=I18N.t('derby_blocked','Blocked! Knocked down.');
+        msgTimer=70;
+        player.angle-=0.06;
+        if(lives<=0){
+          gameOver=true;SFX.lose();
+        }
+      }
+
+      // passing detection: player was behind (negative ad small) now ahead
+      if(!o.passedFlag && ad>0.02 && ad<0.4){
+        o.passedFlag=true;
+        passes++;score+=10;
+        SFX.point();
+        msg=I18N.t('derby_pass','Passed a blocker! +10');
+        msgTimer=60;
+      }
+      if(ad<-0.6)o.passedFlag=false;
+    });
+  }
+
+  // draw opponents
+  opps.forEach(o=>drawSkater(trackPos(o.angle,o.radialT),'#ef5350'));
+  // draw player (flash while invulnerable)
+  if(invuln<=0 || Math.floor(invuln/6)%2===0){
+    drawSkater(trackPos(player.angle,player.radialT), sprint?'#ffee58':'#42a5f5','▲');
+  }
+
+  if(!gameOver){
+    timeLeft-=1/60;
+    if(timeLeft<=0){timeLeft=0;gameOver=true;SFX.lose();}
+  }
+
+  if(gameOver && bestLaps<laps){bestLaps=laps;localStorage.setItem('derby_laps',bestLaps);}
+  if(gameOver && score>hi){hi=score;localStorage.setItem('derby_hi',hi);}
+
+  if(msgTimer>0){
+    msgTimer--;
+    ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,30);
+  }
+
+  ctx.fillStyle='rgba(255,255,255,.9)';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('derby_hud_lives','Lives: {l}').replace('{l}','❤'.repeat(Math.max(0,lives))),10,H-14);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('derby_hud_time','Time: {t}s').replace('{t}',Math.ceil(timeLeft)),W-10,H-14);
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffca28';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-30);
+    ctx.fillStyle='#fff';ctx.font='16px Arial';
+    ctx.fillText(I18N.t('derby_final','Laps: {l} | Passes: {p} | Score: {s}').replace('{l}',laps).replace('{p}',passes).replace('{s}',score),W/2,H/2+2);
+    ctx.fillText(I18N.t('restart_hint3','Press Space / Tap to restart'),W/2,H/2+32);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('derby_score_label','Score: {s} | Hi: {h} | Best Laps: {b}').replace('{s}',score).replace('{h}',hi).replace('{b}',bestLaps);
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

@@ -1,0 +1,206 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rubik's Cube</title><meta name="description" content="Play Rubik's Cube free online — Click the row and column arrows to rotate strips of color across the unfolded cube faces. Get all six faces solid to solve it!"><link rel="canonical" href="https://games.multiportllc.com/games/rubikscube"><meta property="og:title" content="Rubik's Cube - Multiport Games"><meta property="og:description" content="Play Rubik's Cube free online — Click the row and column arrows to rotate strips of color across the unfolded cube faces. Get all six faces solid to solve it!"><meta property="og:url" content="https://games.multiportllc.com/games/rubikscube"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rubik's Cube","description":"Play Rubik's Cube free online instantly. Click the row and column arrows to rotate strips of color across the unfolded cube faces. Get all six faces solid to solve it! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/rubikscube","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:16px;text-align:center}
+#status{color:#fff;font-size:1.05rem;font-weight:800;margin:4px 0 10px;min-height:1.6em}
+#cross{display:inline-grid;grid-template-columns:repeat(4,42px);grid-template-rows:repeat(3,42px);gap:4px;margin:0 auto}
+.face{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:2px;background:#000;border-radius:4px;padding:2px}
+.cell{border-radius:2px}
+.facewrap{position:relative}
+.rowbtn,.colbtn{position:absolute;background:#e94560;color:#fff;border:none;border-radius:50%;width:22px;height:22px;font-size:.8rem;cursor:pointer;line-height:22px;padding:0;z-index:2}
+.rowbtn:hover,.colbtn:hover{background:#ff6b85}
+#stats{color:#ddd;font-size:.9rem;margin-top:12px}
+#controls{margin-top:10px}
+#controls button{padding:8px 18px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;margin:0 5px}
+@media(max-width:480px){
+  #cross{grid-template-columns:repeat(4,32px);grid-template-rows:repeat(3,32px)}
+}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rubik's Cube</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="status">Scramble the arrows to shuffle, then solve each face to one color!</div>
+      <div id="cross"></div>
+      <div id="stats">Moves: 0 | Best solve: —</div>
+      <div id="controls">
+        <button id="scrambleBtn" onclick="scramble()">Scramble</button>
+        <button id="resetBtn" onclick="resetSolved()">Solved State</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Click the arrow buttons</b> around the unfolded cube to rotate a row or column of colored stickers between the neighboring faces. Line up every face so it shows a single solid color to solve the cube — fewer moves is better!
+  </div>
+</div>
+<script>
+// Simplified unfolded-cube puzzle. Layout (cross), face indices:
+//      [U]
+//  [L] [F] [R] [B]
+//      [D]
+// Each face is a 3x3 grid of color indices (0..5). Colors: 0 white 1 yellow 2 red 3 orange 4 green 5 blue
+const COLORS=['#f5f5f5','#ffd93b','#e63946','#ff9f43','#2ecc71','#3498db'];
+const NAMES={U:'up',D:'down',L:'left',R:'right',F:'front',B:'back'};
+let faces={}; // faces.U = 3x3 array
+let moves=0, bestSolve=parseInt(localStorage.getItem('rubik_best')||'0')||0;
+
+function solid(colorIdx){
+  const g=[];
+  for(let r=0;r<3;r++){g.push([colorIdx,colorIdx,colorIdx]);}
+  return g;
+}
+function resetSolved(){
+  faces={U:solid(0),D:solid(1),F:solid(2),B:solid(3),L:solid(4),R:solid(5)};
+  moves=0;
+  render();
+  setStatus(I18N.t('rubik_solved_reset','Solved state restored. Hit Scramble to shuffle!'));
+}
+
+// Rotating a "row" cycles the corresponding row of stickers through F -> R -> B -> L -> F
+// Rotating a "column" cycles the corresponding column of stickers through U -> F -> D -> B -> U
+function rotateRow(rowIdx,dir){
+  const order=dir>0?['F','R','B','L']:['L','B','R','F'];
+  const tmp=faces[order[3]][rowIdx].slice();
+  for(let i=3;i>0;i--){
+    faces[order[i]][rowIdx]=faces[order[i-1]][rowIdx].slice();
+  }
+  faces[order[0]][rowIdx]=tmp;
+  moves++;
+  afterMove();
+}
+function rotateCol(colIdx,dir){
+  const order=dir>0?['U','F','D','B']:['B','D','F','U'];
+  const getCol=(f)=>[faces[f][0][colIdx],faces[f][1][colIdx],faces[f][2][colIdx]];
+  const setCol=(f,v)=>{faces[f][0][colIdx]=v[0];faces[f][1][colIdx]=v[1];faces[f][2][colIdx]=v[2];};
+  const tmp=getCol(order[3]);
+  for(let i=3;i>0;i--){
+    setCol(order[i],getCol(order[i-1]));
+  }
+  setCol(order[0],tmp);
+  moves++;
+  afterMove();
+}
+
+function afterMove(){
+  SFX.click();
+  render();
+  if(checkSolved()){
+    SFX.win();
+    if(bestSolve===0||moves<bestSolve){
+      bestSolve=moves;
+      localStorage.setItem('rubik_best',String(bestSolve));
+    }
+    setStatus(I18N.t('rubik_solved','🎉 Solved in {m} moves! Click Scramble to play again.').replace('{m}',moves));
+  } else {
+    setStatus(I18N.t('rubik_move_hint','Moves: {m} — keep rotating to line up the colors.').replace('{m}',moves));
+  }
+}
+
+function checkSolved(){
+  for(const k of Object.keys(faces)){
+    const f=faces[k];
+    const c=f[0][0];
+    for(let r=0;r<3;r++)for(let cIdx=0;cIdx<3;cIdx++)if(f[r][cIdx]!==c)return false;
+  }
+  return true;
+}
+
+function scramble(){
+  resetSolved();
+  const n=18+Math.floor(Math.random()*8);
+  for(let i=0;i<n;i++){
+    if(Math.random()<0.5){
+      rotateRow(Math.floor(Math.random()*3), Math.random()<0.5?1:-1);
+    } else {
+      rotateCol(Math.floor(Math.random()*3), Math.random()<0.5?1:-1);
+    }
+  }
+  moves=0;
+  render();
+  setStatus(I18N.t('rubik_scrambled','Scrambled! Rotate rows/columns to make every face solid.'));
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function makeFaceEl(key,gridArea){
+  const wrap=document.createElement('div');
+  wrap.className='facewrap';
+  wrap.style.gridArea=gridArea;
+  const face=document.createElement('div');
+  face.className='face';
+  face.style.width='100%';face.style.height='100%';
+  for(let r=0;r<3;r++){
+    for(let c=0;c<3;c++){
+      const cell=document.createElement('div');
+      cell.className='cell';
+      cell.dataset.face=key;cell.dataset.r=r;cell.dataset.c=c;
+      face.appendChild(cell);
+    }
+  }
+  wrap.appendChild(face);
+  return wrap;
+}
+
+function render(){
+  const cross=document.getElementById('cross');
+  if(!cross.dataset.built){
+    cross.dataset.built='1';
+    cross.style.position='relative';
+    cross.style.display='grid';
+    cross.style.gridTemplateAreas="'. u . .' 'l f r b' '. d . .'";
+    cross.style.gridTemplateColumns='repeat(4,minmax(0,1fr))';
+    cross.style.gridTemplateRows='repeat(3,minmax(0,1fr))';
+    cross.appendChild(makeFaceEl('U','u'));
+    cross.appendChild(makeFaceEl('L','l'));
+    const fWrap=makeFaceEl('F','f');
+    cross.appendChild(fWrap);
+    cross.appendChild(makeFaceEl('R','r'));
+    cross.appendChild(makeFaceEl('B','b'));
+    cross.appendChild(makeFaceEl('D','d'));
+    // Row buttons next to F face (rotate row of F/R/B/L)
+    for(let r=0;r<3;r++){
+      const btnL=document.createElement('button');
+      btnL.className='rowbtn';btnL.textContent='◀';
+      btnL.style.left='-26px';btnL.style.top=(r*33+6)+'%';
+      btnL.title='Rotate row '+(r+1)+' left';
+      btnL.onclick=()=>rotateRow(r,-1);
+      fWrap.appendChild(btnL);
+      const btnR=document.createElement('button');
+      btnR.className='rowbtn';btnR.textContent='▶';
+      btnR.style.right='-26px';btnR.style.top=(r*33+6)+'%';
+      btnR.title='Rotate row '+(r+1)+' right';
+      btnR.onclick=()=>rotateRow(r,1);
+      fWrap.appendChild(btnR);
+    }
+    for(let c=0;c<3;c++){
+      const btnU=document.createElement('button');
+      btnU.className='colbtn';btnU.textContent='▲';
+      btnU.style.top='-26px';btnU.style.left=(c*33+6)+'%';
+      btnU.title='Rotate column '+(c+1)+' up';
+      btnU.onclick=()=>rotateCol(c,-1);
+      fWrap.appendChild(btnU);
+      const btnD=document.createElement('button');
+      btnD.className='colbtn';btnD.textContent='▼';
+      btnD.style.bottom='-26px';btnD.style.left=(c*33+6)+'%';
+      btnD.title='Rotate column '+(c+1)+' down';
+      btnD.onclick=()=>rotateCol(c,1);
+      fWrap.appendChild(btnD);
+    }
+  }
+  document.querySelectorAll('.cell').forEach(cell=>{
+    const f=cell.dataset.face,r=+cell.dataset.r,c=+cell.dataset.c;
+    cell.style.background=COLORS[faces[f][r][c]];
+  });
+  document.getElementById('stats').textContent=I18N.t('rubik_stats','Moves: {m} | Best solve: {b}').replace('{m}',moves).replace('{b}',bestSolve||'—');
+}
+
+resetSolved();
+scramble();
+</script></body></html>

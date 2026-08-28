@@ -1,0 +1,222 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Cornhole</title><meta name="description" content="Play Cornhole free online — Drag back from the beanbag to aim and set power/arc, then release to toss it toward the board. Land on the board for 1 point or through the hole for 3. Best of 4 bags per round against the CPU wins."><link rel="canonical" href="https://games.multiportllc.com/games/cornhole"><meta property="og:title" content="Cornhole - Multiport Games"><meta property="og:description" content="Play Cornhole free online — Drag back from the beanbag to aim and set power/arc, then release to toss it toward the board. Land on the board for 1 point or through the hole for 3. Best of 4 bags per round against the CPU wins."><meta property="og:url" content="https://games.multiportllc.com/games/cornhole"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Cornhole","description":"Play Cornhole free online instantly. Drag back from the beanbag to aim and set power/arc, then release to toss it toward the board. Land on the board for 1 point or through the hole for 3. Best of 4 bags per round against the CPU wins. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/cornhole","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#2e7d32,#8d6e63);display:block;border-radius:8px;margin:0 auto;touch-action:none;cursor:crosshair}
+#ui{color:#ffd54f;text-align:center;padding:8px;font-size:1.05rem;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Cornhole</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="ui">You: 0 | CPU: 0 | Bag 1/4</div>
+    <canvas id="c" width="480" height="430"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag back from the beanbag to aim and set power, then release to toss it. Land on the <b>board</b> for 1 point, or sink it through the <b>hole</b> for 3. You and the CPU each throw 4 bags per round — highest total score wins!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=480,H=430;
+const bagStartX=W/2, bagStartY=H-40;
+const boardCX=W/2, boardCY=120, boardW=140, boardH=90, holeR=16;
+let hi=parseInt(localStorage.getItem('cornhole_hi')||'0',10);
+let wins=parseInt(localStorage.getItem('cornhole_wins')||'0',10);
+let playerScore=0, cpuScore=0, bagIdx=0, turn='player', state='aim', roundOver=false, winner=null;
+let drag=null, dragOrigin=null, anim=null, msg='', msgTimer=0, bestRoundScore=0;
+let landedBags=[];
+
+function reset(){
+  playerScore=0;cpuScore=0;bagIdx=0;turn='player';state='aim';roundOver=false;winner=null;
+  landedBags=[];drag=null;anim=null;msg='';msgTimer=0;
+}
+reset();
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  return {x:(t.clientX-r.left)*W/r.width,y:(t.clientY-r.top)*H/r.height};
+}
+
+function pointerDown(e){
+  e.preventDefault();
+  if(roundOver){reset();return;}
+  if(state!=='aim'||turn!=='player')return;
+  const p=getPos(e);
+  drag=p;dragOrigin={x:bagStartX,y:bagStartY};
+}
+function pointerMove(e){
+  if(!drag)return;
+  e.preventDefault();
+  drag=getPos(e);
+}
+function pointerUp(e){
+  if(!drag)return;
+  e.preventDefault();
+  const dx=dragOrigin.x-drag.x, dy=dragOrigin.y-drag.y;
+  const dist=Math.hypot(dx,dy);
+  if(dist>8 && dy>0){
+    const power=Math.min(dist,160)/160;
+    throwBag('player',power,dx);
+  }
+  drag=null;
+}
+c.addEventListener('mousedown',pointerDown);
+c.addEventListener('mousemove',pointerMove);
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',pointerDown,{passive:false});
+c.addEventListener('touchmove',pointerMove,{passive:false});
+c.addEventListener('touchend',pointerUp,{passive:false});
+
+function throwBag(who,power,sideOffset){
+  state='throwing';
+  // target: further power -> further landing. sweet spot ~0.72
+  const sweet=0.72;
+  const errBase=Math.abs(power-sweet)*1.6+0.06;
+  const landX=boardCX + (sideOffset||0)*0.15 + (Math.random()-0.5)*errBase*180;
+  const landY=boardCY + (Math.random()-0.5)*errBase*110 + (power<0.35? (0.35-power)*260 : 0);
+  anim={x0:bagStartX,y0:bagStartY,x1:landX,y1:landY,t:0,who};
+}
+
+function resultFor(x,y){
+  const dx=x-boardCX, dy=y-boardCY;
+  if(Math.hypot(dx,dy)<=holeR)return {pts:3,label:I18N.t('in_hole','IN THE HOLE!')};
+  const hw=boardW/2, hh=boardH/2;
+  if(Math.abs(dx)<=hw && Math.abs(dy)<=hh)return {pts:1,label:I18N.t('on_board','On the board!')};
+  return {pts:0,label:I18N.t('miss_ground','Missed!')};
+}
+
+function applyResult(who,x,y){
+  const r=resultFor(x,y);
+  landedBags.push({x,y,who});
+  if(r.pts===3)SFX.success();else if(r.pts===1)SFX.point();else SFX.error();
+  if(who==='player'){playerScore+=r.pts;}else{cpuScore+=r.pts;}
+  msg=(who==='player'?I18N.t('you_label','You'):'CPU')+': '+r.label+(r.pts?' +'+r.pts:'');
+  msgTimer=70;
+  bagIdx++;
+  if(bagIdx>=8){
+    endRound();
+  } else {
+    turn = turn==='player'?'cpu':'player';
+    state='aim';
+    if(turn==='cpu')setTimeout(cpuThrow,700);
+  }
+}
+
+function cpuThrow(){
+  if(roundOver)return;
+  const power=0.62+Math.random()*0.22;
+  const offset=(Math.random()-0.5)*40;
+  throwBag('cpu',power,offset);
+}
+
+function endRound(){
+  roundOver=true;
+  state='gameover';
+  const roundTotal=playerScore;
+  if(roundTotal>bestRoundScore){bestRoundScore=roundTotal;}
+  if(playerScore>hi){hi=playerScore;localStorage.setItem('cornhole_hi',hi);}
+  if(playerScore>cpuScore){
+    winner='player';wins++;localStorage.setItem('cornhole_wins',wins);SFX.win();
+  } else if(cpuScore>playerScore){
+    winner='cpu';SFX.lose();
+  } else {
+    winner='tie';
+  }
+}
+
+function drawBoard(){
+  ctx.save();
+  ctx.translate(boardCX,boardCY);
+  ctx.fillStyle='#6d4c41';
+  ctx.fillRect(-boardW/2-8,-boardH/2-8,boardW+16,boardH+16);
+  ctx.fillStyle='#8d6e63';
+  ctx.fillRect(-boardW/2,-boardH/2,boardW,boardH);
+  ctx.strokeStyle='rgba(0,0,0,.25)';ctx.lineWidth=2;
+  ctx.strokeRect(-boardW/2,-boardH/2,boardW,boardH);
+  ctx.fillStyle='#1a1a1a';
+  ctx.beginPath();ctx.arc(0,0,holeR,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawBag(x,y,scale,color){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle=color;
+  ctx.beginPath();ctx.ellipse(0,0,14*scale,10*scale,0,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#2e7d32');g.addColorStop(1,'#8d6e63');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+
+  drawBoard();
+
+  landedBags.slice(-8).forEach(b=>{
+    drawBag(b.x,b.y,0.85,b.who==='player'?'#ffca28':'#ef5350');
+  });
+
+  if(anim){
+    anim.t+=0.045;
+    if(anim.t>=1){
+      anim.t=1;
+      const {x1,y1,who}=anim;
+      anim=null;
+      applyResult(who,x1,y1);
+    } else {
+      const t2=anim.t;
+      const x=anim.x0+(anim.x1-anim.x0)*t2;
+      const y=anim.y0+(anim.y1-anim.y0)*t2 - Math.sin(t2*Math.PI)*130;
+      drawBag(x,y,0.9,anim.who==='player'?'#ffca28':'#ef5350');
+    }
+  } else if(state==='aim'&&turn==='player'){
+    drawBag(bagStartX,bagStartY,1,'#ffca28');
+  }
+
+  if(drag&&dragOrigin&&state==='aim'&&turn==='player'){
+    ctx.strokeStyle='rgba(255,213,79,.8)';ctx.lineWidth=2;ctx.setLineDash([5,5]);
+    ctx.beginPath();ctx.moveTo(dragOrigin.x,dragOrigin.y);ctx.lineTo(drag.x,drag.y);ctx.stroke();
+    ctx.setLineDash([]);
+    const dist=Math.min(Math.hypot(drag.x-dragOrigin.x,drag.y-dragOrigin.y),160);
+    const pct=dist/160;
+    ctx.fillStyle='rgba(255,255,255,.2)';ctx.fillRect(W/2-60,H-20,120,12);
+    ctx.fillStyle= pct>0.55&&pct<0.9?'#66bb6a':'#e94560';
+    ctx.fillRect(W/2-60,H-20,120*pct,12);
+    ctx.strokeStyle='rgba(255,255,255,.4)';ctx.strokeRect(W/2-60,H-20,120,12);
+  } else if(state==='aim'&&turn==='player'&&!roundOver){
+    ctx.fillStyle='rgba(255,255,255,.6)';ctx.font='12px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('cornhole_aim_hint','Drag back from the bag, release to throw'),W/2,H-8);
+  }
+
+  ctx.fillStyle='rgba(255,255,255,.9)';ctx.font='bold 14px Arial';ctx.textAlign='left';
+  ctx.fillText(turn==='player'?I18N.t('your_turn2','Your turn'):I18N.t('cpu_turn',"CPU's turn"),10,20);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('bag_count','Bag: {n}/8').replace('{n}',bagIdx+1),W-10,20);
+
+  if(msgTimer>0){
+    msgTimer--;
+    ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,50);
+  }
+
+  if(roundOver){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffd54f';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(winner==='player'?I18N.t('you_win_round','🌽 You win the round!'):winner==='cpu'?I18N.t('cpu_wins_title','CPU wins'):I18N.t('tie_game','Tie game!'),W/2,H/2-20);
+    ctx.fillStyle='#fff';ctx.font='16px Arial';
+    ctx.fillText(I18N.t('final_you_cpu2','Final — You: {y}  CPU: {c}').replace('{y}',playerScore).replace('{c}',cpuScore),W/2,H/2+12);
+    ctx.fillText(I18N.t('restart_hint2','Tap to play again'),W/2,H/2+42);
+  }
+
+  document.getElementById('ui').textContent=I18N.t('cornhole_status','You: {p} | CPU: {c} | Wins: {w} | Hi: {h}').replace('{p}',playerScore).replace('{c}',cpuScore).replace('{w}',wins).replace('{h}',hi);
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

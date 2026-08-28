@@ -1,0 +1,247 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bike Polo</title><meta name="description" content="Play Bike Polo free online — Use Arrow Keys or WASD (or drag on touch) to ride your bike and swing the mallet into the ball. Score 5 goals before the AI defender-turned-attacker scores on you."><link rel="canonical" href="https://games.multiportllc.com/games/bikepolo"><meta property="og:title" content="Bike Polo - Multiport Games"><meta property="og:description" content="Play Bike Polo free online — Use Arrow Keys or WASD (or drag on touch) to ride your bike and swing the mallet into the ball. Score 5 goals before the AI defender-turned-attacker scores on you."><meta property="og:url" content="https://games.multiportllc.com/games/bikepolo"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bike Polo","description":"Play Bike Polo free online instantly. Use Arrow Keys or WASD (or drag on touch) to ride your bike and swing the mallet into the ball. Score 5 goals before the AI defender-turned-attacker scores on you. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/bikepolo","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#00695c;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#4db6ac;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bike Polo</div>
+  <div class="game-frame">
+    <div id="score-display">You: 0 | AI: 0 | Wins: 0</div>
+    <canvas id="c" width="800" height="450"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> or <b>WASD</b> (or drag on touch) to ride your bike. Bump the ball with your mallet to knock it into the opposing goal. First to <b>5 goals</b> wins the match!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=450;
+const WIN_SCORE=5;
+let hi=parseInt(localStorage.getItem('bikepolo_wins')||'0',10);
+let matchWins=hi;
+
+let player,ai,ball,keys,touchTarget,playerScore,aiScore,gameOver,winner,frame;
+
+function reset(){
+  player={x:150,y:H/2,vx:0,vy:0,angle:0,mallet:0};
+  ai={x:W-150,y:H/2,vx:0,vy:0};
+  ball={x:W/2,y:H/2,vx:0,vy:0,r:10};
+  keys={};
+  touchTarget=null;
+  playerScore=0;aiScore=0;
+  gameOver=false;winner=null;
+  frame=0;
+}
+reset();
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(gameOver&&(e.key===' '||e.key==='Enter')){reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function localPos(e){
+  const r=c.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  return {x:(t.clientX-r.left)*(W/r.width),y:(t.clientY-r.top)*(H/r.height)};
+}
+c.addEventListener('touchstart',e=>{e.preventDefault();touchTarget=localPos(e);if(gameOver)reset();},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();touchTarget=localPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();touchTarget=null;},{passive:false});
+c.addEventListener('click',()=>{if(gameOver)reset();});
+
+const GOAL_W=14,GOAL_H=120;
+const goalTopY=H/2-GOAL_H/2,goalBotY=H/2+GOAL_H/2;
+
+function clampField(o,rad){
+  o.x=Math.max(rad,Math.min(W-rad,o.x));
+  o.y=Math.max(rad,Math.min(H-rad,o.y));
+}
+
+function updatePlayer(dt){
+  const accel=0.55;
+  if(touchTarget){
+    const dx=touchTarget.x-player.x,dy=touchTarget.y-player.y;
+    const d=Math.hypot(dx,dy)||1;
+    player.vx+=(dx/d)*accel*dt;
+    player.vy+=(dy/d)*accel*dt;
+  }else{
+    let ax=0,ay=0;
+    if(keys['arrowleft']||keys['a'])ax-=1;
+    if(keys['arrowright']||keys['d'])ax+=1;
+    if(keys['arrowup']||keys['w'])ay-=1;
+    if(keys['arrowdown']||keys['s'])ay+=1;
+    player.vx+=ax*accel*dt;
+    player.vy+=ay*accel*dt;
+  }
+  player.vx*=0.9;player.vy*=0.9;
+  const spd=Math.hypot(player.vx,player.vy);
+  const maxSpd=5.2;
+  if(spd>maxSpd){player.vx*=maxSpd/spd;player.vy*=maxSpd/spd;}
+  player.x+=player.vx*dt;player.y+=player.vy*dt;
+  clampField(player,20);
+  if(spd>0.3)player.angle=Math.atan2(player.vy,player.vx);
+  player.mallet+=dt*(0.15+spd*0.05);
+}
+
+function updateAI(dt){
+  // AI defends its goal (left side x<W/2) but also chases ball to attack player's goal (right side)
+  let targetX,targetY;
+  const ballOnAISide=ball.x<W/2;
+  if(ballOnAISide){
+    targetX=ball.x-30;targetY=ball.y;
+  }else{
+    // fall back toward defending position, biased toward ball y
+    targetX=W-220;targetY=ball.y*0.5+H/2*0.5;
+  }
+  const dx=targetX-ai.x,dy=targetY-ai.y;
+  const d=Math.hypot(dx,dy)||1;
+  const accel=0.42;
+  ai.vx+=(dx/d)*accel*dt;
+  ai.vy+=(dy/d)*accel*dt;
+  ai.vx*=0.9;ai.vy*=0.9;
+  const spd=Math.hypot(ai.vx,ai.vy);
+  const maxSpd=4.6;
+  if(spd>maxSpd){ai.vx*=maxSpd/spd;ai.vy*=maxSpd/spd;}
+  ai.x+=ai.vx*dt;ai.y+=ai.vy*dt;
+  clampField(ai,20);
+}
+
+function hitBall(o,rad,power){
+  const dx=ball.x-o.x,dy=ball.y-o.y;
+  const dist=Math.hypot(dx,dy);
+  const minD=rad+ball.r+8;
+  if(dist<minD&&dist>0.01){
+    const nx=dx/dist,ny=dy/dist;
+    ball.vx+=nx*power;
+    ball.vy+=ny*power;
+    // push ball out of overlap
+    ball.x=o.x+nx*minD;
+    ball.y=o.y+ny*minD;
+    return true;
+  }
+  return false;
+}
+
+function updateBall(dt){
+  ball.x+=ball.vx*dt;ball.y+=ball.vy*dt;
+  ball.vx*=0.985;ball.vy*=0.985;
+  if(ball.y-ball.r<0){ball.y=ball.r;ball.vy*=-0.7;}
+  if(ball.y+ball.r>H){ball.y=H-ball.r;ball.vy*=-0.7;}
+  // side walls except goal mouths
+  if(ball.x-ball.r<0){
+    if(ball.y>goalTopY&&ball.y<goalBotY){
+      // goal for AI (ball entered player's goal on left)
+      aiScore++;SFX.fail();
+      scoreCheck();
+      resetBall(1);
+      return;
+    }else{ball.x=ball.r;ball.vx*=-0.7;}
+  }
+  if(ball.x+ball.r>W){
+    if(ball.y>goalTopY&&ball.y<goalBotY){
+      playerScore++;SFX.success();
+      scoreCheck();
+      resetBall(-1);
+      return;
+    }else{ball.x=W-ball.r;ball.vx*=-0.7;}
+  }
+}
+
+function resetBall(dir){
+  ball.x=W/2;ball.y=H/2;ball.vx=2*dir;ball.vy=(Math.random()-0.5)*2;
+}
+
+function scoreCheck(){
+  if(playerScore>=WIN_SCORE){gameOver=true;winner='player';matchWins++;localStorage.setItem('bikepolo_wins',matchWins);SFX.win();}
+  else if(aiScore>=WIN_SCORE){gameOver=true;winner='ai';SFX.lose();}
+}
+
+function drawField(){
+  ctx.fillStyle='#00695c';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=3;
+  ctx.strokeRect(20,20,W-40,H-40);
+  ctx.beginPath();ctx.moveTo(W/2,20);ctx.lineTo(W/2,H-20);ctx.stroke();
+  ctx.beginPath();ctx.arc(W/2,H/2,50,0,Math.PI*2);ctx.stroke();
+  // goals
+  ctx.fillStyle='#4db6ac';
+  ctx.fillRect(0,goalTopY,GOAL_W,GOAL_H);
+  ctx.fillRect(W-GOAL_W,goalTopY,GOAL_W,GOAL_H);
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;
+  ctx.strokeRect(0,goalTopY,GOAL_W,GOAL_H);
+  ctx.strokeRect(W-GOAL_W,goalTopY,GOAL_W,GOAL_H);
+}
+
+function drawBike(o,color,angle,mallet){
+  ctx.save();
+  ctx.translate(o.x,o.y);
+  ctx.rotate(angle||0);
+  ctx.fillStyle=color;
+  ctx.beginPath();ctx.arc(-12,8,9,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(12,8,9,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#eee';
+  ctx.fillRect(-14,-6,28,10);
+  ctx.fillStyle='#333';
+  ctx.beginPath();ctx.arc(0,-14,7,0,Math.PI*2);ctx.fill();
+  // mallet swinging
+  const swing=Math.sin(mallet)*0.9;
+  ctx.save();
+  ctx.rotate(swing);
+  ctx.strokeStyle='#8d6e63';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(26,0);ctx.stroke();
+  ctx.fillStyle='#5d4037';
+  ctx.fillRect(24,-5,8,10);
+  ctx.restore();
+  ctx.restore();
+}
+
+function drawBall(){
+  ctx.fillStyle='#fff';
+  ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#e0e0e0';ctx.lineWidth=2;ctx.stroke();
+}
+
+function updateScoreDisplay(){
+  document.getElementById('score-display').textContent=
+    I18N.t('bikepolo_score','You: {p} | AI: {a} | Wins: {w}')
+      .replace('{p}',playerScore).replace('{a}',aiScore).replace('{w}',matchWins);
+}
+
+function loop(){
+  frame++;
+  ctx.clearRect(0,0,W,H);
+  drawField();
+
+  if(!gameOver){
+    updatePlayer(1);
+    updateAI(1);
+    hitBall(player,20,3.2);
+    hitBall(ai,20,2.6);
+    updateBall(1);
+  }
+
+  drawBall();
+  drawBike(ai,'#ff8a65',Math.atan2(ai.vy,ai.vx),frame*0.15);
+  drawBike(player,'#4dd0e1',player.angle,player.mallet);
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 40px Arial';ctx.textAlign='center';
+    const msg=winner==='player'?I18N.t('bikepolo_win','YOU WIN!'):I18N.t('bikepolo_loss','AI WINS!');
+    ctx.fillText(msg,W/2,H/2-10);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap, click, or press Space to play again'),W/2,H/2+30);
+  }
+
+  updateScoreDisplay();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
