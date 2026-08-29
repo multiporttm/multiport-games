@@ -1,0 +1,237 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Hurdle Race</title><meta name="description" content="Play Hurdle Race free online — Tap keys rhythmically to build speed and press Jump to clear each hurdle without knocking it down. Race AI runners to the finish line."><link rel="canonical" href="https://games.multiportllc.com/games/hurdlerace"><meta property="og:title" content="Hurdle Race - Multiport Games"><meta property="og:description" content="Play Hurdle Race free online — Tap keys rhythmically to build speed and press Jump to clear each hurdle without knocking it down. Race AI runners to the finish line."><meta property="og:url" content="https://games.multiportllc.com/games/hurdlerace"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Hurdle Race","description":"Play Hurdle Race free online instantly. Tap keys rhythmically to build speed and press Jump to clear each hurdle without knocking it down. Race AI runners to the finish line. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/hurdlerace","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#7c2d12,#fb923c);display:block;border-radius:8px}
+#score-display{color:#fff3e0;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Hurdle Race</div>
+  <div class="game-frame">
+    <div id="score-display">Wins: 0 | Best: --</div>
+    <canvas id="c" width="800" height="300"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Tap <b>Space</b>, <b>Up Arrow</b>, or the screen rhythmically to sprint forward, and press <b>Jump</b> right before each hurdle to clear it. Knocking a hurdle down slows you down — race the AI runners to the finish line!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=300;
+const TRACK_LEN=3000; // world units to finish
+const ground=230;
+let bestTime=localStorage.getItem('hurdlerace_best');
+let wins=parseInt(localStorage.getItem('hurdlerace_wins')||'0',10);
+let state='ready'; // ready, running, finished
+let raceTime=0;
+let hurdles=[];
+let rivals=[];
+let player={x:0,y:ground,vy:0,jumping:false,speed:0,stumble:0};
+let cameraX=0;
+let finishPlace=0;
+let resultShown=false;
+
+function buildHurdles(){
+  hurdles=[];
+  let x=500;
+  while(x<TRACK_LEN-100){
+    hurdles.push({x,hit:false});
+    x+=280+Math.random()*60;
+  }
+}
+
+function reset(){
+  state='ready';
+  raceTime=0;
+  player.x=0;player.y=ground;player.vy=0;player.jumping=false;player.speed=0;player.stumble=0;
+  cameraX=0;
+  finishPlace=0;
+  resultShown=false;
+  buildHurdles();
+  rivals=[
+    {x:0,speed:2.6+Math.random()*0.4,name:'A',color:'#42a5f5',jitter:Math.random()*100},
+    {x:0,speed:2.5+Math.random()*0.5,name:'B',color:'#ab47bc',jitter:Math.random()*100},
+  ];
+}
+
+function startRace(){
+  if(state==='ready'){state='running';}
+}
+
+function tap(){
+  if(state==='ready'){startRace();player.speed=Math.max(player.speed,3.2);return;}
+  if(state==='finished'){reset();return;}
+  if(state==='running'){
+    player.speed=Math.min(player.speed+0.55,7.5);
+  }
+}
+
+function jump(){
+  if(state==='ready'){startRace();}
+  if(state==='running'&&!player.jumping){
+    player.jumping=true;player.vy=-11.5;
+    SFX.jump();
+  } else if(state==='finished'){
+    reset();
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();jump();}
+  if(e.code==='ArrowRight'||e.code==='KeyD'){e.preventDefault();tap();}
+});
+c.addEventListener('click',()=>{ if(state==='ready'||state==='finished')jump(); else tap(); });
+c.addEventListener('touchstart',e=>{e.preventDefault(); if(state==='ready'||state==='finished')jump(); else tap(); },{passive:false});
+
+function nearestHurdleAhead(px){
+  for(const h of hurdles){
+    if(!h.hit && h.x> px-20 && h.x<px+60)return h;
+  }
+  return null;
+}
+
+function checkHurdleCollision(){
+  for(const h of hurdles){
+    if(h.hit)continue;
+    if(Math.abs(player.x-h.x)<18){
+      const clearHeight = ground - player.y; // how high above ground
+      if(player.jumping && clearHeight>28){
+        h.hit=true; // cleared
+      } else {
+        h.hit=true;
+        player.stumble=30;
+        player.speed*=0.35;
+        SFX.hit();
+      }
+    }
+  }
+}
+
+function updateRival(r,dt){
+  r.x += (r.speed + Math.sin((raceTime+r.jitter)/300)*0.4) * dt;
+}
+
+function drawRunner(x,y,jumping,stumble,color){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle=color;
+  ctx.fillRect(-8,jumping?-40:-36,16,28);
+  ctx.beginPath();ctx.arc(0,jumping?-46:-42,9,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle=color;ctx.lineWidth=5;
+  const legPhase=Math.sin(Date.now()/70+x)*10;
+  if(stumble>0){
+    ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(-14,10);ctx.moveTo(0,-8);ctx.lineTo(10,14);ctx.stroke();
+  } else if(jumping){
+    ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(-10,4);ctx.moveTo(0,-8);ctx.lineTo(10,4);ctx.stroke();
+  } else {
+    ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(legPhase,10);ctx.moveTo(0,-8);ctx.lineTo(-legPhase,10);ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawHurdle(x,hit){
+  ctx.save();
+  ctx.translate(x,ground);
+  ctx.strokeStyle=hit?'#a33':'#fff';
+  ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(-14,0);ctx.lineTo(-14,hit?-6:-34);ctx.moveTo(14,0);ctx.lineTo(14,hit?-6:-34);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-14,hit?-6:-30);ctx.lineTo(14,hit?-6:-30);ctx.stroke();
+  ctx.restore();
+}
+
+function worldToScreen(wx){ return wx - cameraX + 150; }
+
+let lastTime=null;
+function loop(t){
+  const dt=lastTime===null?1:Math.min((t-lastTime)/16.6667,3);
+  lastTime=t;
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,ground);
+  sky.addColorStop(0,'#ff8a50');sky.addColorStop(1,'#ffd08a');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,ground);
+  ctx.fillStyle='#c0392b';ctx.fillRect(0,ground,W,H-ground);
+  ctx.strokeStyle='rgba(255,255,255,0.4)';ctx.lineWidth=2;
+  for(let i=0;i<H-ground;i+=12){
+    ctx.beginPath();ctx.moveTo(0,ground+i);ctx.lineTo(W,ground+i);ctx.stroke();
+  }
+
+  if(state==='running'){
+    raceTime+=16.6667*dt;
+    player.speed=Math.max(0,player.speed-0.012*dt);
+    player.x+=player.speed*dt;
+    if(player.stumble>0)player.stumble-=dt;
+
+    if(player.jumping){
+      player.vy+=0.6*dt;
+      player.y+=player.vy*dt;
+      if(player.y>=ground){player.y=ground;player.vy=0;player.jumping=false;}
+    }
+    checkHurdleCollision();
+
+    rivals.forEach(r=>updateRival(r,dt));
+
+    cameraX=player.x-150;
+
+    if(player.x>=TRACK_LEN){
+      state='finished';
+      const place=1+rivals.filter(r=>r.x>player.x).length;
+      finishPlace=place;
+      if(place===1){
+        wins++;localStorage.setItem('hurdlerace_wins',wins);
+        const secs=raceTime/1000;
+        if(!bestTime||secs<parseFloat(bestTime)){bestTime=secs.toFixed(2);localStorage.setItem('hurdlerace_best',bestTime);}
+        SFX.win();
+      } else {
+        SFX.lose();
+      }
+    }
+  }
+
+  // finish line marker
+  const finishScreenX=worldToScreen(TRACK_LEN);
+  if(finishScreenX>-50&&finishScreenX<W+50){
+    ctx.strokeStyle='#fff';ctx.lineWidth=6;
+    ctx.setLineDash([10,8]);
+    ctx.beginPath();ctx.moveTo(finishScreenX,ground);ctx.lineTo(finishScreenX,ground-90);ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  hurdles.forEach(h=>{
+    const sx=worldToScreen(h.x);
+    if(sx>-40&&sx<W+40)drawHurdle(sx,h.hit);
+  });
+
+  rivals.forEach(r=>{
+    const sx=worldToScreen(r.x);
+    if(sx>-30&&sx<W+30)drawRunner(sx,ground,false,0,r.color);
+  });
+
+  drawRunner(worldToScreen(player.x),player.y,player.jumping,player.stumble,'#ffd54f');
+
+  if(state==='ready'){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('hr_start_hint','Tap / Space to start running!'),W/2,H/2);
+  } else if(state==='finished'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    const placeText = finishPlace===1?I18N.t('hr_you_won','YOU WON THE RACE!'):I18N.t('hr_placed','You finished {p} place').replace('{p}',finishPlace===2?'2nd':'3rd');
+    ctx.fillText(placeText,W/2,H/2-30);
+    ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('hr_time_label','Time: {t}s').replace('{t}',(raceTime/1000).toFixed(2)),W/2,H/2+8);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap or click to play again'),W/2,H/2+46);
+  }
+
+  document.getElementById('score-display').textContent=
+    I18N.t('hr_stats_label','Wins: {w} | Best: {b}s').replace('{w}',wins).replace('{b}',bestTime?parseFloat(bestTime).toFixed(2):'--');
+
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

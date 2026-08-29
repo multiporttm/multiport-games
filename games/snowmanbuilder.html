@@ -1,0 +1,332 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Snowman Builder</title><meta name="description" content="Play Snowman Builder free online — Drag across the snowy field to roll and grow a snowball to the target size, then click completed balls to stack them and decorate your snowman."><link rel="canonical" href="https://games.multiportllc.com/games/snowmanbuilder"><meta property="og:title" content="Snowman Builder - Multiport Games"><meta property="og:description" content="Play Snowman Builder free online — Drag across the snowy field to roll and grow a snowball to the target size, then click completed balls to stack them and decorate your snowman."><meta property="og:url" content="https://games.multiportllc.com/games/snowmanbuilder"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Snowman Builder","description":"Play Snowman Builder free online instantly. Drag across the snowy field to roll and grow a snowball to the target size, then click completed balls to stack them in order and decorate your snowman to match the design. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/snowmanbuilder","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(160deg,#0d47a1,#e1f5fe);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#e1f5fe;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Snowman Builder</div>
+  <div class="game-frame">
+    <div id="score-display">Snowmen: 0 | Best time: —</div>
+    <canvas id="c" width="800" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click and <b>drag</b> across the snowy field to roll and grow a snowball to the target size shown at top. When it's ready, <b>click it</b> to add it to your snowman. Build all 3 sizes in order, then <b>click the decoration palette</b> and click on the snowman to place eyes, nose and buttons to match the design.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480;
+let snowmenDone=0,bestTime=parseFloat(localStorage.getItem('snowmanbuilder_best')||'0');
+let stage='roll'; // roll -> stack -> decorate -> done
+let targetIdx=0; // 0=head(small) actually order is base,mid,head large->small
+const TARGETS=[{name:'Base',r:70},{name:'Torso',r:52},{name:'Head',r:34}];
+let ball=null; // currently rolling ball {x,y,r}
+let dragging=false,lastX=0,lastY=0;
+let readyBalls=[]; // completed balls waiting to be stacked, each {r}
+let placed=[]; // stacked balls in order
+let decorPalette=['eye','eye','nose','button','button','button'];
+let decorPlaced=[]; // {type,x,y} relative to snowman
+let targetDecor=null; // target design: array of {type,dx,dy} relative slots
+let startTime=null,elapsed=0;
+let particles=[];
+let message='';
+
+function fieldY(){return H-90;}
+
+function newRollTarget(){
+  const t=TARGETS[targetIdx];
+  ball={x:120,y:fieldY(),r:14,goal:t.r};
+  message='';
+}
+
+function genTargetDesign(){
+  // slots relative to head center (placed[2])
+  targetDecor=[
+    {type:'eye',dx:-12,dy:-6},
+    {type:'eye',dx:12,dy:-6},
+    {type:'nose',dx:0,dy:4},
+    {type:'button',dx:0,dy:-30,onTorso:true},
+    {type:'button',dx:0,dy:-10,onTorso:true},
+    {type:'button',dx:0,dy:10,onTorso:true},
+  ];
+}
+
+function startNew(){
+  stage='roll';targetIdx=0;readyBalls=[];placed=[];decorPlaced=[];
+  genTargetDesign();
+  newRollTarget();
+  startTime=performance.now();
+  elapsed=0;
+}
+
+// --- Rolling controls ---
+function pos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+
+function onDown(e){
+  e.preventDefault();
+  const p=pos(e);
+  if(stage==='roll'&&ball){
+    const d=Math.hypot(p.x-ball.x,p.y-ball.y);
+    if(d<ball.r+30){dragging=true;lastX=p.x;lastY=p.y;}
+  } else if(stage==='stack'){
+    // check click on a ready ball
+    readyBalls.forEach((rb,i)=>{
+      const d=Math.hypot(p.x-rb.dispX,p.y-rb.dispY);
+      if(d<rb.r+5) placeBall(i);
+    });
+  } else if(stage==='decorate'){
+    handleDecorClick(p);
+  } else if(stage==='done'){
+    startNew();
+  }
+}
+function onMove(e){
+  if(!dragging||stage!=='roll')return;
+  e.preventDefault();
+  const p=pos(e);
+  const dx=p.x-lastX,dy=p.y-lastY;
+  const dist=Math.hypot(dx,dy);
+  if(dist>1){
+    ball.x+=dx*0.6;ball.y+=dy*0.6;
+    ball.x=Math.max(ball.r,Math.min(W-ball.r,ball.x));
+    ball.y=Math.max(ball.r,Math.min(fieldY()+40,ball.y));
+    ball.r+=dist*0.045;
+    for(let i=0;i<2;i++)particles.push({x:ball.x+(Math.random()-.5)*ball.r,y:ball.y+ball.r*0.6,vx:(Math.random()-.5)*1.5,vy:-Math.random()*1.5,life:20});
+    if(ball.r>=ball.goal){
+      dragging=false;
+      SFX.success();
+      readyBalls.push({r:ball.goal,size:TARGETS[targetIdx].name});
+      targetIdx++;
+      if(targetIdx<TARGETS.length){newRollTarget();}
+      else{stage='stack';layoutReadyBalls();message=I18N.t('stack_hint','Click each ball to stack your snowman!');}
+    }
+  }
+  lastX=p.x;lastY=p.y;
+}
+function onUp(){dragging=false;}
+
+function layoutReadyBalls(){
+  readyBalls.forEach((rb,i)=>{
+    rb.dispX=150+i*180;
+    rb.dispY=fieldY()+20;
+  });
+}
+
+function placeBall(i){
+  // must place in order base(0) first only if matches next needed
+  const needed=placed.length;
+  if(TARGETS[needed] && readyBalls[i].size!==TARGETS[needed].name){
+    message=I18N.t('wrong_order','Place them base first, then torso, then head!');
+    SFX.error();
+    return;
+  }
+  const rb=readyBalls.splice(i,1)[0];
+  placed.push(rb);
+  SFX.coin();
+  layoutReadyBalls();
+  if(placed.length===TARGETS.length){
+    stage='decorate';
+    message=I18N.t('decorate_hint','Now click a decoration below, then click the snowman to place it!');
+  }
+}
+
+let selectedDecor=null;
+function handleDecorClick(p){
+  // palette area at bottom
+  const py=H-30;
+  if(p.y>py-25){
+    const idx=Math.floor((p.x-40)/110);
+    if(idx>=0&&idx<decorPalette.length){selectedDecor=decorPalette[idx];SFX.click();}
+    return;
+  }
+  if(!selectedDecor)return;
+  // snowman body center
+  const sx=W/2, headY=headCenterY(), torsoY=torsoCenterY();
+  const dx=p.x-sx, dy=p.y-(selectedDecor==='button'?torsoY:headY);
+  decorPlaced.push({type:selectedDecor,dx,dy,onTorso:selectedDecor==='button'});
+  const idx=decorPalette.indexOf(selectedDecor);
+  if(idx>=0)decorPalette.splice(idx,1);
+  selectedDecor=null;
+  SFX.click();
+  checkDecorComplete();
+}
+
+function checkDecorComplete(){
+  if(decorPalette.length===0){
+    stage='done';
+    elapsed=(performance.now()-startTime)/1000;
+    snowmenDone++;
+    if(bestTime===0||elapsed<bestTime){bestTime=elapsed;localStorage.setItem('snowmanbuilder_best',bestTime.toFixed(1));}
+    SFX.win();
+    message=I18N.t('complete_msg','Snowman complete! Click to build another.');
+  }
+}
+
+c.addEventListener('mousedown',onDown);
+c.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+c.addEventListener('touchstart',onDown,{passive:false});
+c.addEventListener('touchmove',onMove,{passive:false});
+c.addEventListener('touchend',onUp);
+
+function headCenterY(){
+  // stack bottom-aligned near fieldY, sizes base->mid->head from bottom up
+  let y=fieldY();
+  const sizes=placed.map(p=>p.r);
+  let cy=y-sizes[0];
+  for(let i=1;i<sizes.length;i++){cy-=sizes[i-1];cy-=sizes[i]*0;}
+  // simpler: compute stacking directly in draw; approximate head center
+  let bottom=fieldY();
+  let curY=bottom;
+  let centers=[];
+  for(let i=0;i<placed.length;i++){
+    curY-=placed[i].r;
+    centers.push(curY);
+    curY-=placed[i].r;
+  }
+  return centers[2]!==undefined?centers[2]:bottom-160;
+}
+function torsoCenterY(){
+  let bottom=fieldY();
+  let curY=bottom;
+  let centers=[];
+  for(let i=0;i<placed.length;i++){
+    curY-=placed[i].r;
+    centers.push(curY);
+    curY-=placed[i].r;
+  }
+  return centers[1]!==undefined?centers[1]:bottom-90;
+}
+
+function drawSnowman(){
+  const sx=W/2;
+  let bottom=fieldY();
+  let curY=bottom;
+  let centers=[];
+  for(let i=0;i<placed.length;i++){
+    curY-=placed[i].r;
+    centers.push(curY);
+    ctx.fillStyle='#ffffff';
+    ctx.beginPath();ctx.arc(sx,curY,placed[i].r,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#b0d9e8';ctx.lineWidth=2;ctx.stroke();
+    curY-=placed[i].r;
+  }
+  // decorations
+  decorPlaced.forEach(d=>{
+    const baseY=d.onTorso?(centers[1]!==undefined?centers[1]:bottom-90):(centers[2]!==undefined?centers[2]:bottom-160);
+    const x=sx+d.dx,y=baseY+d.dy;
+    if(d.type==='eye'){ctx.fillStyle='#1a1a2e';ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();}
+    else if(d.type==='nose'){ctx.fillStyle='#ff8f00';ctx.beginPath();ctx.moveTo(x-6,y);ctx.lineTo(x+8,y);ctx.lineTo(x-6,y+7);ctx.closePath();ctx.fill();}
+    else if(d.type==='button'){ctx.fillStyle='#1a1a2e';ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fill();}
+  });
+}
+
+function drawTargetPreview(){
+  ctx.save();
+  ctx.translate(W-90,70);
+  ctx.scale(0.35,0.35);
+  let bottom=140;
+  let curY=bottom;
+  let centers=[];
+  const sizes=[70,52,34];
+  for(let i=0;i<3;i++){
+    curY-=sizes[i];
+    centers.push(curY);
+    ctx.fillStyle='rgba(255,255,255,0.9)';
+    ctx.beginPath();ctx.arc(0,curY,sizes[i],0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#333';ctx.stroke();
+    curY-=sizes[i];
+  }
+  if(targetDecor)targetDecor.forEach(d=>{
+    const baseY=d.onTorso?centers[1]:centers[2];
+    const x=d.dx,y=baseY+d.dy;
+    ctx.fillStyle=d.type==='nose'?'#ff8f00':'#1a1a2e';
+    ctx.beginPath();ctx.arc(x,y,10,0,Math.PI*2);ctx.fill();
+  });
+  ctx.restore();
+  ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('target_label','Target'),W-90,145);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0d47a1');sky.addColorStop(1,'#e1f5fe');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // ground
+  ctx.fillStyle='#f5fbff';ctx.fillRect(0,fieldY()+40,W,H-fieldY()-40);
+  ctx.strokeStyle='#cfe8f5';ctx.beginPath();ctx.moveTo(0,fieldY()+40);ctx.lineTo(W,fieldY()+40);ctx.stroke();
+
+  // particles
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=0.1;p.life--;ctx.fillStyle='rgba(255,255,255,0.8)';ctx.fillRect(p.x,p.y,3,3);});
+
+  drawTargetPreview();
+  drawSnowman();
+
+  if(stage==='roll'&&ball){
+    ctx.fillStyle='#ffffff';ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#b0d9e8';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('roll_hint','Drag to roll the {n} snowball!').replace('{n}',TARGETS[targetIdx].name),W/2,30);
+    // progress bar
+    const pct=Math.min(1,(ball.r-14)/(ball.goal-14));
+    ctx.fillStyle='rgba(0,0,0,0.2)';ctx.fillRect(W/2-100,44,200,14);
+    ctx.fillStyle='#4caf50';ctx.fillRect(W/2-100,44,200*pct,14);
+    ctx.strokeStyle='#fff';ctx.strokeRect(W/2-100,44,200,14);
+  }
+
+  if(stage==='stack'){
+    ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(message,W/2,30);
+    readyBalls.forEach(rb=>{
+      ctx.fillStyle='#ffffff';ctx.beginPath();ctx.arc(rb.dispX,rb.dispY,rb.r,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='#4caf50';ctx.lineWidth=3;ctx.stroke();
+      ctx.fillStyle='#333';ctx.font='12px Arial';ctx.fillText(rb.size,rb.dispX,rb.dispY+rb.r+16);
+    });
+  }
+
+  if(stage==='decorate'){
+    ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(message,W/2,30);
+    // palette
+    decorPalette.forEach((d,i)=>{
+      const x=40+i*110+35,y=H-30;
+      ctx.fillStyle=selectedDecor===d?'#ffd54f':'rgba(255,255,255,0.85)';
+      ctx.beginPath();ctx.arc(x,y,22,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='#333';ctx.stroke();
+      ctx.fillStyle='#1a1a2e';ctx.font='bold 11px Arial';
+      ctx.fillText(d,x,y+4);
+    });
+  }
+
+  if(stage==='done'){
+    ctx.fillStyle='rgba(0,0,0,0.35)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('complete_title','SNOWMAN COMPLETE!'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('time_label','Time: {t}s').replace('{t}',elapsed.toFixed(1)),W/2,H/2+16);
+    ctx.fillText(I18N.t('click_restart','Click to build another'),W/2,H/2+46);
+  }
+
+  document.getElementById('score-display').textContent=
+    I18N.t('snowman_score_label','Snowmen: {s} | Best time: {b}')
+      .replace('{s}',snowmenDone)
+      .replace('{b}',bestTime>0?bestTime.toFixed(1)+'s':'—');
+
+  requestAnimationFrame(loop);
+}
+startNew();
+loop();
+</script></body></html>

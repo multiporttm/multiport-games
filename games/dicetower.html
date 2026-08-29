@@ -1,0 +1,211 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Dice Tower</title><meta name="description" content="Play Dice Tower free online — Roll 5 dice and try to match the target pattern shown. Lock dice you want to keep and reroll the rest, up to 3 rolls, before your chances run out."><link rel="canonical" href="https://games.multiportllc.com/games/dicetower"><meta property="og:title" content="Dice Tower - Multiport Games"><meta property="og:description" content="Play Dice Tower free online — Roll 5 dice and try to match the target pattern shown. Lock dice you want to keep and reroll the rest, up to 3 rolls, before your chances run out."><meta property="og:url" content="https://games.multiportllc.com/games/dicetower"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Dice Tower","description":"Play Dice Tower free online instantly. Roll 5 dice and try to match the target pattern shown. Lock dice you want to keep and reroll the rest, up to 3 rolls, before your chances run out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/dicetower","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:linear-gradient(135deg,#37474f,#90a4ae);border-radius:14px;padding:20px;text-align:center}
+#target{color:#fff;font-size:1.15rem;font-weight:800;margin:6px 0 14px;min-height:1.6em;text-shadow:0 1px 3px rgba(0,0,0,.4)}
+#status{color:#eceff1;font-size:.95rem;font-weight:600;margin:6px 0;min-height:1.4em}
+#stats{color:#fff;font-weight:800;font-size:1rem;margin-bottom:10px;display:flex;justify-content:center;gap:18px}
+#dice{display:flex;justify-content:center;gap:12px;margin:16px 0;flex-wrap:wrap}
+.die{width:64px;height:64px;background:#fdfdfd;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:2rem;font-weight:900;color:#263238;cursor:pointer;transition:transform .12s,box-shadow .12s;box-shadow:0 3px 0 #b0bec5;user-select:none}
+.die.locked{background:#ffd54f;box-shadow:0 3px 0 #c8a415;transform:translateY(2px)}
+.die.rolling{animation:shake .12s infinite}
+@keyframes shake{0%{transform:rotate(-4deg)}50%{transform:rotate(4deg)}100%{transform:rotate(-4deg)}}
+#controls{margin:14px 0}
+#controls button{padding:10px 24px;background:#263238;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:0 6px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+#rollsLeft{color:#eceff1;font-size:.85rem;margin-top:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Dice Tower</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="stats"><span id="matchedDisplay">Matched: 0</span><span id="livesDisplay">Lives: 3</span></div>
+      <div id="target">Target: —</div>
+      <div id="dice"></div>
+      <div id="rollsLeft">Rolls left: 3</div>
+      <div id="controls">
+        <button id="rollBtn">Roll</button>
+        <button id="submitBtn">Submit</button>
+      </div>
+      <div id="status">Click Roll to begin!</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click <b>Roll</b> to roll all 5 dice, then click individual dice to <b>lock</b> them before rerolling the rest. You get up to <b>3 rolls</b> per target — click <b>Submit</b> when you think you match the shown pattern. Fail a target and you lose a life; 3 lives lost ends the run.</div>
+</div>
+<script>
+let hi=0;
+try{hi=parseInt(localStorage.getItem('dicetower_hi')||'0');}catch(e){}
+
+let dice=[1,1,1,1,1];
+let locked=[false,false,false,false,false];
+let rollsLeft=3;
+let matched=0;
+let lives=3;
+let target=null;
+let round=1;
+let gameOver=false;
+let canSubmit=false;
+
+const TARGET_TYPES=[
+  {key:'three_kind',label:()=>I18N.t('target_three_kind','Get Three of a Kind'),check:d=>{const c=counts(d);return Object.values(c).some(v=>v>=3);}},
+  {key:'four_kind',label:()=>I18N.t('target_four_kind','Get Four of a Kind'),check:d=>{const c=counts(d);return Object.values(c).some(v=>v>=4);}},
+  {key:'run3',label:()=>I18N.t('target_run3','Get a Run of 3 (e.g. 2-3-4)'),check:d=>hasRun(d,3)},
+  {key:'run4',label:()=>I18N.t('target_run4','Get a Run of 4 (e.g. 2-3-4-5)'),check:d=>hasRun(d,4)},
+  {key:'full_house',label:()=>I18N.t('target_full_house','Get a Full House (3+2)'),check:d=>{const c=Object.values(counts(d)).sort((a,b)=>b-a);return c[0]>=3&&c[1]>=2;}},
+  {key:'sum_high',label:(n)=>I18N.t('target_sum','Get Dice Sum ≥ {n}').replace('{n}',n),check:(d,n)=>d.reduce((a,b)=>a+b,0)>=n,param:true},
+  {key:'all_even',label:()=>I18N.t('target_all_even','Make All Dice Even'),check:d=>d.every(v=>v%2===0)},
+  {key:'all_odd',label:()=>I18N.t('target_all_odd','Make All Dice Odd'),check:d=>d.every(v=>v%2!==0)},
+];
+
+function counts(d){const c={};d.forEach(v=>c[v]=(c[v]||0)+1);return c;}
+function hasRun(d,len){
+  const uniq=Array.from(new Set(d)).sort((a,b)=>a-b);
+  let run=1,best=1;
+  for(let i=1;i<uniq.length;i++){
+    if(uniq[i]===uniq[i-1]+1){run++;best=Math.max(best,run);}else run=1;
+  }
+  return best>=len;
+}
+
+function newTarget(){
+  const idx=Math.floor(Math.random()*TARGET_TYPES.length);
+  const t=TARGET_TYPES[idx];
+  let param=null;
+  if(t.param){
+    param=Math.min(28,15+round*2+Math.floor(Math.random()*4));
+  }
+  target={def:t,param};
+}
+
+function checkTarget(){
+  return target.def.check(dice,target.param);
+}
+
+function renderTarget(){
+  document.getElementById('target').textContent=I18N.t('target_label','Target: {t}').replace('{t}',target.def.label(target.param));
+}
+
+function rollDice(){
+  if(gameOver)return;
+  if(rollsLeft<=0)return;
+  rollsLeft--;
+  const els=document.querySelectorAll('.die');
+  els.forEach((el,i)=>{ if(!locked[i]) el.classList.add('rolling'); });
+  SFX.click();
+  let ticks=0;
+  const iv=setInterval(()=>{
+    ticks++;
+    for(let i=0;i<5;i++){ if(!locked[i]) dice[i]=1+Math.floor(Math.random()*6); }
+    render();
+    if(ticks>=8){
+      clearInterval(iv);
+      els.forEach(el=>el.classList.remove('rolling'));
+      canSubmit=true;
+      updateStatus();
+    }
+  },50);
+}
+
+function toggleLock(i){
+  if(gameOver||rollsLeft===3)return; // can't lock before first roll
+  if(rollsLeft<=0)return;
+  locked[i]=!locked[i];
+  render();
+  SFX.select();
+}
+
+function updateStatus(){
+  document.getElementById('rollsLeft').textContent=I18N.t('rolls_left','Rolls left: {n}').replace('{n}',rollsLeft);
+  document.getElementById('rollBtn').disabled=rollsLeft<=0||gameOver;
+  document.getElementById('submitBtn').disabled=!canSubmit||gameOver;
+  document.getElementById('matchedDisplay').textContent=I18N.t('matched_label','Matched: {n}').replace('{n}',matched);
+  document.getElementById('livesDisplay').textContent=I18N.t('lives_label','Lives: {n}').replace('{n}',Math.max(0,lives));
+  if(!gameOver){
+    document.getElementById('status').textContent=canSubmit?I18N.t('status_check','Match the target, or reroll unlocked dice.'):I18N.t('status_roll','Click Roll to roll the dice.');
+  }
+}
+
+function render(){
+  const el=document.getElementById('dice');
+  el.innerHTML='';
+  const FACES=['','⚀','⚁','⚂','⚃','⚄','⚅'];
+  dice.forEach((v,i)=>{
+    const d=document.createElement('div');
+    d.className='die'+(locked[i]?' locked':'');
+    d.textContent=FACES[v];
+    d.onclick=()=>toggleLock(i);
+    el.appendChild(d);
+  });
+}
+
+function submitAttempt(){
+  if(!canSubmit||gameOver)return;
+  if(checkTarget()){
+    matched++;
+    round++;
+    SFX.success();
+    if(matched>hi){hi=matched;try{localStorage.setItem('dicetower_hi',hi);}catch(e){}}
+    document.getElementById('status').textContent=I18N.t('status_matched','Target matched! New target incoming...');
+    nextRound();
+  } else {
+    lives--;
+    SFX.fail();
+    if(lives<=0){
+      endGame();
+    } else {
+      document.getElementById('status').textContent=I18N.t('status_failed','No match! You lost a life. New target incoming...');
+      nextRound();
+    }
+  }
+}
+
+function nextRound(){
+  setTimeout(()=>{
+    if(gameOver)return;
+    resetRound();
+  },1100);
+}
+
+function resetRound(){
+  locked=[false,false,false,false,false];
+  rollsLeft=3;
+  canSubmit=false;
+  newTarget();
+  renderTarget();
+  // initial roll so dice show something
+  for(let i=0;i<5;i++)dice[i]=1+Math.floor(Math.random()*6);
+  render();
+  updateStatus();
+  document.getElementById('status').textContent=I18N.t('status_roll','Click Roll to roll the dice.');
+}
+
+function endGame(){
+  gameOver=true;
+  document.getElementById('status').textContent=I18N.t('game_over_msg','GAME OVER — Matched {n} target(s). Hi: {h}. Click Roll to play again.').replace('{n}',matched).replace('{h}',hi);
+  document.getElementById('rollBtn').textContent=I18N.t('play_again','Play Again');
+  document.getElementById('rollBtn').disabled=false;
+  document.getElementById('submitBtn').disabled=true;
+  SFX.lose();
+}
+
+function startGame(){
+  matched=0;lives=3;round=1;gameOver=false;canSubmit=false;
+  document.getElementById('rollBtn').textContent=I18N.t('roll_btn','Roll');
+  resetRound();
+}
+
+document.getElementById('rollBtn').addEventListener('click',()=>{
+  if(gameOver){startGame();return;}
+  rollDice();
+});
+document.getElementById('submitBtn').addEventListener('click',submitAttempt);
+
+startGame();
+</script></body></html>

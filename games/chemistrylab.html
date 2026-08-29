@@ -1,0 +1,230 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Chemistry Lab</title><meta name="description" content="Play Chemistry Lab free online — Click reagent icons from the shelf in the exact order shown on the formula card, then hit Mix before time runs out to create the compound."><link rel="canonical" href="https://games.multiportllc.com/games/chemistrylab"><meta property="og:title" content="Chemistry Lab - Multiport Games"><meta property="og:description" content="Play Chemistry Lab free online — Click reagent icons from the shelf in the exact order shown on the formula card, then hit Mix before time runs out to create the compound."><meta property="og:url" content="https://games.multiportllc.com/games/chemistrylab"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Chemistry Lab","description":"Play Chemistry Lab free online instantly. Click reagent icons from the shelf in the exact order shown on the formula card, then hit Mix before time runs out to create the compound. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/chemistrylab","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#101a2e;border-radius:14px;padding:18px;text-align:center;max-width:560px;margin:0 auto}
+#status{color:#fff;font-size:1.05rem;font-weight:800;margin:6px 0;min-height:1.6em}
+#lives{color:#ff6b6b;font-size:1.1rem;margin:4px 0}
+#timerWrap{background:#0a1120;border-radius:8px;height:14px;margin:8px auto;max-width:400px;overflow:hidden}
+#timerBar{background:linear-gradient(90deg,#00e5ff,#7c4dff);height:100%;width:100%;transition:width .1s linear}
+#formulaCard{background:#1a2740;border-radius:12px;padding:14px;margin:12px auto;max-width:420px}
+#formulaCard .label{color:#9fb8e0;font-size:.85rem;margin-bottom:6px}
+#formulaSeq{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}
+.icon-chip{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.4rem;box-shadow:0 2px 4px rgba(0,0,0,.4)}
+#playerSeq{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;min-height:52px;margin:10px auto;max-width:420px}
+#shelf{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin:14px auto;max-width:480px}
+.reagent{width:56px;height:56px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.8rem;cursor:pointer;border:2px solid rgba(255,255,255,.15);transition:transform .1s}
+.reagent:active{transform:scale(.9)}
+#actions{margin:14px 0}
+#actions button{padding:10px 26px;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:0 6px;font-weight:700}
+#mixBtn{background:#00c853}
+#clearBtn{background:#546e7a}
+#actions button:disabled{opacity:.4;cursor:not-allowed}
+.explosion{position:relative}
+@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-6px)}80%{transform:translateX(6px)}}
+.shake{animation:shake .4s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Chemistry Lab</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="status">Match the formula, then click Mix!</div>
+      <div id="lives">❤️❤️❤️</div>
+      <div>Compounds made: <span id="compoundCount">0</span> | Best: <span id="bestCount">0</span></div>
+      <div id="timerWrap"><div id="timerBar"></div></div>
+      <div id="formulaCard">
+        <div class="label">Target Formula:</div>
+        <div id="formulaSeq"></div>
+      </div>
+      <div class="label" style="color:#9fb8e0">Your Sequence:</div>
+      <div id="playerSeq"></div>
+      <div id="shelf"></div>
+      <div id="actions">
+        <button id="mixBtn" onclick="attemptMix()">Mix</button>
+        <button id="clearBtn" onclick="clearSeq()">Clear</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click the <b>reagent icons</b> from the shelf in the <b>exact order</b> shown on the formula card, then click <b>Mix</b> before the timer runs out. Wrong order or a bad mix causes a small explosion and costs a life. Get it right for a point and a new, harder formula!</div>
+</div>
+<script>
+const REAGENTS=[
+  {id:'H2O',icon:'💧',color:'#1e88e5'},
+  {id:'NaCl',icon:'🧂',color:'#eceff1'},
+  {id:'CO2',icon:'☁️',color:'#90a4ae'},
+  {id:'O2',icon:'🫧',color:'#4fc3f7'},
+  {id:'Fe',icon:'🧲',color:'#8d6e63'},
+  {id:'Au',icon:'✨',color:'#ffd54f'},
+  {id:'S',icon:'🟡',color:'#fff176'},
+  {id:'Acid',icon:'🧪',color:'#66bb6a'}
+];
+
+let lives=3,compounds=0,best=parseInt(localStorage.getItem('chemistrylab_best')||'0');
+let formula=[],playerSeq=[],timeLeft=100,timerMax=100,timerInterval=null,round=1,locked=false;
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+function updateCounts(){
+  document.getElementById('compoundCount').textContent=compounds;
+  document.getElementById('bestCount').textContent=best;
+  document.getElementById('lives').textContent='❤️'.repeat(Math.max(0,lives));
+}
+
+function genFormula(){
+  const len=Math.min(6,3+Math.floor(round/2));
+  const seq=[];
+  for(let i=0;i<len;i++)seq.push(REAGENTS[Math.floor(Math.random()*REAGENTS.length)]);
+  return seq;
+}
+
+function renderFormula(){
+  const el=document.getElementById('formulaSeq');
+  el.innerHTML='';
+  formula.forEach(r=>{
+    const d=document.createElement('div');
+    d.className='icon-chip';
+    d.style.background=r.color+'33';
+    d.style.border='2px solid '+r.color;
+    d.textContent=r.icon;
+    el.appendChild(d);
+  });
+}
+
+function renderPlayerSeq(){
+  const el=document.getElementById('playerSeq');
+  el.innerHTML='';
+  playerSeq.forEach(r=>{
+    const d=document.createElement('div');
+    d.className='icon-chip';
+    d.style.background=r.color+'55';
+    d.style.border='2px solid '+r.color;
+    d.textContent=r.icon;
+    el.appendChild(d);
+  });
+}
+
+function renderShelf(){
+  const el=document.getElementById('shelf');
+  el.innerHTML='';
+  REAGENTS.forEach(r=>{
+    const d=document.createElement('div');
+    d.className='reagent';
+    d.style.background=r.color+'22';
+    d.style.borderColor=r.color;
+    d.textContent=r.icon;
+    d.onclick=()=>pickReagent(r);
+    el.appendChild(d);
+  });
+}
+
+function pickReagent(r){
+  if(locked)return;
+  playerSeq.push(r);
+  SFX.select();
+  renderPlayerSeq();
+}
+
+function clearSeq(){
+  if(locked)return;
+  playerSeq=[];
+  renderPlayerSeq();
+  SFX.click();
+}
+
+function startTimer(){
+  clearInterval(timerInterval);
+  timeLeft=timerMax;
+  timerInterval=setInterval(()=>{
+    timeLeft-=1;
+    document.getElementById('timerBar').style.width=Math.max(0,(timeLeft/timerMax)*100)+'%';
+    if(timeLeft<=0){
+      clearInterval(timerInterval);
+      failAttempt('Time ran out!');
+    }
+  },100);
+}
+
+function nextRound(){
+  round++;
+  formula=genFormula();
+  playerSeq=[];
+  timerMax=Math.max(45,100-round*3);
+  locked=false;
+  renderFormula();
+  renderPlayerSeq();
+  setStatus('Match the formula, then click Mix!');
+  startTimer();
+}
+
+function sequencesMatch(a,b){
+  if(a.length!==b.length)return false;
+  for(let i=0;i<a.length;i++)if(a[i].id!==b[i].id)return false;
+  return true;
+}
+
+function attemptMix(){
+  if(locked)return;
+  if(playerSeq.length===0){setStatus('Pick some reagents first!');return;}
+  locked=true;
+  clearInterval(timerInterval);
+  if(sequencesMatch(formula,playerSeq)){
+    compounds++;
+    if(compounds>best){best=compounds;localStorage.setItem('chemistrylab_best',best);}
+    SFX.success();
+    setStatus(I18N.t('compound_success','Compound created! Great work.'));
+    updateCounts();
+    setTimeout(()=>{ if(lives>0)nextRound(); },900);
+  } else {
+    failAttempt('Wrong sequence! Explosion!');
+  }
+}
+
+function failAttempt(msg){
+  locked=true;
+  clearInterval(timerInterval);
+  lives--;
+  SFX.fail();
+  const table=document.getElementById('table');
+  table.classList.add('shake');
+  setTimeout(()=>table.classList.remove('shake'),400);
+  updateCounts();
+  if(lives<=0){
+    setStatus(I18N.t('game_over_lab','💥 '+msg+' Out of lives! Game over.'));
+    showRestart();
+  } else {
+    setStatus(I18N.t('failed_retry','💥 '+msg+' Try again.'));
+    setTimeout(()=>{ playerSeq=[];renderPlayerSeq();locked=false;startTimer(); },900);
+  }
+}
+
+function showRestart(){
+  const el=document.getElementById('shelf');
+  const btn=document.createElement('button');
+  btn.textContent=I18N.t('new_game_btn','New Game');
+  btn.style.cssText='padding:10px 26px;border:none;border-radius:20px;background:#e94560;color:#fff;font-weight:700;cursor:pointer;margin-top:10px;width:100%';
+  btn.onclick=()=>{ startGame(); };
+  el.innerHTML='';
+  el.appendChild(btn);
+}
+
+function startGame(){
+  lives=3;compounds=0;round=1;
+  formula=genFormula();
+  playerSeq=[];
+  timerMax=100;
+  locked=false;
+  renderFormula();
+  renderShelf();
+  renderPlayerSeq();
+  updateCounts();
+  setStatus('Match the formula, then click Mix!');
+  startTimer();
+}
+
+startGame();
+</script></body></html>

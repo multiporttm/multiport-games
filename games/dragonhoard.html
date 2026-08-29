@@ -1,0 +1,272 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Dragon Hoard</title><meta name="description" content="Play Dragon Hoard free online — Sneak around the dragon's lair with Arrow Keys / WASD or touch-drag, grab gold and gems, and stay out of the dragon's sweeping gaze or lose a life."><link rel="canonical" href="https://games.multiportllc.com/games/dragonhoard"><meta property="og:title" content="Dragon Hoard - Multiport Games"><meta property="og:description" content="Play Dragon Hoard free online — Sneak around the dragon's lair with Arrow Keys / WASD or touch-drag, grab gold and gems, and stay out of the dragon's sweeping gaze or lose a life."><meta property="og:url" content="https://games.multiportllc.com/games/dragonhoard"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Dragon Hoard","description":"Play Dragon Hoard free online instantly. Sneak around the dragon's lair with Arrow Keys / WASD or touch-drag, grab gold and gems, and stay out of the dragon's sweeping gaze or lose a life. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/dragonhoard","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#1a0e2e,#5c1a1a);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffd54f;font-size:1.15rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Dragon Hoard</div>
+  <div class="game-frame">
+    <div id="score-display">Gold: 0 | Lives: 3 | Hi: 0</div>
+    <canvas id="c" width="800" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>touch-drag</b> to sneak through the lair. Collect gold and gems — the richest treasure sits closest to the sleeping dragon. When the dragon wakes, its sweeping gaze becomes deadly — stay out of the red zone or lose a life!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+let hi=0;
+try{hi=parseInt(localStorage.getItem('dragonhoard_hi')||'0');}catch(e){}
+
+const dragon={x:W/2,y:H/2,r:55};
+let gold=0,lives=3,gameOver=true,started=false;
+let player={x:80,y:H-60,r:14,vx:0,vy:0};
+let treasures=[];
+let awake=false,gazeAngle=0,gazeTimer=0,sleepTimer=0,gazeRange=Math.PI/3.2,gazeLen=260;
+let keys={};
+let dragTarget=null;
+let invuln=0;
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function spawnTreasures(){
+  treasures=[];
+  const n=10;
+  for(let i=0;i<n;i++){
+    let x,y,d;
+    do{
+      x=40+Math.random()*(W-80);
+      y=40+Math.random()*(H-80);
+      d=dist({x,y},dragon);
+    }while(d<70);
+    // value increases the closer to dragon
+    const closeness=Math.max(0,1-(d-70)/400);
+    const isGem=closeness>0.55;
+    const value=isGem?Math.round(20+closeness*40):Math.round(5+closeness*10);
+    treasures.push({x,y,r:isGem?9:7,value,isGem,taken:false});
+  }
+}
+
+function reset(){
+  gold=0;lives=3;gameOver=false;started=true;
+  player.x=80;player.y=H-60;player.vx=0;player.vy=0;
+  awake=false;sleepTimer=120+Math.random()*90;gazeAngle=0;invuln=0;
+  spawnTreasures();
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(!started||gameOver){started=true;if(gameOver)reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function canvasPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*(W/rect.width),y:(cy-rect.top)*(H/rect.height)};
+}
+c.addEventListener('mousedown',e=>{
+  if(!started||gameOver){started=true;if(gameOver)reset();return;}
+  dragTarget=canvasPos(e);
+});
+c.addEventListener('mousemove',e=>{ if(dragTarget) dragTarget=canvasPos(e); });
+window.addEventListener('mouseup',()=>{dragTarget=null;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started||gameOver){started=true;if(gameOver)reset();return;}
+  dragTarget=canvasPos(e);
+},{passive:false});
+c.addEventListener('touchmove',e=>{ e.preventDefault(); if(dragTarget) dragTarget=canvasPos(e); },{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragTarget=null;},{passive:false});
+
+function updatePlayer(dt){
+  let ax=0,ay=0;
+  if(keys['arrowleft']||keys['a'])ax-=1;
+  if(keys['arrowright']||keys['d'])ax+=1;
+  if(keys['arrowup']||keys['w'])ay-=1;
+  if(keys['arrowdown']||keys['s'])ay+=1;
+  if(dragTarget){
+    const dx=dragTarget.x-player.x,dy=dragTarget.y-player.y;
+    const d=Math.hypot(dx,dy);
+    if(d>4){ax=dx/d;ay=dy/d;}
+  }
+  const len=Math.hypot(ax,ay);
+  if(len>0){ax/=len;ay/=len;}
+  const speed=3.4;
+  player.vx=ax*speed;player.vy=ay*speed;
+  player.x+=player.vx*dt;player.y+=player.vy*dt;
+  player.x=Math.max(player.r,Math.min(W-player.r,player.x));
+  player.y=Math.max(player.r,Math.min(H-player.r,player.y));
+}
+
+function updateDragon(dt){
+  if(!awake){
+    sleepTimer-=dt;
+    if(sleepTimer<=0){
+      awake=true;
+      gazeTimer=140+Math.random()*60;
+      gazeAngle=Math.random()*Math.PI*2;
+      SFX.error();
+    }
+  } else {
+    gazeTimer-=dt;
+    gazeAngle+=0.028*dt;
+    if(gazeTimer<=0){
+      awake=false;
+      sleepTimer=150+Math.random()*120;
+    }
+  }
+}
+
+function inGaze(px,py){
+  if(!awake)return false;
+  const dx=px-dragon.x,dy=py-dragon.y;
+  const d=Math.hypot(dx,dy);
+  if(d>gazeLen)return false;
+  let ang=Math.atan2(dy,dx);
+  let diff=Math.atan2(Math.sin(ang-gazeAngle),Math.cos(ang-gazeAngle));
+  return Math.abs(diff)<gazeRange/2;
+}
+
+function collectTreasure(){
+  treasures.forEach(t=>{
+    if(t.taken)return;
+    if(dist(player,t)<player.r+t.r){
+      t.taken=true;
+      gold+=t.value;
+      SFX.coin();
+      if(gold>hi){hi=gold;try{localStorage.setItem('dragonhoard_hi',hi);}catch(e){}}
+    }
+  });
+  if(treasures.every(t=>t.taken)){
+    spawnTreasures();
+  }
+}
+
+function loseLife(){
+  if(invuln>0)return;
+  lives--;
+  invuln=90;
+  SFX.hit();
+  player.x=80;player.y=H-60;
+  if(lives<=0)endGame();
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+}
+
+function drawDragon(){
+  ctx.save();
+  ctx.fillStyle=awake?'#e53935':'#6d1414';
+  ctx.beginPath();ctx.arc(dragon.x,dragon.y,dragon.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffd54f';
+  const eyeOpen=awake?6:1.5;
+  ctx.beginPath();ctx.arc(dragon.x-14,dragon.y-8,eyeOpen,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(dragon.x+14,dragon.y-8,eyeOpen,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawGaze(){
+  if(!awake)return;
+  ctx.save();
+  ctx.translate(dragon.x,dragon.y);
+  ctx.rotate(gazeAngle);
+  const grad=ctx.createRadialGradient(0,0,0,0,0,gazeLen);
+  grad.addColorStop(0,'rgba(255,50,50,0.55)');
+  grad.addColorStop(1,'rgba(255,50,50,0.05)');
+  ctx.fillStyle=grad;
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  ctx.arc(0,0,gazeLen,-gazeRange/2,gazeRange/2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawTreasures(){
+  treasures.forEach(t=>{
+    if(t.taken)return;
+    ctx.fillStyle=t.isGem?'#7c4dff':'#ffd54f';
+    ctx.beginPath();
+    if(t.isGem){
+      ctx.moveTo(t.x,t.y-t.r);ctx.lineTo(t.x+t.r,t.y);ctx.lineTo(t.x,t.y+t.r);ctx.lineTo(t.x-t.r,t.y);ctx.closePath();
+    } else {
+      ctx.arc(t.x,t.y,t.r,0,Math.PI*2);
+    }
+    ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.4)';ctx.lineWidth=1.5;ctx.stroke();
+  });
+}
+
+function drawPlayer(){
+  ctx.save();
+  if(invuln>0&&Math.floor(invuln/6)%2===0)ctx.globalAlpha=0.4;
+  ctx.fillStyle='#4fc3f7';
+  ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#01579b';ctx.lineWidth=2;ctx.stroke();
+  ctx.restore();
+}
+
+function updateScore(){
+  document.getElementById('score-display').textContent=I18N.t('dragonhoard_score','Gold: {g} | Lives: {l} | Hi: {h}')
+    .replace('{g}',gold).replace('{l}',Math.max(0,lives)).replace('{h}',hi);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#1a0e2e');bg.addColorStop(1,'#5c1a1a');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('dragonhoard_start','Arrow Keys / Drag to start'),W/2,H/2);
+    drawDragon();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawDragon();
+    drawTreasures();
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('dragonhoard_restart','Gold: {g} — Tap / Key to try again').replace('{g}',gold),W/2,H/2+18);
+    updateScore();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const dt=1;
+  updatePlayer(dt);
+  updateDragon(dt);
+  if(invuln>0)invuln-=dt;
+
+  collectTreasure();
+
+  if(inGaze(player.x,player.y))loseLife();
+
+  drawGaze();
+  drawTreasures();
+  drawDragon();
+  drawPlayer();
+
+  updateScore();
+  requestAnimationFrame(loop);
+}
+updateScore();
+loop();
+</script></body></html>

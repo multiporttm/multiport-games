@@ -1,0 +1,255 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Astrogazer</title><meta name="description" content="Play Astrogazer free online — Study the target constellation shape, then click the matching star cluster among the decoys before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/astrogazer"><meta property="og:title" content="Astrogazer - Multiport Games"><meta property="og:description" content="Play Astrogazer free online — Study the target constellation shape, then click the matching star cluster among the decoys before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/astrogazer"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Astrogazer","description":"Play Astrogazer free online instantly. Study the target constellation shape, then click the matching star cluster among the decoys before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/astrogazer","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#02030f,#1a2a6c);display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#score-display{color:#aecbfa;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Astrogazer</div>
+  <div class="game-frame">
+    <div id="score-display">Found: 0 | Lives: 3 | Best: 0</div>
+    <canvas id="c" width="800" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Study the <b>target constellation</b> shown at the top, then <b>click/tap</b> the matching star cluster in the night sky before the timer runs out. Decoys look similar but don't match exactly — a wrong click or timeout costs a life!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+let found=0,lives=3,best=parseInt(localStorage.getItem('astrogazer_best')||'0');
+let gameState='ready'; // ready, playing, over
+let round=1,clusters=[],targetPattern=null,targetName='';
+let timeLeft=100,timerMax=100,lastTime=null,flashTimer=0,flashResult=null;
+let bgStars=[];
+
+const NAMES=['Lyra','Draco','Orionis','Cassia','Perseon','Vela','Auriga','Cygnid','Hydrae','Pegasi'];
+
+function initBgStars(){
+  bgStars=[];
+  for(let i=0;i<150;i++)bgStars.push({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.4+0.3,tw:Math.random()*Math.PI*2});
+}
+initBgStars();
+
+// Generate a base random pattern of N points within a unit box, centered.
+function genPattern(n){
+  const pts=[];
+  for(let i=0;i<n;i++)pts.push({x:(Math.random()-0.5)*0.8,y:(Math.random()-0.5)*0.8});
+  return pts;
+}
+
+// Create a decoy: same point count, but nudge positions so it looks similar but not identical.
+function makeDecoy(pattern,strength){
+  return pattern.map(p=>({x:p.x+(Math.random()-0.5)*strength,y:p.y+(Math.random()-0.5)*strength}));
+}
+
+function newRound(){
+  const n=4+Math.min(3,Math.floor(round/3));
+  targetPattern=genPattern(n);
+  targetName=NAMES[Math.floor(Math.random()*NAMES.length)];
+  const numDecoys=Math.min(5,2+Math.floor(round/2));
+  clusters=[];
+  const slots=numDecoys+1;
+  const cols=Math.ceil(Math.sqrt(slots));
+  const rows=Math.ceil(slots/cols);
+  const cellW=W/cols,cellH=(H-140)/rows;
+  const positions=[];
+  for(let r=0;r<rows;r++)for(let col=0;col<cols;col++)positions.push({cx:cellW*col+cellW/2,cy:140+cellH*r+cellH/2});
+  // shuffle positions
+  for(let i=positions.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[positions[i],positions[j]]=[positions[j],positions[i]];}
+  const correctIdx=Math.floor(Math.random()*slots);
+  for(let i=0;i<slots;i++){
+    const pos=positions[i];
+    const isCorrect=i===correctIdx;
+    const strength=0.18+Math.max(0,0.12-round*0.01);
+    const pattern=isCorrect?targetPattern:makeDecoy(targetPattern,strength);
+    clusters.push({cx:pos.cx,cy:pos.cy,pattern,correct:isCorrect,scale:Math.min(cellW,cellH)*0.38});
+  }
+  timerMax=Math.max(40,90-round*3);
+  timeLeft=timerMax;
+  lastTime=null;
+}
+
+function startGame(){
+  found=0;lives=3;round=1;gameState='playing';
+  newRound();
+}
+
+function drawStarPoint(x,y,r,tw){
+  const alpha=0.6+Math.sin(tw)*0.4;
+  ctx.save();
+  ctx.globalAlpha=Math.max(0.2,alpha);
+  ctx.fillStyle='#fff';
+  ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawCluster(cl,highlight){
+  ctx.save();
+  ctx.strokeStyle=highlight==='correct'?'#4caf50':highlight==='wrong'?'#e53935':'rgba(255,255,255,0.15)';
+  ctx.lineWidth=highlight?3:1;
+  if(highlight){
+    ctx.beginPath();
+    ctx.arc(cl.cx,cl.cy,cl.scale+18,0,Math.PI*2);
+    ctx.stroke();
+  }
+  // connecting lines
+  ctx.strokeStyle='rgba(174,203,250,0.3)';
+  ctx.lineWidth=1;
+  ctx.beginPath();
+  cl.pattern.forEach((p,i)=>{
+    const x=cl.cx+p.x*cl.scale*2,y=cl.cy+p.y*cl.scale*2;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  cl.pattern.forEach(p=>{
+    const x=cl.cx+p.x*cl.scale*2,y=cl.cy+p.y*cl.scale*2;
+    ctx.shadowColor='#aecbfa';ctx.shadowBlur=8;
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawTargetPanel(){
+  ctx.save();
+  ctx.fillStyle='rgba(10,15,40,0.6)';
+  ctx.fillRect(0,0,W,110);
+  ctx.fillStyle='#ffd54f';
+  ctx.font='bold 20px Arial';
+  ctx.textAlign='center';
+  ctx.fillText(I18N.t('target_label','Find: {n}').replace('{n}',targetName),W/2,30);
+  // draw pattern preview
+  const pcx=W/2,pcy=72,scale=32;
+  ctx.strokeStyle='rgba(174,203,250,0.5)';
+  ctx.beginPath();
+  targetPattern.forEach((p,i)=>{
+    const x=pcx+p.x*scale*2,y=pcy+p.y*scale*2;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  targetPattern.forEach(p=>{
+    const x=pcx+p.x*scale*2,y=pcy+p.y*scale*2;
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill();
+  });
+  ctx.restore();
+}
+
+function handlePick(mx,my){
+  if(gameState!=='playing'||flashTimer>0)return;
+  let hit=null;
+  for(const cl of clusters){
+    const dx=mx-cl.cx,dy=my-cl.cy;
+    if(Math.sqrt(dx*dx+dy*dy)<cl.scale+22){hit=cl;break;}
+  }
+  if(!hit)return;
+  if(hit.correct){
+    found++;
+    if(found>best){best=found;localStorage.setItem('astrogazer_best',best);}
+    SFX.success();
+    flashResult='correct';
+    flashTimer=45;
+    round++;
+  } else {
+    lives--;
+    SFX.error();
+    flashResult='wrong';
+    flashTimer=45;
+  }
+}
+
+c.addEventListener('click',e=>{
+  if(gameState==='ready'){startGame();return;}
+  if(gameState==='over'){startGame();return;}
+  const r=c.getBoundingClientRect();
+  handlePick((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameState==='ready'||gameState==='over'){startGame();return;}
+  const r=c.getBoundingClientRect();
+  const t=e.touches[0];
+  handlePick((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));
+},{passive:false});
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#02030f');bg.addColorStop(1,'#1a2a6c');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  bgStars.forEach(s=>{s.tw+=0.03;drawStarPoint(s.x,s.y,s.r,s.tw);});
+
+  if(gameState==='ready'){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('astro_start_hint','Click / Tap to start stargazing'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(gameState==='playing'){
+    if(flashTimer<=0){
+      timeLeft-=dt*(100/timerMax)*0.6;
+      if(timeLeft<=0){
+        lives--;
+        SFX.error();
+        flashResult='wrong';
+        flashTimer=45;
+        timeLeft=0;
+      }
+    } else {
+      flashTimer-=dt;
+      if(flashTimer<=0){
+        flashResult=null;
+        if(lives<=0){gameState='over';SFX.lose();}
+        else newRound();
+      }
+    }
+
+    clusters.forEach(cl=>{
+      let hl=null;
+      if(flashTimer>0&&flashResult){
+        if(cl.correct)hl='correct';
+      }
+      drawCluster(cl,hl);
+    });
+    drawTargetPanel();
+
+    // timer bar
+    ctx.fillStyle='#0a1120';
+    ctx.fillRect(30,H-24,W-60,10);
+    ctx.fillStyle=timeLeft>timerMax*0.3?'#4fc3f7':'#e53935';
+    ctx.fillRect(30,H-24,(W-60)*Math.max(0,timeLeft/timerMax),10);
+
+    if(flashTimer>0){
+      ctx.fillStyle=flashResult==='correct'?'#4caf50':'#e53935';
+      ctx.font='bold 30px Arial';ctx.textAlign='center';
+      ctx.fillText(flashResult==='correct'?I18N.t('correct_label','Correct!'):I18N.t('wrong_label','Not quite!'),W/2,H/2);
+    }
+  } else if(gameState==='over'){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-30);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+8);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('astro_score_label','Found: {f} | Lives: {l} | Best: {b}').replace('{f}',found).replace('{l}',Math.max(0,lives)).replace('{b}',best);
+  requestAnimationFrame(loop);
+}
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){
+    e.preventDefault();
+    if(gameState==='ready'||gameState==='over')startGame();
+  }
+});
+loop();
+</script></body></html>

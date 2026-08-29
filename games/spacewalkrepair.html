@@ -1,0 +1,227 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Spacewalk Repair</title><meta name="description" content="Play Spacewalk Repair free online — Memorize the flashing wire order, then click the panels in that order to repair the satellite before your oxygen runs out."><link rel="canonical" href="https://games.multiportllc.com/games/spacewalkrepair"><meta property="og:title" content="Spacewalk Repair - Multiport Games"><meta property="og:description" content="Play Spacewalk Repair free online — Memorize the flashing wire order, then click the panels in that order to repair the satellite before your oxygen runs out."><meta property="og:url" content="https://games.multiportllc.com/games/spacewalkrepair"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Spacewalk Repair","description":"Play Spacewalk Repair free online instantly. Memorize the flashing wire/panel order shown at the start of each repair job, then click the panels in that order to complete the repair before your oxygen meter runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/spacewalkrepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(160deg,#000814,#023e7d);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#90e0ef;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#o2-wrap{width:min(92vw,500px);height:14px;background:rgba(0,0,0,.35);border-radius:7px;margin:0 auto 8px;overflow:hidden}
+#o2-fill{height:100%;background:#48cae4;width:100%;transition:width .15s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Spacewalk Repair</div>
+  <div class="game-frame">
+    <div id="score-display">Repairs: 0 | Best O2: 0%</div>
+    <div id="o2-wrap"><div id="o2-fill"></div></div>
+    <canvas id="c" width="600" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch the panels <b>flash in order</b> at the start of each repair job, then <b>click them in that same order</b> to reconnect the satellite before your oxygen runs out. A correct sequence completes the repair and refills oxygen for a longer job; a wrong click forces a retry, costing precious time and oxygen.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=600,H=440;
+const o2Fill=document.getElementById('o2-fill');
+const scoreDisplay=document.getElementById('score-display');
+
+let repairs=0,bestO2=parseFloat(localStorage.getItem('spacewalkrepair_best')||'0');
+let o2=100,maxO2=100,gameOver=true,started=false;
+let panels=[]; // {x,y,r,color,idx}
+let sequence=[]; // indices into panels
+let playerIdx=0;
+let phase='show'; // show -> input -> success -> fail
+let showTimer=0,showStep=0;
+let seqLen=3;
+let flashPanel=-1,flashTimer=0;
+let feedback={idx:-1,ok:null,timer:0};
+let msg='';
+
+const COLORS=['#ff6b35','#ffd54f','#4caf50','#4fc3f7','#e91e63','#ab47bc'];
+
+function layoutPanels(n){
+  panels=[];
+  const cx=W/2,cy=H/2+10,rad=140;
+  for(let i=0;i<n;i++){
+    const ang=(i/n)*Math.PI*2-Math.PI/2;
+    panels.push({x:cx+Math.cos(ang)*rad,y:cy+Math.sin(ang)*rad,r:34,color:COLORS[i%COLORS.length]});
+  }
+}
+
+function newJob(){
+  seqLen=Math.min(3+Math.floor(repairs/1),8);
+  const n=Math.min(6,Math.max(4,seqLen));
+  layoutPanels(n);
+  sequence=[];
+  const pool=[...Array(n).keys()];
+  for(let i=0;i<seqLen;i++){
+    sequence.push(pool[Math.floor(Math.random()*pool.length)]);
+  }
+  playerIdx=0;
+  phase='show';
+  showTimer=0;showStep=0;
+  msg=I18N.t('memorize_hint','Memorize the sequence!');
+}
+
+function reset(){
+  repairs=0;o2=100;maxO2=100;gameOver=false;started=true;
+  newJob();
+}
+
+function pos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+
+function onClick(e){
+  e.preventDefault();
+  if(!started||gameOver){reset();return;}
+  if(phase!=='input')return;
+  const p=pos(e);
+  let hit=-1;
+  panels.forEach((pn,i)=>{
+    if(Math.hypot(p.x-pn.x,p.y-pn.y)<pn.r)hit=i;
+  });
+  if(hit<0)return;
+  if(hit===sequence[playerIdx]){
+    feedback={idx:hit,ok:true,timer:20};
+    SFX.point();
+    playerIdx++;
+    if(playerIdx>=sequence.length){
+      phase='successwait';
+      msg=I18N.t('repair_complete','Repair complete!');
+      SFX.win();
+      const pctNow=(o2/maxO2)*100;
+      if(pctNow>bestO2){bestO2=pctNow;localStorage.setItem('spacewalkrepair_best',bestO2.toFixed(0));}
+      o2=Math.min(maxO2,o2+25);
+      maxO2=Math.min(160,maxO2+6);
+      repairs++;
+      setTimeout(()=>{ if(!gameOver){newJob();} },900);
+    }
+  } else {
+    feedback={idx:hit,ok:false,timer:20};
+    SFX.error();
+    o2-=18;
+    msg=I18N.t('wrong_order_sw','Wrong order! Retry the sequence.');
+    playerIdx=0;
+    phase='failwait';
+    setTimeout(()=>{ if(!gameOver){phase='show';showTimer=0;showStep=0;} },700);
+  }
+}
+
+c.addEventListener('mousedown',onClick);
+c.addEventListener('touchstart',onClick,{passive:false});
+
+function drawPanel(p,i,highlight,fb){
+  ctx.save();
+  ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+  ctx.fillStyle=highlight?'#ffffff':p.color;
+  ctx.globalAlpha=highlight?1:0.85;
+  ctx.fill();
+  if(fb){
+    ctx.strokeStyle=fb==='ok'?'#4caf50':'#e53935';
+    ctx.lineWidth=6;ctx.stroke();
+  } else {
+    ctx.strokeStyle='#0a2540';ctx.lineWidth=3;ctx.stroke();
+  }
+  ctx.restore();
+  ctx.fillStyle='#0a2540';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText((i+1),p.x,p.y+5);
+}
+
+function drawAstronaut(){
+  ctx.save();
+  ctx.translate(W/2,60);
+  ctx.fillStyle='#e0e0e0';
+  ctx.beginPath();ctx.arc(0,0,22,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#0a2540';
+  ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#48cae4';
+  ctx.beginPath();ctx.arc(-4,-2,4,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#000814');sky.addColorStop(1,'#023e7d');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // stars
+  ctx.fillStyle='#ffffff';
+  for(let i=0;i<40;i++){
+    const sx=(i*53)%W, sy=(i*97)%H;
+    ctx.globalAlpha=0.3+((i*37)%10)/20;
+    ctx.fillRect(sx,sy,2,2);
+  }
+  ctx.globalAlpha=1;
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_sw','Tap or Click to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('out_of_oxygen','OUT OF OXYGEN!'),W/2,H/2-30);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_repairs','Repairs completed: {r}').replace('{r}',repairs),W/2,H/2+2);
+    ctx.fillText(I18N.t('restart_hint_sw','Tap or Click to restart'),W/2,H/2+30);
+    requestAnimationFrame(loop);return;
+  }
+
+  drawAstronaut();
+
+  if(phase==='show'){
+    showTimer++;
+    if(showTimer===1){flashPanel=sequence[showStep];flashTimer=30;}
+    panels.forEach((p,i)=>drawPanel(p,i,i===flashPanel&&flashTimer>0,null));
+    if(flashTimer>0)flashTimer--;
+    if(showTimer>36){
+      showTimer=0;showStep++;
+      if(showStep>=sequence.length){
+        phase='input';
+        msg=I18N.t('your_turn','Your turn! Click the panels in order.');
+      } else {
+        flashPanel=sequence[showStep];flashTimer=30;
+      }
+    }
+    ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,H-16);
+  } else {
+    panels.forEach((p,i)=>{
+      let fb=null;
+      if(feedback.idx===i&&feedback.timer>0)fb=feedback.ok?'ok':'bad';
+      drawPanel(p,i,false,fb);
+    });
+    if(feedback.timer>0)feedback.timer--;
+    ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,H-16);
+    ctx.font='14px Arial';
+    ctx.fillText(I18N.t('progress_label','Progress: {a}/{b}').replace('{a}',playerIdx).replace('{b}',sequence.length),W/2,H-40);
+  }
+
+  if(phase==='input'||phase==='show'){
+    o2-=0.09;
+    if(o2<=0){
+      o2=0;gameOver=true;
+      SFX.lose();
+    }
+  }
+
+  o2Fill.style.width=Math.max(0,(o2/maxO2)*100)+'%';
+  o2Fill.style.background=o2/maxO2>0.5?'#48cae4':o2/maxO2>0.25?'#ffca28':'#ef5350';
+
+  scoreDisplay.textContent=I18N.t('repairs_score_label','Repairs: {r} | Best O2: {b}%')
+    .replace('{r}',repairs).replace('{b}',bestO2.toFixed(0));
+
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script></body></html>

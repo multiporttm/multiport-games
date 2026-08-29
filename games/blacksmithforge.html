@@ -1,0 +1,288 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Blacksmith Forge</title><meta name="description" content="Play Blacksmith Forge free online — Click or tap to strike the glowing metal with your hammer when the swing indicator lines up with the target zone, shaping it to match the outline before it cools."><link rel="canonical" href="https://games.multiportllc.com/games/blacksmithforge"><meta property="og:title" content="Blacksmith Forge - Multiport Games"><meta property="og:description" content="Play Blacksmith Forge free online — Click or tap to strike the glowing metal with your hammer when the swing indicator lines up with the target zone, shaping it to match the outline before it cools."><meta property="og:url" content="https://games.multiportllc.com/games/blacksmithforge"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Blacksmith Forge","description":"Play Blacksmith Forge free online instantly. Click or tap to strike the glowing metal with your hammer when the swing indicator lines up with the target zone, shaping it to match the outline before it cools. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/blacksmithforge","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#1a0a05,#c1440e);display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#score-display{color:#ffb347;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Blacksmith Forge</div>
+  <div class="game-frame">
+    <div id="score-display">Pieces: 0 | Best: 0</div>
+    <canvas id="c" width="800" height="450"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click or tap to swing the <b>hammer</b> — strike when the moving indicator is inside the green zone to shape the metal toward the faint target outline. Strike too early or late and you'll shape poorly or overheat the metal. Finish before it cools too far, or click <b>Reheat</b> to buy time!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=450;
+let pieces=0,best=parseFloat(localStorage.getItem('blacksmithforge_best')||'0');
+let gameState='ready'; // ready, shaping, forged, failed
+let heat=100; // 100 = white hot, 0 = cold
+let shapeProgress=0; // 0-100
+let precision=0;
+let swingPos=0,swingDir=1,swingSpeed=2.2;
+let targetShape=null,targetIdx=0;
+let anvilShake=0;
+let particles=[];
+let sparks=[];
+let lastTime=null;
+let reheatCooldown=0;
+let round=1;
+
+const SHAPES=[
+  {name:'Blade',pts:[[0.15,0.5],[0.85,0.42],[0.9,0.5],[0.85,0.58],[0.15,0.5]]},
+  {name:'Horseshoe',pts:[[0.2,0.3],[0.15,0.6],[0.3,0.75],[0.5,0.78],[0.7,0.75],[0.85,0.6],[0.8,0.3]]},
+  {name:'Axe Head',pts:[[0.2,0.5],[0.55,0.25],[0.85,0.35],[0.85,0.65],[0.55,0.75],[0.2,0.5]]},
+  {name:'Ring',pts:[[0.5,0.25],[0.7,0.35],[0.75,0.5],[0.7,0.65],[0.5,0.75],[0.3,0.65],[0.25,0.5],[0.3,0.35],[0.5,0.25]]}
+];
+
+function pickShape(){
+  return SHAPES[Math.floor(Math.random()*SHAPES.length)];
+}
+
+function reset(){
+  heat=100;shapeProgress=0;precision=0;
+  swingPos=0;swingDir=1;swingSpeed=2.2+round*0.15;
+  targetShape=pickShape();
+  gameState='shaping';
+  reheatCooldown=0;
+  particles=[];sparks=[];
+}
+
+function startGame(){
+  round=1;pieces=0;
+  reset();
+}
+
+function metalColor(){
+  // white hot -> orange -> red as heat drops
+  if(heat>70)return `rgb(255,${240+Math.floor((heat-70)/30*15)},${200+Math.floor((heat-70)/30*55)})`;
+  if(heat>35)return `rgb(255,${140+Math.floor((heat-35)/35*100)},${20+Math.floor((heat-35)/35*60)})`;
+  return `rgb(${180+Math.floor(heat/35*75)},${40+Math.floor(heat/35*100)},20)`;
+}
+
+function zoneBounds(){
+  // green target zone width shrinks as rounds progress
+  const w=Math.max(0.10,0.22-round*0.008);
+  return {lo:0.5-w/2,hi:0.5+w/2};
+}
+
+function strike(){
+  if(gameState==='ready'){startGame();return;}
+  if(gameState==='forged'||gameState==='failed'){reset();return;}
+  if(gameState!=='shaping')return;
+  const z=zoneBounds();
+  const dist=Math.abs(swingPos-0.5);
+  anvilShake=10;
+  let quality;
+  if(dist<=z.hi-0.5){
+    quality=1-(dist/(z.hi-0.5))*0.3; // near-perfect
+    SFX.hit();
+    sparks.push(...makeSparks());
+  } else if(dist<0.3){
+    quality=0.4;
+    SFX.click();
+    sparks.push(...makeSparks());
+  } else {
+    quality=0.1;
+    heat-=6; // bad hit overheats/damages
+    SFX.error();
+  }
+  shapeProgress+=quality*18;
+  precision+=quality;
+  heat-=4+ (1-quality)*3;
+  if(shapeProgress>=100){
+    shapeProgress=100;
+    finishPiece();
+  }
+  if(heat<=0&&gameState==='shaping'){
+    gameState='failed';
+    SFX.fail();
+  }
+}
+
+function makeSparks(){
+  const arr=[];
+  for(let i=0;i<14;i++){
+    arr.push({x:W*0.42+Math.random()*W*0.16,y:H*0.62,vx:(Math.random()-0.5)*7,vy:-Math.random()*6-2,life:22});
+  }
+  return arr;
+}
+
+function finishPiece(){
+  const avgPrecision=Math.round((precision/ (shapeProgress/18)) *100)/1 ;
+  pieces++;
+  const score=Math.round(precision*10);
+  if(score>best){best=score;localStorage.setItem('blacksmithforge_best',best);}
+  gameState='forged';
+  SFX.success();
+  round++;
+}
+
+function reheat(){
+  if(gameState!=='shaping'||reheatCooldown>0)return;
+  heat=Math.min(100,heat+35);
+  reheatCooldown=180;
+  SFX.powerup();
+}
+
+c.addEventListener('click',e=>{
+  // reheat button hit-test handled in canvas coords
+  const r=c.getBoundingClientRect();
+  const mx=(e.clientX-r.left)*(W/r.width);
+  const my=(e.clientY-r.top)*(H/r.height);
+  if(gameState==='shaping'&&mx>W-140&&mx<W-20&&my>20&&my<60){reheat();return;}
+  strike();
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const r=c.getBoundingClientRect();
+  const t=e.touches[0];
+  const mx=(t.clientX-r.left)*(W/r.width);
+  const my=(t.clientY-r.top)*(H/r.height);
+  if(gameState==='shaping'&&mx>W-140&&mx<W-20&&my>20&&my<60){reheat();return;}
+  strike();
+},{passive:false});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();strike();}
+  if(e.code==='KeyR')reheat();
+});
+
+function drawAnvil(){
+  ctx.save();
+  ctx.translate(0,anvilShake>0?Math.sin(anvilShake)*2:0);
+  ctx.fillStyle='#2a2a30';
+  ctx.fillRect(W*0.25,H*0.72,W*0.5,H*0.14);
+  ctx.fillStyle='#1c1c22';
+  ctx.fillRect(W*0.32,H*0.86,W*0.36,H*0.08);
+  ctx.restore();
+  if(anvilShake>0)anvilShake--;
+}
+
+function drawTargetOutline(){
+  if(!targetShape)return;
+  ctx.save();
+  ctx.globalAlpha=0.25;
+  ctx.strokeStyle='#ffffff';
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  targetShape.pts.forEach(([px,py],i)=>{
+    const x=W*0.2+px*W*0.6, y=H*0.3+py*H*0.35;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawMetal(){
+  const w=(W*0.42)*(0.5+shapeProgress/200);
+  const h=H*0.08*(1-shapeProgress/300);
+  const x=W*0.5-w/2, y=H*0.62;
+  ctx.save();
+  ctx.shadowColor=metalColor();
+  ctx.shadowBlur=25*(heat/100);
+  ctx.fillStyle=metalColor();
+  ctx.fillRect(x,y,w,h);
+  ctx.restore();
+}
+
+function drawSwingBar(){
+  const barX=W*0.15,barW=W*0.7,barY=H*0.15;
+  ctx.fillStyle='#222';
+  ctx.fillRect(barX,barY,barW,18);
+  const z=zoneBounds();
+  ctx.fillStyle='#4caf50';
+  ctx.fillRect(barX+z.lo*barW,barY,(z.hi-z.lo)*barW,18);
+  const px=barX+swingPos*barW;
+  ctx.fillStyle='#fff';
+  ctx.fillRect(px-3,barY-6,6,30);
+}
+
+function drawHeatBar(){
+  const x=30,y=H-40,w=W-60,h=16;
+  ctx.fillStyle='#333';ctx.fillRect(x,y,w,h);
+  ctx.fillStyle=heat>50?'#ff9800':heat>20?'#ff5722':'#d32f2f';
+  ctx.fillRect(x,y,w*(heat/100),h);
+  ctx.strokeStyle='#fff';ctx.strokeRect(x,y,w,h);
+}
+
+function drawReheatBtn(){
+  const active=reheatCooldown<=0;
+  ctx.save();
+  ctx.fillStyle=active?'#2196f3':'#555';
+  ctx.fillRect(W-140,20,120,40);
+  ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('reheat_label','REHEAT'),W-80,44);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#1a0a05');bg.addColorStop(1,'#4a1a08');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(gameState==='ready'){
+    ctx.fillStyle='#ffb347';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('forge_start_hint','Click / Tap to start forging'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  drawAnvil();
+  drawTargetOutline();
+
+  if(gameState==='shaping'){
+    swingPos+=swingDir*swingSpeed*0.01*dt;
+    if(swingPos>=1){swingPos=1;swingDir=-1;}
+    if(swingPos<=0){swingPos=0;swingDir=1;}
+    if(reheatCooldown>0)reheatCooldown-=dt;
+    drawMetal();
+    drawSwingBar();
+    drawHeatBar();
+    drawReheatBtn();
+    ctx.fillStyle='#fff';ctx.font='16px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('shaping_target_label','Shaping: {n}').replace('{n}',targetShape.name),W/2,H*0.28-20);
+    ctx.fillStyle='#ffe0b2';ctx.font='14px Arial';
+    ctx.fillText(I18N.t('progress_label','Progress: {p}%').replace('{p}',Math.floor(shapeProgress)),W/2,H*0.9-2);
+  } else {
+    drawMetal();
+    drawHeatBar();
+  }
+
+  sparks=sparks.filter(s=>s.life>0);
+  sparks.forEach(s=>{
+    s.x+=s.vx;s.y+=s.vy;s.vy+=0.3;s.life--;
+    ctx.globalAlpha=s.life/22;
+    ctx.fillStyle='#ffd54f';
+    ctx.beginPath();ctx.arc(s.x,s.y,2.5,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+  });
+
+  if(gameState==='forged'){
+    ctx.fillStyle='#4caf50';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('forged_title','FORGED!'),W/2,H/2-20);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('restart_hint2','Click / Tap for next piece'),W/2,H/2+16);
+  } else if(gameState==='failed'){
+    ctx.fillStyle='#e53935';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('cooled_title','TOO COLD!'),W/2,H/2-20);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+16);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('pieces_best_label','Pieces: {p} | Best: {b}').replace('{p}',pieces).replace('{b}',Math.floor(best));
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
