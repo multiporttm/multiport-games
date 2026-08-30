@@ -1,0 +1,224 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Fingerprint Match</title><meta name="description" content="Play Fingerprint Match free online — Study the target fingerprint, then click the matching candidate print before time runs out. Wrong picks and timeouts cost a life."><link rel="canonical" href="https://games.multiportllc.com/games/fingerprintmatch"><meta property="og:title" content="Fingerprint Match - Multiport Games"><meta property="og:description" content="Play Fingerprint Match free online — Study the target fingerprint, then click the matching candidate print before time runs out. Wrong picks and timeouts cost a life."><meta property="og:url" content="https://games.multiportllc.com/games/fingerprintmatch"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Fingerprint Match","description":"Play Fingerprint Match free online instantly. Study the target fingerprint, then click the matching candidate print before time runs out. Wrong picks and timeouts cost a life. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/fingerprintmatch","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#stage{background:#1a1a2e;border-radius:14px;padding:16px;max-width:560px;margin:0 auto}
+#ui{color:#fff;text-align:center;font-weight:700;margin-bottom:6px}
+#timerWrap{max-width:400px;margin:0 auto 10px;background:rgba(255,255,255,.1);border-radius:8px;height:10px;overflow:hidden}
+#timerBar{height:100%;width:100%;background:#4fc3f7;transition:width .1s linear}
+#targetWrap{text-align:center;margin-bottom:10px}
+#targetWrap canvas{background:#e8e8e8;border-radius:10px;border:3px solid #4fc3f7}
+#candidates{display:flex;flex-wrap:wrap;justify-content:center;gap:10px}
+.cand{background:#e8e8e8;border-radius:10px;border:3px solid transparent;cursor:pointer;transition:transform .1s,border-color .15s}
+.cand:hover{transform:scale(1.04)}
+.cand.correct{border-color:#66bb6a}
+.cand.wrong{border-color:#ef5350}
+#msg{color:#ffd54f;text-align:center;min-height:1.4em;margin-top:8px;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Fingerprint Match</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="stage">
+      <div id="ui">Matches: 0 | Lives: 3</div>
+      <div id="timerWrap"><div id="timerBar"></div></div>
+      <div id="targetWrap"><canvas id="target" width="110" height="140"></canvas></div>
+      <div id="candidates"></div>
+      <div id="msg"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Study the <b>target fingerprint</b> at the top, then <b>click</b> the candidate below that matches it exactly before the timer runs out. A wrong click or a timeout costs a life!</div>
+</div>
+<script>
+const W=110,H=140;
+let round,lives,hi,gameOver,timeLeft,timerMax,decoyCount,targetPrint,candidates,answered;
+let timerHandle;
+
+function loadHi(){return +(localStorage.getItem('fingerprintmatch_hi')||0);}
+function saveHi(v){if(v>loadHi())localStorage.setItem('fingerprintmatch_hi',v);}
+
+// deterministic pseudo-random generator per seed so prints can be re-derived/mutated
+function mulberry32(seed){
+  return function(){
+    seed|=0;seed=seed+0x6D2B79F5|0;
+    let t=Math.imul(seed^seed>>>15,1|seed);
+    t=t+Math.imul(t^t>>>7,61|t)^t;
+    return ((t^t>>>14)>>>0)/4294967296;
+  };
+}
+
+function genPrint(seed,type){
+  // returns a spec: type ('loop'|'whorl'|'arch'), plus ridge parameters derived from seed
+  const rnd=mulberry32(seed);
+  const ridgeCount=10+Math.floor(rnd()*4);
+  const wobble=0.15+rnd()*0.25;
+  const skew=(rnd()-0.5)*0.6;
+  const coreX=W/2+(rnd()-0.5)*10;
+  const coreY=H/2+(rnd()-0.5)*10;
+  return {type,ridgeCount,wobble,skew,coreX,coreY,seed};
+}
+
+function drawPrint(ctx,print,highlight){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#e8e8e8';ctx.fillRect(0,0,W,H);
+  const rnd=mulberry32(print.seed*7+1);
+  ctx.strokeStyle='#333';
+  ctx.lineWidth=1.4;
+  const {type,ridgeCount,wobble,skew,coreX,coreY}=print;
+  for(let i=0;i<ridgeCount;i++){
+    const r=8+i*((Math.min(W,H)/2-10)/ridgeCount);
+    ctx.beginPath();
+    const steps=40;
+    for(let s=0;s<=steps;s++){
+      const t=s/steps;
+      let ang,x,y;
+      if(type==='whorl'){
+        ang=t*Math.PI*2;
+        const rr=r*(1+Math.sin(ang*3+print.seed)*wobble*0.3);
+        x=coreX+Math.cos(ang+skew)*rr;
+        y=coreY+Math.sin(ang+skew)*rr*0.85;
+      } else if(type==='loop'){
+        ang=Math.PI*0.15+t*Math.PI*1.7;
+        const rr=r*(1+Math.sin(t*6+print.seed)*wobble*0.4);
+        x=coreX+Math.cos(ang+skew)*rr;
+        y=coreY-Math.abs(Math.sin(ang))*rr*0.3+Math.sin(ang+skew)*rr*0.9;
+      } else { // arch
+        x=8+t*(W-16);
+        const bow=Math.sin(t*Math.PI)*(20+i*2)*(1+wobble*0.3);
+        y=coreY+ (i- ridgeCount/2)*3 - bow + Math.sin(t*10+print.seed+i)*wobble*3;
+      }
+      if(s===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+  if(highlight){
+    ctx.strokeStyle='rgba(102,187,106,.9)';
+    ctx.lineWidth=3;
+    ctx.strokeRect(1,1,W-2,H-2);
+  }
+}
+
+function mutate(print){
+  // produce a decoy: same type but different seed/wobble/skew so it looks similar but not identical
+  const rnd=mulberry32(print.seed*13+99+Math.floor(Math.random()*1000));
+  return {
+    type:print.type,
+    ridgeCount:print.ridgeCount+(rnd()<0.5?0:(rnd()<0.5?1:-1)),
+    wobble:Math.max(0.05,print.wobble+(rnd()-0.5)*0.15),
+    skew:print.skew+(rnd()-0.5)*0.5,
+    coreX:print.coreX+(rnd()-0.5)*14,
+    coreY:print.coreY+(rnd()-0.5)*14,
+    seed:print.seed+1+Math.floor(rnd()*10000)
+  };
+}
+
+function newRound(){
+  answered=false;
+  const types=['loop','whorl','arch'];
+  const type=types[Math.floor(Math.random()*types.length)];
+  const seed=Math.floor(Math.random()*100000)+1;
+  targetPrint=genPrint(seed,type);
+  decoyCount=Math.min(2+Math.floor(round/2),7);
+  candidates=[];
+  const correctIdx=Math.floor(Math.random()*(decoyCount+1));
+  for(let i=0;i<=decoyCount;i++){
+    candidates.push(i===correctIdx?{...targetPrint,correct:true}:{...mutate(targetPrint),correct:false});
+  }
+  timerMax=Math.max(3200,6500-round*250);
+  timeLeft=timerMax;
+  renderRound();
+}
+
+function renderRound(){
+  document.getElementById('msg').textContent='';
+  const tctx=document.getElementById('target').getContext('2d');
+  drawPrint(tctx,targetPrint,false);
+  const wrap=document.getElementById('candidates');
+  wrap.innerHTML='';
+  candidates.forEach((p,i)=>{
+    const cv=document.createElement('canvas');
+    cv.width=W;cv.height=H;cv.className='cand';
+    const ctx2=cv.getContext('2d');
+    drawPrint(ctx2,p,false);
+    cv.addEventListener('click',()=>pick(i,cv));
+    wrap.appendChild(cv);
+  });
+}
+
+function pick(i,el){
+  if(answered||gameOver)return;
+  answered=true;
+  clearInterval(timerHandle);
+  if(candidates[i].correct){
+    el.classList.add('correct');
+    round++;
+    if(round-1>hi)hi=round-1;
+    SFX.success();
+    document.getElementById('msg').textContent=I18N.t('match_correct','Match found!');
+    setTimeout(()=>{ if(!gameOver)newRound(); },700);
+  } else {
+    el.classList.add('wrong');
+    document.querySelectorAll('#candidates .cand').forEach((c,idx)=>{ if(candidates[idx].correct)c.classList.add('correct'); });
+    loseLife(I18N.t('match_wrong','Wrong print!'));
+  }
+}
+
+function loseLife(msg){
+  lives--;
+  SFX.error();
+  document.getElementById('msg').textContent=msg;
+  if(lives<=0){
+    endGame();
+  } else {
+    setTimeout(()=>{ if(!gameOver)newRound(); },900);
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  clearInterval(timerHandle);
+  SFX.lose();
+  saveHi(round-1);hi=loadHi();
+  document.getElementById('msg').textContent=I18N.t('game_over_final','Game Over! Click Restart below.');
+  const wrap=document.getElementById('candidates');
+  wrap.innerHTML='';
+  const btn=document.createElement('button');
+  btn.textContent=I18N.t('restart_btn','Restart');
+  btn.style.cssText='padding:10px 26px;font-size:1rem;border:none;border-radius:20px;background:#4fc3f7;color:#08080f;font-weight:800;cursor:pointer;margin-top:6px';
+  btn.onclick=startGame;
+  wrap.appendChild(btn);
+}
+
+function tick(){
+  if(gameOver||answered)return;
+  timeLeft-=100;
+  document.getElementById('timerBar').style.width=Math.max(0,(timeLeft/timerMax*100))+'%';
+  if(timeLeft<=0){
+    answered=true;
+    clearInterval(timerHandle);
+    document.querySelectorAll('#candidates .cand').forEach((c,idx)=>{ if(candidates[idx].correct)c.classList.add('correct'); });
+    loseLife(I18N.t('match_timeout','Too slow!'));
+  }
+}
+
+function updateUI(){
+  document.getElementById('ui').textContent=
+    I18N.t('matches_lives_label','Matches: {m} | Lives: {l}').replace('{m}',round-1).replace('{l}',Math.max(0,lives));
+}
+
+function startGame(){
+  round=1;lives=3;gameOver=false;hi=loadHi();
+  newRound();
+  clearInterval(timerHandle);
+  timerHandle=setInterval(()=>{ tick(); updateUI(); },100);
+}
+
+updateUI();
+startGame();
+setInterval(updateUI,150);
+</script></body></html>

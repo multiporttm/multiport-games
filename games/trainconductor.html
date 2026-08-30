@@ -1,0 +1,230 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Train Conductor</title><meta name="description" content="Play Train Conductor free online — Route each arriving train to its scheduled platform, then depart at the right moment. Wrong routes and bad timing cost lives."><link rel="canonical" href="https://games.multiportllc.com/games/trainconductor"><meta property="og:title" content="Train Conductor - Multiport Games"><meta property="og:description" content="Play Train Conductor free online — Route each arriving train to its scheduled platform, then depart at the right moment. Wrong routes and bad timing cost lives."><meta property="og:url" content="https://games.multiportllc.com/games/trainconductor"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Train Conductor","description":"Play Train Conductor free online instantly. Route each arriving train to its scheduled platform, then depart at the right moment. Wrong routes and bad timing cost lives. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/trainconductor","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:linear-gradient(135deg,#37474f,#ffa000);border-radius:14px;padding:16px;text-align:center}
+#status{color:#fff;font-size:1rem;font-weight:800;margin:4px 0 10px;min-height:1.5em;text-shadow:0 1px 3px rgba(0,0,0,.5)}
+#stats{color:#fff3c4;font-size:.95rem;font-weight:700;margin-bottom:6px}
+#c{background:#1c2b33;border-radius:10px;display:block;margin:0 auto}
+#board{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:10px 0}
+.sched{background:rgba(0,0,0,.35);border-radius:8px;padding:6px 10px;color:#fff;font-size:.78rem;font-weight:700;min-width:110px}
+.sched b{color:#ffd54f}
+#switches{display:flex;justify-content:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+#switches button{padding:8px 16px;background:#0288d1;border:none;border-radius:18px;color:#fff;font-weight:800;cursor:pointer;font-size:.95rem}
+#switches button.sel{background:#ffd54f;color:#222}
+#departBtn{padding:10px 26px;background:#43a047;border:none;border-radius:22px;color:#fff;font-weight:900;cursor:pointer;font-size:1rem;margin-top:10px}
+#departBtn:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Train Conductor</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="stats">Trains Managed: 0 | Lives: ❤❤❤ | Best: 0</div>
+      <div id="status">Route the incoming train to its scheduled platform!</div>
+      <canvas id="c" width="760" height="220"></canvas>
+      <div id="board"></div>
+      <div id="switches">
+        <button data-p="0" onclick="selectPlatform(0)">Switch → Platform 1</button>
+        <button data-p="1" onclick="selectPlatform(1)">Switch → Platform 2</button>
+        <button data-p="2" onclick="selectPlatform(2)">Switch → Platform 3</button>
+      </div>
+      <button id="departBtn" onclick="depart()" disabled>Depart 🚦</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    Check the schedule board for which <b>platform</b> each incoming train needs, then click the matching <b>Switch</b> button before it arrives to route it there. Once it's stopped, wait for boarding to finish and click <b>Depart</b> — not too early (passengers still boarding) and not too late (schedule delay). Wrong routing or bad timing costs a life. Survive as many trains as you can!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=220;
+const PLATFORM_Y=[60,120,180];
+let hi=parseInt(localStorage.getItem('trainconductor_hi')||'0');
+let managed=0,lives=3,over=false;
+let selectedPlatform=null;
+let train=null; // {x, targetPlatform, routedPlatform, state, boardTimer, speed}
+let queue=[];
+let spawnTimer=0,started=false,lastTime=null,difficulty=0;
+
+function reset(){
+  managed=0;lives=3;over=false;selectedPlatform=null;train=null;queue=[];spawnTimer=0;started=false;lastTime=null;difficulty=0;
+  document.getElementById('departBtn').disabled=true;
+  updateStats();
+}
+reset();
+
+function updateStats(){
+  document.getElementById('stats').textContent = I18N.t('tc_stats','Trains Managed: {m} | Lives: {l} | Best: {b}')
+    .replace('{m}',managed).replace('{l}','❤'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives))).replace('{b}',hi);
+}
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function spawnTrain(){
+  const target=Math.floor(Math.random()*3);
+  const stopTime=90+Math.floor(Math.random()*60); // frames to board
+  train={
+    x:-60, targetPlatform:target, routedPlatform:null,
+    state:'incoming', boardTimer:0, requiredBoard:stopTime,
+    speed:2.2+difficulty*0.35, y:PLATFORM_Y[1], arrived:false
+  };
+  selectedPlatform=null;
+  renderBoard(target);
+  setStatus(I18N.t('tc_incoming','Train incoming! Route it to the platform shown on the board.'));
+  document.getElementById('departBtn').disabled=true;
+}
+
+function renderBoard(target){
+  document.getElementById('board').innerHTML =
+    `<div class="sched">${I18N.t('tc_next','NEXT TRAIN')}<br>→ <b>${I18N.t('tc_platform','Platform')} ${target+1}</b></div>`;
+}
+
+function selectPlatform(p){
+  if(!train||over)return;
+  if(train.state!=='incoming'){ setStatus(I18N.t('tc_toolate','Too late to switch — the train is already routed!')); return; }
+  selectedPlatform=p;
+  document.querySelectorAll('#switches button').forEach((b,i)=>b.classList.toggle('sel',i===p));
+  SFX.select();
+}
+
+function depart(){
+  if(!train||train.state!=='boarding'||over)return;
+  const boardPct = train.boardTimer/train.requiredBoard;
+  let quality;
+  if(boardPct<0.6){ quality='early'; }
+  else if(boardPct<=1.3){ quality='good'; }
+  else { quality='late'; }
+
+  if(quality==='good'){
+    managed++;
+    SFX.success();
+    setStatus(I18N.t('tc_ontime','On time departure! Passengers happy.'));
+  } else {
+    lives--;
+    SFX.error();
+    setStatus(quality==='early'?I18N.t('tc_early','Departed too early — passengers left behind! Life lost.'):I18N.t('tc_late','Departed too late — schedule delay! Life lost.'));
+  }
+  train.state='leaving';
+  document.getElementById('departBtn').disabled=true;
+  difficulty=Math.min(difficulty+0.12,6);
+  if(lives<=0){
+    over=true;
+    if(managed>hi){hi=managed;localStorage.setItem('trainconductor_hi',String(hi));}
+    SFX.lose();
+    setStatus(I18N.t('tc_over','Shift over — out of lives!'));
+  }
+  updateStats();
+}
+
+function startGame(){
+  if(started)return;
+  started=true;
+  spawnTrain();
+}
+
+c.addEventListener('click',()=>{ if(!started&&!over)startGame(); });
+document.addEventListener('keydown',e=>{
+  if(e.code==='Digit1')selectPlatform(0);
+  if(e.code==='Digit2')selectPlatform(1);
+  if(e.code==='Digit3')selectPlatform(2);
+  if(e.code==='Space'){e.preventDefault(); if(!started)startGame(); else depart();}
+});
+
+function drawTracks(){
+  ctx.strokeStyle='#546e7a';ctx.lineWidth=3;
+  PLATFORM_Y.forEach((y,i)=>{
+    ctx.beginPath();ctx.moveTo(0,y+18);ctx.lineTo(W,y+18);ctx.stroke();
+    ctx.fillStyle='#37474f';ctx.fillRect(0,y-24,90,44);
+    ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+    ctx.fillText((i+1)+'',45,y);
+  });
+}
+
+function drawTrain(t){
+  const y = t.routedPlatform!=null ? PLATFORM_Y[t.routedPlatform] : PLATFORM_Y[1];
+  ctx.fillStyle= t.state==='boarding'? '#ffca28':'#e53935';
+  ctx.fillRect(t.x,y-16,70,32);
+  ctx.fillStyle='#263238';
+  ctx.fillRect(t.x+6,y-10,16,14);
+  ctx.fillRect(t.x+30,y-10,16,14);
+  ctx.fillRect(t.x+54,y-10,10,14);
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText('🚂',t.x+35,y+4);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawTracks();
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('tc_start','Click to start your shift!'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(over){
+    if(train)drawTrain(train);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('tc_gameover','SHIFT OVER'),W/2,H/2-10);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('tc_finalscore','Trains Managed: {m}').replace('{m}',managed),W/2,H/2+18);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(train){
+    if(train.state==='incoming'){
+      train.x+=train.speed*dt;
+      const arriveX=W/2-35;
+      if(selectedPlatform!==null)train.routedPlatform=selectedPlatform;
+      if(train.x>=arriveX){
+        train.x=arriveX;
+        if(train.routedPlatform===null){
+          // never switched: defaults to platform 2 (middle) — likely wrong
+          train.routedPlatform=1;
+        }
+        if(train.routedPlatform===train.targetPlatform){
+          train.state='boarding';
+          setStatus(I18N.t('tc_boarding','Correct platform! Boarding passengers — wait for the right moment to Depart.'));
+          document.getElementById('departBtn').disabled=false;
+        } else {
+          lives--;
+          SFX.error();
+          setStatus(I18N.t('tc_wrongplatform','Wrong platform! Passengers stranded. Life lost.'));
+          updateStats();
+          train.state='leaving';
+          if(lives<=0){
+            over=true;
+            if(managed>hi){hi=managed;localStorage.setItem('trainconductor_hi',String(hi));}
+            SFX.lose();
+          }
+        }
+      }
+    } else if(train.state==='boarding'){
+      train.boardTimer+=dt;
+    } else if(train.state==='leaving'){
+      train.x+=(train.speed+2)*dt;
+      if(train.x>W+80){
+        train=null;
+        if(!over){
+          spawnTimer=0;
+          setTimeout(()=>{ if(!over&&!train)spawnTrain(); }, 500);
+        }
+      }
+    }
+    if(train)drawTrain(train);
+  }
+
+  updateStats();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

@@ -1,0 +1,175 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Postal Worker</title><meta name="description" content="Play Postal Worker free online — Click a package on the belt, then click the matching colored mailbox to sort it before it reaches the end. The belt speeds up, so don't let too many packages slip by!"><link rel="canonical" href="https://games.multiportllc.com/games/postalworker"><meta property="og:title" content="Postal Worker - Multiport Games"><meta property="og:description" content="Play Postal Worker free online — Click a package on the belt, then click the matching colored mailbox to sort it before it reaches the end. The belt speeds up, so don't let too many packages slip by!"><meta property="og:url" content="https://games.multiportllc.com/games/postalworker"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Postal Worker","description":"Play Postal Worker free online instantly. Click a package on the belt, then click the matching colored mailbox to sort it before it reaches the end. The belt speeds up, so don't let too many packages slip by! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/postalworker","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:linear-gradient(135deg,#7a3b12,#f2a154);border-radius:14px;padding:18px;text-align:center}
+#status{color:#fff;font-size:1.05rem;font-weight:800;margin:4px 0 12px;min-height:1.6em;text-shadow:0 1px 3px rgba(0,0,0,.4)}
+#belt{position:relative;width:100%;max-width:680px;height:110px;margin:0 auto;background:#3d2410;border-radius:10px;overflow:hidden;box-shadow:inset 0 0 12px rgba(0,0,0,.5)}
+#belt .stripe{position:absolute;top:0;bottom:0;width:2px;background:rgba(255,255,255,.12)}
+.pkg{position:absolute;top:30px;width:52px;height:50px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.3rem;color:#2b1a0a;cursor:pointer;box-shadow:0 3px 6px rgba(0,0,0,.4);transition:box-shadow .1s;user-select:none}
+.pkg.selected{box-shadow:0 0 0 4px #fff,0 3px 6px rgba(0,0,0,.4);transform:scale(1.05)}
+#bins{display:flex;justify-content:center;gap:14px;max-width:680px;margin:16px auto 0;flex-wrap:wrap}
+.bin{width:90px;height:70px;border-radius:10px 10px 4px 4px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.6rem;color:#fff;cursor:pointer;box-shadow:0 4px 0 rgba(0,0,0,.3);transition:transform .1s}
+.bin:active{transform:translateY(2px)}
+.bin small{display:block;font-size:.6rem;font-weight:700;color:rgba(255,255,255,.85)}
+#pw-score{color:#fff;font-size:1.1rem;font-weight:800;margin-top:10px;text-shadow:0 1px 3px rgba(0,0,0,.4)}
+@media(max-width:480px){
+  .bin{width:68px;height:56px;font-size:1.2rem}
+  .pkg{width:44px;height:42px;font-size:1.1rem;top:34px}
+}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Postal Worker</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="status">Click a package, then click its matching mailbox</div>
+      <div id="belt"></div>
+      <div id="bins"></div>
+      <div id="pw-score">Sorted: 0 | Misses: 0/8 | Best: 0</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a <b>package</b> on the belt, then click the <b>matching colored mailbox</b> (shown by the letter code) to sort it before it reaches the end. You can also press <b>1-4</b> on the keyboard to sort the selected package. The belt speeds up over time — <b>8 misses</b> ends your shift!</div>
+</div>
+<script>
+const BINS=[
+  {code:'R',color:'#e53935',name:'Red'},
+  {code:'B',color:'#1e88e5',name:'Blue'},
+  {code:'G',color:'#43a047',name:'Green'},
+  {code:'Y',color:'#fdd835',name:'Yellow'}
+];
+const beltEl=document.getElementById('belt'),binsEl=document.getElementById('bins');
+let beltW=680;
+let packages=[],selected=null,sorted=0,misses=0,best=parseInt(localStorage.getItem('postalworker_best')||'0');
+let spd=0.6,spawnTimer=0,lastTime=null,idCounter=0,gameOver=false,elapsed=0;
+
+function buildBins(){
+  binsEl.innerHTML='';
+  BINS.forEach((b,i)=>{
+    const el=document.createElement('div');
+    el.className='bin';
+    el.style.background=b.color;
+    el.innerHTML=`${b.code}<small>${i+1}</small>`;
+    el.onclick=()=>attemptSort(i);
+    binsEl.appendChild(el);
+  });
+}
+buildBins();
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+function updateScore(){
+  document.getElementById('pw-score').textContent=
+    I18N.t('postalworker_score_label','Sorted: {s} | Misses: {m}/8 | Best: {b}')
+      .replace('{s}',sorted).replace('{m}',misses).replace('{b}',best);
+}
+
+function reset(){
+  packages.forEach(p=>p.el.remove());
+  packages=[];selected=null;sorted=0;misses=0;spd=0.6;spawnTimer=0;lastTime=null;idCounter=0;gameOver=false;elapsed=0;
+  setStatus(I18N.t('postalworker_start','Click a package, then click its matching mailbox'));
+  updateScore();
+}
+
+function spawnPackage(){
+  beltW=beltEl.clientWidth||680;
+  const bin=BINS[Math.floor(Math.random()*BINS.length)];
+  const el=document.createElement('div');
+  el.className='pkg';
+  el.style.background=bin.color;
+  el.textContent=bin.code;
+  el.style.left='-56px';
+  beltEl.appendChild(el);
+  const p={id:idCounter++,el,x:-56,code:bin.code,binIndex:BINS.indexOf(bin)};
+  el.onclick=(e)=>{e.stopPropagation();if(gameOver)return;selectPkg(p);};
+  packages.push(p);
+}
+
+function selectPkg(p){
+  if(selected)selected.el.classList.remove('selected');
+  selected=p;
+  p.el.classList.add('selected');
+  SFX.click();
+  setStatus(I18N.t('postalworker_selected','Package {c} selected — pick its mailbox!').replace('{c}',p.code));
+}
+
+function attemptSort(binIndex){
+  if(gameOver||!selected)return;
+  const p=selected;
+  if(p.binIndex===binIndex){
+    sorted++;SFX.success();
+    setStatus(I18N.t('postalworker_correct','Sorted correctly! Nice work.'));
+  } else {
+    misses++;SFX.error();
+    setStatus(I18N.t('postalworker_wrong','Wrong bin! That package was misrouted.'));
+  }
+  removePkg(p);
+  checkEnd();
+}
+
+function removePkg(p){
+  p.el.remove();
+  packages=packages.filter(x=>x!==p);
+  if(selected===p)selected=null;
+  updateScore();
+}
+
+function checkEnd(){
+  if(misses>=8){
+    gameOver=true;
+    if(sorted>best){best=sorted;localStorage.setItem('postalworker_best',String(best));}
+    setStatus(I18N.t('postalworker_over','Shift over! Click below to start a new shift.'));
+    SFX.lose();
+    updateScore();
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameOver)return;
+  if(e.code>='Digit1'&&e.code<='Digit4'){
+    const idx=parseInt(e.code.slice(-1))-1;
+    attemptSort(idx);
+  }
+});
+
+document.getElementById('belt').addEventListener('click',()=>{
+  if(gameOver)reset();
+});
+document.getElementById('table').addEventListener('click',(e)=>{
+  if(gameOver&&e.target.id!=='belt')reset();
+});
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(!gameOver){
+    elapsed+=dt;
+    spd=0.6+elapsed/900;
+    spawnTimer+=dt;
+    const interval=Math.max(45,110-elapsed/6);
+    if(spawnTimer>=interval){spawnTimer-=interval;spawnPackage();}
+
+    beltW=beltEl.clientWidth||680;
+    packages.forEach(p=>{
+      p.x+=spd*dt;
+      p.el.style.left=p.x+'px';
+      if(p.x>beltW+10&&!p.missedFlag){
+        p.missedFlag=true;
+        misses++;SFX.fail();
+        setStatus(I18N.t('postalworker_missed','A package reached the end unsorted!'));
+        removePkg(p);
+        checkEnd();
+      }
+    });
+  }
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

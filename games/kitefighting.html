@@ -1,0 +1,238 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Kite Fighting</title><meta name="description" content="Play Kite Fighting free online — Use Arrow Keys or WASD (or drag/touch) to steer your kite, cross strings with your rival, then press Space or tap Cut at the right moment to saw through their line."><link rel="canonical" href="https://games.multiportllc.com/games/kitefighting"><meta property="og:title" content="Kite Fighting - Multiport Games"><meta property="og:description" content="Play Kite Fighting free online — Use Arrow Keys or WASD (or drag/touch) to steer your kite, cross strings with your rival, then press Space or tap Cut at the right moment to saw through their line."><meta property="og:url" content="https://games.multiportllc.com/games/kitefighting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Kite Fighting","description":"Play Kite Fighting free online instantly. Use Arrow Keys or WASD (or drag/touch) to steer your kite, cross strings with your rival, then press Space or tap Cut at the right moment to saw through their line before they cut yours. Best of five rounds wins the match. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/kitefighting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#4a7fc4;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#fff3b0;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#cutBtn{display:block;margin:8px auto 0;padding:10px 26px;background:#e53935;color:#fff;border:none;border-radius:22px;font-weight:800;font-size:1rem;cursor:pointer}
+#cutBtn:active{transform:scale(.95)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Kite Fighting</div>
+  <div class="game-frame">
+    <div id="score-display">Round: 0-0 | Match Wins: 0</div>
+    <canvas id="c" width="800" height="480"></canvas>
+    <button id="cutBtn">✂️ Cut</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> or <b>WASD</b> (or drag/touch) to steer your kite. When your string crosses your rival's, press <b>Space</b> or tap <b>Cut</b> near your own kite to saw through theirs — but time it wrong and they'll cut you first! Best of 5 rounds wins the match.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480;
+const pAnchor={x:220,y:H-20}, aAnchor={x:580,y:H-20};
+let player={x:220,y:220,vx:0,vy:0};
+let ai={x:580,y:220,vx:0,vy:0,mood:0};
+let playerWins=0,aiWins=0,matchWins=parseInt(localStorage.getItem('kitefighting_matchwins')||'0');
+let started=false,roundOver=false,matchOver=false,resultTimer=0,resultText='';
+let keys={};
+let touching=false,touchPos=null;
+let cutFlashPlayer=0,cutFlashAI=0;
+
+function seg(p1,p2){return [p1,p2];}
+function intersect(a1,a2,b1,b2){
+  const d1x=a2.x-a1.x, d1y=a2.y-a1.y;
+  const d2x=b2.x-b1.x, d2y=b2.y-b1.y;
+  const denom=d1x*d2y-d1y*d2x;
+  if(Math.abs(denom)<1e-6)return null;
+  const t=((b1.x-a1.x)*d2y-(b1.y-a1.y)*d2x)/denom;
+  const u=((b1.x-a1.x)*d1y-(b1.y-a1.y)*d1x)/denom;
+  if(t<0||t>1||u<0||u>1)return null;
+  return {x:a1.x+t*d1x,y:a1.y+t*d1y};
+}
+
+function newRound(){
+  player.x=220;player.y=220;player.vx=0;player.vy=0;
+  ai.x=580;ai.y=220;ai.vx=0;ai.vy=0;
+  roundOver=false;resultTimer=0;
+  cutFlashPlayer=0;cutFlashAI=0;
+}
+function newMatch(){
+  playerWins=0;aiWins=0;matchOver=false;
+  newRound();
+}
+
+function keyDown(e){
+  const k=e.key.toLowerCase();
+  if(['arrowup','arrowdown','arrowleft','arrowright','w','a','s','d',' '].includes(k))e.preventDefault();
+  keys[k]=true;
+  if(!started)started=true;
+  if(matchOver){newMatch();return;}
+  if(k===' ')tryCut('player');
+}
+function keyUp(e){ keys[e.key.toLowerCase()]=false; }
+document.addEventListener('keydown',keyDown);
+document.addEventListener('keyup',keyUp);
+
+function canvasPos(e){
+  const r=c.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  return {x:(t.clientX-r.left)*(W/r.width), y:(t.clientY-r.top)*(H/r.height)};
+}
+function onDown(e){ e.preventDefault(); if(!started)started=true; if(matchOver){newMatch();return;} touching=true;touchPos=canvasPos(e); }
+function onMove(e){ if(touching){e.preventDefault();touchPos=canvasPos(e);} }
+function onUp(){ touching=false; }
+c.addEventListener('mousedown',onDown);
+c.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+c.addEventListener('touchstart',onDown,{passive:false});
+c.addEventListener('touchmove',onMove,{passive:false});
+c.addEventListener('touchend',onUp);
+document.getElementById('cutBtn').addEventListener('click',()=>{ if(!started)started=true; if(matchOver){newMatch();return;} tryCut('player'); });
+
+function tryCut(who){
+  if(roundOver||matchOver)return;
+  const ip=intersect(pAnchor,player,aAnchor,ai);
+  if(!ip){ SFX.click(); return; }
+  const distP=Math.hypot(ip.x-player.x,ip.y-player.y);
+  const distA=Math.hypot(ip.x-ai.x,ip.y-ai.y);
+  const favorPlayer = distP < distA;
+  if(who==='player'){
+    if(favorPlayer){ winRound('player'); } else { winRound('ai'); }
+  } else {
+    if(!favorPlayer){ winRound('ai'); } else { winRound('player'); }
+  }
+}
+
+function winRound(who){
+  roundOver=true;
+  if(who==='player'){
+    playerWins++; cutFlashAI=20; SFX.win();
+    resultText=I18N.t('you_win_round','You cut their string!');
+  } else {
+    aiWins++; cutFlashPlayer=20; SFX.lose();
+    resultText=I18N.t('ai_win_round','Your string got cut!');
+  }
+  if(playerWins>=3||aiWins>=3){
+    matchOver=true;
+    if(playerWins>=3){ matchWins++; localStorage.setItem('kitefighting_matchwins',matchWins); }
+  }
+}
+
+function moveKite(k,anchor,targetDir,speedMul){
+  const accel=0.5*speedMul, friction=0.9, maxSp=5.5;
+  k.vx += targetDir.x*accel; k.vy += targetDir.y*accel;
+  k.vx*=friction; k.vy*=friction;
+  const sp=Math.hypot(k.vx,k.vy);
+  if(sp>maxSp){ k.vx=k.vx/sp*maxSp; k.vy=k.vy/sp*maxSp; }
+  k.x+=k.vx; k.y+=k.vy;
+  k.x=Math.max(20,Math.min(W-20,k.x));
+  k.y=Math.max(20,Math.min(H-40,k.y));
+  const maxLen=380;
+  const d=Math.hypot(k.x-anchor.x,k.y-anchor.y);
+  if(d>maxLen){ const s=maxLen/d; k.x=anchor.x+(k.x-anchor.x)*s; k.y=anchor.y+(k.y-anchor.y)*s; }
+}
+
+function drawKite(k,color,flash){
+  ctx.save();
+  ctx.translate(k.x,k.y);
+  const ang=Math.atan2(k.vy,k.vx);
+  ctx.rotate(ang+Math.PI/2);
+  ctx.fillStyle=flash>0? '#fff':color;
+  ctx.beginPath();ctx.moveTo(0,-16);ctx.lineTo(12,0);ctx.lineTo(0,20);ctx.lineTo(-12,0);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.3)';ctx.lineWidth=1.5;ctx.stroke();
+  // tail
+  ctx.strokeStyle=color;ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(0,20);ctx.lineTo(-6,32);ctx.lineTo(6,40);ctx.lineTo(-6,52);ctx.stroke();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#2d6bb0');sky.addColorStop(1,'#8fc7ee');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(255,255,255,0.3)';
+  [[130,90,30],[680,120,26],[420,60,22]].forEach(([x,y,r])=>{
+    ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.arc(x+r*0.8,y+5,r*0.65,0,Math.PI*2);ctx.fill();
+  });
+  ctx.fillStyle='#3e2723';
+  ctx.fillRect(pAnchor.x-6,pAnchor.y,12,H-pAnchor.y);
+  ctx.fillRect(aAnchor.x-6,aAnchor.y,12,H-aAnchor.y);
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press a key or tap to start'),W/2,40);
+    drawKite(player,'#e53935',0);
+    drawKite(ai,'#43a047',0);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(matchOver){
+    ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(playerWins>=3? I18N.t('match_win_title','MATCH WON!') : I18N.t('match_lose_title','MATCH LOST'),W/2,H/2-30);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_round_score','Rounds: {p} - {a}').replace('{p}',playerWins).replace('{a}',aiWins),W/2,H/2+8);
+    ctx.fillText(I18N.t('restart_hint','Tap or press a key to restart'),W/2,H/2+40);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(roundOver){
+    resultTimer++;
+    // draw strings/kites frozen
+    ctx.strokeStyle='rgba(255,255,255,0.85)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(pAnchor.x,pAnchor.y);ctx.lineTo(player.x,player.y);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(aAnchor.x,aAnchor.y);ctx.lineTo(ai.x,ai.y);ctx.stroke();
+    drawKite(player,'#e53935',cutFlashPlayer);
+    drawKite(ai,'#43a047',cutFlashAI);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(resultText,W/2,50);
+    if(resultTimer>55)newRound();
+    requestAnimationFrame(loop);return;
+  }
+
+  // player input
+  let dir={x:0,y:0};
+  if(keys['arrowleft']||keys['a'])dir.x-=1;
+  if(keys['arrowright']||keys['d'])dir.x+=1;
+  if(keys['arrowup']||keys['w'])dir.y-=1;
+  if(keys['arrowdown']||keys['s'])dir.y+=1;
+  if(touching&&touchPos){
+    const dx=touchPos.x-player.x, dy=touchPos.y-player.y;
+    const d=Math.hypot(dx,dy);
+    if(d>6){ dir.x=dx/d; dir.y=dy/d; }
+  } else {
+    const d=Math.hypot(dir.x,dir.y);
+    if(d>0){dir.x/=d;dir.y/=d;}
+  }
+  moveKite(player,pAnchor,dir,1);
+
+  // AI: wander + try to intercept player's string, occasional cut attempt
+  ai.mood-=1;
+  if(ai.mood<=0){ ai.mood=40+Math.random()*60; }
+  const towardPlayerMid={x:(player.x-ai.x),y:(player.y-ai.y)};
+  const dmid=Math.hypot(towardPlayerMid.x,towardPlayerMid.y)||1;
+  let aiDir={x: towardPlayerMid.x/dmid*0.6 + (Math.sin(Date.now()/500+ai.mood)*0.5), y: towardPlayerMid.y/dmid*0.4 + Math.cos(Date.now()/700)*0.3};
+  const adn=Math.hypot(aiDir.x,aiDir.y)||1; aiDir.x/=adn; aiDir.y/=adn;
+  moveKite(ai,aAnchor,aiDir,0.85);
+
+  const ip=intersect(pAnchor,player,aAnchor,ai);
+  if(ip && Math.random()<0.03){ tryCut('ai'); }
+
+  // draw strings
+  ctx.strokeStyle='rgba(255,255,255,0.85)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(pAnchor.x,pAnchor.y);ctx.lineTo(player.x,player.y);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(aAnchor.x,aAnchor.y);ctx.lineTo(ai.x,ai.y);ctx.stroke();
+  if(ip){
+    ctx.fillStyle='#ffee58';
+    ctx.beginPath();ctx.arc(ip.x,ip.y,5,0,Math.PI*2);ctx.fill();
+  }
+
+  drawKite(player,'#e53935',0);
+  drawKite(ai,'#43a047',0);
+
+  document.getElementById('score-display').textContent =
+    I18N.t('kite_status','Round: {p}-{a} | Match Wins: {m}')
+      .replace('{p}',playerWins).replace('{a}',aiWins).replace('{m}',matchWins);
+
+  requestAnimationFrame(loop);
+}
+newMatch();
+loop();
+</script></body></html>

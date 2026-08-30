@@ -1,0 +1,303 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mahjong Solitaire</title><meta name="description" content="Play Mahjong Solitaire free online — Click two matching free tiles to remove them. Clear the whole layout as fast as you can!"><link rel="canonical" href="https://games.multiportllc.com/games/mahjongsolitaire"><meta property="og:title" content="Mahjong Solitaire - Multiport Games"><meta property="og:description" content="Play Mahjong Solitaire free online — Click two matching free tiles to remove them. Clear the whole layout as fast as you can!"><meta property="og:url" content="https://games.multiportllc.com/games/mahjongsolitaire"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mahjong Solitaire","description":"Play Mahjong Solitaire free online instantly. Click two matching free tiles to remove them. Clear the whole layout as fast as you can! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/mahjongsolitaire","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0f3d2e;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#a8e6a1;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#btnRow{text-align:center;padding-bottom:8px}
+#btnRow button{padding:8px 20px;border-radius:20px;border:none;background:#2e7d32;color:#fff;font-weight:700;cursor:pointer;margin:0 6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mahjong Solitaire</div>
+  <div class="game-frame">
+    <div id="score-display">Solved: 0 | Best time: —</div>
+    <canvas id="c" width="800" height="460"></canvas>
+    <div id="btnRow"><button id="shuffleBtn">New Layout</button></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click two <b>free</b> matching tiles (not blocked on the left+right, and not covered by a tile above) to remove them. Clear the whole board to win — a new, always-solvable layout appears each round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=460;
+const TW=48,TH=60; // tile draw size
+const SYMBOLS=['🀄','🀅','🀆','🐉','🌸','🍀','🎋','🌊','🔥','⭐','🌙','☀️','🎭','🎨','🎪','🎯','🃏','💎'];
+
+let solved=0,bestTime=null,startTime=null,elapsed=0,timerRunning=false;
+let tiles=[]; // {col,row,layer,sym,removed,id}
+let selected=null;
+let won=false;
+
+bestTime=localStorage.getItem('mahjong_best')?parseFloat(localStorage.getItem('mahjong_best')):null;
+
+// Layout definition: list of (col,row,layer) cells. Build a layered pyramid-ish shape
+// using simple offsets so blocking rules are meaningful across layers.
+function buildLayoutCells(){
+  const cells=[];
+  // Layer 0: big grid 10 cols x 6 rows (some missing corners)
+  const cols=10, rows=6;
+  for(let r=0;r<rows;r++){
+    for(let col=0;col<cols;col++){
+      if((r===0||r===rows-1)&&(col===0||col===cols-1))continue; // skip corners
+      cells.push({col:col*2,row:r*2,layer:0});
+    }
+  }
+  // Layer 1: smaller grid, offset by 1 (sits on top, centered)
+  const l1cols=7,l1rows=4;
+  const l1offc=(cols*2-(l1cols*2-1))/2;
+  const l1offr=(rows*2-(l1rows*2-1))/2;
+  for(let r=0;r<l1rows;r++){
+    for(let col=0;col<l1cols;col++){
+      cells.push({col:l1offc+col*2,row:l1offr+r*2,layer:1});
+    }
+  }
+  // Layer 2: smaller still
+  const l2cols=4,l2rows=2;
+  const l2offc=(cols*2-(l2cols*2-1))/2;
+  const l2offr=(rows*2-(l2rows*2-1))/2;
+  for(let r=0;r<l2rows;r++){
+    for(let col=0;col<l2cols;col++){
+      cells.push({col:l2offc+col*2,row:l2offr+r*2,layer:2});
+    }
+  }
+  // Layer 3: top single/pair capstone
+  cells.push({col:l2offc+2,row:l2offr,layer:3});
+  cells.push({col:l2offc+4,row:l2offr,layer:3});
+  return cells;
+}
+
+function generateLayout(){
+  let cells=buildLayoutCells();
+  // ensure even count (pairs)
+  if(cells.length%2!==0)cells.pop();
+  const n=cells.length;
+  const pairCount=n/2;
+
+  // Solvability guarantee: simulate the real removal process on the symbol-blind geometry —
+  // repeatedly find ALL currently-free tiles (both tiles of a move must be free AT THE SAME
+  // TIME, matching the real click rule) and remove two of them together as one "pair move".
+  // Assign each pair move the same symbol. Replaying these exact moves in order is then
+  // guaranteed legal, so the generated board always has at least one full solution.
+  const pairsIdx=simulatePairRemovalOrder(cells);
+  const symOrder=[];
+  for(let i=0;i<pairCount;i++)symOrder.push(SYMBOLS[i%SYMBOLS.length]);
+  symOrder.sort(()=>Math.random()-0.5);
+  const symAssign=new Array(n);
+  pairsIdx.forEach(([a,b],i)=>{
+    symAssign[a]=symOrder[i];
+    symAssign[b]=symOrder[i];
+  });
+  const result=cells.map((cell,i)=>({
+    id:i,col:cell.col,row:cell.row,layer:cell.layer,sym:symAssign[i],removed:false
+  }));
+  return result;
+}
+
+// Returns an array of [idxA, idxB] pairs (indices into `cells`) such that removing them in
+// this exact order, two at a time, is always legal on the real board geometry.
+function simulatePairRemovalOrder(cells){
+  const remaining=cells.map((c,i)=>({...c,idx:i}));
+  const pairs=[];
+  function isFree(cell,pool){
+    const covered=pool.some(o=>o.layer===cell.layer+1 && Math.abs(o.col-cell.col)<2 && Math.abs(o.row-cell.row)<2);
+    if(covered)return false;
+    const leftBlocked=pool.some(o=>o.layer===cell.layer && o.row===cell.row && o.col===cell.col-2);
+    const rightBlocked=pool.some(o=>o.layer===cell.layer && o.row===cell.row && o.col===cell.col+2);
+    return !(leftBlocked&&rightBlocked);
+  }
+  let pool=remaining.slice();
+  let guard=0;
+  while(pool.length>0&&guard<100000){
+    guard++;
+    const freeCells=pool.filter(c=>isFree(c,pool));
+    if(freeCells.length>=2){
+      const a=freeCells[Math.floor(Math.random()*freeCells.length)];
+      let b;
+      do{ b=freeCells[Math.floor(Math.random()*freeCells.length)]; }while(b.idx===a.idx);
+      pairs.push([a.idx,b.idx]);
+      pool=pool.filter(c=>c.idx!==a.idx&&c.idx!==b.idx);
+    }else{
+      // shouldn't happen for this layered geometry; fail safe by pairing whatever remains
+      const a=pool[0], b=pool[1]||pool[0];
+      pairs.push([a.idx,b.idx]);
+      pool=pool.filter(c=>c.idx!==a.idx&&c.idx!==b.idx);
+    }
+  }
+  return pairs;
+}
+
+function computeFree(tile){
+  if(tile.removed)return false;
+  const pool=tiles.filter(t=>!t.removed);
+  const covered=pool.some(o=>o.layer===tile.layer+1 && Math.abs(o.col-tile.col)<2 && Math.abs(o.row-tile.row)<2);
+  if(covered)return false;
+  const leftBlocked=pool.some(o=>o.layer===tile.layer && o.row===tile.row && o.col===tile.col-2);
+  const rightBlocked=pool.some(o=>o.layer===tile.layer && o.row===tile.row && o.col===tile.col+2);
+  return !(leftBlocked&&rightBlocked);
+}
+
+function boardBounds(){
+  let maxCol=0,maxRow=0;
+  tiles.forEach(t=>{ if(t.col>maxCol)maxCol=t.col; if(t.row>maxRow)maxRow=t.row; });
+  return {maxCol,maxRow};
+}
+
+let offsetX=40,offsetY=30,cellW=0,cellH=0;
+
+function layout(){
+  const {maxCol,maxRow}=boardBounds();
+  const boardColSpan=maxCol+2; // in half-units
+  const boardRowSpan=maxRow+2;
+  cellW=Math.min(TW, (W-80)/boardColSpan*2);
+  cellH=Math.min(TH, (H-140)/boardRowSpan*2);
+  offsetX=(W-boardColSpan*cellW/2)/2;
+  offsetY=60;
+}
+
+function tileScreen(t){
+  const x=offsetX+(t.col/2)*cellW - t.layer*4;
+  const y=offsetY+(t.row/2)*cellH - t.layer*4;
+  return {x,y,w:cellW*0.92,h:cellH*0.92};
+}
+
+function newGame(){
+  tiles=generateLayout();
+  layout();
+  selected=null;
+  won=false;
+  startTime=performance.now();
+  timerRunning=true;
+  elapsed=0;
+}
+
+function drawTile(t,isSelected,isFree){
+  const {x,y,w,h}=tileScreen(t);
+  ctx.fillStyle= t.layer===0?'#1a1a2e':t.layer===1?'#22223a':t.layer===2?'#2a2a46':'#333352';
+  ctx.strokeStyle=isFree?'#ffd54f':'rgba(255,255,255,0.15)';
+  ctx.lineWidth=isSelected?4:1.5;
+  ctx.fillRect(x,y,w,h);
+  ctx.strokeRect(x,y,w,h);
+  if(!isFree){
+    ctx.fillStyle='rgba(0,0,0,0.4)';
+    ctx.fillRect(x,y,w,h);
+  }
+  ctx.fillStyle=isFree?'#fff':'rgba(255,255,255,0.5)';
+  ctx.font=Math.floor(h*0.55)+'px Arial';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(t.sym,x+w/2,y+h/2+2);
+  if(isSelected){
+    ctx.strokeStyle='#4fc3f7';ctx.lineWidth=3;
+    ctx.strokeRect(x-2,y-2,w+4,h+4);
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0a2e22');bg.addColorStop(1,'#0f3d2e');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  const remaining=tiles.filter(t=>!t.removed);
+  // sort by layer then row for stacking draw order
+  remaining.sort((a,b)=> a.layer-b.layer || a.row-b.row);
+  remaining.forEach(t=>{
+    const free=computeFree(t);
+    drawTile(t,selected===t.id,free);
+  });
+
+  if(won){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('win_title','BOARD CLEARED!'),400,200);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('time_label','Time: {t}s').replace('{t}',elapsed.toFixed(1)),400,240);
+    ctx.fillText(I18N.t('new_layout_hint','Click New Layout to play again'),400,270);
+  } else if(remaining.length>0 && !hasMovesLeft(remaining)){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('stuck_title','No moves left!'),400,200);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('new_layout_hint','Click New Layout to play again'),400,240);
+  }
+}
+
+function hasMovesLeft(remaining){
+  const free=remaining.filter(t=>computeFree(t));
+  const bySym={};
+  free.forEach(t=>{ (bySym[t.sym]=bySym[t.sym]||[]).push(t); });
+  return Object.values(bySym).some(arr=>arr.length>=2);
+}
+
+function updateHud(){
+  const timeStr = timerRunning ? elapsed.toFixed(1)+'s' : (bestTime?bestTime.toFixed(1)+'s':'—');
+  document.getElementById('score-display').textContent =
+    I18N.t('mahjong_hud','Solved: {s} | Best time: {b} | Time: {t}s')
+      .replace('{s}',solved).replace('{b}', bestTime?bestTime.toFixed(1):'—').replace('{t}',elapsed.toFixed(1));
+}
+
+function handlePick(px,py){
+  if(won)return;
+  const remaining=tiles.filter(t=>!t.removed).sort((a,b)=>b.layer-a.layer);
+  for(const t of remaining){
+    const {x,y,w,h}=tileScreen(t);
+    if(px>=x&&px<=x+w&&py>=y&&py<=y+h){
+      if(!computeFree(t))return; // blocked, ignore
+      if(selected===null){
+        selected=t.id;
+        SFX.click();
+      } else if(selected===t.id){
+        selected=null;
+      } else {
+        const other=tiles.find(o=>o.id===selected);
+        if(other && other.sym===t.sym){
+          t.removed=true; other.removed=true;
+          selected=null;
+          SFX.point();
+          const rem=tiles.filter(x=>!x.removed);
+          if(rem.length===0){
+            won=true;
+            timerRunning=false;
+            solved++;
+            if(bestTime===null||elapsed<bestTime){bestTime=elapsed;localStorage.setItem('mahjong_best',bestTime);}
+            SFX.win();
+          }
+        } else {
+          SFX.error();
+          selected=t.id;
+        }
+      }
+      return;
+    }
+  }
+}
+
+c.addEventListener('click',e=>{
+  const r=c.getBoundingClientRect();
+  const scaleX=W/r.width, scaleY=H/r.height;
+  handlePick((e.clientX-r.left)*scaleX,(e.clientY-r.top)*scaleY);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const r=c.getBoundingClientRect();
+  const scaleX=W/r.width, scaleY=H/r.height;
+  const t=e.changedTouches[0];
+  handlePick((t.clientX-r.left)*scaleX,(t.clientY-r.top)*scaleY);
+},{passive:false});
+
+document.getElementById('shuffleBtn').onclick=()=>{ newGame(); };
+
+function loop(){
+  if(timerRunning){ elapsed=(performance.now()-startTime)/1000; }
+  draw();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+newGame();
+loop();
+</script></body></html>

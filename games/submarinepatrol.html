@@ -1,0 +1,265 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Submarine Patrol</title><meta name="description" content="Play Submarine Patrol free online — Steer your submarine through the minefield, dodge torpedoes, and sink enemy subs to survive as long as you can."><link rel="canonical" href="https://games.multiportllc.com/games/submarinepatrol"><meta property="og:title" content="Submarine Patrol - Multiport Games"><meta property="og:description" content="Play Submarine Patrol free online — Steer your submarine through the minefield, dodge torpedoes, and sink enemy subs to survive as long as you can."><meta property="og:url" content="https://games.multiportllc.com/games/submarinepatrol"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Submarine Patrol","description":"Play Submarine Patrol free online instantly. Steer your submarine through the minefield, dodge torpedoes, and sink enemy subs to survive as long as you can. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/submarinepatrol","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d3b5c;display:block;border-radius:8px;margin:0 auto;touch-action:none}
+#score-display{color:#4fc3f7;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Submarine Patrol</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="score-display">Sunk: 0 | Lives: 3</div>
+    <canvas id="c" width="480" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>drag</b> to steer your submarine. Press <b>Space</b> or <b>tap</b> to fire a torpedo. Dodge mines and enemy torpedoes — sink enemy subs for points!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=480,H=480;
+let sub,mines,enemies,torps,eTorps,bubbles,score,lives,hi,gameOver,started,frame;
+let keys={},dragTarget=null,fireCooldown=0;
+let mineTimer=0,enemyTimer=0;
+
+function loadHi(){return +(localStorage.getItem('submarinepatrol_hi')||0);}
+function saveHi(v){if(v>loadHi())localStorage.setItem('submarinepatrol_hi',v);}
+
+function reset(){
+  sub={x:W/2,y:H-60,w:44,h:22,vx:0,vy:0};
+  mines=[];enemies=[];torps=[];eTorps=[];bubbles=[];
+  score=0;lives=3;gameOver=false;started=false;frame=0;
+  mineTimer=0;enemyTimer=0;fireCooldown=0;
+  hi=loadHi();
+}
+
+function spawnMine(){
+  mines.push({x:20+Math.random()*(W-40),y:-20,r:14,vy:0.6+Math.random()*0.6,bob:Math.random()*Math.PI*2});
+}
+function spawnEnemy(){
+  const fromLeft=Math.random()<0.5;
+  enemies.push({x:fromLeft?-30:W+30,y:40+Math.random()*(H*0.45),w:40,h:20,vx:fromLeft?1.2:-1.2,dir:fromLeft?1:-1,shotTimer:60+Math.random()*80});
+}
+
+function fire(){
+  if(gameOver||!started||fireCooldown>0)return;
+  torps.push({x:sub.x,y:sub.y-14,vy:-6});
+  fireCooldown=18;
+  SFX.click();
+}
+
+function startOrRestart(){
+  if(gameOver){reset();return;}
+  started=true;
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(e.code==='Space'){e.preventDefault();if(gameOver||!started)startOrRestart();else fire();}
+  if(['arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())){e.preventDefault();if(!started&&!gameOver)started=true;}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function canvasPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+c.addEventListener('mousedown',e=>{
+  if(gameOver||!started){startOrRestart();return;}
+  dragTarget=canvasPos(e);
+});
+c.addEventListener('mousemove',e=>{ if(dragTarget)dragTarget=canvasPos(e); });
+window.addEventListener('mouseup',()=>{dragTarget=null;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver||!started){startOrRestart();return;}
+  dragTarget=canvasPos(e);
+},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(dragTarget)dragTarget=canvasPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragTarget=null;fire();},{passive:false});
+c.addEventListener('click',()=>{ if(started&&!gameOver)fire(); });
+
+function rectCirc(rx,ry,rw,rh,cx,cy,cr){
+  const nx=Math.max(rx,Math.min(cx,rx+rw));
+  const ny=Math.max(ry,Math.min(cy,ry+rh));
+  const dx=cx-nx,dy=cy-ny;
+  return dx*dx+dy*dy<cr*cr;
+}
+function rectRect(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function hitLife(){
+  lives--;SFX.hit();
+  bubbles.push({x:sub.x,y:sub.y,r:5,life:20});
+  if(lives<=0){gameOver=true;SFX.lose();saveHi(score);hi=loadHi();}
+}
+
+function update(dt){
+  if(!started||gameOver)return;
+  frame+=dt;
+  // movement
+  const spd=3.2*dt;
+  if(keys['arrowleft']||keys['a'])sub.x-=spd;
+  if(keys['arrowright']||keys['d'])sub.x+=spd;
+  if(keys['arrowup']||keys['w'])sub.y-=spd;
+  if(keys['arrowdown']||keys['s'])sub.y+=spd;
+  if(dragTarget){
+    sub.x+=(dragTarget.x-sub.x)*0.15*dt;
+    sub.y+=(dragTarget.y-sub.y)*0.15*dt;
+  }
+  sub.x=Math.max(sub.w/2,Math.min(W-sub.w/2,sub.x));
+  sub.y=Math.max(40,Math.min(H-20,sub.y));
+
+  if(fireCooldown>0)fireCooldown-=dt;
+
+  // difficulty ramp
+  const diff=1+score*0.05;
+  mineTimer+=dt;
+  if(mineTimer>=Math.max(35,80-diff*4)){mineTimer=0;spawnMine();}
+  enemyTimer+=dt;
+  if(enemyTimer>=Math.max(90,180-diff*8)){enemyTimer=0;spawnEnemy();}
+
+  mines.forEach(m=>{m.y+=m.vy*dt;m.bob+=0.08*dt;});
+  mines=mines.filter(m=>m.y<H+30);
+
+  enemies.forEach(en=>{
+    en.x+=en.vx*dt;
+    en.shotTimer-=dt;
+    if(en.shotTimer<=0&&en.x>10&&en.x<W-10){
+      en.shotTimer=100+Math.random()*100;
+      eTorps.push({x:en.x,y:en.y+10,vy:3});
+    }
+  });
+  enemies=enemies.filter(en=>en.x>-60&&en.x<W+60);
+
+  torps.forEach(t=>t.y+=t.vy*dt);
+  torps=torps.filter(t=>t.y>-20);
+  eTorps.forEach(t=>t.y+=t.vy*dt);
+  eTorps=eTorps.filter(t=>t.y<H+20);
+
+  const subHit={x:sub.x-sub.w/2,y:sub.y-sub.h/2,w:sub.w,h:sub.h};
+
+  // torpedo hits enemy
+  for(let i=torps.length-1;i>=0;i--){
+    const t=torps[i];
+    for(let j=enemies.length-1;j>=0;j--){
+      const en=enemies[j];
+      if(t.x>en.x-en.w/2&&t.x<en.x+en.w/2&&t.y>en.y-en.h/2&&t.y<en.y+en.h/2){
+        enemies.splice(j,1);torps.splice(i,1);
+        score++;if(score>hi)hi=score;
+        SFX.coin();
+        break;
+      }
+    }
+  }
+
+  // mine collision
+  for(let i=mines.length-1;i>=0;i--){
+    const m=mines[i];
+    if(rectCirc(subHit.x,subHit.y,subHit.w,subHit.h,m.x,m.y,m.r)){
+      mines.splice(i,1);
+      hitLife();
+    }
+  }
+  // enemy torpedo collision
+  for(let i=eTorps.length-1;i>=0;i--){
+    const t=eTorps[i];
+    if(t.x>subHit.x&&t.x<subHit.x+subHit.w&&t.y>subHit.y&&t.y<subHit.y+subHit.h){
+      eTorps.splice(i,1);
+      hitLife();
+    }
+  }
+  // direct sub-enemy collision
+  for(let j=enemies.length-1;j>=0;j--){
+    const en=enemies[j];
+    if(rectRect(subHit,{x:en.x-en.w/2,y:en.y-en.h/2,w:en.w,h:en.h})){
+      enemies.splice(j,1);
+      hitLife();
+    }
+  }
+}
+
+function drawSub(x,y,color,dir){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(dir||1,1);
+  ctx.fillStyle=color;
+  ctx.beginPath();
+  ctx.ellipse(0,0,22,10,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillRect(-6,-16,10,8);
+  ctx.fillStyle='#ffeb3b';
+  ctx.beginPath();ctx.arc(10,0,3,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function draw(){
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#0d3b5c');g.addColorStop(1,'#01293f');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+
+  // bubbles/waves decoration
+  ctx.strokeStyle='rgba(255,255,255,.06)';
+  for(let y=20;y<H;y+=40){
+    ctx.beginPath();
+    for(let x=0;x<=W;x+=20){ ctx.lineTo(x,y+Math.sin((x+frame)*0.05)*4); }
+    ctx.stroke();
+  }
+
+  mines.forEach(m=>{
+    const by=m.y+Math.sin(m.bob)*2;
+    ctx.fillStyle='#455a64';
+    ctx.beginPath();ctx.arc(m.x,by,m.r,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#263238';ctx.lineWidth=2;
+    for(let a=0;a<8;a++){
+      const ang=a/8*Math.PI*2;
+      ctx.beginPath();
+      ctx.moveTo(m.x+Math.cos(ang)*m.r,by+Math.sin(ang)*m.r);
+      ctx.lineTo(m.x+Math.cos(ang)*(m.r+6),by+Math.sin(ang)*(m.r+6));
+      ctx.stroke();
+    }
+  });
+
+  enemies.forEach(en=>drawSub(en.x,en.y,'#e57373',en.dir));
+
+  ctx.fillStyle='#fff176';
+  torps.forEach(t=>ctx.fillRect(t.x-2,t.y-8,4,10));
+  ctx.fillStyle='#ff8a65';
+  eTorps.forEach(t=>ctx.fillRect(t.x-2,t.y-2,4,10));
+
+  if(started)drawSub(sub.x,sub.y,'#4fc3f7',1);
+
+  document.getElementById('score-display').textContent=
+    I18N.t('sunk_lives_label','Sunk: {s} | Lives: {l}').replace('{s}',score).replace('{l}',Math.max(0,lives));
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='#e1f5fe';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_sub','Tap, drag, or press an arrow key to dive in'),W/2,H/2);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-24);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi),W/2,H/2+8);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+36);
+  }
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>
