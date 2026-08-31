@@ -1,0 +1,215 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Graffiti Art</title><meta name="description" content="Play Graffiti Art free online — Pick a spray-paint color from the palette then drag over the matching stencil regions to recreate the faint target design before your paint cans run dry."><link rel="canonical" href="https://games.multiportllc.com/games/graffitiart"><meta property="og:title" content="Graffiti Art - Multiport Games"><meta property="og:description" content="Play Graffiti Art free online — Pick a spray-paint color from the palette then drag over the matching stencil regions to recreate the faint target design before your paint cans run dry."><meta property="og:url" content="https://games.multiportllc.com/games/graffitiart"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Graffiti Art","description":"Play Graffiti Art free online instantly. Pick a spray-paint color from the palette then drag over the matching stencil regions to recreate the faint target design before your paint cans run dry. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/graffitiart","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#1a1a2e,#3a3a55);display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#score-display{color:#ffca28;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#palette{display:flex;gap:8px;justify-content:center;margin:10px auto;flex-wrap:wrap}
+#palette button{width:38px;height:38px;border-radius:50%;border:3px solid rgba(255,255,255,.3);cursor:pointer}
+#palette button.active{border-color:#fff;transform:scale(1.15)}
+#meterWrap{width:280px;height:16px;background:#222;border-radius:8px;margin:8px auto;overflow:hidden}
+#meterFill{height:100%;background:linear-gradient(90deg,#ffca28,#ff7043);width:100%;transition:width .1s}
+#toolRow{text-align:center;margin:6px 0}
+#toolRow button{padding:8px 18px;background:#ff477e;border:none;border-radius:18px;color:#fff;font-weight:700;cursor:pointer;margin:0 4px}
+#toolRow button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Graffiti Art</div>
+  <div class="game-frame">
+    <div id="score-display">Pieces: 0 | Score: 0 | Hi: 0</div>
+    <canvas id="c" width="500" height="400"></canvas>
+    <div id="meterWrap"><div id="meterFill"></div></div>
+    <div id="palette"></div>
+    <div id="toolRow">
+      <button id="refillBtn">Refill Can (2 left)</button>
+      <button id="submitBtn">Submit Piece</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Pick a <b>spray color</b> from the palette, then <b>click or drag</b> over the stencil regions on the wall to fill them in and match the faint target design. Watch your <b>paint meter</b> — refills are limited. Click <b>Submit Piece</b> when you think it matches!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=500,H=400;
+const PALETTE=['#ff477e','#ffca28','#29b6f6','#66bb6a','#ab47bc','#ffffff'];
+let regions=[],targetColors=[],currentColor=PALETTE[0],paint=100,refillsLeft=2;
+let pieces=parseInt(localStorage.getItem('graffitiart_pieces')||'0');
+let hi=parseFloat(localStorage.getItem('graffitiart_hi')||'0');
+let score=0,drawing=false,gameEnded=false;
+
+function genRegions(){
+  // Grid of blocky "stencil" cells forming a simple abstract shape (like a letter/star)
+  const cols=8,rows=8,cw=W/cols,ch=H/cols;
+  const patterns=[
+    // star-ish / diamond pattern indices to fill (row,col)
+    ()=>{
+      const cells=[];
+      for(let r=0;r<rows;r++)for(let col=0;col<cols;col++){
+        const dr=Math.abs(r-3.5),dc=Math.abs(col-3.5);
+        if(dr+dc<4.5)cells.push([r,col]);
+      }
+      return cells;
+    },
+    ()=>{ // heart-ish blocky
+      const cells=[];
+      for(let r=0;r<rows;r++)for(let col=0;col<cols;col++){
+        const x=(col-3.5)/3.5,y=(r-3)/4;
+        if(Math.pow(x*x+y*y-0.4,3)-x*x*Math.pow(y,3)<0.05)cells.push([r,col]);
+      }
+      return cells.length>5?cells:[[2,3],[2,4],[3,2],[3,5],[4,3],[4,4],[5,3],[5,4]];
+    },
+    ()=>{ // simple block letter "X"
+      const cells=[];
+      for(let r=0;r<rows;r++)for(let col=0;col<cols;col++){
+        if(Math.abs(r-col)<=1||Math.abs(r-(rows-1-col))<=1)cells.push([r,col]);
+      }
+      return cells;
+    }
+  ];
+  const chosen=patterns[Math.floor(Math.random()*patterns.length)]();
+  regions=chosen.map(([r,col])=>({
+    x:col*cw,y:r*ch,w:cw,h:ch,
+    target:PALETTE[Math.floor(Math.random()*PALETTE.length)],
+    painted:null
+  }));
+}
+
+function newPiece(){
+  genRegions();
+  paint=100;
+  refillsLeft=2;
+  gameEnded=false;
+  document.getElementById('refillBtn').textContent=I18N.t('refill_label','Refill Can ({n} left)').replace('{n}',refillsLeft);
+  document.getElementById('refillBtn').disabled=false;
+  document.getElementById('submitBtn').disabled=false;
+  updateMeter();
+}
+
+function updateMeter(){
+  document.getElementById('meterFill').style.width=Math.max(0,paint)+'%';
+}
+
+function buildPalette(){
+  const wrap=document.getElementById('palette');
+  wrap.innerHTML='';
+  PALETTE.forEach(col=>{
+    const b=document.createElement('button');
+    b.style.background=col;
+    if(col===currentColor)b.classList.add('active');
+    b.onclick=()=>{currentColor=col;buildPalette();SFX.select();};
+    wrap.appendChild(b);
+  });
+}
+
+function regionAt(px,py){
+  return regions.find(r=>px>=r.x&&px<r.x+r.w&&py>=r.y&&py<r.y+r.h);
+}
+
+function sprayAt(px,py){
+  if(gameEnded)return;
+  if(paint<=0)return;
+  const r=regionAt(px,py);
+  if(!r)return;
+  if(r.painted!==currentColor){
+    r.painted=currentColor;
+    paint-=3;
+    if(paint<0)paint=0;
+    updateMeter();
+    SFX.click();
+  }
+}
+
+function getPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  let clientX,clientY;
+  if(e.touches&&e.touches.length){clientX=e.touches[0].clientX;clientY=e.touches[0].clientY;}
+  else{clientX=e.clientX;clientY=e.clientY;}
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+
+c.addEventListener('mousedown',e=>{drawing=true;const p=getPos(e);sprayAt(p.x,p.y);});
+c.addEventListener('mousemove',e=>{if(drawing){const p=getPos(e);sprayAt(p.x,p.y);}});
+window.addEventListener('mouseup',()=>drawing=false);
+c.addEventListener('touchstart',e=>{e.preventDefault();drawing=true;const p=getPos(e);sprayAt(p.x,p.y);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(drawing){const p=getPos(e);sprayAt(p.x,p.y);}},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();drawing=false;},{passive:false});
+
+document.getElementById('refillBtn').addEventListener('click',()=>{
+  if(refillsLeft<=0||gameEnded)return;
+  refillsLeft--;
+  paint=100;
+  updateMeter();
+  document.getElementById('refillBtn').textContent=I18N.t('refill_label','Refill Can ({n} left)').replace('{n}',refillsLeft);
+  if(refillsLeft<=0)document.getElementById('refillBtn').disabled=true;
+  SFX.powerup();
+});
+
+document.getElementById('submitBtn').addEventListener('click',()=>{
+  if(gameEnded)return;
+  let correct=0;
+  regions.forEach(r=>{ if(r.painted===r.target)correct++; });
+  const pct=Math.round((correct/regions.length)*100);
+  const pieceScore=Math.round(pct*10);
+  score+=pieceScore;
+  pieces++;
+  if(score>hi)hi=score;
+  localStorage.setItem('graffitiart_pieces',pieces);
+  localStorage.setItem('graffitiart_hi',hi);
+  gameEnded=true;
+  document.getElementById('submitBtn').disabled=true;
+  document.getElementById('refillBtn').disabled=true;
+  if(pct>=85){SFX.win();}else if(pct>=50){SFX.success();}else{SFX.fail();}
+  resultText=I18N.t('match_result','Match: {p}% — +{s} pts').replace('{p}',pct).replace('{s}',pieceScore);
+  resultTimer=180;
+  setTimeout(newPiece,1800);
+});
+
+let resultText='',resultTimer=0;
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#1a1a2e');bg.addColorStop(1,'#3a3a55');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // faint target underneath
+  regions.forEach(r=>{
+    ctx.fillStyle=r.target+'33';
+    ctx.fillRect(r.x+1,r.y+1,r.w-2,r.h-2);
+  });
+  // painted overlay
+  regions.forEach(r=>{
+    if(r.painted){
+      ctx.fillStyle=r.painted;
+      ctx.fillRect(r.x+1,r.y+1,r.w-2,r.h-2);
+      if(r.painted!==r.target){
+        ctx.strokeStyle='rgba(255,255,255,.5)';
+        ctx.lineWidth=1;
+        ctx.strokeRect(r.x+1,r.y+1,r.w-2,r.h-2);
+      }
+    }
+  });
+
+  if(resultTimer>0){
+    resultTimer--;
+    ctx.fillStyle='rgba(0,0,0,.6)';
+    ctx.fillRect(0,H/2-30,W,60);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(resultText,W/2,H/2);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('graffiti_score_label','Pieces: {p} | Score: {s} | Hi: {h}').replace('{p}',pieces).replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+
+  requestAnimationFrame(draw);
+}
+
+buildPalette();
+newPiece();
+draw();
+</script></body></html>

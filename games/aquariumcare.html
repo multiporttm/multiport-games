@@ -1,0 +1,208 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Aquarium Care</title><meta name="description" content="Play Aquarium Care free online — Click fish to feed them and click algae spots to clean the glass. Keep every fish fed and happy as more fish arrive."><link rel="canonical" href="https://games.multiportllc.com/games/aquariumcare"><meta property="og:title" content="Aquarium Care - Multiport Games"><meta property="og:description" content="Play Aquarium Care free online — Click fish to feed them and click algae spots to clean the glass. Keep every fish fed and happy as more fish arrive."><meta property="og:url" content="https://games.multiportllc.com/games/aquariumcare"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Aquarium Care","description":"Play Aquarium Care free online instantly. Click a fish to drop food and keep its hunger meter up, and click algae spots on the glass to clean them before they spread. Neglected fish get sick and are eventually lost. More fish arrive over time, testing how well you can juggle the whole tank. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/aquariumcare","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#tank{position:relative;width:100%;max-width:760px;height:440px;margin:0 auto;background:linear-gradient(135deg,#003049,#00b4d8);border-radius:10px;overflow:hidden;border:6px solid #023047;cursor:pointer}
+#hud{color:#caf0f8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px}
+.fish{position:absolute;width:56px;height:34px;transition:left .4s linear,top .6s ease-in-out;cursor:pointer;user-select:none}
+.fish .body{width:100%;height:100%;position:relative}
+.fish svg{width:100%;height:100%;display:block;overflow:visible}
+.meter{position:absolute;top:-14px;left:0;width:56px;height:5px;background:rgba(0,0,0,.4);border-radius:3px;overflow:hidden}
+.meter i{display:block;height:100%}
+.meter.hunger i{background:#ffb703}
+.meter.clean i{background:#8ecae6}
+.meter2{position:absolute;top:-8px;left:0;width:56px;height:5px;background:rgba(0,0,0,.4);border-radius:3px;overflow:hidden}
+.sick{filter:saturate(.3) brightness(.8)}
+.food{position:absolute;width:8px;height:8px;background:#ffd166;border-radius:50%;pointer-events:none;animation:sink 3s linear forwards}
+@keyframes sink{to{transform:translateY(160px);opacity:0}}
+.algae{position:absolute;background:radial-gradient(circle,#4d7c0f,#365314);border-radius:50%;cursor:pointer;box-shadow:0 0 6px rgba(0,0,0,.3)}
+#msg{color:#fff;text-align:center;font-size:.95rem;min-height:1.4em;padding:4px}
+#overlay{position:absolute;inset:0;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;flex-direction:column;color:#fff;text-align:center;gap:10px}
+#overlay button{padding:10px 24px;background:#00b4d8;border:none;border-radius:20px;color:#012a36;font-weight:800;cursor:pointer;font-size:1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Aquarium Care</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">Time: 0s | Fish healthy: 0 | Lives: 3 | Hi: 0</div>
+    <div id="tank"></div>
+    <div id="msg">Click a fish to feed it. Click algae spots to clean them.</div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a <b>fish</b> to feed it and keep its hunger meter up. Click <b>algae patches</b> on the glass to clean them before they spread. If a fish's hunger or cleanliness meter empties for too long it gets sick and can be lost — more fish join the tank over time, so keep juggling!</div>
+</div>
+<script>
+const tank=document.getElementById('tank');
+let hi=parseInt(localStorage.getItem('aquariumcare_hi')||'0',10);
+let fish=[],algae=[],lives=3,elapsed=0,healthySeconds=0,running=true,nextFishTimer=0,algaeTimer=0,fishIdSeed=0,algaeIdSeed=0;
+const COLORS=['#ff6b6b','#ffd166','#06d6a0','#ef476f','#a78bfa','#f4a261'];
+
+function tankRect(){return tank.getBoundingClientRect();}
+
+function makeFishEl(f){
+  const el=document.createElement('div');
+  el.className='fish';
+  el.style.left=f.x+'px';el.style.top=f.y+'px';
+  el.innerHTML=`
+    <div class="meter hunger"><i style="width:100%"></i></div>
+    <div class="meter2 clean"><i style="width:100%"></i></div>
+    <div class="body">
+      <svg viewBox="0 0 56 34"><ellipse cx="24" cy="17" rx="20" ry="12" fill="${f.color}"/><polygon points="4,17 -12,6 -12,28" fill="${f.color}"/><circle cx="36" cy="12" r="3" fill="#012a36"/></svg>
+    </div>`;
+  el.addEventListener('click',e=>{e.stopPropagation();feedFish(f);});
+  tank.appendChild(el);
+  f.el=el;
+}
+
+function spawnFish(){
+  const r=tankRect();
+  const f={id:fishIdSeed++,x:20+Math.random()*(Math.min(700,r.width-80)),y:20+Math.random()*280,color:COLORS[Math.floor(Math.random()*COLORS.length)],hunger:100,clean:100,sick:false,dead:false};
+  makeFishEl(f);
+  fish.push(f);
+  moveFishRandomly(f);
+}
+
+function moveFishRandomly(f){
+  if(f.dead)return;
+  const r=tankRect();
+  const w=Math.max(200,r.width-80);
+  f.x=10+Math.random()*w;
+  f.y=10+Math.random()*300;
+  f.el.style.left=f.x+'px';
+  f.el.style.top=f.y+'px';
+  setTimeout(()=>moveFishRandomly(f),2500+Math.random()*2000);
+}
+
+function feedFish(f){
+  if(f.dead||!running)return;
+  f.hunger=Math.min(100,f.hunger+35);
+  SFX.point();
+  const foodEl=document.createElement('div');
+  foodEl.className='food';
+  foodEl.style.left=(f.x+24)+'px';
+  foodEl.style.top=(f.y)+'px';
+  tank.appendChild(foodEl);
+  setTimeout(()=>foodEl.remove(),3000);
+}
+
+function spawnAlgae(){
+  const r=tankRect();
+  const size=24+Math.random()*20;
+  const a={id:algaeIdSeed++,x:Math.random()*(Math.max(50,r.width-size)),y:Math.random()*(Math.max(50,r.height-size)),size,life:0};
+  const el=document.createElement('div');
+  el.className='algae';
+  el.style.width=size+'px';el.style.height=size+'px';
+  el.style.left=a.x+'px';el.style.top=a.y+'px';
+  el.addEventListener('click',e=>{e.stopPropagation();cleanAlgae(a);});
+  tank.appendChild(el);
+  a.el=el;
+  algae.push(a);
+}
+
+function cleanAlgae(a){
+  if(!running)return;
+  a.el.remove();
+  algae=algae.filter(x=>x!==a);
+  SFX.click();
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function updateHud(){
+  document.getElementById('hud').textContent=
+    I18N.t('aq_hud','Time: {t}s | Fish healthy: {n} | Lives: {l} | Hi: {h}')
+      .replace('{t}',Math.floor(elapsed)).replace('{n}',fish.filter(f=>!f.dead&&!f.sick).length)
+      .replace('{l}',Math.max(0,lives)).replace('{h}',hi);
+}
+
+let tickCount=0;
+function tick(){
+  if(!running)return;
+  elapsed+=0.5;
+  tickCount++;
+
+  fish.forEach(f=>{
+    if(f.dead)return;
+    f.hunger=Math.max(0,f.hunger-1.2);
+    f.clean=Math.max(0,f.clean-1.0-(algae.length*0.15));
+    const worst=Math.min(f.hunger,f.clean);
+    const wasSick=f.sick;
+    f.sick=worst<30;
+    if(f.sick&&!wasSick){SFX.error();}
+    if(worst<=0){
+      f.dyingTimer=(f.dyingTimer||0)+0.5;
+      if(f.dyingTimer>4){
+        loseFish(f);
+      }
+    } else {
+      f.dyingTimer=0;
+    }
+    f.el.classList.toggle('sick',f.sick);
+    const hb=f.el.querySelector('.meter.hunger i');
+    const cb=f.el.querySelector('.meter2.clean i');
+    hb.style.width=f.hunger+'%';
+    cb.style.width=f.clean+'%';
+    hb.style.background=f.hunger<30?'#ff3b3b':'#ffb703';
+    cb.style.background=f.clean<30?'#ff3b3b':'#8ecae6';
+  });
+
+  if(fish.filter(f=>!f.dead).every(f=>f.hunger>40&&f.clean>40)&&fish.some(f=>!f.dead)){
+    healthySeconds+=0.5;
+  }
+
+  algaeTimer+=0.5;
+  const algaeInterval=Math.max(4,10-elapsed/30);
+  if(algaeTimer>=algaeInterval&&algae.length<8){
+    algaeTimer=0;
+    spawnAlgae();
+  }
+
+  nextFishTimer+=0.5;
+  const fishInterval=25;
+  if(nextFishTimer>=fishInterval&&fish.filter(f=>!f.dead).length<7){
+    nextFishTimer=0;
+    spawnFish();
+    SFX.levelup();
+    setMsg(I18N.t('aq_newfish','A new fish joined the tank!'));
+  }
+
+  updateHud();
+  if(lives<=0)endGame();
+}
+
+function loseFish(f){
+  if(f.dead)return;
+  f.dead=true;
+  f.el.style.opacity='0.15';
+  f.el.style.filter='grayscale(1)';
+  lives--;
+  SFX.fail();
+  setMsg(I18N.t('aq_lost','A fish was lost! Lives left: {l}').replace('{l}',lives));
+  if(lives<=0)endGame();
+}
+
+function endGame(){
+  running=false;
+  clearInterval(loopId);
+  const score=Math.floor(healthySeconds);
+  if(score>hi){hi=score;localStorage.setItem('aquariumcare_hi',hi);}
+  const overlay=document.createElement('div');
+  overlay.id='overlay';
+  overlay.innerHTML=`<div style="font-size:1.6rem;font-weight:900">${I18N.t('game_over_title','GAME OVER')}</div>
+    <div>${I18N.t('aq_final','Healthy seconds: {s} | Best: {h}').replace('{s}',score).replace('{h}',hi)}</div>
+    <button id="retryBtn">${I18N.t('aq_restart','Restart Tank')}</button>`;
+  tank.appendChild(overlay);
+  document.getElementById('retryBtn').onclick=()=>location.reload();
+}
+
+let loopId=setInterval(tick,500);
+
+// initial fish
+spawnFish();
+spawnFish();
+updateHud();
+</script></body></html>

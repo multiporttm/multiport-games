@@ -1,0 +1,243 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Polar Expedition</title><meta name="description" content="Play Polar Expedition free online — Steer your dog sled with Arrow Keys, WASD, or drag. Dodge crevasses and snowdrifts, collect fish to keep your dogs' energy up, and race AI sleds to the finish line."><link rel="canonical" href="https://games.multiportllc.com/games/polarexpedition"><meta property="og:title" content="Polar Expedition - Multiport Games"><meta property="og:description" content="Play Polar Expedition free online — Steer your dog sled with Arrow Keys, WASD, or drag. Dodge crevasses and snowdrifts, collect fish to keep your dogs' energy up, and race AI sleds to the finish line."><meta property="og:url" content="https://games.multiportllc.com/games/polarexpedition"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Polar Expedition","description":"Play Polar Expedition free online instantly. Steer your dog sled with Arrow Keys, WASD, or drag. Dodge crevasses and snowdrifts, collect fish to keep your dogs' energy up, and race AI sleds to the finish line. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/polarexpedition","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#dce9f5;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#7fc7ff;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#energy-wrap{max-width:400px;margin:0 auto 6px;background:#1a2a3a;border-radius:8px;height:14px;overflow:hidden}
+#energy-bar{height:100%;background:linear-gradient(90deg,#ff9800,#ffd54f);width:100%;transition:width .2s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Polar Expedition</div>
+  <div class="game-frame">
+    <div id="score-display">Wins: 0 | Best Time: --</div>
+    <div id="energy-wrap"><div id="energy-bar"></div></div>
+    <canvas id="c" width="800" height="450"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> / <b>WASD</b> (or <b>drag</b> on mobile) to steer your dog sled. Dodge <b>crevasses</b> and <b>snowdrifts</b>, grab <b>fish</b> to keep your dogs' energy up, and beat the AI sleds to the finish!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=450;
+const RACE_DIST=6000;
+let hi=localStorage.getItem('polarexpedition_besttime');
+let bestTime=hi?parseFloat(hi):null;
+let wins=parseInt(localStorage.getItem('polarexpedition_wins')||'0',10);
+
+let player,opponents,obstacles,fish,dist,energy,gameOver,started,winState,elapsed,lastTime,spawnTimer,camShake;
+
+function reset(){
+  player={lane:1,x:W/2,y:340,w:50,h:70,vx:0,speed:4};
+  opponents=[
+    {x:W*0.3,progress:0,baseSpeed:3.3+Math.random()*0.4,y:60,color:'#e94560'},
+    {x:W*0.7,progress:0,baseSpeed:3.3+Math.random()*0.4,y:60,color:'#4caf50'}
+  ];
+  obstacles=[];fish=[];
+  dist=0;energy=100;gameOver=false;started=false;winState=null;elapsed=0;lastTime=null;spawnTimer=0;camShake=0;
+}
+reset();
+
+let keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS','Space'].includes(e.code))e.preventDefault();
+  if(e.code==='Space'){ if(!started)started=true; if(gameOver)reset(); return; }
+  keys[e.code]=true;
+});
+document.addEventListener('keyup',e=>{ keys[e.code]=false; });
+
+let dragging=false,dragX=0;
+function pointerX(evt){
+  const rect=c.getBoundingClientRect();
+  const cx=(evt.touches?evt.touches[0].clientX:evt.clientX);
+  return (cx-rect.left)*(W/rect.width);
+}
+c.addEventListener('mousedown',e=>{ if(!started)started=true; if(gameOver){reset();return;} dragging=true;dragX=pointerX(e); });
+window.addEventListener('mousemove',e=>{ if(dragging){const x=pointerX(e); player.vx=(x-dragX)*0.15; dragX=x;} });
+window.addEventListener('mouseup',()=>{dragging=false;});
+c.addEventListener('touchstart',e=>{ e.preventDefault(); if(!started)started=true; if(gameOver){reset();return;} dragging=true;dragX=pointerX(e); },{passive:false});
+c.addEventListener('touchmove',e=>{ e.preventDefault(); if(dragging){const x=pointerX(e); player.vx=(x-dragX)*0.15; dragX=x;} },{passive:false});
+c.addEventListener('touchend',()=>{dragging=false;player.vx=0;});
+
+function spawnObstacle(){
+  const type=Math.random()<0.5?'crevasse':'drift';
+  const x=80+Math.random()*(W-160);
+  obstacles.push({x,y:-40,w:type==='crevasse'?70:50,h:type==='crevasse'?26:34,type});
+}
+function spawnFish(){
+  const x=80+Math.random()*(W-160);
+  fish.push({x,y:-30,r:12,taken:false});
+}
+
+function rectHit(ax,ay,aw,ah,bx,by,bw,bh){
+  return ax<bx+bw&&ax+aw>bx&&ay<by+bh&&ay+ah>by;
+}
+
+function drawSnowGround(t){
+  ctx.fillStyle='#eaf4fb';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#c9dcea';ctx.lineWidth=2;
+  for(let i=0;i<10;i++){
+    const y=((i*70+t*0.3)%(H+70))-70;
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y+10);ctx.stroke();
+  }
+}
+
+function drawSled(x,y,w,h,color,legPhase){
+  ctx.save();
+  ctx.fillStyle=color;
+  ctx.fillRect(x-w/2,y,w,h*0.4);
+  ctx.fillStyle='#5a3a22';
+  ctx.fillRect(x-w/2,y+h*0.35,w,h*0.15);
+  // dogs
+  ctx.fillStyle='#c9a877';
+  for(let i=0;i<2;i++){
+    const dy=y-18-i*22;
+    ctx.fillRect(x-10,dy,20,16);
+    ctx.fillStyle='#8a6a44';
+    const legOff=Math.sin(legPhase+i)*4;
+    ctx.fillRect(x-8,dy+16,4,8+legOff);
+    ctx.fillRect(x+4,dy+16,4,8-legOff);
+    ctx.fillStyle='#c9a877';
+  }
+  ctx.restore();
+}
+
+function drawObstacle(o){
+  if(o.type==='crevasse'){
+    ctx.fillStyle='#0d3a5c';
+    ctx.fillRect(o.x-o.w/2,o.y,o.w,o.h);
+    ctx.fillStyle='#1a5a8c';
+    ctx.fillRect(o.x-o.w/2+4,o.y+4,o.w-8,o.h-8);
+  }else{
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.ellipse(o.x,o.y+o.h/2,o.w/2,o.h/2,0,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#c9dcea';ctx.stroke();
+  }
+}
+function drawFish(f){
+  ctx.fillStyle='#4fc3f7';
+  ctx.beginPath();ctx.ellipse(f.x,f.y,f.r,f.r*0.55,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.moveTo(f.x-f.r,f.y);ctx.lineTo(f.x-f.r-8,f.y-6);ctx.lineTo(f.x-f.r-8,f.y+6);ctx.fill();
+}
+
+function updateEnergyBar(){
+  document.getElementById('energy-bar').style.width=Math.max(0,energy)+'%';
+}
+function updateScoreDisplay(){
+  document.getElementById('score-display').textContent=
+    I18N.t('pe_score_label','Wins: {w} | Best Time: {t}')
+      .replace('{w}',wins)
+      .replace('{t}', bestTime!=null? bestTime.toFixed(1)+'s' : '--');
+}
+
+function loop(){
+  if(!started){
+    drawSnowGround(0);
+    drawSled(W/2,340,50,70,'#e94560',0);
+    ctx.fillStyle='#333';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('pe_start_hint','Move / Tap to start the race'),W/2,H/2);
+    updateScoreDisplay();updateEnergyBar();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawSnowGround(dist);
+    ctx.fillStyle='rgba(255,255,255,0.85)';ctx.fillRect(0,H/2-60,W,120);
+    ctx.fillStyle='#222';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(winState==='win'?I18N.t('pe_win_title','YOU WIN!'):I18N.t('pe_lose_title','FINISHED'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+24);
+    updateScoreDisplay();updateEnergyBar();
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?16.6667:Math.min(now-lastTime,50);
+  lastTime=now;
+  const f=dt/16.6667;
+  elapsed+=dt/1000;
+
+  if(keys['ArrowLeft']||keys['KeyA'])player.vx=-6;
+  else if(keys['ArrowRight']||keys['KeyD'])player.vx=6;
+  else if(!dragging) player.vx*=0.8;
+
+  player.x+=player.vx*f;
+  player.x=Math.max(60,Math.min(W-60,player.x));
+
+  const slowFactor=energy<=0?0.45:1;
+  const moveSpeed=player.speed*slowFactor;
+  dist+=moveSpeed*f*10;
+  energy-=0.06*f;
+  if(energy<0)energy=0;
+
+  opponents.forEach(o=>{
+    o.progress+=o.baseSpeed*f*10;
+    o.x+=(Math.sin(dist*0.002+o.y)*0.3);
+  });
+
+  spawnTimer+=dt;
+  if(spawnTimer>700){
+    spawnTimer=0;
+    if(Math.random()<0.6)spawnObstacle();
+    if(Math.random()<0.5)spawnFish();
+  }
+
+  drawSnowGround(dist);
+
+  obstacles.forEach(o=>{o.y+=moveSpeed*f*2.2;drawObstacle(o);
+    if(!gameOver&&rectHit(player.x-player.w/2,player.y,player.w,player.h,o.x-o.w/2,o.y,o.w,o.h)){
+      energy-=18;SFX.hit();camShake=8;
+      o.y=9999;
+    }
+  });
+  obstacles=obstacles.filter(o=>o.y<H+60);
+
+  fish.forEach(fi=>{fi.y+=moveSpeed*f*2.2;
+    if(!fi.taken){
+      drawFish(fi);
+      if(rectHit(player.x-20,player.y-10,40,90,fi.x-fi.r,fi.y-fi.r,fi.r*2,fi.r*2)){
+        fi.taken=true;energy=Math.min(100,energy+22);SFX.coin();
+      }
+    }
+  });
+  fish=fish.filter(fi=>fi.y<H+40&&!fi.taken);
+
+  const shakeX=camShake>0?(Math.random()-0.5)*camShake:0;
+  camShake=Math.max(0,camShake-0.5*f);
+
+  drawSled(W*0.25+shakeX,60,44,60,'#e94560',elapsed*8);
+  drawSled(W*0.75+shakeX,60,44,60,'#4caf50',elapsed*8+1);
+  drawSled(player.x+shakeX,player.y,player.w,player.h,'#2b6cb0',elapsed*8+2);
+
+  ctx.fillStyle='#222';ctx.font='bold 16px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('pe_dist_label','Distance: {d}m').replace('{d}',Math.floor(dist/10)),16,26);
+
+  if(dist>=RACE_DIST&&!gameOver){
+    gameOver=true;
+    const oppFinished=opponents.filter(o=>o.progress>=RACE_DIST).length;
+    if(oppFinished===0){
+      winState='win';wins++;localStorage.setItem('polarexpedition_wins',wins);
+      if(bestTime===null||elapsed<bestTime){bestTime=elapsed;localStorage.setItem('polarexpedition_besttime',bestTime);}
+      SFX.win();
+    }else{
+      winState='lose';SFX.lose();
+    }
+  }
+  if(!gameOver){
+    opponents.forEach(o=>{
+      if(o.progress>=RACE_DIST&&!gameOver){
+        gameOver=true;winState='lose';SFX.lose();
+      }
+    });
+  }
+
+  updateScoreDisplay();updateEnergyBar();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

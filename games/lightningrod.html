@@ -1,0 +1,222 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Lightning Rod</title><meta name="description" content="Play Lightning Rod free online — Watch the sky for the warning flash, then move under it with Arrow Keys, A/D, or drag before the bolt strikes to safely ground it and build your combo."><link rel="canonical" href="https://games.multiportllc.com/games/lightningrod"><meta property="og:title" content="Lightning Rod - Multiport Games"><meta property="og:description" content="Play Lightning Rod free online — Watch the sky for the warning flash, then move under it with Arrow Keys, A/D, or drag before the bolt strikes to safely ground it and build your combo."><meta property="og:url" content="https://games.multiportllc.com/games/lightningrod"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Lightning Rod","description":"Play Lightning Rod free online instantly. Watch the sky for the warning flash, then move under it with Arrow Keys, A/D, or drag before the bolt strikes to safely ground it and build your combo. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/lightningrod","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(#1a1a2e,#3a3a5e);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffd700;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Lightning Rod</div>
+  <div class="game-frame">
+    <div id="score-display">Grounded: 0 | Combo: 0 | Best Combo: 0</div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> or <b>A/D</b> (or <b>drag</b> on mobile) to move your lightning rod under the warning flash before each bolt strikes. Ground bolts in a row to build your combo!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400,groundY=360;
+let rod={x:400,w:16,h:60};
+let grounded=0,combo=0,bestCombo=0;
+let bolts=[]; // {x, warnTime, strikeTime, state:'warn'|'strike'|'done', resolved}
+let gameOver=false,started=false;
+let strikeInterval=2200,timeSince=0,lastTime=null;
+let sparks=[];
+let flashAlpha=0;
+
+let hi=parseInt(localStorage.getItem('lightningrod_bestcombo')||'0',10);
+bestCombo=hi;
+
+function reset(){
+  grounded=0;combo=0;bolts=[];gameOver=false;started=false;strikeInterval=2200;timeSince=0;lastTime=null;sparks=[];flashAlpha=0;
+  rod.x=400;
+}
+
+function spawnBolt(){
+  const x=60+Math.random()*(W-120);
+  bolts.push({x,age:0,warnDur:strikeInterval*0.55,state:'warn',resolved:false});
+}
+
+function moveRod(dx){ rod.x=Math.max(20,Math.min(W-20,rod.x+dx)); }
+
+let keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','KeyA','KeyD','Space'].includes(e.code))e.preventDefault();
+  if(e.code==='Space'){ if(!started){started=true;} if(gameOver){reset();} return; }
+  keys[e.code]=true;
+});
+document.addEventListener('keyup',e=>{ keys[e.code]=false; });
+
+let dragging=false;
+function pointerX(evt){
+  const rect=c.getBoundingClientRect();
+  const cx=(evt.touches?evt.touches[0].clientX:evt.clientX);
+  return (cx-rect.left)*(W/rect.width);
+}
+c.addEventListener('mousedown',e=>{ dragging=true; if(!started)started=true; if(gameOver){reset();return;} rod.x=pointerX(e); });
+window.addEventListener('mousemove',e=>{ if(dragging)rod.x=Math.max(20,Math.min(W-20,pointerX(e))); });
+window.addEventListener('mouseup',()=>dragging=false);
+c.addEventListener('touchstart',e=>{ e.preventDefault(); if(!started)started=true; if(gameOver){reset();return;} rod.x=pointerX(e); dragging=true; },{passive:false});
+c.addEventListener('touchmove',e=>{ e.preventDefault(); if(dragging)rod.x=Math.max(20,Math.min(W-20,pointerX(e))); },{passive:false});
+c.addEventListener('touchend',()=>dragging=false);
+
+function drawSky(){
+  const sky=ctx.createLinearGradient(0,0,0,groundY);
+  sky.addColorStop(0,'#0d0d1f');sky.addColorStop(1,'#2c2c4e');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,groundY);
+  if(flashAlpha>0){
+    ctx.fillStyle='rgba(255,255,255,'+flashAlpha+')';
+    ctx.fillRect(0,0,W,groundY);
+  }
+  ctx.fillStyle='#1e1e35';ctx.fillRect(0,groundY,W,H-groundY);
+}
+
+function drawRod(){
+  ctx.save();
+  ctx.fillStyle='#8a8a9e';
+  ctx.fillRect(rod.x-4,groundY-rod.h,8,rod.h);
+  ctx.fillStyle='#c9c9d9';
+  ctx.fillRect(rod.x-10,groundY-rod.h-8,20,8);
+  ctx.beginPath();
+  ctx.moveTo(rod.x,groundY-rod.h-8);
+  ctx.lineTo(rod.x-6,groundY-rod.h-20);
+  ctx.lineTo(rod.x+2,groundY-rod.h-20);
+  ctx.lineTo(rod.x-4,groundY-rod.h-32);
+  ctx.strokeStyle='#ffd700';ctx.lineWidth=3;ctx.stroke();
+  ctx.restore();
+}
+
+function drawBoltWarn(b){
+  const p=b.age/b.warnDur;
+  const alpha=0.3+0.5*Math.abs(Math.sin(p*Math.PI*6));
+  ctx.save();
+  ctx.strokeStyle='rgba(255,255,150,'+alpha+')';
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.ellipse(b.x,groundY-4,26*(1-p*0.3),8,0,0,Math.PI*2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBoltStrike(b){
+  ctx.save();
+  ctx.strokeStyle='#fff9c4';
+  ctx.lineWidth=5;
+  ctx.beginPath();
+  let x=b.x,y=0;
+  ctx.moveTo(x,y);
+  while(y<groundY){
+    y+=30+Math.random()*20;
+    x+=(Math.random()-0.5)*30;
+    ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  ctx.strokeStyle='#ffd700';ctx.lineWidth=2;ctx.stroke();
+  ctx.restore();
+}
+
+function spawnSparks(x,y,color){
+  for(let i=0;i<16;i++){
+    sparks.push({x,y,vx:(Math.random()-0.5)*8,vy:(Math.random()-1.5)*6,life:30,color});
+  }
+}
+
+function updateScoreDisplay(){
+  document.getElementById('score-display').textContent=
+    I18N.t('lr_score_label','Grounded: {g} | Combo: {c} | Best Combo: {b}')
+      .replace('{g}',grounded).replace('{c}',combo).replace('{b}',bestCombo);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawSky();
+
+  if(!started){
+    drawRod();
+    ctx.fillStyle='#ffd700cc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('lr_start_hint','Move / Tap to start'),W/2,H/2);
+    updateScoreDisplay();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawRod();
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('lr_game_over_title','STORM OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+16);
+    updateScoreDisplay();
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?16.6667:Math.min(now-lastTime,50);
+  lastTime=now;
+
+  if(keys['ArrowLeft']||keys['KeyA'])moveRod(-6*(dt/16.6667));
+  if(keys['ArrowRight']||keys['KeyD'])moveRod(6*(dt/16.6667));
+
+  timeSince+=dt;
+  if(timeSince>=strikeInterval){
+    timeSince=0;
+    spawnBolt();
+    strikeInterval=Math.max(700,strikeInterval*0.965);
+  }
+
+  flashAlpha=Math.max(0,flashAlpha-0.02*(dt/16.6667));
+
+  bolts.forEach(b=>{
+    if(b.state==='warn'){
+      b.age+=dt;
+      drawBoltWarn(b);
+      if(b.age>=b.warnDur){
+        b.state='strike';
+        b.strikeAge=0;
+        flashAlpha=0.55;
+        const hitRod=Math.abs(b.x-rod.x)<22;
+        if(hitRod){
+          combo++;
+          grounded++;
+          if(combo>bestCombo){bestCombo=combo;localStorage.setItem('lightningrod_bestcombo',bestCombo);}
+          spawnSparks(b.x,groundY-rod.h,'#ffd700');
+          SFX.success();
+        }else{
+          combo=0;
+          spawnSparks(b.x,groundY,'#ff6b35');
+          SFX.hit();
+        }
+      }
+    }else if(b.state==='strike'){
+      b.strikeAge+=dt;
+      drawBoltStrike(b);
+      if(b.strikeAge>60)b.state='done';
+    }
+  });
+  bolts=bolts.filter(b=>b.state!=='done');
+
+  sparks.forEach(s=>{
+    s.x+=s.vx;s.y+=s.vy;s.vy+=0.3;s.life--;
+    ctx.fillStyle=s.color;
+    ctx.globalAlpha=Math.max(0,s.life/30);
+    ctx.fillRect(s.x,s.y,4,4);
+    ctx.globalAlpha=1;
+  });
+  sparks=sparks.filter(s=>s.life>0);
+
+  drawRod();
+
+  ctx.fillStyle='#ffd700';
+  ctx.font='bold 18px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('lr_combo_label','Combo x{c}','').replace('{c}',combo),16,28);
+
+  updateScoreDisplay();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

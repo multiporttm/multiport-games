@@ -1,0 +1,290 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Pet Grooming</title><meta name="description" content="Play Pet Grooming free online — Drag the brush over messy fur zones to groom your pet smooth before its patience meter runs out. Don't over-brush!"><link rel="canonical" href="https://games.multiportllc.com/games/petgrooming"><meta property="og:title" content="Pet Grooming - Multiport Games"><meta property="og:description" content="Play Pet Grooming free online — Drag the brush over messy fur zones to groom your pet smooth before its patience meter runs out. Don't over-brush!"><meta property="og:url" content="https://games.multiportllc.com/games/petgrooming"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Pet Grooming","description":"Play Pet Grooming free online instantly. Drag the brush over each messy, tangled fur zone on the pet's body the right number of times to smooth it out, without over-brushing the same spot, which annoys the pet and drains its patience meter. Finish grooming every zone before patience runs out to score points, then a new pet with a fresh mess pattern appears. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/petgrooming","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#3d2b1f,#e8b088);display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#score-display{color:#e8b088;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Pet Grooming</div>
+  <div class="game-frame">
+    <div id="score-display">Pets groomed: 0 | Best: 0</div>
+    <canvas id="c" width="800" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click and <b>drag the brush</b> over each messy (dark, tangled) fur zone to smooth it out. Each zone needs a few passes — but brushing a spot too many times annoys the pet and drains its <b>patience meter</b>. Groom every zone clean before patience runs out!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480;
+let petsGroomed=0,best=parseInt(localStorage.getItem('petgrooming_best')||'0',10);
+let zones=[],patience=100,maxPatience=100,gameOver=false,started=false,petType='dog';
+let brush={x:-100,y:-100,down:false,lastX:-100,lastY:-100};
+let patienceDrainPending=0;
+
+function makeZones(){
+  // zones are circles on the pet body needing N brush passes
+  const count=4+Math.min(3,Math.floor(petsGroomed/2));
+  const arr=[];
+  const bodyCX=W/2,bodyCY=250;
+  for(let i=0;i<count;i++){
+    const angle=(i/count)*Math.PI*2+Math.random()*0.4;
+    const dist=60+Math.random()*90;
+    arr.push({
+      x:bodyCX+Math.cos(angle)*dist*1.4,
+      y:bodyCY+Math.sin(angle)*dist*0.8,
+      r:32+Math.random()*10,
+      needed:3+Math.floor(Math.random()*3)+Math.floor(petsGroomed/3),
+      progress:0,
+      overBrushed:0,
+      done:false
+    });
+  }
+  return arr;
+}
+
+function reset(){
+  petType=Math.random()<0.5?'dog':'cat';
+  zones=makeZones();
+  patience=maxPatience=100+petsGroomed*5;
+  gameOver=false;started=true;
+}
+
+function distTo(zone,x,y){return Math.hypot(zone.x-x,zone.y-y);}
+
+function pointerDown(x,y){
+  if(!started||gameOver){reset();return;}
+  brush.down=true;brush.x=x;brush.y=y;brush.lastX=x;brush.lastY=y;
+}
+function pointerMove(x,y){
+  brush.x=x;brush.y=y;
+  if(!brush.down||gameOver||!started)return;
+  const moveDist=Math.hypot(x-brush.lastX,y-brush.lastY);
+  if(moveDist>6){
+    applyBrush(x,y);
+    brush.lastX=x;brush.lastY=y;
+  }
+}
+function pointerUp(){brush.down=false;}
+
+let brushCooldownMap=new Map();
+function applyBrush(x,y){
+  let hitAny=false;
+  zones.forEach((z,idx)=>{
+    if(z.done)return;
+    if(distTo(z,x,y)<z.r){
+      hitAny=true;
+      const key=idx;
+      const last=brushCooldownMap.get(key)||0;
+      const now=performance.now();
+      if(now-last<180)return; // avoid double counting within one drag stroke tick
+      brushCooldownMap.set(key,now);
+      z.progress++;
+      if(z.progress>=z.needed){
+        z.progress=z.needed;
+        z.done=true;
+        SFX.success();
+        if(zones.every(zz=>zz.done)){
+          finishPet();
+        }
+      } else {
+        SFX.click();
+      }
+      if(z.progress>z.needed-1){
+        // approaching over-brush territory handled below via extra strokes after done
+      }
+    }
+  });
+  if(!hitAny){
+    // brushing empty fur / already-done zone slightly costs patience less
+  }
+  zones.forEach((z,idx)=>{
+    if(z.done&&distTo(z,x,y)<z.r){
+      const last=brushCooldownMap.get('over'+idx)||0;
+      const now=performance.now();
+      if(now-last<180)return;
+      brushCooldownMap.set('over'+idx,now);
+      z.overBrushed++;
+      patience-=3;
+      SFX.error();
+    }
+  });
+}
+
+c.addEventListener('mousedown',e=>{const r=c.getBoundingClientRect();pointerDown((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));});
+c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();pointerMove((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));});
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();const r=c.getBoundingClientRect();const t=e.touches[0];pointerDown((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();const r=c.getBoundingClientRect();const t=e.touches[0];pointerMove((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerUp();},{passive:false});
+
+function finishPet(){
+  gameOver=false;
+  petsGroomed++;
+  const points=Math.floor(patience);
+  if(petsGroomed>best){} // best tracked separately below by pets count
+  if(petsGroomed>best){best=petsGroomed;localStorage.setItem('petgrooming_best',best);}
+  SFX.win();
+  setTimeout(()=>{ if(!gameOverFinal) reset(); },1200);
+  celebrating=true;
+  celebrateTimer=70;
+}
+let celebrating=false,celebrateTimer=0,gameOverFinal=false;
+
+function drawPetBody(){
+  ctx.save();
+  const bodyCX=W/2,bodyCY=250;
+  ctx.fillStyle=petType==='dog'?'#c68a4e':'#8a8a8a';
+  ctx.beginPath();
+  ctx.ellipse(bodyCX,bodyCY,170,110,0,0,Math.PI*2);
+  ctx.fill();
+  // head
+  ctx.beginPath();
+  ctx.ellipse(bodyCX+190,bodyCY-40,70,60,0,0,Math.PI*2);
+  ctx.fill();
+  // ears
+  ctx.fillStyle=petType==='dog'?'#8a5a2e':'#666';
+  if(petType==='dog'){
+    ctx.beginPath();ctx.ellipse(bodyCX+150,bodyCY-90,18,34,-0.3,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(bodyCX+230,bodyCY-90,18,34,0.3,0,Math.PI*2);ctx.fill();
+  } else {
+    ctx.beginPath();ctx.moveTo(bodyCX+150,bodyCY-95);ctx.lineTo(bodyCX+165,bodyCY-135);ctx.lineTo(bodyCX+180,bodyCY-95);ctx.fill();
+    ctx.beginPath();ctx.moveTo(bodyCX+205,bodyCY-95);ctx.lineTo(bodyCX+220,bodyCY-135);ctx.lineTo(bodyCX+235,bodyCY-95);ctx.fill();
+  }
+  // eye
+  ctx.fillStyle='#222';
+  ctx.beginPath();ctx.arc(bodyCX+215,bodyCY-45,5,0,Math.PI*2);ctx.fill();
+  // nose
+  ctx.beginPath();ctx.arc(bodyCX+250,bodyCY-25,7,0,Math.PI*2);ctx.fill();
+  // legs
+  ctx.fillStyle=petType==='dog'?'#c68a4e':'#8a8a8a';
+  for(let lx of [-100,-40,40,100]){
+    ctx.fillRect(bodyCX+lx-12,bodyCY+80,24,60);
+  }
+  // tail
+  ctx.beginPath();
+  ctx.ellipse(bodyCX-190,bodyCY-10,50,16,0.4,0,Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawZone(z){
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(z.x,z.y,z.r,0,Math.PI*2);
+  if(z.done){
+    ctx.fillStyle='rgba(255,255,255,0.12)';
+    ctx.fill();
+  } else {
+    const ratio=z.progress/z.needed;
+    ctx.fillStyle=`rgba(60,40,25,${0.75-ratio*0.6})`;
+    ctx.fill();
+    // tangle marks
+    ctx.strokeStyle='rgba(30,20,10,0.6)';
+    ctx.lineWidth=2;
+    for(let i=0;i<5;i++){
+      const a=i*1.3+z.x*0.01;
+      ctx.beginPath();
+      ctx.moveTo(z.x+Math.cos(a)*z.r*0.3,z.y+Math.sin(a)*z.r*0.3);
+      ctx.lineTo(z.x+Math.cos(a)*z.r*0.9*(1-ratio),z.y+Math.sin(a)*z.r*0.9*(1-ratio));
+      ctx.stroke();
+    }
+  }
+  ctx.strokeStyle=z.done?'#7ec850':'#ffd166';
+  ctx.lineWidth=2;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBrush(){
+  ctx.save();
+  ctx.strokeStyle='#fff';
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(brush.x,brush.y,18,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,0.15)';
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawHud(){
+  ctx.fillStyle='rgba(0,0,0,0.35)';
+  ctx.fillRect(20,20,260,26);
+  ctx.fillStyle='#4caf50';
+  ctx.fillRect(22,22,256*Math.max(0,patience/maxPatience),22);
+  ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.strokeRect(20,20,260,26);
+  ctx.fillStyle='#fff';ctx.font='13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('pg_patience','Patience'),26,38);
+}
+
+function endGame(){
+  gameOverFinal=true;
+  gameOver=true;
+  started=false;
+  SFX.lose();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,W,H);
+  sky.addColorStop(0,'#5a4032');sky.addColorStop(1,'#caa06e');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  if(!started&&!gameOverFinal){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('pg_start_hint','Click / Tap to start grooming'),W/2,60);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver&&gameOverFinal){
+    drawPetBody();
+    zones.forEach(drawZone);
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('pg_restart_hint','Tap to try again'),W/2,H/2+18);
+    document.getElementById('score-display').textContent=
+      I18N.t('pg_hud','Pets groomed: {n} | Best: {b}').replace('{n}',petsGroomed).replace('{b}',best);
+    c.onclickOnce=true;
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(!gameOverFinal&&started){
+    if(!celebrating)patience-=0.05;
+    if(patience<=0){
+      endGame();
+    }
+  }
+
+  drawPetBody();
+  zones.forEach(drawZone);
+  drawHud();
+  drawBrush();
+
+  if(celebrating){
+    celebrateTimer--;
+    ctx.fillStyle='rgba(76,175,80,0.25)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('pg_clean','Squeaky clean!'),W/2,60);
+    if(celebrateTimer<=0)celebrating=false;
+  }
+
+  document.getElementById('score-display').textContent=
+    I18N.t('pg_hud','Pets groomed: {n} | Best: {b}').replace('{n}',petsGroomed).replace('{b}',best);
+
+  requestAnimationFrame(loop);
+}
+
+c.addEventListener('click',()=>{ if(!started&&!gameOverFinal)reset(); else if(gameOverFinal){gameOverFinal=false;petsGroomed=0;reset();} });
+c.addEventListener('touchstart',()=>{ if(!started&&!gameOverFinal)reset(); else if(gameOverFinal){gameOverFinal=false;petsGroomed=0;reset();} },{passive:true});
+
+loop();
+</script></body></html>
