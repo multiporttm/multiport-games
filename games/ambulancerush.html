@@ -1,0 +1,236 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ambulance Rush</title><meta name="description" content="Play Ambulance Rush free online — Steer the ambulance with Arrow Keys/WASD or drag, weave through city traffic, and reach the hospital before the patient-critical countdown hits zero. Save patients and avoid crashes before you run out of lives."><link rel="canonical" href="https://games.multiportllc.com/games/ambulancerush"><meta property="og:title" content="Ambulance Rush - Multiport Games"><meta property="og:description" content="Play Ambulance Rush free online — Steer the ambulance with Arrow Keys/WASD or drag, weave through city traffic, and reach the hospital before the patient-critical countdown hits zero. Save patients and avoid crashes before you run out of lives."><meta property="og:url" content="https://games.multiportllc.com/games/ambulancerush"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ambulance Rush","description":"Play Ambulance Rush free online instantly. Steer the ambulance with Arrow Keys/WASD or drag, weave through city traffic, and reach the hospital before the patient-critical countdown hits zero. Save patients and avoid crashes before you run out of lives. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/ambulancerush","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a3a42;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#e94560;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ambulance Rush</div>
+  <div class="game-frame">
+    <div id="score-display">Patients Saved: 0 | Hi: 0 | Lives: 3</div>
+    <canvas id="c" width="500" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b>/<b>WASD</b> or drag to steer the ambulance up the road. Weave around traffic to reach the hospital before the <b>critical countdown</b> runs out — crashing costs time and a life!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=500,H=500;
+let saved=0,hi=parseInt(localStorage.getItem('ambulancerush_hi')||'0'),lives=3,gameOver=false,started=false;
+let level=1;
+let timeLeft=0,timeMax=0;
+let distance=0,distanceGoal=0;
+let traffic=[];
+let roadOffset=0;
+let ambulance={x:W/2,lane:1};
+let lastTime=null;
+let flashTimer=0;
+let toast={text:'',t:0};
+const LANES=[W*0.3,W*0.5,W*0.7];
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function startLevel(){
+  distance=0;
+  distanceGoal=900+level*180;
+  timeMax=14+level*1.2;
+  timeLeft=timeMax;
+  traffic=[];
+  ambulance.x=LANES[1];
+}
+
+function reset(){
+  saved=0;lives=3;gameOver=false;started=false;level=1;flashTimer=0;toast={text:'',t:0};
+  startLevel();
+  lastTime=null;
+}
+reset();
+
+function spawnTraffic(){
+  const lane=Math.floor(Math.random()*3);
+  traffic.push({lane,y:-80,w:44,h:74,color:['#3477c9','#c9a634','#8a3ac9','#3ac97a'][Math.floor(Math.random()*4)]});
+}
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'&&gameOver)reset();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let dragging=false,dragStartX=0,ambStartX=0;
+c.addEventListener('mousedown',e=>{ if(gameOver){reset();return;} dragging=true;dragStartX=e.clientX;ambStartX=ambulance.x;started=true; });
+window.addEventListener('mousemove',e=>{ if(dragging){ const rect=c.getBoundingClientRect(); const scale=W/rect.width; ambulance.x=ambStartX+(e.clientX-dragStartX)*scale; ambulance.x=Math.max(60,Math.min(W-60,ambulance.x)); } });
+window.addEventListener('mouseup',()=>{dragging=false;});
+c.addEventListener('touchstart',e=>{ e.preventDefault(); if(gameOver){reset();return;} dragging=true; dragStartX=e.touches[0].clientX; ambStartX=ambulance.x; started=true; },{passive:false});
+c.addEventListener('touchmove',e=>{ e.preventDefault(); if(dragging){ const rect=c.getBoundingClientRect(); const scale=W/rect.width; ambulance.x=ambStartX+(e.touches[0].clientX-dragStartX)*scale; ambulance.x=Math.max(60,Math.min(W-60,ambulance.x)); } },{passive:false});
+c.addEventListener('touchend',()=>{dragging=false;});
+
+function rectsOverlap(ax,ay,aw,ah,bx,by,bw,bh){
+  return ax<bx+bw&&ax+aw>bx&&ay<by+bh&&ay+ah>by;
+}
+
+function drawRoad(){
+  ctx.fillStyle='#3a3a42';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#555';ctx.fillRect(W*0.18,0,W*0.64,H);
+  ctx.strokeStyle='#ffd54f';
+  ctx.lineWidth=4;
+  ctx.setLineDash([24,20]);
+  ctx.lineDashOffset=-roadOffset;
+  ctx.beginPath();
+  ctx.moveTo(W*0.4,0);ctx.lineTo(W*0.4,H);
+  ctx.moveTo(W*0.6,0);ctx.lineTo(W*0.6,H);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawAmbulance(){
+  ctx.save();
+  ctx.translate(ambulance.x,H-80);
+  ctx.fillStyle='#fff';
+  ctx.fillRect(-24,-40,48,80);
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(-24,-10,48,14);
+  ctx.fillStyle='#222';
+  ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText('🚑',0,4);
+  const flash=Math.floor(frameCount/8)%2===0?'#ff3355':'#3355ff';
+  ctx.fillStyle=flash;
+  ctx.fillRect(-6,-46,12,6);
+  ctx.restore();
+}
+
+function drawTraffic(t){
+  const x=LANES[t.lane];
+  ctx.fillStyle=t.color;
+  ctx.fillRect(x-t.w/2,t.y,t.w,t.h);
+  ctx.fillStyle='#111';
+  ctx.fillRect(x-t.w/2+4,t.y+10,t.w-8,18);
+}
+
+let frameCount=0;
+function loop(){
+  frameCount++;
+  ctx.clearRect(0,0,W,H);
+  drawRoad();
+
+  document.getElementById('score-display').textContent=
+    I18N.t('ambulance_status','Patients Saved: {s} | Hi: {h} | Lives: {l}').replace('{s}',saved).replace('{h}',hi).replace('{l}',Math.max(0,lives));
+
+  if(!started&&!gameOver){
+    drawAmbulance();
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_ambulance','Steer to start the shift!'),W/2,H/2);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawAmbulance();
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,200);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('patients_saved_label','Patients saved: {s}').replace('{s}',saved),W/2,236);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,268);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(keys['ArrowLeft']||keys['KeyA'])ambulance.x-=5*dt;
+  if(keys['ArrowRight']||keys['KeyD'])ambulance.x+=5*dt;
+  ambulance.x=Math.max(60,Math.min(W-60,ambulance.x));
+
+  const speed=(5+level*0.4)*dt;
+  roadOffset+=speed;
+  distance+=speed;
+  timeLeft-=dt/60;
+
+  if(timeLeft<=0){
+    lives--;
+    SFX.error();
+    toast={text:I18N.t('too_slow','Too slow!'),t:60};
+    flashTimer=20;
+    if(lives<=0){
+      gameOver=true;
+      if(saved>hi){hi=saved;localStorage.setItem('ambulancerush_hi',hi);}
+      SFX.lose();
+    } else {
+      startLevel();
+    }
+  }
+
+  if(distance>=distanceGoal){
+    saved++;
+    if(saved>hi){hi=saved;localStorage.setItem('ambulancerush_hi',hi);}
+    level++;
+    toast={text:I18N.t('patient_delivered','Patient delivered!'),t:70};
+    SFX.win();
+    startLevel();
+  }
+
+  if(Math.random()<0.02+level*0.002)spawnTraffic();
+
+  traffic=traffic.filter(t=>t.y<H+100);
+  traffic.forEach(t=>{ t.y+=speed*0.9; drawTraffic(t); });
+
+  // collision
+  const ambBox={x:ambulance.x-24,y:H-120,w:48,h:80};
+  for(const t of traffic){
+    const x=LANES[t.lane];
+    if(rectsOverlap(ambBox.x,ambBox.y,ambBox.w,ambBox.h,x-t.w/2,t.y,t.w,t.h)){
+      traffic=traffic.filter(o=>o!==t);
+      lives--;
+      timeLeft-=2.5;
+      flashTimer=20;
+      SFX.hit();
+      toast={text:I18N.t('crash_label','Crash!'),t:50};
+      if(lives<=0){
+        gameOver=true;
+        if(saved>hi){hi=saved;localStorage.setItem('ambulancerush_hi',hi);}
+        SFX.lose();
+      }
+      break;
+    }
+  }
+
+  drawAmbulance();
+
+  // HUD: timer bar + goal progress
+  ctx.fillStyle='#111';ctx.fillRect(10,10,W-20,14);
+  ctx.fillStyle= timeLeft/timeMax<0.3?'#ff3355':'#4caf50';
+  ctx.fillRect(10,10,(W-20)*Math.max(0,timeLeft/timeMax),14);
+  ctx.strokeStyle='#fff';ctx.strokeRect(10,10,W-20,14);
+  ctx.fillStyle='#333';ctx.fillRect(10,28,W-20,8);
+  ctx.fillStyle='#ffd54f';ctx.fillRect(10,28,(W-20)*Math.min(1,distance/distanceGoal),8);
+
+  ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('level_label','Shift {n}').replace('{n}',level),12,52);
+
+  if(flashTimer>0){
+    flashTimer-=dt;
+    ctx.fillStyle=`rgba(255,0,0,${Math.max(0,flashTimer/40)})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  if(toast.t>0){
+    toast.t-=dt;
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(toast.text,W/2,80);
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

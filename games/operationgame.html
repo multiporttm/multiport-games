@@ -1,0 +1,235 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Operation Game</title><meta name="description" content="Play Operation Game free online — Drag the tweezers cursor to grab each object and lift it straight out of its cavity without touching the buzzing edges. Clear a patient's cavities for points before you run out of lives."><link rel="canonical" href="https://games.multiportllc.com/games/operationgame"><meta property="og:title" content="Operation Game - Multiport Games"><meta property="og:description" content="Play Operation Game free online — Drag the tweezers cursor to grab each object and lift it straight out of its cavity without touching the buzzing edges. Clear a patient's cavities for points before you run out of lives."><meta property="og:url" content="https://games.multiportllc.com/games/operationgame"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Operation Game","description":"Play Operation Game free online instantly. Drag the tweezers cursor to grab each object and lift it straight out of its cavity without touching the buzzing edges. Clear a patient's cavities for points before you run out of lives. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/operationgame","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#2b3a67 0%,#5c9ead 100%);display:block;border-radius:8px;cursor:crosshair;touch-action:none}
+#score-display{color:#5c9ead;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Operation Game</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0 | Lives: 3</div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click and hold on an object, then drag the <b>tweezers</b> carefully along the safe path to lift it out through the opening. Touching an edge buzzes and costs a <b>life</b> — clear every object to move to the next, trickier patient!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+let score=0,hi=parseInt(localStorage.getItem('operationgame_hi')||'0'),lives=3,gameOver=false;
+let round=1;
+let cavities=[];
+let holding=null; // index of held cavity
+let tweezerPos={x:400,y:400};
+let buzzTimer=0;
+let toast={text:'',t:0};
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function genCavities(n,difficulty){
+  const list=[];
+  const cols=Math.ceil(Math.sqrt(n));
+  const rows=Math.ceil(n/cols);
+  const cellW=W/cols, cellH=(H-80)/rows;
+  let idx=0;
+  for(let r=0;r<rows;r++){
+    for(let cIdx=0;cIdx<cols;cIdx++){
+      if(idx>=n)break;
+      const cx=cellW*cIdx+cellW/2;
+      const cy=80+cellH*r+cellH/2;
+      const openW=Math.max(28,55-difficulty*4)+rand(-4,4);
+      const openH=Math.max(28,55-difficulty*4)+rand(-4,4);
+      const wobble=difficulty*3;
+      list.push({
+        cx,cy,openW,openH,
+        holeAngle:rand(0,Math.PI*2),
+        removed:false,
+        obj:{x:cx+rand(-6,6),y:cy+rand(-6,6)},
+        exitY:cy-90, // must lift object above this y to fully remove
+        wobble,
+        id:idx
+      });
+      idx++;
+    }
+  }
+  return list;
+}
+
+function newRound(){
+  cavities=genCavities(4+Math.min(round,4),round);
+  holding=null;
+}
+
+function reset(){
+  score=0;lives=3;gameOver=false;round=1;buzzTimer=0;toast={text:'',t:0};
+  newRound();
+}
+reset();
+
+function getPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  let cx,cy;
+  if(e.touches&&e.touches.length){ cx=e.touches[0].clientX; cy=e.touches[0].clientY; }
+  else { cx=e.clientX; cy=e.clientY; }
+  return {x:(cx-rect.left)*scaleX, y:(cy-rect.top)*scaleY};
+}
+
+function dist(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
+
+function startDrag(e){
+  if(gameOver){reset();return;}
+  const p=getPos(e);
+  tweezerPos=p;
+  for(const cav of cavities){
+    if(cav.removed)continue;
+    if(dist(p,cav.obj)<22){ holding=cav.id; SFX.click(); return; }
+  }
+}
+
+function moveDrag(e){
+  const p=getPos(e);
+  tweezerPos=p;
+  if(holding==null)return;
+  const cav=cavities.find(cv=>cv.id===holding);
+  if(!cav||cav.removed){holding=null;return;}
+  cav.obj.x=p.x; cav.obj.y=p.y;
+
+  // check edge collision: distance from cavity center vs opening radius, only while object is still within the "neck" band
+  const dx=cav.obj.x-cav.cx, dy=cav.obj.y-cav.cy;
+  const inNeckBand = cav.obj.y > cav.exitY && cav.obj.y < cav.cy+40;
+  const rx=cav.openW/2 - 10, ry=cav.openH/2 - 10;
+  const norm=(dx*dx)/(rx*rx)+(dy*dy)/(ry*ry);
+  if(inNeckBand && norm>1 && buzzTimer<=0){
+    buzz();
+  }
+
+  if(cav.obj.y<=cav.exitY){
+    // successfully removed
+    cav.removed=true;
+    holding=null;
+    const pts=50+round*10;
+    score+=pts;
+    toast={text:`+${pts} ${I18N.t('removed_label','Removed!')}`,t:70};
+    SFX.success();
+    if(cavities.every(cv=>cv.removed)){
+      round++;
+      toast={text:I18N.t('next_patient','Next patient!'),t:80};
+      setTimeout(()=>{ if(!gameOver) newRound(); },700);
+    }
+  }
+}
+
+function endDrag(){ holding=null; }
+
+function buzz(){
+  buzzTimer=30;
+  lives--;
+  SFX.error();
+  toast={text:I18N.t('buzz_label','BZZZT!'),t:40};
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem('operationgame_hi',hi);}
+    SFX.lose();
+  }
+}
+
+c.addEventListener('mousedown',startDrag);
+window.addEventListener('mousemove',moveDrag);
+window.addEventListener('mouseup',endDrag);
+c.addEventListener('touchstart',e=>{e.preventDefault();startDrag(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();moveDrag(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();endDrag();},{passive:false});
+
+function drawCavity(cav){
+  ctx.save();
+  ctx.fillStyle='#f5e6c8';
+  ctx.beginPath();
+  ctx.ellipse(cav.cx,cav.cy,cav.openW/2+14,cav.openH/2+14,0,0,7);
+  ctx.fill();
+  ctx.fillStyle= cav.removed?'#8fd19e':'#1a1a2e';
+  ctx.beginPath();
+  ctx.ellipse(cav.cx,cav.cy,cav.openW/2,cav.openH/2,0,0,7);
+  ctx.fill();
+  if(!cav.removed){
+    ctx.strokeStyle='#e94560';
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.ellipse(cav.cx,cav.cy,cav.openW/2-10,cav.openH/2-10,0,0,7);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawObj(cav){
+  if(cav.removed)return;
+  ctx.save();
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();
+  ctx.arc(cav.obj.x,cav.obj.y,10,0,7);
+  ctx.fill();
+  ctx.strokeStyle='#c9a227';
+  ctx.lineWidth=2;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawTweezers(){
+  ctx.save();
+  ctx.strokeStyle= buzzTimer>0? '#ff3355':'#ccc';
+  ctx.lineWidth=4;
+  ctx.beginPath();
+  ctx.moveTo(tweezerPos.x-14,tweezerPos.y-30);
+  ctx.lineTo(tweezerPos.x-2,tweezerPos.y-4);
+  ctx.moveTo(tweezerPos.x+14,tweezerPos.y-30);
+  ctx.lineTo(tweezerPos.x+2,tweezerPos.y-4);
+  ctx.stroke();
+  ctx.fillStyle= holding!=null? '#ffd54f':'#eee';
+  ctx.beginPath();ctx.arc(tweezerPos.x,tweezerPos.y-2,4,0,7);ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#2b3a67');bg.addColorStop(1,'#5c9ead');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('round_label','Patient {r}').replace('{r}',round),16,30);
+
+  document.getElementById('score-display').textContent=
+    I18N.t('op_status','Score: {s} | Hi: {h} | Lives: {l}').replace('{s}',score).replace('{h}',hi).replace('{l}',Math.max(0,lives));
+
+  if(buzzTimer>0)buzzTimer--;
+
+  cavities.forEach(drawCavity);
+  cavities.forEach(drawObj);
+  drawTweezers();
+
+  if(toast.t>0){
+    toast.t--;
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(toast.text,W/2,60);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,190);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final score: {s}').replace('{s}',score),W/2,226);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,258);
+  }
+
+  requestAnimationFrame(loop);
+}
+document.addEventListener('keydown',e=>{ if(e.code==='Space'&&gameOver){reset();} });
+loop();
+</script></body></html>

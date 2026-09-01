@@ -1,0 +1,360 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Labyrinth Minotaur</title><meta name="description" content="Play Labyrinth Minotaur free online — Use Arrow Keys or WASD (or swipe / D-pad) to navigate a dark, randomly-generated labyrinth from entrance to exit while dodging the patrolling Minotaur. Collect torches to light your way."><link rel="canonical" href="https://games.multiportllc.com/games/labyrinthminotaur"><meta property="og:title" content="Labyrinth Minotaur - Multiport Games"><meta property="og:description" content="Play Labyrinth Minotaur free online — Use Arrow Keys or WASD (or swipe / D-pad) to navigate a dark, randomly-generated labyrinth from entrance to exit while dodging the patrolling Minotaur. Collect torches to light your way."><meta property="og:url" content="https://games.multiportllc.com/games/labyrinthminotaur"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Labyrinth Minotaur","description":"Play Labyrinth Minotaur free online instantly. Use Arrow Keys or WASD (or swipe / D-pad) to navigate a dark, randomly-generated labyrinth from entrance to exit while dodging the patrolling Minotaur. Collect torches to light your way. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/labyrinthminotaur","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#2b0a0a,#c9a24b);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#e6c07b;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#dpad{display:grid;grid-template-columns:repeat(3,44px);grid-template-rows:repeat(3,44px);gap:4px;justify-content:center;margin:10px auto 0}
+#dpad button{background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.25);border-radius:8px;color:#fff;font-size:1.1rem;cursor:pointer}
+#dpad button:active{background:rgba(255,255,255,0.3)}
+.dpad-empty{visibility:hidden}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Labyrinth Minotaur</div>
+  <div class="game-frame">
+    <div id="score-display">Mazes Escaped: 0 | Lives: 3 | Best: 0</div>
+    <canvas id="c" width="640" height="640"></canvas>
+    <div id="dpad">
+      <div class="dpad-empty"></div><button id="up">▲</button><div class="dpad-empty"></div>
+      <button id="left">◀</button><div class="dpad-empty"></div><button id="right">▶</button>
+      <div class="dpad-empty"></div><button id="down">▼</button><div class="dpad-empty"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> or <b>WASD</b> (or the on-screen <b>D-pad</b> / swipe on the maze) to find the glowing exit while a lurking <b>Minotaur</b> hunts you through the dark. Getting caught costs a life and sends you back to the entrance. Collect <b>torches 🔥</b> to light up more of the maze!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=640,H=640;
+let hiEscaped=parseInt(localStorage.getItem('labyrinthminotaur_escaped')||'0',10);
+let mazesEscaped=0,lives=3,gameOver=false;
+
+let COLS=9,ROWS=9;
+let cellSize;
+let grid;
+let player,exitCell,torches;
+let minotaur;
+let minoMoveTimer=0;
+let torchGlow=0; // extra reveal radius, decays
+let caughtFlashT=0;
+let solvedThisRound=false;
+let lastTime=null;
+
+function makeMaze(cols,rows){
+  const g=[];
+  for(let r=0;r<rows;r++){
+    const row=[];
+    for(let cIdx=0;cIdx<cols;cIdx++)row.push({n:true,s:true,e:true,w:true,visited:false});
+    g.push(row);
+  }
+  const stack=[[0,0]];
+  g[0][0].visited=true;
+  while(stack.length){
+    const [r,cIdx]=stack[stack.length-1];
+    const neighbors=[];
+    if(r>0 && !g[r-1][cIdx].visited)neighbors.push(['n',r-1,cIdx]);
+    if(r<rows-1 && !g[r+1][cIdx].visited)neighbors.push(['s',r+1,cIdx]);
+    if(cIdx>0 && !g[r][cIdx-1].visited)neighbors.push(['w',r,cIdx-1]);
+    if(cIdx<cols-1 && !g[r][cIdx+1].visited)neighbors.push(['e',r,cIdx+1]);
+    if(neighbors.length===0){stack.pop();continue;}
+    const [dir,nr,nc]=neighbors[Math.floor(Math.random()*neighbors.length)];
+    const opp={n:'s',s:'n',e:'w',w:'e'};
+    g[r][cIdx][dir]=false;
+    g[nr][nc][opp[dir]]=false;
+    g[nr][nc].visited=true;
+    stack.push([nr,nc]);
+  }
+  return g;
+}
+
+function neighborsOf(g,r,cIdx,cols,rows){
+  const cell=g[r][cIdx];
+  const out=[];
+  if(!cell.n)out.push([r-1,cIdx]);
+  if(!cell.s)out.push([r+1,cIdx]);
+  if(!cell.e)out.push([r,cIdx+1]);
+  if(!cell.w)out.push([r,cIdx-1]);
+  return out;
+}
+
+function bfsPath(g,cols,rows,start,end){
+  const q=[start];
+  const prev={};
+  const key=(r,c)=>r+','+c;
+  const seen=new Set([key(start[0],start[1])]);
+  while(q.length){
+    const cur=q.shift();
+    if(cur[0]===end[0]&&cur[1]===end[1])break;
+    for(const [nr,nc] of neighborsOf(g,cur[0],cur[1],cols,rows)){
+      const k=key(nr,nc);
+      if(!seen.has(k)){seen.add(k);prev[k]=cur;q.push([nr,nc]);}
+    }
+  }
+  const path=[];
+  let cur=end;
+  while(cur[0]!==start[0]||cur[1]!==start[1]){
+    path.push(cur);
+    const k=key(cur[0],cur[1]);
+    if(!prev[k])return [start,end]; // fallback, shouldn't happen (fully connected maze)
+    cur=prev[k];
+  }
+  path.push(start);
+  path.reverse();
+  return path;
+}
+
+function newMaze(){
+  COLS=9+Math.min(6,Math.floor(mazesEscaped/2));
+  ROWS=COLS;
+  cellSize=Math.floor(W/COLS);
+  grid=makeMaze(COLS,ROWS);
+  player={r:0,c:0};
+  exitCell={r:ROWS-1,c:COLS-1};
+  const path=bfsPath(grid,COLS,ROWS,[0,0],[ROWS-1,COLS-1]);
+  // place minotaur somewhere along back half of path, away from entrance
+  const spawnIdx=Math.max(1,Math.floor(path.length*0.6));
+  minotaur={r:path[spawnIdx][0],c:path[spawnIdx][1],spawnR:path[spawnIdx][0],spawnC:path[spawnIdx][1]};
+  torches=[];
+  const torchCount=Math.min(5,Math.max(2,Math.floor(path.length/6)));
+  const usedIdx=new Set();
+  let tries=0;
+  while(torches.length<torchCount && tries<50){
+    tries++;
+    const idx=1+Math.floor(Math.random()*(path.length-2));
+    if(usedIdx.has(idx))continue;
+    usedIdx.add(idx);
+    const [r,cIdx]=path[idx];
+    torches.push({r,c:cIdx,taken:false});
+  }
+  minoMoveTimer=0;
+  solvedThisRound=false;
+}
+
+function resetPositions(){
+  player={r:0,c:0};
+  minotaur.r=minotaur.spawnR;minotaur.c=minotaur.spawnC;
+}
+
+function tryMove(dr,dc){
+  if(solvedThisRound||gameOver)return;
+  const cell=grid[player.r][player.c];
+  if(dr===-1 && cell.n)return;
+  if(dr===1 && cell.s)return;
+  if(dc===-1 && cell.w)return;
+  if(dc===1 && cell.e)return;
+  const nr=player.r+dr, nc=player.c+dc;
+  if(nr<0||nr>=ROWS||nc<0||nc>=COLS)return;
+  player.r=nr;player.c=nc;
+  SFX.click();
+  torches.forEach(t=>{
+    if(!t.taken && t.r===nr && t.c===nc){
+      t.taken=true;torchGlow=8; // extra cells of reveal
+      SFX.coin();
+    }
+  });
+  checkCatch();
+  if(!gameOver && nr===exitCell.r && nc===exitCell.c){
+    solvedThisRound=true;
+    mazesEscaped++;
+    if(mazesEscaped>hiEscaped){hiEscaped=mazesEscaped;localStorage.setItem('labyrinthminotaur_escaped',hiEscaped);}
+    SFX.win();
+  }
+}
+
+function checkCatch(){
+  if(player.r===minotaur.r && player.c===minotaur.c){
+    lives--;
+    caughtFlashT=20;
+    SFX.hit();
+    if(lives<=0){
+      gameOver=true;
+      SFX.lose();
+    } else {
+      resetPositions();
+    }
+  }
+}
+
+function moveMinotaur(){
+  if(solvedThisRound||gameOver)return;
+  const path=bfsPath(grid,COLS,ROWS,[minotaur.r,minotaur.c],[player.r,player.c]);
+  if(path.length>1){
+    // occasionally patrol randomly instead of direct chase, for fairness
+    const opts=neighborsOf(grid,minotaur.r,minotaur.c,COLS,ROWS);
+    if(Math.random()<0.15 && opts.length>0){
+      const [nr,nc]=opts[Math.floor(Math.random()*opts.length)];
+      minotaur.r=nr;minotaur.c=nc;
+    } else {
+      minotaur.r=path[1][0];minotaur.c=path[1][1];
+    }
+  }
+  checkCatch();
+}
+
+const keyMap={ArrowUp:[-1,0],ArrowDown:[1,0],ArrowLeft:[0,-1],ArrowRight:[0,1],
+  KeyW:[-1,0],KeyS:[1,0],KeyA:[0,-1],KeyD:[0,1]};
+document.addEventListener('keydown',e=>{
+  if(gameOver && (e.code==='Space'||e.code==='Enter')){reset();return;}
+  if(keyMap[e.code]){
+    e.preventDefault();
+    if(solvedThisRound){newMaze();return;}
+    const [dr,dc]=keyMap[e.code];
+    tryMove(dr,dc);
+  }
+  if(e.code==='Space' && solvedThisRound){newMaze();}
+});
+
+document.getElementById('up').addEventListener('click',()=>{if(gameOver)reset();else if(solvedThisRound)newMaze();else tryMove(-1,0);});
+document.getElementById('down').addEventListener('click',()=>{if(gameOver)reset();else if(solvedThisRound)newMaze();else tryMove(1,0);});
+document.getElementById('left').addEventListener('click',()=>{if(gameOver)reset();else if(solvedThisRound)newMaze();else tryMove(0,-1);});
+document.getElementById('right').addEventListener('click',()=>{if(gameOver)reset();else if(solvedThisRound)newMaze();else tryMove(0,1);});
+
+let touchStart=null;
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.touches[0];
+  touchStart={x:t.clientX,y:t.clientY};
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  e.preventDefault();
+  if(!touchStart)return;
+  const t=e.changedTouches[0];
+  const dx=t.clientX-touchStart.x, dy=t.clientY-touchStart.y;
+  touchStart=null;
+  if(gameOver){reset();return;}
+  if(solvedThisRound){newMaze();return;}
+  if(Math.abs(dx)<20 && Math.abs(dy)<20)return;
+  if(Math.abs(dx)>Math.abs(dy)){
+    tryMove(0,dx>0?1:-1);
+  } else {
+    tryMove(dy>0?1:-1,0);
+  }
+},{passive:false});
+c.addEventListener('click',()=>{ if(gameOver)reset(); else if(solvedThisRound)newMaze(); });
+
+function reset(){
+  mazesEscaped=0;lives=3;gameOver=false;
+  newMaze();
+}
+
+function drawMaze(revealR,revealC,radiusCells){
+  ctx.fillStyle='#1a0e0e';
+  ctx.fillRect(0,0,W,H);
+  const wallColor='#4a2f1a';
+  ctx.strokeStyle=wallColor;
+  ctx.lineWidth=Math.max(3,cellSize*0.12);
+  ctx.lineCap='round';
+  for(let r=0;r<ROWS;r++){
+    for(let cIdx=0;cIdx<COLS;cIdx++){
+      const cell=grid[r][cIdx];
+      const x=cIdx*cellSize, y=r*cellSize;
+      ctx.beginPath();
+      if(cell.n){ctx.moveTo(x,y);ctx.lineTo(x+cellSize,y);}
+      if(cell.w){ctx.moveTo(x,y);ctx.lineTo(x,y+cellSize);}
+      if(r===ROWS-1 && cell.s){ctx.moveTo(x,y+cellSize);ctx.lineTo(x+cellSize,y+cellSize);}
+      if(cIdx===COLS-1 && cell.e){ctx.moveTo(x+cellSize,y);ctx.lineTo(x+cellSize,y+cellSize);}
+      ctx.stroke();
+    }
+  }
+  const ex=exitCell.c*cellSize+cellSize/2, ey=exitCell.r*cellSize+cellSize/2;
+  const glow=ctx.createRadialGradient(ex,ey,2,ex,ey,cellSize*1.2);
+  glow.addColorStop(0,'rgba(255,214,10,0.9)');
+  glow.addColorStop(1,'rgba(255,214,10,0)');
+  ctx.fillStyle=glow;
+  ctx.fillRect(ex-cellSize*1.5,ey-cellSize*1.5,cellSize*3,cellSize*3);
+
+  torches.forEach(t=>{
+    if(t.taken)return;
+    const fx=t.c*cellSize+cellSize/2, fy=t.r*cellSize+cellSize/2;
+    ctx.font=(cellSize*0.55)+'px Arial';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText('🔥',fx,fy);
+  });
+
+  // minotaur
+  const mx=minotaur.c*cellSize+cellSize/2, my=minotaur.r*cellSize+cellSize/2;
+  ctx.font=(cellSize*0.7)+'px Arial';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('👹',mx,my);
+
+  // player
+  const px=player.c*cellSize+cellSize/2, py=player.r*cellSize+cellSize/2;
+  ctx.beginPath();
+  ctx.arc(px,py,cellSize*0.3,0,Math.PI*2);
+  ctx.fillStyle='#4fc3f7';
+  ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+
+  // fog of war: darken everything outside reveal radius around player
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,0.94)';
+  ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation='destination-out';
+  const holeR=radiusCells*cellSize;
+  const hole=ctx.createRadialGradient(revealR,revealC,holeR*0.3,revealR,revealC,holeR);
+  hole.addColorStop(0,'rgba(0,0,0,1)');
+  hole.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=hole;
+  ctx.beginPath();ctx.arc(revealR,revealC,holeR,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function updateScore(){
+  document.getElementById('score-display').textContent =
+    I18N.t('labyrinth_score_label','Mazes Escaped: {m} | Lives: {l} | Best: {h}')
+      .replace('{m}',mazesEscaped).replace('{l}',Math.max(0,lives)).replace('{h}',hiEscaped);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+
+  const now=performance.now();
+  const dt=lastTime===null?0:(now-lastTime)/1000;
+  lastTime=now;
+
+  if(!solvedThisRound && !gameOver){
+    minoMoveTimer+=dt;
+    const interval=Math.max(0.35,0.62-mazesEscaped*0.02);
+    if(minoMoveTimer>=interval){minoMoveTimer-=interval;moveMinotaur();}
+    if(torchGlow>0)torchGlow=Math.max(0,torchGlow-dt*1.2);
+  }
+
+  const px=player.c*cellSize+cellSize/2, py=player.r*cellSize+cellSize/2;
+  const baseRadius=2.4+torchGlow;
+  drawMaze(px,py,baseRadius);
+
+  if(caughtFlashT>0){
+    ctx.fillStyle='rgba(255,0,0,'+(caughtFlashT/20*0.4)+')';
+    ctx.fillRect(0,0,W,H);
+    caughtFlashT--;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-30);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('labyrinth_final_label','Mazes Escaped: {m} | Best: {h}').replace('{m}',mazesEscaped).replace('{h}',hiEscaped),W/2,H/2+10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+44);
+  } else if(solvedThisRound){
+    ctx.fillStyle='rgba(0,0,0,0.55)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('maze_solved_title','MAZE SOLVED!'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('maze_next_hint','Tap / Click / Space for a new maze'),W/2,H/2+20);
+  }
+
+  updateScore();
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>

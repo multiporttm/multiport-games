@@ -1,0 +1,231 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Safari Jeep</title><meta name="description" content="Play Safari Jeep free online — Drive across the savanna with Arrow Keys/WASD or drag, and tap the Camera button (or Space) to snap photos of animals when they're centered in frame. Rarer animals and better-centered shots score more points before your film runs out."><link rel="canonical" href="https://games.multiportllc.com/games/safarijeep"><meta property="og:title" content="Safari Jeep - Multiport Games"><meta property="og:description" content="Play Safari Jeep free online — Drive across the savanna with Arrow Keys/WASD or drag, and tap the Camera button (or Space) to snap photos of animals when they're centered in frame. Rarer animals and better-centered shots score more points before your film runs out."><meta property="og:url" content="https://games.multiportllc.com/games/safarijeep"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Safari Jeep","description":"Play Safari Jeep free online instantly. Drive across the savanna with Arrow Keys/WASD or drag, and tap the Camera button (or Space) to snap photos of animals when they're centered in frame. Rarer animals and better-centered shots score more points before your film runs out. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/safarijeep","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(180deg,#8d6e33 0%,#d4a94c 100%);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#d4a94c;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#camBtn{display:block;margin:10px auto 0;padding:12px 30px;font-size:1.3rem;font-weight:800;background:#e94560;color:#fff;border:none;border-radius:30px;cursor:pointer}
+#camBtn:active{transform:scale(.95)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Safari Jeep</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0 | Shots: 15</div>
+    <canvas id="c" width="800" height="400"></canvas>
+    <button id="camBtn">📸 Snap</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b>/<b>WASD</b> or drag to steer the jeep. Press <b>Space</b> or tap <b>📸 Snap</b> to photograph animals when they're centered in frame. Rarer animals and better-centered shots score more — you only have 15 shots per round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+let score=0,hi=parseInt(localStorage.getItem('safarijeep_hi')||'0'),shots=15,gameOver=false,started=false;
+const jeep={x:400,y:340,w:70,h:40};
+let animals=[];
+let frame=0,spawnTimer=0;
+let lastTime=null;
+let flash=0;
+let toast={text:'',t:0};
+
+const KINDS=[
+  {name:'zebra',emoji:'🦓',rarity:1,pts:10,color:'#eee'},
+  {name:'elephant',emoji:'🐘',rarity:1,pts:15,color:'#999'},
+  {name:'giraffe',emoji:'🦒',rarity:2,pts:25,color:'#e0b04a'},
+  {name:'lion',emoji:'🦁',rarity:3,pts:40,color:'#c9974a'},
+];
+
+function reset(){
+  score=0;shots=15;gameOver=false;started=false;animals=[];frame=0;spawnTimer=0;lastTime=null;jeep.x=400;flash=0;toast={text:'',t:0};
+}
+
+function weightedKind(){
+  const weights=KINDS.map(k=>1/k.rarity);
+  const total=weights.reduce((a,b)=>a+b,0);
+  let r=Math.random()*total;
+  for(let i=0;i<KINDS.length;i++){ r-=weights[i]; if(r<=0)return KINDS[i]; }
+  return KINDS[0];
+}
+
+function spawnAnimal(){
+  const k=weightedKind();
+  const side=Math.random()<0.5?-1:1;
+  animals.push({
+    kind:k,
+    x: side<0 ? -60 : W+60,
+    y: 80+Math.random()*180,
+    vx: side<0 ? (1.5+Math.random()*1.5) : -(1.5+Math.random()*1.5),
+    life:0,
+    maxLife:260+Math.random()*140,
+    photographed:false,
+    size:46
+  });
+}
+
+function startGame(){
+  if(!started){started=true;}
+}
+
+function jeepMove(dir){ startGame(); jeep.x+=dir*8; jeep.x=Math.max(50,Math.min(W-50,jeep.x)); }
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'){ if(gameOver){reset();return;} startGame(); snap(); }
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let dragging=false,dragStartX=0,jeepStartX=0;
+c.addEventListener('mousedown',e=>{dragging=true;dragStartX=e.clientX;jeepStartX=jeep.x;startGame();});
+window.addEventListener('mousemove',e=>{ if(dragging){ const rect=c.getBoundingClientRect(); const scale=W/rect.width; jeep.x=jeepStartX+(e.clientX-dragStartX)*scale; jeep.x=Math.max(50,Math.min(W-50,jeep.x)); } });
+window.addEventListener('mouseup',()=>{dragging=false;});
+c.addEventListener('touchstart',e=>{ e.preventDefault(); startGame(); if(gameOver){reset();return;} dragging=true; const rect=c.getBoundingClientRect(); dragStartX=e.touches[0].clientX; jeepStartX=jeep.x; },{passive:false});
+c.addEventListener('touchmove',e=>{ e.preventDefault(); if(dragging){ const rect=c.getBoundingClientRect(); const scale=W/rect.width; jeep.x=jeepStartX+(e.touches[0].clientX-dragStartX)*scale; jeep.x=Math.max(50,Math.min(W-50,jeep.x)); } },{passive:false});
+c.addEventListener('touchend',()=>{dragging=false;});
+
+document.getElementById('camBtn').addEventListener('click',()=>{ if(gameOver){reset();return;} startGame(); snap(); });
+
+function snap(){
+  if(gameOver||shots<=0)return;
+  shots--;
+  flash=8;
+  // find best-centered animal within frame window
+  let best=null,bestDist=Infinity;
+  for(const a of animals){
+    if(a.photographed)continue;
+    const dist=Math.abs(a.x-jeep.x);
+    if(dist<180 && dist<bestDist){ bestDist=dist; best=a; }
+  }
+  if(best){
+    best.photographed=true;
+    const centerRatio=1-Math.min(1,bestDist/180);
+    const pts=Math.round(best.kind.pts*(0.4+0.6*centerRatio));
+    score+=pts;
+    toast={text:`+${pts} ${best.kind.emoji} ${I18N.t('nice_shot','Nice shot!')}`,t:90};
+    if(centerRatio>0.85)SFX.success(); else SFX.coin();
+  } else {
+    toast={text:I18N.t('missed_shot','Missed!'),t:60};
+    SFX.error();
+  }
+  if(shots<=0){
+    setTimeout(()=>{ endRound(); },400);
+  }
+}
+
+function endRound(){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem('safarijeep_hi',hi);}
+  SFX.lose();
+}
+
+function drawJeep(){
+  ctx.save();
+  ctx.translate(jeep.x,jeep.y);
+  ctx.fillStyle='#3d6e2b';
+  ctx.fillRect(-35,-10,70,30);
+  ctx.fillStyle='#2f5a1f';
+  ctx.fillRect(-25,-28,50,22);
+  ctx.fillStyle='#bcd9ff';
+  ctx.fillRect(-18,-24,44,14);
+  ctx.fillStyle='#222';
+  ctx.beginPath();ctx.arc(-22,22,10,0,7);ctx.fill();
+  ctx.beginPath();ctx.arc(22,22,10,0,7);ctx.fill();
+  ctx.fillStyle='#ffe066';
+  ctx.fillRect(30,-2,6,8);
+  ctx.restore();
+}
+
+function drawAnimal(a){
+  ctx.save();
+  ctx.font='42px serif';
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  ctx.fillText(a.kind.emoji,a.x,a.y);
+  ctx.restore();
+}
+
+function drawFrameGuide(){
+  ctx.save();
+  ctx.strokeStyle='rgba(255,255,255,0.35)';
+  ctx.lineWidth=2;
+  ctx.setLineDash([6,6]);
+  ctx.strokeRect(jeep.x-180,60,360,220);
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  // sky/ground
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#e8b56a');sky.addColorStop(0.5,'#d4a94c');sky.addColorStop(0.5,'#8d6e33');sky.addColorStop(1,'#6b5326');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // sun
+  ctx.fillStyle='#fff3c4';ctx.beginPath();ctx.arc(700,60,35,0,7);ctx.fill();
+  // grass tufts
+  ctx.fillStyle='#5a441f';
+  for(let i=0;i<12;i++){ const gx=(i*70+frame*0.6)%(W+40)-20; ctx.fillRect(gx,300+((i*37)%40),4,14); }
+
+  document.getElementById('score-display').textContent=
+    I18N.t('safari_status','Score: {s} | Hi: {h} | Shots: {n}').replace('{s}',score).replace('{h}',hi).replace('{n}',Math.max(0,shots));
+
+  if(!started&&!gameOver){
+    drawJeep();
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_safari','Move to start — Space/Snap to take photos'),W/2,150);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawJeep();
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,170);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final score: {s}').replace('{s}',score),W/2,210);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,244);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frame+=dt;
+
+  if(keys['ArrowLeft']||keys['KeyA'])jeepMove(-0.6*dt);
+  if(keys['ArrowRight']||keys['KeyD'])jeepMove(0.6*dt);
+
+  spawnTimer+=dt;
+  const interval=Math.max(40,90-score/8);
+  if(spawnTimer>=interval && animals.length<6){ spawnTimer=0; spawnAnimal(); }
+
+  animals=animals.filter(a=>{ a.life+=dt; return a.life<a.maxLife && a.x>-100 && a.x<W+100; });
+  animals.forEach(a=>{ a.x+=a.vx*dt; drawAnimal(a); });
+
+  drawFrameGuide();
+  drawJeep();
+
+  if(flash>0){
+    flash-=dt;
+    ctx.fillStyle=`rgba(255,255,255,${Math.max(0,flash/8)})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  if(toast.t>0){
+    toast.t-=dt;
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(toast.text,W/2,60);
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
