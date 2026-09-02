@@ -1,0 +1,319 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rummy Card Game</title><meta name="description" content="Play Rummy Card Game free online — Draw from the stock or discard pile, arrange your hand into sets and runs, then discard to try to go out before the AI opponent does."><link rel="canonical" href="https://games.multiportllc.com/games/rummycardgame"><meta property="og:title" content="Rummy Card Game - Multiport Games"><meta property="og:description" content="Play Rummy Card Game free online — Draw from the stock or discard pile, arrange your hand into sets and runs, then discard to try to go out before the AI opponent does."><meta property="og:url" content="https://games.multiportllc.com/games/rummycardgame"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rummy Card Game","description":"Play Rummy Card Game free online instantly. Draw from the stock or discard pile, arrange your hand into sets (3+ of a rank) and runs (3+ consecutive same-suit cards), then discard to try to go out before the AI opponent does. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/rummycardgame","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:linear-gradient(135deg,#1b5e20,#0d3311);border-radius:14px;padding:16px;text-align:center}
+#status{color:#fff;font-size:1.05rem;font-weight:700;margin:4px 0 10px;min-height:1.6em}
+#stats{color:#a5d6a7;font-size:.9rem;margin-bottom:8px}
+#ai-row{display:flex;justify-content:center;gap:4px;margin-bottom:14px}
+.aicard{width:32px;height:46px;background:linear-gradient(135deg,#37474f,#263238);border-radius:5px;border:1px solid #546e7a}
+#piles{display:flex;justify-content:center;gap:22px;margin-bottom:16px;align-items:center}
+.pile{display:flex;flex-direction:column;align-items:center;gap:6px}
+.pile-label{color:#a5d6a7;font-size:.75rem;font-weight:700;text-transform:uppercase}
+.card{width:52px;height:74px;border-radius:6px;background:#fdfdfd;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:900;font-size:1.05rem;cursor:pointer;user-select:none;box-shadow:0 2px 4px rgba(0,0,0,.4);transition:transform .12s;border:2px solid transparent}
+.card.red{color:#c62828}
+.card.black{color:#222}
+.card:hover{transform:translateY(-4px)}
+.card.selected{border-color:#ffd54f;transform:translateY(-8px)}
+.card.meld{outline:3px solid #4caf50}
+.card.back{background:linear-gradient(135deg,#37474f,#263238);color:transparent}
+.card.empty{background:transparent;box-shadow:none;cursor:default}
+#hand{display:flex;justify-content:center;gap:6px;flex-wrap:wrap;margin:10px auto;max-width:640px;min-height:90px}
+#controls{margin:14px 0}
+#controls button{padding:9px 20px;background:#a5d6a7;border:none;border-radius:20px;color:#0d3311;font-weight:700;cursor:pointer;font-size:.95rem;margin:4px}
+#controls button:disabled{opacity:.35;cursor:not-allowed}
+#hint{color:#c8e6c9;font-size:.8rem;margin-top:6px}
+@media(max-width:480px){
+  .card{width:42px;height:60px;font-size:.9rem}
+  .aicard{width:26px;height:38px}
+}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rummy Card Game</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="stats">Hands won: 0 | Best turns: —</div>
+      <div id="status">Opponent's hand</div>
+      <div id="ai-row"></div>
+      <div id="piles">
+        <div class="pile">
+          <div class="pile-label">Stock</div>
+          <div class="card back" id="stockPile" onclick="drawFrom('stock')"></div>
+        </div>
+        <div class="pile">
+          <div class="pile-label">Discard</div>
+          <div class="card empty" id="discardPile" onclick="drawFrom('discard')"></div>
+        </div>
+      </div>
+      <div id="hand"></div>
+      <div id="controls">
+        <button id="discardBtn" onclick="discardSelected()" disabled>Discard Selected</button>
+        <button id="goOutBtn" onclick="tryGoOut()" disabled>Go Out</button>
+        <button id="newBtn" onclick="newGame()">New Hand</button>
+      </div>
+      <div id="hint">Draw a card first, then click a card in your hand and discard it to end your turn.</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Each turn, draw a card from the <b>Stock</b> pile or the <b>Discard</b> pile, then click a card in your hand to select it and click <b>Discard Selected</b> to end your turn. Try to arrange your 10-card hand into <b>sets</b> (3+ cards of the same rank) and <b>runs</b> (3+ consecutive cards of the same suit) — cards forming a valid meld glow green. Once your entire hand melds into sets/runs (with at most one leftover card to discard), click <b>Go Out</b> to win the hand! The AI opponent plays too — if it goes out first, the hand ends and you score based on your unmelded card value.
+  </div>
+</div>
+<script>
+const SUITS=['♠','♥','♦','♣'];
+const RANKS=['A','2','3','4','5','6','7','8','9','10','J','Q','K'];
+let deck,playerHand,aiHand,discard,stock,selected,turn,handsWon,bestTurns,turnCount,gameOver,drawnThisTurn;
+
+function loadStats(){
+  handsWon=parseInt(localStorage.getItem('rummy_wins')||'0');
+  bestTurns=localStorage.getItem('rummy_best');
+  bestTurns=bestTurns?parseInt(bestTurns):null;
+}
+function saveStats(){
+  localStorage.setItem('rummy_wins',handsWon);
+  if(bestTurns!=null)localStorage.setItem('rummy_best',bestTurns);
+}
+function updateStats(){
+  document.getElementById('stats').textContent=I18N.t('rummy_stats','Hands won: {w} | Best turns: {t}').replace('{w}',handsWon).replace('{t}',bestTurns==null?'—':bestTurns);
+}
+
+function makeDeck(){
+  const d=[];
+  for(const s of SUITS)for(let r=0;r<RANKS.length;r++)d.push({suit:s,rank:RANKS[r],val:r,id:s+RANKS[r]});
+  for(let i=d.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[d[i],d[j]]=[d[j],d[i]];}
+  return d;
+}
+
+function isRed(s){return s==='♥'||s==='♦';}
+
+function newGame(){
+  deck=makeDeck();
+  playerHand=deck.splice(0,10);
+  aiHand=deck.splice(0,10);
+  discard=[deck.splice(0,1)[0]];
+  stock=deck;
+  selected=null;
+  turn='player';
+  turnCount=1;
+  gameOver=false;
+  drawnThisTurn=false;
+  setStatus(I18N.t('rummy_your_turn','Your turn — draw a card from Stock or Discard.'));
+  render();
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+// find best meld grouping: returns {melded:[cardIndices...], leftover:[indices]}
+function findMelds(hand){
+  const n=hand.length;
+  const used=new Array(n).fill(false);
+  const melds=[];
+  // sets: group by rank
+  const byRank={};
+  hand.forEach((c,i)=>{(byRank[c.rank]=byRank[c.rank]||[]).push(i);});
+  Object.values(byRank).forEach(idxs=>{
+    if(idxs.length>=3){idxs.forEach(i=>used[i]=true);melds.push(idxs.slice());}
+  });
+  // runs: group by suit, sort by val, find consecutive runs of unused cards
+  const bySuit={};
+  hand.forEach((c,i)=>{if(!used[i])(bySuit[c.suit]=bySuit[c.suit]||[]).push(i);});
+  Object.values(bySuit).forEach(idxs=>{
+    idxs.sort((a,b)=>hand[a].val-hand[b].val);
+    let run=[idxs[0]];
+    for(let k=1;k<idxs.length;k++){
+      if(hand[idxs[k]].val===hand[idxs[k-1]].val+1){run.push(idxs[k]);}
+      else{
+        if(run.length>=3)run.forEach(i=>used[i]=true),melds.push(run.slice());
+        run=[idxs[k]];
+      }
+    }
+    if(run.length>=3)run.forEach(i=>used[i]=true),melds.push(run.slice());
+  });
+  const leftover=[];
+  for(let i=0;i<n;i++)if(!used[i])leftover.push(i);
+  return {melds,leftover};
+}
+
+function handValue(hand,leftoverIdxs){
+  return leftoverIdxs.reduce((sum,i)=>{
+    const c=hand[i];
+    const v=c.rank==='A'?1:(c.rank==='J'||c.rank==='Q'||c.rank==='K'||c.rank==='10')?10:parseInt(c.rank);
+    return sum+v;
+  },0);
+}
+
+function render(){
+  document.getElementById('ai-row').innerHTML=aiHand.map(()=>'<div class="aicard"></div>').join('');
+  const {melds,leftover}=findMelds(playerHand);
+  const meldedIdx=new Set(melds.flat());
+  const handEl=document.getElementById('hand');
+  handEl.innerHTML='';
+  playerHand.forEach((c,i)=>{
+    const div=document.createElement('div');
+    div.className='card '+(isRed(c.suit)?'red':'black');
+    if(meldedIdx.has(i))div.classList.add('meld');
+    if(selected===i)div.classList.add('selected');
+    div.innerHTML=`<div>${c.rank}</div><div>${c.suit}</div>`;
+    div.onclick=()=>selectCard(i);
+    handEl.appendChild(div);
+  });
+  const dtop=discard[discard.length-1];
+  const dEl=document.getElementById('discardPile');
+  if(dtop){
+    dEl.className='card '+(isRed(dtop.suit)?'red':'black');
+    dEl.innerHTML=`<div>${dtop.rank}</div><div>${dtop.suit}</div>`;
+  } else {
+    dEl.className='card empty';
+    dEl.innerHTML='';
+  }
+  document.getElementById('discardBtn').disabled=(selected===null||!drawnThisTurn||turn!=='player'||gameOver);
+  document.getElementById('goOutBtn').disabled=!(turn==='player'&&drawnThisTurn&&leftover.length<=1&&!gameOver);
+  updateStats();
+}
+
+function selectCard(i){
+  if(turn!=='player'||!drawnThisTurn||gameOver)return;
+  selected=(selected===i)?null:i;
+  SFX.select();
+  render();
+}
+
+function drawFrom(src){
+  if(turn!=='player'||drawnThisTurn||gameOver)return;
+  let card;
+  if(src==='stock'){
+    if(stock.length===0){
+      // reshuffle discard (keep top) back into stock
+      if(discard.length<=1)return;
+      const top=discard.pop();
+      stock=discard;discard=[top];
+      for(let i=stock.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[stock[i],stock[j]]=[stock[j],stock[i]];}
+    }
+    card=stock.pop();
+  } else {
+    if(discard.length===0)return;
+    card=discard.pop();
+  }
+  playerHand.push(card);
+  drawnThisTurn=true;
+  SFX.click();
+  setStatus(I18N.t('rummy_now_discard','Card drawn — select a card and click Discard Selected.'));
+  render();
+}
+
+function discardSelected(){
+  if(selected===null||!drawnThisTurn||turn!=='player'||gameOver)return;
+  const [c]=playerHand.splice(selected,1);
+  discard.push(c);
+  selected=null;
+  drawnThisTurn=false;
+  render();
+  checkEndOfGameByStock();
+  if(gameOver)return;
+  turn='ai';
+  setStatus(I18N.t('rummy_ai_turn','Opponent is thinking...'));
+  render();
+  setTimeout(aiTurn,700);
+}
+
+function checkEndOfGameByStock(){
+  if(stock.length===0&&discard.length<=1){
+    // no more draws possible for anyone eventually — just let it continue via reshuffle; skip
+  }
+}
+
+function aiTurn(){
+  if(gameOver)return;
+  // AI decides: draw from discard if it completes/extends a meld with top discard, else stock
+  const top=discard[discard.length-1];
+  let useDiscard=false;
+  if(top){
+    const trial=aiHand.concat([top]);
+    const before=findMelds(aiHand).melds.flat().length;
+    const after=findMelds(trial).melds.flat().length;
+    if(after>before+0)useDiscard=true;
+  }
+  let card;
+  if(useDiscard&&top){
+    card=discard.pop();
+  } else {
+    if(stock.length===0){
+      if(discard.length<=1){card=null;}
+      else{
+        const t=discard.pop();stock=discard;discard=[t];
+        for(let i=stock.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[stock[i],stock[j]]=[stock[j],stock[i]];}
+        card=stock.pop();
+      }
+    } else {
+      card=stock.pop();
+    }
+  }
+  if(card)aiHand.push(card);
+
+  // AI checks if it can go out
+  const {melds,leftover}=findMelds(aiHand);
+  if(leftover.length<=1){
+    // AI goes out
+    if(leftover.length===1){
+      discard.push(aiHand.splice(leftover[0],1)[0]);
+    }
+    endHand('ai');
+    return;
+  }
+
+  // AI discards the least useful leftover card (highest value, not part of near-meld)
+  const meldedIdx=new Set(melds.flat());
+  let worst=-1,worstScore=-1;
+  aiHand.forEach((c,i)=>{
+    if(meldedIdx.has(i))return;
+    const v=c.rank==='A'?1:(c.rank==='J'||c.rank==='Q'||c.rank==='K'||c.rank==='10')?10:parseInt(c.rank);
+    if(v>worstScore){worstScore=v;worst=i;}
+  });
+  if(worst===-1)worst=0;
+  discard.push(aiHand.splice(worst,1)[0]);
+
+  turn='player';
+  drawnThisTurn=false;
+  turnCount++;
+  setStatus(I18N.t('rummy_your_turn2','Your turn — draw a card from Stock or Discard.'));
+  render();
+}
+
+function tryGoOut(){
+  if(turn!=='player'||!drawnThisTurn||gameOver)return;
+  const {leftover}=findMelds(playerHand);
+  if(leftover.length>1){
+    setStatus(I18N.t('rummy_cant_go_out',"You still have unmelded cards — discard instead."));
+    return;
+  }
+  if(leftover.length===1){
+    discard.push(playerHand.splice(leftover[0],1)[0]);
+  }
+  endHand('player');
+}
+
+function endHand(winner){
+  gameOver=true;
+  if(winner==='player'){
+    handsWon++;
+    if(bestTurns==null||turnCount<bestTurns)bestTurns=turnCount;
+    saveStats();
+    SFX.win();
+    setStatus(I18N.t('rummy_you_win','🎉 You went out! You win this hand in {t} turns.').replace('{t}',turnCount));
+  } else {
+    const {leftover}=findMelds(playerHand);
+    const val=handValue(playerHand,leftover);
+    SFX.lose();
+    setStatus(I18N.t('rummy_ai_win','Opponent went out first. Your leftover card value: {v}.').replace('{v}',val));
+  }
+  render();
+}
+
+loadStats();
+newGame();
+</script></body></html>

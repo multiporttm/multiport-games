@@ -1,0 +1,250 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Viking Raid</title><meta name="description" content="Play Viking Raid free online — Use Arrow Keys/WASD or touch-drag to grab gold and loot from the village, fight off defenders with Space, then reach the longship before the raid-alarm timer runs out."><link rel="canonical" href="https://games.multiportllc.com/games/vikingraid"><meta property="og:title" content="Viking Raid - Multiport Games"><meta property="og:description" content="Play Viking Raid free online — Use Arrow Keys/WASD or touch-drag to grab gold and loot from the village, fight off defenders with Space, then reach the longship before the raid-alarm timer runs out."><meta property="og:url" content="https://games.multiportllc.com/games/vikingraid"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Viking Raid","description":"Play Viking Raid free online instantly. Use Arrow Keys/WASD or touch-drag to grab gold and loot from the village, fight off defenders with Space, then reach the longship before the raid-alarm timer runs out. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/vikingraid","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#37474f,#ffab00);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffe082;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Viking Raid</div>
+  <div class="game-frame">
+    <div id="score-display">Loot: 0 | Best: 0 | Lives: 3</div>
+    <canvas id="c" width="800" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>touch-drag</b> to grab gold and loot. Press <b>Space</b> (or tap the sword button) to attack nearby defenders. Reach the <b>longship</b> before the raid-alarm timer runs out to bank your loot!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+let hi=parseInt(localStorage.getItem('vikingraid_hi')||'0',10);
+let loot=0,lives=3,gameOver=false,started=false;
+let timeLeft=30,raidNum=1;
+const player={x:60,y:H/2,r:14,speed:2.6,attackCd:0};
+let keys={};
+let lootItems=[],defenders=[];
+let ship={x:60,y:H/2,r:30};
+let bankedThisRaid=0;
+
+function reset(){
+  loot=0;lives=3;gameOver=false;
+  raidNum=1;
+  startRaid();
+}
+
+function startRaid(){
+  timeLeft=25+raidNum*2;
+  bankedThisRaid=0;
+  player.x=100;player.y=H/2;
+  ship.x=50;ship.y=H/2;
+  lootItems=[];
+  const n=6+raidNum;
+  for(let i=0;i<n;i++){
+    lootItems.push({x:180+Math.random()*(W-260),y:40+Math.random()*(H-80),r:9,val:5+Math.floor(Math.random()*10),taken:false});
+  }
+  defenders=[];
+  const dn=Math.min(2+raidNum,8);
+  for(let i=0;i<dn;i++){
+    defenders.push({
+      x:250+Math.random()*(W-350),y:40+Math.random()*(H-80),
+      vx:(Math.random()<0.5?1:-1)*(0.6+Math.random()*0.6+raidNum*0.05),
+      vy:(Math.random()<0.5?1:-1)*(0.6+Math.random()*0.6+raidNum*0.05),
+      r:12,alive:true,hitCd:0
+    });
+  }
+}
+
+function updateHud(){
+  document.getElementById('score-display').textContent=
+    I18N.t('loot_best_lives_label','Loot: {lo} | Best: {b} | Lives: {li}').replace('{lo}',loot).replace('{b}',hi).replace('{li}',Math.max(0,lives));
+}
+
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  keys[k]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k))e.preventDefault();
+  if(!started){started=true;}
+  if(gameOver&&(k===' '||k==='enter')){gameOver=false;reset();}
+  if(k===' ')attack();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+let touchStart=null,touchActive=false;
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started)started=true;
+  if(gameOver){gameOver=false;reset();return;}
+  const t=e.touches[0];
+  const rect=c.getBoundingClientRect();
+  touchStart={x:(t.clientX-rect.left)*(W/rect.width),y:(t.clientY-rect.top)*(H/rect.height)};
+  touchActive=true;
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(!touchActive)return;
+  const t=e.touches[0];
+  const rect=c.getBoundingClientRect();
+  const cur={x:(t.clientX-rect.left)*(W/rect.width),y:(t.clientY-rect.top)*(H/rect.height)};
+  const dx=cur.x-touchStart.x,dy=cur.y-touchStart.y;
+  player.x+=dx*0.25;player.y+=dy*0.25;
+  touchStart=cur;
+},{passive:false});
+c.addEventListener('touchend',()=>{touchActive=false;});
+c.addEventListener('dblclick',attack);
+c.addEventListener('click',()=>{
+  if(!started){started=true;return;}
+  if(gameOver){gameOver=false;reset();return;}
+  attack();
+});
+
+function attack(){
+  if(gameOver||!started||player.attackCd>0)return;
+  player.attackCd=20;
+  SFX.swoosh();
+  defenders.forEach(d=>{
+    if(d.alive&&Math.hypot(d.x-player.x,d.y-player.y)<50){
+      d.alive=false;
+      SFX.hit();
+    }
+  });
+}
+
+function dist(ax,ay,bx,by){return Math.hypot(ax-bx,ay-by);}
+
+function drawPlayer(){
+  ctx.fillStyle='#5d4037';
+  ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(player.x-3,player.y-20,6,14);
+  if(player.attackCd>12){
+    ctx.strokeStyle='#fff';ctx.lineWidth=3;
+    ctx.beginPath();ctx.arc(player.x,player.y,45,0,Math.PI*2);ctx.stroke();
+  }
+}
+
+function drawShip(){
+  ctx.fillStyle='#6d4c41';
+  ctx.beginPath();
+  ctx.ellipse(ship.x,ship.y,ship.r,ship.r*0.6,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#8d6e63';
+  ctx.fillRect(ship.x-4,ship.y-ship.r,8,ship.r);
+  ctx.fillStyle='#c62828';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('ship_label','SHIP'),ship.x,ship.y+4);
+}
+
+function drawLoot(l){
+  ctx.fillStyle='#ffd700';
+  ctx.beginPath();ctx.arc(l.x,l.y,l.r,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#b8860b';ctx.lineWidth=2;ctx.stroke();
+}
+
+function drawDefender(d){
+  if(!d.alive)return;
+  ctx.fillStyle='#c62828';
+  ctx.beginPath();ctx.arc(d.x,d.y,d.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#eee';
+  ctx.fillRect(d.x-2,d.y-16,4,10);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#37474f');bg.addColorStop(1,'#8d6e00');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#ffe082';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('viking_start_hint','Move / Tap to begin the raid'),W/2,H/2);
+    drawShip();drawPlayer();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+18);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  // movement
+  let dx=0,dy=0;
+  if(keys['arrowup']||keys['w'])dy-=1;
+  if(keys['arrowdown']||keys['s'])dy+=1;
+  if(keys['arrowleft']||keys['a'])dx-=1;
+  if(keys['arrowright']||keys['d'])dx+=1;
+  const len=Math.hypot(dx,dy)||1;
+  player.x+=(dx/len)*player.speed*2.2;
+  player.y+=(dy/len)*player.speed*2.2;
+  player.x=Math.max(player.r,Math.min(W-player.r,player.x));
+  player.y=Math.max(player.r,Math.min(H-player.r,player.y));
+  if(player.attackCd>0)player.attackCd--;
+
+  // defenders move, bounce off walls
+  defenders.forEach(d=>{
+    if(!d.alive)return;
+    d.x+=d.vx;d.y+=d.vy;
+    if(d.x<d.r||d.x>W-d.r)d.vx*=-1;
+    if(d.y<d.r||d.y>H-d.r)d.vy*=-1;
+    if(d.hitCd>0)d.hitCd--;
+  });
+
+  // timer
+  timeLeft-=1/60;
+  if(timeLeft<=0){
+    // alarm — lose a life, restart raid attempt
+    lives--;
+    SFX.hurt();
+    if(lives<=0){gameOver=true;SFX.lose();if(loot>hi){hi=loot;localStorage.setItem('vikingraid_hi',String(hi));}}
+    else {raidNum++;startRaid();}
+  }
+
+  // draw
+  drawShip();
+  lootItems.forEach(l=>{if(!l.taken)drawLoot(l);});
+  defenders.forEach(drawDefender);
+  drawPlayer();
+
+  // collisions - loot
+  lootItems.forEach(l=>{
+    if(!l.taken&&dist(player.x,player.y,l.x,l.y)<player.r+l.r){
+      l.taken=true;loot+=l.val;bankedThisRaid+=l.val;SFX.coin();
+    }
+  });
+
+  // collisions - defenders
+  defenders.forEach(d=>{
+    if(d.alive&&d.hitCd===0&&dist(player.x,player.y,d.x,d.y)<player.r+d.r){
+      lives--;d.hitCd=60;SFX.hurt();
+      if(lives<=0){gameOver=true;SFX.lose();if(loot>hi){hi=loot;localStorage.setItem('vikingraid_hi',String(hi));}}
+    }
+  });
+
+  // reach ship to bank & advance
+  if(dist(player.x,player.y,ship.x,ship.y)<ship.r&&bankedThisRaid>0){
+    SFX.success();
+    raidNum++;
+    startRaid();
+  }
+
+  // timer bar
+  ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(10,10,150,14);
+  ctx.fillStyle=timeLeft<8?'#e53935':'#ffca28';
+  ctx.fillRect(10,10,150*Math.max(0,timeLeft/(25+raidNum*2)),14);
+  ctx.strokeStyle='#fff';ctx.strokeRect(10,10,150,14);
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('raid_alarm_label','Raid #{n} — Alarm').replace('{n}',raidNum),12,40);
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

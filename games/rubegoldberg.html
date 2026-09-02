@@ -1,0 +1,389 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rube Goldberg Machine</title><meta name="description" content="Play Rube Goldberg Machine free online — Place ramps, dominoes, seesaws and fans onto the playfield to build a chain reaction that carries the ball from start to the goal zone, then hit Start to watch the simulation run. Fewer attempts used means a higher score."><link rel="canonical" href="https://games.multiportllc.com/games/rubegoldberg"><meta property="og:title" content="Rube Goldberg Machine - Multiport Games"><meta property="og:description" content="Play Rube Goldberg Machine free online — Place ramps, dominoes, seesaws and fans onto the playfield to build a chain reaction that carries the ball from start to the goal zone, then hit Start to watch the simulation run. Fewer attempts used means a higher score."><meta property="og:url" content="https://games.multiportllc.com/games/rubegoldberg"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rube Goldberg Machine","description":"Play Rube Goldberg Machine free online instantly. Place ramps, dominoes, seesaws and fans onto the playfield to build a chain reaction that carries the ball from start to the goal zone, then hit Start to watch the simulation run. Fewer attempts used means a higher score. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/rubegoldberg","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#263238,#546e7a);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffd54f;font-size:1.1rem;font-weight:700;text-align:center;padding:6px}
+#palette{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:8px 0}
+#palette button{padding:8px 12px;background:#37474f;border:2px solid #546e7a;border-radius:8px;color:#fff;cursor:pointer;font-size:.95rem}
+#palette button.active{background:#ffd54f;color:#222;border-color:#ffd54f}
+#palette button:disabled{opacity:.35;cursor:not-allowed}
+#actions{display:flex;gap:8px;justify-content:center;margin:6px 0}
+#actions button{padding:8px 18px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+#actions button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rube Goldberg Machine</div>
+  <div class="game-frame">
+    <div id="score-display">Level 1 | Attempts: 3 | Solved: 0 | Score: 0 | Best: 0</div>
+    <div id="palette"></div>
+    <canvas id="c" width="800" height="450"></canvas>
+    <div id="actions">
+      <button id="flipBtn" onclick="flipTool()">Flip / Rotate</button>
+      <button id="clearBtn" onclick="clearParts()">Clear Layout</button>
+      <button id="startBtn" onclick="startSim()">Start</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Select a part below, then <b>Click / Tap</b> the playfield to place it. Use <b>Flip / Rotate</b> to change a ramp's angle or a fan's direction before placing. Build a path to guide the ball from the green start to the golden goal zone, then click <b>Start</b> to run the simulation. Fewer attempts used means a bigger score!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=450;
+let hi=parseInt(localStorage.getItem('rubegoldberg_hi')||'0');
+let totalScore=0,levelsSolved=0,levelIdx=0,attempts=3,attemptsMax=3;
+let simRunning=false,simMsg='',simMsgTimer=0;
+let ball=null,frameCount=0;
+let selectedTool=null;
+let toolOrient={ramp:1,fan:0}; // ramp:1 or -1; fan:0=up,1=right,2=down,3=left (arrow dir index)
+
+const LEVELS=[
+  {start:{x:50,y:50},goal:{x:730,y:400,r:32},parts:{ramp:2,domino:1,seesaw:0,fan:0}},
+  {start:{x:50,y:50},goal:{x:400,y:410,r:30},parts:{ramp:2,domino:2,seesaw:0,fan:0}},
+  {start:{x:50,y:50},goal:{x:730,y:410,r:30},parts:{ramp:1,domino:1,seesaw:1,fan:0}},
+  {start:{x:50,y:50},goal:{x:400,y:410,r:28},parts:{ramp:2,domino:1,seesaw:1,fan:1}},
+];
+
+let counts={},placed=[];
+
+function currentLevel(){ return LEVELS[levelIdx%LEVELS.length]; }
+
+function setupLevel(){
+  const lv=currentLevel();
+  counts=Object.assign({},lv.parts);
+  placed=[];
+  attempts=3;attemptsMax=3;
+  simRunning=false;ball=null;
+  selectedTool=null;
+  renderPalette();
+}
+
+function renderPalette(){
+  const pal=document.getElementById('palette');
+  pal.innerHTML='';
+  const defs=[
+    {type:'ramp',label:'🛝 Ramp',icon:'🛝'},
+    {type:'domino',label:'🁢 Domino',icon:'🁢'},
+    {type:'seesaw',label:'⚖️ Seesaw',icon:'⚖️'},
+    {type:'fan',label:'🌀 Fan',icon:'🌀'}
+  ];
+  defs.forEach(d=>{
+    const n=counts[d.type]||0;
+    const btn=document.createElement('button');
+    btn.textContent=`${d.icon} ${n}`;
+    btn.disabled=n<=0||simRunning;
+    if(selectedTool===d.type)btn.classList.add('active');
+    btn.onclick=()=>{ selectedTool=(selectedTool===d.type)?null:d.type; renderPalette(); };
+    pal.appendChild(btn);
+  });
+}
+
+function flipTool(){
+  if(!selectedTool)return;
+  if(selectedTool==='ramp')toolOrient.ramp*=-1;
+  if(selectedTool==='fan')toolOrient.fan=(toolOrient.fan+1)%4;
+  SFX.click();
+}
+
+function clearParts(){
+  if(simRunning)return;
+  const lv=currentLevel();
+  counts=Object.assign({},lv.parts);
+  placed=[];
+  renderPalette();
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+
+function placeAt(x,y){
+  if(simRunning)return;
+  const lv=currentLevel();
+  if(Math.hypot(x-lv.start.x,y-lv.start.y)<30)return;
+  if(Math.hypot(x-lv.goal.x,y-lv.goal.y)<lv.goal.r+20)return;
+  if(selectedTool){
+    if((counts[selectedTool]||0)<=0)return;
+    const part={type:selectedTool,x,y};
+    if(selectedTool==='ramp')part.dir=toolOrient.ramp;
+    if(selectedTool==='fan')part.orient=toolOrient.fan;
+    if(selectedTool==='seesaw'){part.angle=0;part.angVel=0;}
+    if(selectedTool==='domino'){part.fallen=false;part.rot=0;}
+    placed.push(part);
+    counts[selectedTool]--;
+    SFX.point();
+    if(counts[selectedTool]<=0)selectedTool=null;
+    renderPalette();
+  } else {
+    for(let i=placed.length-1;i>=0;i--){
+      const p=placed[i];
+      if(Math.hypot(p.x-x,p.y-y)<26){
+        counts[p.type]=(counts[p.type]||0)+1;
+        placed.splice(i,1);
+        SFX.click();
+        renderPalette();
+        return;
+      }
+    }
+  }
+}
+
+c.addEventListener('click',e=>{ const p=pointerPos(e); placeAt(p.x,p.y); });
+c.addEventListener('touchstart',e=>{ e.preventDefault(); const p=pointerPos(e); placeAt(p.x,p.y); },{passive:false});
+
+function rampSegment(part){
+  const len=110;
+  const ang=part.dir>0? -0.55 : 0.55; // radians, negative = slopes down-right
+  return {
+    x1:part.x-Math.cos(ang)*len/2, y1:part.y-Math.sin(ang)*len/2,
+    x2:part.x+Math.cos(ang)*len/2, y2:part.y+Math.sin(ang)*len/2
+  };
+}
+function seesawSegment(part){
+  const len=130;
+  const ang=part.angle;
+  return {
+    x1:part.x-Math.cos(ang)*len/2, y1:part.y-Math.sin(ang)*len/2,
+    x2:part.x+Math.cos(ang)*len/2, y2:part.y+Math.sin(ang)*len/2
+  };
+}
+function fanVector(orient){
+  return [{x:0,y:-1},{x:1,y:0},{x:0,y:1},{x:-1,y:0}][orient];
+}
+
+function closestOnSegment(px,py,x1,y1,x2,y2){
+  const dx=x2-x1,dy=y2-y1;
+  const len2=dx*dx+dy*dy||1;
+  let t=((px-x1)*dx+(py-y1)*dy)/len2;
+  t=Math.max(0,Math.min(1,t));
+  return {x:x1+t*dx,y:y1+t*dy};
+}
+
+function resolveSegmentCollision(seg,restitution){
+  const cp=closestOnSegment(ball.x,ball.y,seg.x1,seg.y1,seg.x2,seg.y2);
+  const dx=ball.x-cp.x,dy=ball.y-cp.y;
+  const dist=Math.hypot(dx,dy);
+  if(dist<ball.r&&dist>0.01){
+    const nx=dx/dist,ny=dy/dist;
+    const pen=ball.r-dist;
+    ball.x+=nx*pen;ball.y+=ny*pen;
+    const vn=ball.vx*nx+ball.vy*ny;
+    if(vn<0){
+      ball.vx-=(1+restitution)*vn*nx;
+      ball.vy-=(1+restitution)*vn*ny;
+      ball.vx*=0.995;ball.vy*=0.995;
+    }
+    return true;
+  }
+  return false;
+}
+
+function resolveRectCollision(rx,ry,rw,rh,restitution){
+  const cx=Math.max(rx,Math.min(ball.x,rx+rw));
+  const cy=Math.max(ry,Math.min(ball.y,ry+rh));
+  const dx=ball.x-cx,dy=ball.y-cy;
+  const dist=Math.hypot(dx,dy);
+  if(dist<ball.r){
+    const nx=dist>0.01?dx/dist:0, ny=dist>0.01?dy/dist:-1;
+    const pen=ball.r-dist;
+    ball.x+=nx*pen;ball.y+=ny*pen;
+    const vn=ball.vx*nx+ball.vy*ny;
+    if(vn<0){
+      ball.vx-=(1+restitution)*vn*nx;
+      ball.vy-=(1+restitution)*vn*ny;
+    }
+    return true;
+  }
+  return false;
+}
+
+function startSim(){
+  if(simRunning||attempts<=0)return;
+  const lv=currentLevel();
+  ball={x:lv.start.x,y:lv.start.y,vx:0,vy:0,r:11};
+  placed.forEach(p=>{ if(p.type==='seesaw'){p.angle=0;p.angVel=0;} if(p.type==='domino'){p.fallen=false;p.rot=0;} });
+  simRunning=true;frameCount=0;
+  selectedTool=null;
+  renderPalette();
+  SFX.click();
+}
+
+function endAttempt(success){
+  simRunning=false;
+  attempts--;
+  if(success){
+    const pts=Math.max(20,100-(attemptsMax-attempts-1)*25);
+    totalScore+=pts;
+    levelsSolved++;
+    if(totalScore>hi){hi=totalScore;localStorage.setItem('rubegoldberg_hi',hi);}
+    simMsg=I18N.t('rg_solved','Level solved! +{p} pts').replace('{p}',pts);
+    simMsgTimer=150;
+    SFX.success();
+    levelIdx++;
+    setTimeout(()=>{ setupLevel(); },1600);
+  } else {
+    if(attempts<=0){
+      simMsg=I18N.t('rg_outof','Out of attempts — layout reset');
+      simMsgTimer=150;
+      SFX.fail();
+      setTimeout(()=>{ setupLevel(); },1600);
+    } else {
+      simMsg=I18N.t('rg_failed','Attempt failed — {n} attempts left').replace('{n}',attempts);
+      simMsgTimer=120;
+      SFX.error();
+      ball=null;
+      renderPalette();
+    }
+  }
+}
+
+function drawPart(p){
+  ctx.save();
+  if(p.type==='ramp'){
+    const seg=rampSegment(p);
+    ctx.strokeStyle='#8d6e63';ctx.lineWidth=10;ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(seg.x1,seg.y1);ctx.lineTo(seg.x2,seg.y2);ctx.stroke();
+    ctx.strokeStyle='#a1887f';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(seg.x1,seg.y1);ctx.lineTo(seg.x2,seg.y2);ctx.stroke();
+  } else if(p.type==='domino'){
+    ctx.translate(p.x,p.y);
+    ctx.rotate(p.rot||0);
+    ctx.fillStyle='#eceff1';
+    ctx.fillRect(-6,-26,12,52);
+    ctx.fillStyle='#455a64';
+    ctx.fillRect(-6,-26,12,6);
+  } else if(p.type==='seesaw'){
+    ctx.fillStyle='#6d4c41';
+    ctx.beginPath();ctx.moveTo(p.x-14,p.y+16);ctx.lineTo(p.x+14,p.y+16);ctx.lineTo(p.x,p.y-6);ctx.fill();
+    const seg=seesawSegment(p);
+    ctx.strokeStyle='#a1887f';ctx.lineWidth=9;ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(seg.x1,seg.y1);ctx.lineTo(seg.x2,seg.y2);ctx.stroke();
+  } else if(p.type==='fan'){
+    ctx.translate(p.x,p.y);
+    ctx.fillStyle='#37474f';
+    ctx.beginPath();ctx.arc(0,0,20,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#b0bec5';ctx.lineWidth=3;
+    const t=performance.now()/120;
+    for(let i=0;i<3;i++){
+      ctx.save();ctx.rotate(t+i*(Math.PI*2/3));
+      ctx.beginPath();ctx.ellipse(0,-10,5,10,0,0,Math.PI*2);ctx.stroke();
+      ctx.restore();
+    }
+    const v=fanVector(p.orient);
+    ctx.rotate(0);
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(v.x*24,v.y*24);ctx.lineTo(v.x*40,v.y*40);ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function fanZone(p){ return {x:p.x-25,y:p.y-25,w:50,h:50}; }
+
+function stepSim(dt){
+  if(!ball)return;
+  ball.vy+=0.45*dt;
+  ball.x+=ball.vx*dt;
+  ball.y+=ball.vy*dt;
+
+  if(ball.x<ball.r){ball.x=ball.r;ball.vx*=-0.5;}
+  if(ball.x>W-ball.r){ball.x=W-ball.r;ball.vx*=-0.5;}
+
+  placed.forEach(p=>{
+    if(p.type==='ramp'){
+      resolveSegmentCollision(rampSegment(p),0.15);
+    } else if(p.type==='domino'){
+      const hit=resolveRectCollision(p.x-6,p.y-26,12,52,0.35);
+      if(hit&&!p.fallen){ p.fallen=true; p.rot=(ball.vx>=0?1:-1)*1.3; SFX.hit(); }
+    } else if(p.type==='seesaw'){
+      const seg=seesawSegment(p);
+      const wasNear=Math.hypot(ball.x-p.x,ball.y-p.y)<80;
+      const collided=resolveSegmentCollision(seg,0.05);
+      if(collided||((ball.y<p.y+18)&&wasNear)){
+        const offset=ball.x-p.x;
+        p.angVel+=offset*0.000025*dt;
+      }
+      p.angVel+=-p.angle*0.0006*dt;
+      p.angle+=p.angVel*dt;
+      p.angVel*=0.97;
+      p.angle=Math.max(-0.45,Math.min(0.45,p.angle));
+    } else if(p.type==='fan'){
+      const z=fanZone(p);
+      if(ball.x>z.x&&ball.x<z.x+z.w&&ball.y>z.y&&ball.y<z.y+z.h){
+        const v=fanVector(p.orient);
+        ball.vx+=v.x*0.55*dt;
+        ball.vy+=v.y*0.55*dt;
+      }
+    }
+  });
+
+  const lv=currentLevel();
+  if(Math.hypot(ball.x-lv.goal.x,ball.y-lv.goal.y)<lv.goal.r){
+    endAttempt(true);
+    return;
+  }
+  frameCount+=dt;
+  if(ball.y>H+40||frameCount>900){
+    endAttempt(false);
+  }
+}
+
+function drawBall(){
+  if(!ball)return;
+  ctx.fillStyle='#ff7043';
+  ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#bf360c';ctx.lineWidth=2;ctx.stroke();
+}
+
+let lastTime=null;
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#263238');bg.addColorStop(1,'#546e7a');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  const lv=currentLevel();
+  ctx.fillStyle='#66bb6a';
+  ctx.beginPath();ctx.arc(lv.start.x,lv.start.y,16,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('rg_start_label','START'),lv.start.x,lv.start.y+30);
+
+  ctx.fillStyle='rgba(255,213,79,0.35)';
+  ctx.beginPath();ctx.arc(lv.goal.x,lv.goal.y,lv.goal.r,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;ctx.stroke();
+  ctx.fillStyle='#fff';
+  ctx.fillText(I18N.t('rg_goal_label','GOAL'),lv.goal.x,lv.goal.y+lv.goal.r+16);
+
+  placed.forEach(drawPart);
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,2);
+  lastTime=now;
+
+  if(simRunning)stepSim(dt);
+  drawBall();
+
+  if(simMsgTimer>0){
+    simMsgTimer-=dt;
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(simMsg,W/2,H/2);
+  }
+
+  document.getElementById('score-display').textContent=
+    I18N.t('rg_status','Level {lv} | Attempts: {a} | Solved: {s} | Score: {sc} | Best: {b}')
+      .replace('{lv}',(levelIdx%LEVELS.length)+1).replace('{a}',Math.max(0,attempts))
+      .replace('{s}',levelsSolved).replace('{sc}',totalScore).replace('{b}',hi);
+
+  document.getElementById('startBtn').disabled=simRunning||attempts<=0;
+  requestAnimationFrame(loop);
+}
+setupLevel();
+loop();
+</script></body></html>

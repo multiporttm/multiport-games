@@ -1,0 +1,268 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ninja Stealth</title><meta name="description" content="Play Ninja Stealth free online — Use Arrow Keys/WASD or touch-drag to sneak past patrolling guards' vision cones and reach the exit. Throw shuriken to silently take down guards in your way."><link rel="canonical" href="https://games.multiportllc.com/games/ninjastealth"><meta property="og:title" content="Ninja Stealth - Multiport Games"><meta property="og:description" content="Play Ninja Stealth free online — Use Arrow Keys/WASD or touch-drag to sneak past patrolling guards' vision cones and reach the exit. Throw shuriken to silently take down guards in your way."><meta property="og:url" content="https://games.multiportllc.com/games/ninjastealth"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ninja Stealth","description":"Play Ninja Stealth free online instantly. Use Arrow Keys/WASD or touch-drag to sneak past patrolling guards' vision cones and reach the exit. Throw shuriken to silently take down guards in your way. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/ninjastealth","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#1b1b2f,#00c2a8);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#7ef9d0;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ninja Stealth</div>
+  <div class="game-frame">
+    <div id="score-display">Compounds: 0 | Lives: 3</div>
+    <canvas id="c" width="800" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>touch-drag</b> to sneak to the green exit, avoiding guards' vision cones. Click/tap a guard to throw a <b>shuriken</b> and silently take them down. Getting spotted costs a life!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+let hi=parseInt(localStorage.getItem('ninjastealth_hi')||'0',10);
+let compounds=0,lives=3,gameOver=false,started=false,won=false;
+const player={x:40,y:H/2,r:12,speed:2.6};
+let keys={};
+let guards=[];
+let shurikens=[];
+let exit={x:W-50,y:H/2,r:24};
+let flashTimer=0;
+let spottedTimer=0;
+
+function reset(){
+  compounds=0;lives=3;gameOver=false;won=false;
+  player.x=40;player.y=H/2;
+  buildCompound();
+}
+
+function buildCompound(){
+  shurikens=[];
+  won=false;
+  player.x=40;player.y=40+Math.random()*(H-80);
+  exit.x=W-50;exit.y=40+Math.random()*(H-80);
+  guards=[];
+  const n=Math.min(2+compounds,7);
+  for(let i=0;i<n;i++){
+    const gx=150+Math.random()*(W-300);
+    const gy=40+Math.random()*(H-80);
+    const horiz=Math.random()<0.5;
+    guards.push({
+      x:gx,y:gy,
+      ang:Math.random()*Math.PI*2,
+      dir:Math.random()<0.5?1:-1,
+      turnSpeed:0.012+Math.random()*0.01+compounds*0.001,
+      range:150,
+      fov:0.7,
+      alive:true,
+      patrolAxis:horiz?0:1,
+      patrolFrom: horiz? gx-60 : gy-60,
+      patrolTo: horiz? gx+60 : gy+60,
+      patrolPos:0,
+      patrolDir:1,
+      patrolSpeed:0.6+compounds*0.05
+    });
+  }
+}
+
+function updateHud(){
+  document.getElementById('score-display').textContent=
+    I18N.t('compounds_lives_label','Compounds: {c} | Lives: {l}').replace('{c}',compounds).replace('{l}',Math.max(0,lives));
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(!started){started=true;}
+  if(gameOver&&(e.key===' '||e.key==='Enter')){gameOver=false;reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+// touch drag movement
+let touchStart=null,touchActive=false;
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started)started=true;
+  if(gameOver){gameOver=false;reset();return;}
+  const t=e.touches[0];
+  const rect=c.getBoundingClientRect();
+  touchStart={x:(t.clientX-rect.left)*(W/rect.width),y:(t.clientY-rect.top)*(H/rect.height)};
+  touchActive=true;
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(!touchActive)return;
+  const t=e.touches[0];
+  const rect=c.getBoundingClientRect();
+  const cur={x:(t.clientX-rect.left)*(W/rect.width),y:(t.clientY-rect.top)*(H/rect.height)};
+  const dx=cur.x-touchStart.x,dy=cur.y-touchStart.y;
+  player.x+=dx*0.25;player.y+=dy*0.25;
+  touchStart=cur;
+},{passive:false});
+c.addEventListener('touchend',()=>{touchActive=false;});
+
+function throwShuriken(tx,ty){
+  if(gameOver||!started)return;
+  const dx=tx-player.x,dy=ty-player.y;
+  const d=Math.hypot(dx,dy)||1;
+  shurikens.push({x:player.x,y:player.y,vx:dx/d*8,vy:dy/d*8,life:80});
+  SFX.swoosh();
+}
+
+c.addEventListener('click',e=>{
+  if(!started){started=true;return;}
+  if(gameOver){gameOver=false;reset();return;}
+  const rect=c.getBoundingClientRect();
+  const mx=(e.clientX-rect.left)*(W/rect.width);
+  const my=(e.clientY-rect.top)*(H/rect.height);
+  throwShuriken(mx,my);
+});
+
+function dist(ax,ay,bx,by){return Math.hypot(ax-bx,ay-by);}
+
+function drawPlayer(){
+  ctx.fillStyle='#111';
+  ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#e74c3c';
+  ctx.fillRect(player.x-4,player.y-2,8,3);
+}
+
+function drawExit(){
+  ctx.fillStyle='#7ec850';
+  ctx.beginPath();ctx.arc(exit.x,exit.y,exit.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#0f0';
+  ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('exit_label','EXIT'),exit.x,exit.y+4);
+}
+
+function drawGuard(g){
+  if(!g.alive)return;
+  // vision cone
+  ctx.save();
+  ctx.translate(g.x,g.y);
+  ctx.rotate(g.ang);
+  const grad=ctx.createLinearGradient(0,0,g.range,0);
+  grad.addColorStop(0,'rgba(255,220,0,0.35)');
+  grad.addColorStop(1,'rgba(255,220,0,0)');
+  ctx.fillStyle=grad;
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  ctx.arc(0,0,g.range,-g.fov,g.fov);
+  ctx.closePath();ctx.fill();
+  ctx.restore();
+  // body
+  ctx.fillStyle='#8b0000';
+  ctx.beginPath();ctx.arc(g.x,g.y,11,0,Math.PI*2);ctx.fill();
+}
+
+function inCone(g,px,py){
+  const dx=px-g.x,dy=py-g.y;
+  const d=Math.hypot(dx,dy);
+  if(d>g.range)return false;
+  let a=Math.atan2(dy,dx)-g.ang;
+  while(a>Math.PI)a-=Math.PI*2;
+  while(a<-Math.PI)a+=Math.PI*2;
+  return Math.abs(a)<g.fov;
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#1b1b2f');bg.addColorStop(1,'#004d40');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#7ef9d0';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('ninja_start_hint','Move / Tap to begin infiltration'),W/2,H/2);
+    drawExit();drawPlayer();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+18);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  // movement
+  let dx=0,dy=0;
+  if(keys['arrowup']||keys['w'])dy-=1;
+  if(keys['arrowdown']||keys['s'])dy+=1;
+  if(keys['arrowleft']||keys['a'])dx-=1;
+  if(keys['arrowright']||keys['d'])dx+=1;
+  const len=Math.hypot(dx,dy)||1;
+  player.x+=(dx/len)*player.speed*2.2;
+  player.y+=(dy/len)*player.speed*2.2;
+  player.x=Math.max(player.r,Math.min(W-player.r,player.x));
+  player.y=Math.max(player.r,Math.min(H-player.r,player.y));
+
+  // guards patrol + rotate vision
+  guards.forEach(g=>{
+    if(!g.alive)return;
+    g.patrolPos+=g.patrolSpeed*g.patrolDir;
+    if(g.patrolPos>60||g.patrolPos<-60)g.patrolDir*=-1;
+    if(g.patrolAxis===0)g.x=(g.patrolFrom+g.patrolTo)/2+g.patrolPos;
+    else g.y=(g.patrolFrom+g.patrolTo)/2+g.patrolPos;
+    g.ang+=g.turnSpeed*g.dir;
+    if(Math.abs(Math.sin(g.ang*0.5))>0.999)g.dir*=-1;
+  });
+
+  // shurikens
+  shurikens=shurikens.filter(s=>s.life>0&&s.x>0&&s.x<W&&s.y>0&&s.y<H);
+  shurikens.forEach(s=>{
+    s.x+=s.vx;s.y+=s.vy;s.life--;
+    guards.forEach(g=>{
+      if(g.alive&&dist(s.x,s.y,g.x,g.y)<15){
+        g.alive=false;s.life=0;SFX.hit();
+      }
+    });
+  });
+
+  // draw
+  drawExit();
+  guards.forEach(drawGuard);
+  ctx.fillStyle='#ddd';
+  shurikens.forEach(s=>{ctx.beginPath();ctx.arc(s.x,s.y,4,0,Math.PI*2);ctx.fill();});
+  drawPlayer();
+
+  // spotted check
+  let spotted=false;
+  guards.forEach(g=>{
+    if(g.alive&&inCone(g,player.x,player.y))spotted=true;
+  });
+  if(spotted){
+    spottedTimer++;
+    ctx.fillStyle='rgba(255,0,0,0.25)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff5252';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('spotted_msg','SPOTTED!'),W/2,40);
+    if(spottedTimer>25){
+      spottedTimer=0;
+      lives--;
+      SFX.hurt();
+      player.x=40;player.y=H/2;
+      if(lives<=0){gameOver=true;SFX.lose();localStorage.setItem('ninjastealth_hi',String(Math.max(hi,compounds)));}
+    }
+  } else {
+    spottedTimer=Math.max(0,spottedTimer-1);
+  }
+
+  // reached exit
+  if(!won&&dist(player.x,player.y,exit.x,exit.y)<exit.r){
+    won=true;
+    compounds++;
+    SFX.success();
+    if(compounds>hi){hi=compounds;localStorage.setItem('ninjastealth_hi',String(hi));}
+    setTimeout(()=>{ if(!gameOver) buildCompound(); },400);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

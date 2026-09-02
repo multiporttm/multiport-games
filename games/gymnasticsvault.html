@@ -1,0 +1,233 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Gymnastics Vault</title><meta name="description" content="Play Gymnastics Vault free online — Time your run-up, launch off the horse, pull a trick in the air, and stick the landing for the highest score."><link rel="canonical" href="https://games.multiportllc.com/games/gymnasticsvault"><meta property="og:title" content="Gymnastics Vault - Multiport Games"><meta property="og:description" content="Play Gymnastics Vault free online — Time your run-up, launch off the horse, pull a trick in the air, and stick the landing for the highest score."><meta property="og:url" content="https://games.multiportllc.com/games/gymnasticsvault"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Gymnastics Vault","description":"Play Gymnastics Vault free online instantly. Time your run-up, launch off the horse, pull a trick in the air, and stick the landing for the highest score. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/gymnasticsvault","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#004d40,#26a69a);display:block;border-radius:8px;margin:0 auto}
+#stats{color:#e0f2f1;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:20px;flex-wrap:wrap}
+#hint{color:#ffe082;text-align:center;font-weight:800;min-height:1.6em;font-size:1.1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Gymnastics Vault</div>
+  <div class="game-frame">
+    <div id="stats"><span id="attemptLbl">Attempt: 1 / 5</span><span id="totalLbl">Total: 0</span><span id="bestLbl">Best: 0</span></div>
+    <canvas id="c" width="800" height="300"></canvas>
+    <div id="hint">Click / press Space to start your run-up</div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click / tap or press <b>Space</b> when the moving marker is in the <b>green power zone</b> to build speed, launch off the horse, pull a trick in the air, then time your final press to <b>stick the landing</b> in the shrinking target zone. Five attempts per round — chase the highest total score!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const attemptLbl=document.getElementById('attemptLbl'),totalLbl=document.getElementById('totalLbl'),bestLbl=document.getElementById('bestLbl'),hintEl=document.getElementById('hint');
+let attempt=1,totalScore=0,best=parseInt(localStorage.getItem('gymnasticsvault_best')||'0',10);
+const MAX_ATTEMPTS=5;
+bestLbl.textContent=I18N.t('vault_best_label','Best: {n}').replace('{n}',best);
+
+// phases: 'runup','launch','air','landing','result','done'
+let phase='runup';
+let barPos=0,barDir=1,barSpeed=2.4;
+let runSpeedQuality=0; // 0-1
+let launchQuality=0;
+let airTimer=0,trickDone=false,trickQuality=0;
+let landZoneWidth=90,landMarkerPos=0,landDir=1,landSpeed=3.2;
+let resultText='',resultScore=0,resultTimer=0;
+let athleteX=60,athleteY=220,athleteVX=0,athleteVY=0,jumpArcT=0;
+
+function resetAttemptState(){
+  phase='runup';
+  barPos=0;barDir=1;barSpeed=2.4+Math.random()*0.6;
+  runSpeedQuality=0;launchQuality=0;
+  airTimer=0;trickDone=false;trickQuality=0;
+  landZoneWidth=Math.max(40,90-attempt*8);
+  landMarkerPos=0;landDir=1;landSpeed=3.2+attempt*0.3;
+  athleteX=60;athleteY=220;athleteVX=0;athleteVY=0;jumpArcT=0;
+  hintEl.textContent=I18N.t('vault_runup_hint','Click / Space when the marker is in the GREEN zone (build speed)');
+}
+
+function action(){
+  if(phase==='runup'){
+    const zoneLo=0.6,zoneHi=0.85;
+    const inZone=barPos>=zoneLo&&barPos<=zoneHi;
+    const dist=inZone?0:Math.min(Math.abs(barPos-zoneLo),Math.abs(barPos-zoneHi));
+    const q=inZone?1:Math.max(0,1-dist*2.5);
+    runSpeedQuality=Math.max(runSpeedQuality,q);
+    SFX.tick();
+    if(runSpeedQuality>0.8){
+      phase='launch';
+      hintEl.textContent=I18N.t('vault_launch_hint','Press again to LAUNCH off the horse!');
+    }
+  }else if(phase==='launch'){
+    launchQuality=runSpeedQuality;
+    phase='air';
+    airTimer=0;
+    SFX.jump();
+    hintEl.textContent=I18N.t('vault_air_hint','Press for a TRICK while airborne!');
+  }else if(phase==='air'&&!trickDone){
+    trickDone=true;
+    // reward mid-air timing (airTimer around 20-40 is ideal, out of ~70 total air time)
+    const ideal=32,dev=Math.abs(airTimer-ideal);
+    trickQuality=Math.max(0.2,1-dev/40);
+    SFX.powerup();
+    hintEl.textContent=I18N.t('vault_land_hint','Time your LANDING in the shrinking zone!');
+  }else if(phase==='landing'){
+    const center=50;
+    const dev=Math.abs(landMarkerPos-center);
+    const zoneHalf=landZoneWidth/2;
+    let landQuality;
+    if(dev<=zoneHalf*0.3){landQuality=1;}
+    else if(dev<=zoneHalf){landQuality=0.6;}
+    else{landQuality=0.15;}
+    finishAttempt(landQuality);
+  }
+}
+
+function finishAttempt(landQuality){
+  const combined=(runSpeedQuality*0.3+launchQuality*0.15+trickQuality*0.25+landQuality*0.3);
+  let score=Math.round(combined*10*10)/10;
+  let label;
+  if(landQuality>=1){label=I18N.t('vault_perfect','PERFECT LANDING!');SFX.win();}
+  else if(landQuality>=0.6){label=I18N.t('vault_stumble','Stumble on landing');SFX.hit();}
+  else{label=I18N.t('vault_fall','FALL!');score=Math.max(0.5,score*0.3);SFX.fail();}
+  resultText=label;
+  resultScore=score;
+  totalScore+=score;
+  totalScore=Math.round(totalScore*10)/10;
+  totalLbl.textContent=I18N.t('vault_total_label','Total: {n}').replace('{n}',totalScore);
+  phase='result';
+  resultTimer=0;
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();
+    if(phase==='result'||phase==='done')advance();
+    else action();
+  }
+});
+c.addEventListener('click',()=>{ if(phase==='result'||phase==='done')advance(); else action(); });
+c.addEventListener('touchstart',e=>{e.preventDefault(); if(phase==='result'||phase==='done')advance(); else action(); },{passive:false});
+
+function advance(){
+  if(phase==='done'){
+    attempt=1;totalScore=0;
+    totalLbl.textContent=I18N.t('vault_total_label','Total: {n}').replace('{n}',0);
+    attemptLbl.textContent=I18N.t('vault_attempt_label','Attempt: {a} / {m}').replace('{a}',1).replace('{m}',MAX_ATTEMPTS);
+    resetAttemptState();
+    return;
+  }
+  if(attempt>=MAX_ATTEMPTS){
+    if(totalScore>best){best=totalScore;localStorage.setItem('gymnasticsvault_best',Math.round(best));}
+    bestLbl.textContent=I18N.t('vault_best_label','Best: {n}').replace('{n}',Math.round(best));
+    phase='done';
+    hintEl.textContent=I18N.t('vault_done_hint','Round complete! Click / Space to play again');
+    return;
+  }
+  attempt++;
+  attemptLbl.textContent=I18N.t('vault_attempt_label','Attempt: {a} / {m}').replace('{a}',attempt).replace('{m}',MAX_ATTEMPTS);
+  resetAttemptState();
+}
+
+function drawScene(){
+  ctx.clearRect(0,0,800,300);
+  ctx.fillStyle='#37474f';ctx.fillRect(0,250,800,50);
+  ctx.fillStyle='#eceff1';ctx.fillRect(0,250,800,3);
+  // horse
+  ctx.fillStyle='#8d6e63';
+  ctx.fillRect(380,190,90,30);
+  ctx.fillRect(400,170,50,25);
+  ctx.fillStyle='#6d4c41';
+  ctx.fillRect(390,220,10,30);
+  ctx.fillRect(450,220,10,30);
+}
+
+function drawAthlete(x,y,rot){
+  ctx.save();
+  ctx.translate(x,y);
+  if(rot)ctx.rotate(rot);
+  ctx.fillStyle='#ffca28';
+  ctx.fillRect(-10,-24,20,26);
+  ctx.fillStyle='#ffe0b2';
+  ctx.beginPath();ctx.arc(0,-30,8,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawRunupBar(){
+  const bx=100,by=270,bw=600;
+  ctx.fillStyle='rgba(0,0,0,.3)';ctx.fillRect(bx,by,bw,16);
+  ctx.fillStyle='#66bb6a';ctx.fillRect(bx+bw*0.6,by,bw*0.25,16);
+  const mx=bx+bw*barPos;
+  ctx.fillStyle='#fff';ctx.fillRect(mx-3,by-4,6,24);
+}
+
+function drawLandingBar(){
+  const bx=100,by=270,bw=600;
+  ctx.fillStyle='rgba(0,0,0,.3)';ctx.fillRect(bx,by,bw,16);
+  const center=50;
+  const zoneHalf=landZoneWidth/2;
+  const zx=bx+bw*(center-zoneHalf)/100;
+  const zw=bw*landZoneWidth/100;
+  ctx.fillStyle='#66bb6a';ctx.fillRect(zx,by,zw,16);
+  const mx=bx+bw*(landMarkerPos/100);
+  ctx.fillStyle='#fff';ctx.fillRect(mx-3,by-4,6,24);
+}
+
+function loop(){
+  drawScene();
+
+  if(phase==='runup'){
+    barPos+=barDir*0.014*barSpeed;
+    if(barPos>=1){barPos=1;barDir=-1;}
+    if(barPos<=0){barPos=0;barDir=1;}
+    drawRunupBar();
+    drawAthlete(60,220,0);
+  }else if(phase==='launch'){
+    drawRunupBar();
+    drawAthlete(60,220,0);
+  }else if(phase==='air'){
+    airTimer++;
+    const totalAir=70;
+    const t=Math.min(1,airTimer/totalAir);
+    const x=60+t*340;
+    const arc=Math.sin(t*Math.PI)*90;
+    const y=220-arc;
+    const rot=trickDone?0:t*Math.PI*2*launchQuality*1.2;
+    drawAthlete(x,y,rot);
+    if(airTimer>=totalAir){
+      phase='landing';
+      landMarkerPos=0;landDir=1;
+      hintEl.textContent=I18N.t('vault_land_hint2','Press to STICK the landing!');
+    }
+  }else if(phase==='landing'){
+    landMarkerPos+=landDir*landSpeed;
+    if(landMarkerPos>=100){landMarkerPos=100;landDir=-1;}
+    if(landMarkerPos<=0){landMarkerPos=0;landDir=1;}
+    drawLandingBar();
+    drawAthlete(400,220,0);
+  }else if(phase==='result'){
+    resultTimer++;
+    drawAthlete(400,220,0);
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(resultText,400,100);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('vault_score_line','Score: {s}').replace('{s}',resultScore),400,135);
+    ctx.font='16px Arial';ctx.fillStyle='#e0f2f1';
+    ctx.fillText(I18N.t('vault_continue_hint','Click / Space to continue'),400,165);
+  }else if(phase==='done'){
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('vault_round_over','ROUND COMPLETE'),400,100);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('vault_total_final','Total Score: {n}').replace('{n}',totalScore),400,140);
+    ctx.font='16px Arial';ctx.fillStyle='#e0f2f1';
+    ctx.fillText(I18N.t('vault_continue_hint2','Click / Space to play again'),400,170);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+resetAttemptState();
+loop();
+</script></body></html>

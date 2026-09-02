@@ -1,0 +1,218 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Swimming Relay</title><meta name="description" content="Play Swimming Relay free online — Alternate the Left and Right Arrow keys (or tap the left/right side of the screen) to stroke forward, and time your flip-turns at the wall for a speed boost. Race to the finish!"><link rel="canonical" href="https://games.multiportllc.com/games/swimmingrelay"><meta property="og:title" content="Swimming Relay - Multiport Games"><meta property="og:description" content="Play Swimming Relay free online — Alternate the Left and Right Arrow keys (or tap the left/right side of the screen) to stroke forward, and time your flip-turns at the wall for a speed boost. Race to the finish!"><meta property="og:url" content="https://games.multiportllc.com/games/swimmingrelay"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Swimming Relay","description":"Play Swimming Relay free online instantly. Alternate the Left and Right Arrow keys (or tap the left/right side of the screen) to stroke forward down the lane, and time your flip-turn near each wall for a speed boost. Race across multiple laps against AI competitors to the finish! No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/swimmingrelay","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#01579b,#4fc3f7);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#01579b;background:#e1f5fe;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;border-radius:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Swimming Relay</div>
+  <div class="game-frame">
+    <div id="score-display">Wins: 0 | Best Time: --</div>
+    <canvas id="c" width="800" height="280"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Alternate <b>Left Arrow</b> and <b>Right Arrow</b> (or tap the left/right side of the screen) to stroke forward. Near each wall, keep tapping to trigger an automatic <b>flip-turn</b> — a well-timed turn gives a speed boost! Complete all laps before the AI swimmers to win.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=280;
+const LANE_LEN=1000; // one length of pool in game units
+const LAPS=3;
+const TOTAL_DIST=LANE_LEN*LAPS;
+let hiTime=parseFloat(localStorage.getItem('swimrelay_hi')||'0')||null;
+let wins=parseInt(localStorage.getItem('swimrelay_wins')||'0',10);
+
+let swimmers,lastKey,started,finished,raceTime,camX,lastTime,turnFlash;
+
+function makeSwimmers(){
+  return [
+    {x:0,dir:1,color:'#42a5f5',isPlayer:true,strokePhase:0,finishTime:null,boostTimer:0},
+    {x:0,dir:1,color:'#ef5350',isPlayer:false,aiRhythm:34+Math.random()*10,aiTimer:0,finishTime:null},
+    {x:0,dir:1,color:'#66bb6a',isPlayer:false,aiRhythm:30+Math.random()*14,aiTimer:0,finishTime:null},
+  ];
+}
+
+function reset(){
+  swimmers=makeSwimmers();
+  lastKey=null;started=false;finished=false;raceTime=0;camX=0;lastTime=null;turnFlash=0;
+}
+reset();
+
+function posInLap(x){
+  const m=x%(LANE_LEN*2);
+  return m<LANE_LEN?m:LANE_LEN*2-m; // ping-pong 0..LANE_LEN representing distance from near wall along current direction
+}
+function displayX(x){
+  // convert raw distance to actual lane x position (bounces back and forth)
+  const cyc=LANE_LEN*2;
+  const m=((x%cyc)+cyc)%cyc;
+  return m<=LANE_LEN?m:cyc-m;
+}
+
+function stroke(side){
+  if(finished){reset();return;}
+  if(!started){started=true;lastTime=null;}
+  const p=swimmers[0];
+  if(side===lastKey){
+    // same side twice — inefficient stroke, small penalty (no speed gain)
+    SFX.error();
+    return;
+  }
+  lastKey=side;
+  let gain=14+Math.random()*3;
+  // boost near wall = flip turn zone
+  const posX=displayX(p.x);
+  const nearWall=posX>LANE_LEN-40||posX<40;
+  if(nearWall&&p.boostTimer<=0){
+    gain*=1.9;
+    p.boostTimer=30;
+    turnFlash=15;
+    SFX.powerup();
+  }else{
+    SFX.jump();
+  }
+  p.x+=gain;
+  p.strokePhase=1;
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'){e.preventDefault();stroke('L');}
+  else if(e.code==='ArrowRight'){e.preventDefault();stroke('R');}
+});
+c.addEventListener('mousedown',e=>{
+  const r=c.getBoundingClientRect();
+  const x=e.clientX-r.left;
+  stroke(x<r.width/2?'L':'R');
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const r=c.getBoundingClientRect();
+  const t=e.changedTouches[0];
+  const x=t.clientX-r.left;
+  stroke(x<r.width/2?'L':'R');
+},{passive:false});
+
+function updateScoreDisplay(){
+  document.getElementById('score-display').textContent=
+    I18N.t('swim_score_label','Wins: {w} | Best Time: {t}')
+      .replace('{w}',wins)
+      .replace('{t}',hiTime?hiTime.toFixed(1)+'s':'--');
+}
+
+function drawSwimmer(s,laneY,label){
+  const dx=displayX(s.x);
+  const sx=80+dx*(640/LANE_LEN);
+  const bob=s.strokePhase>0?Math.sin(s.strokePhase*Math.PI)*6:0;
+  ctx.fillStyle=s.color;
+  ctx.beginPath();ctx.ellipse(sx,laneY-bob,20,10,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffe0b2';
+  ctx.beginPath();ctx.arc(sx+18,laneY-bob,7,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText(label,sx,laneY-24-bob);
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+
+  ctx.clearRect(0,0,W,H);
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#0288d1');grad.addColorStop(1,'#4fc3f7');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+
+  const lanes=[60,140,220];
+  ctx.fillStyle='#0277bd';ctx.fillRect(60,40,680,200);
+  for(let i=1;i<3;i++){
+    ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=2;ctx.setLineDash([12,8]);
+    ctx.beginPath();ctx.moveTo(60,40+i*60);ctx.lineTo(740,40+i*60);ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // walls
+  ctx.fillStyle='#b0bec5';ctx.fillRect(70,40,10,200);
+  ctx.fillRect(720,40,10,200);
+
+  if(!started){
+    ctx.fillStyle='#01579b';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('swim_start_hint','Alternate L/R or tap sides to start!'),W/2,25);
+    swimmers.forEach((s,i)=>drawSwimmer(s,40+i*60+40,i===0?I18N.t('swim_you_label','YOU'):'CPU'));
+    requestAnimationFrame(loop);return;
+  }
+
+  if(finished){
+    ctx.fillStyle='#01579b';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    const won=swimmers[0].finishTime!==null&&swimmers.every(s=>s.finishTime===null||s.finishTime>=swimmers[0].finishTime);
+    ctx.fillText(won?I18N.t('swim_win','YOU WIN!'):I18N.t('swim_lose','YOU LOSE'),W/2,25);
+    ctx.font='15px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or key to restart'),W/2,48);
+    swimmers.forEach((s,i)=>drawSwimmer(s,40+i*60+40,i===0?I18N.t('swim_you_label','YOU'):'CPU'));
+    requestAnimationFrame(loop);return;
+  }
+
+  raceTime+=dt/60;
+
+  swimmers.forEach((s,i)=>{
+    if(s.boostTimer>0)s.boostTimer-=dt;
+    if(i===0)return;
+    s.aiTimer+=dt;
+    if(s.aiTimer>=s.aiRhythm){
+      s.aiTimer=0;
+      let gain=13+Math.random()*4;
+      const posX=displayX(s.x);
+      if(posX>LANE_LEN-40||posX<40)gain*=1.5;
+      s.x+=gain;
+      s.strokePhase=1;
+    }
+  });
+
+  swimmers.forEach(s=>{
+    if(s.strokePhase>0){s.strokePhase-=0.06*dt;if(s.strokePhase<0)s.strokePhase=0;}
+    if(s.finishTime===null&&s.x>=TOTAL_DIST){s.finishTime=raceTime;}
+  });
+
+  if(turnFlash>0)turnFlash-=dt;
+
+  swimmers.forEach((s,i)=>drawSwimmer(s,40+i*60+40,i===0?I18N.t('swim_you_label','YOU'):'CPU'));
+
+  if(turnFlash>0){
+    ctx.fillStyle='rgba(255,213,79,0.7)';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('swim_turn_boost','FLIP TURN BOOST!'),W/2,110);
+  }
+
+  if(swimmers[0].finishTime!==null&&!finished){
+    finished=true;
+    const won=swimmers.every(s=>s.finishTime===null||s.finishTime>=swimmers[0].finishTime);
+    if(won){
+      wins++;
+      localStorage.setItem('swimrelay_wins',wins);
+      if(hiTime===null||raceTime<hiTime){
+        hiTime=raceTime;
+        localStorage.setItem('swimrelay_hi',hiTime);
+      }
+      SFX.win();
+    }else{
+      SFX.lose();
+    }
+  } else if(!finished && swimmers.some((s,i)=>i>0&&s.finishTime!==null)){
+    finished=true;
+    SFX.lose();
+  }
+
+  const lapNum=Math.min(LAPS,Math.floor(swimmers[0].x/LANE_LEN)+1);
+  ctx.fillStyle='#01579b';ctx.font='bold 14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('swim_time_label','Time: {t}s').replace('{t}',raceTime.toFixed(1)),10,20);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('swim_lap_label','Lap {l}/{m}').replace('{l}',lapNum).replace('{m}',LAPS),W-10,20);
+
+  updateScoreDisplay();
+  requestAnimationFrame(loop);
+}
+updateScoreDisplay();
+requestAnimationFrame(loop);
+</script></body></html>
