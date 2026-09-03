@@ -1,0 +1,291 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Lawn Mowing</title><meta name="description" content="Play Lawn Mowing free online — Drive the mower with Arrow Keys/WASD or touch-drag to cut every blade of grass before your fuel runs out, avoiding gnomes, flower beds, and sprinklers."><link rel="canonical" href="https://games.multiportllc.com/games/lawnmowing"><meta property="og:title" content="Lawn Mowing - Multiport Games"><meta property="og:description" content="Play Lawn Mowing free online — Drive the mower with Arrow Keys/WASD or touch-drag to cut every blade of grass before your fuel runs out, avoiding gnomes, flower beds, and sprinklers."><meta property="og:url" content="https://games.multiportllc.com/games/lawnmowing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Lawn Mowing","description":"Play Lawn Mowing free online instantly. Drive the mower with Arrow Keys/WASD or touch-drag to cut every blade of grass before your fuel runs out, avoiding gnomes, flower beds, and sprinklers. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/lawnmowing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#7ec850;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffd54f;font-size:1.05rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Lawn Mowing</div>
+  <div class="game-frame">
+    <div id="score-display">Lawns: 0 | Best Efficiency: --</div>
+    <canvas id="c" width="640" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>touch-drag</b> to drive the mower and cut every patch of grass before your <b>fuel</b> runs out. Avoid the gnomes, flower beds, and sprinklers — mow efficiently with the fewest repeat passes for the best score.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=640,H=400,CELL=40;
+let COLS=16,ROWS=10;
+
+let grid,obstacles,mower,fuel,maxFuel,cutCount,mowable,entries,lawnsDone,bestEff,gameOver,started,level;
+let keys={};
+let joy=null; // {baseX,baseY,dx,dy}
+
+function loadHi(){
+  bestEff=localStorage.getItem('lawnmowing_best');
+  bestEff=bestEff?parseFloat(bestEff):null;
+}
+loadHi();
+
+function buildLawn(){
+  COLS=14+Math.min(level,6);
+  ROWS=8+Math.min(Math.floor(level/2),4);
+  const cw=W/COLS,ch=H/ROWS;
+  grid=[];
+  obstacles=[];
+  for(let r=0;r<ROWS;r++){
+    const row=[];
+    for(let col=0;col<COLS;col++)row.push({cut:false,obstacle:null});
+    grid.push(row);
+  }
+  const obstacleCount=Math.min(4+level,18);
+  const types=['gnome','flower','sprinkler'];
+  for(let i=0;i<obstacleCount;i++){
+    const r=1+Math.floor(Math.random()*(ROWS-2));
+    const col=1+Math.floor(Math.random()*(COLS-2));
+    if(grid[r][col].obstacle)continue;
+    const type=types[Math.floor(Math.random()*types.length)];
+    grid[r][col].obstacle=type;
+  }
+  mowable=0;
+  for(let r=0;r<ROWS;r++)for(let col=0;col<COLS;col++)if(!grid[r][col].obstacle)mowable++;
+  mower={x:cw/2+cw*0.5,y:ch/2+ch*0.5,vx:0,vy:0,r:Math.min(cw,ch)*0.38};
+  // ensure start cell not obstacle
+  grid[0][0].obstacle=null;
+  cutCount=0;
+  entries=0;
+  maxFuel=mowable*2.2;
+  fuel=maxFuel;
+  gameOver=false;
+  started=false;
+  lastCell={r:-1,c:-1};
+}
+
+let lastCell={r:-1,c:-1};
+
+function cellSize(){return {cw:W/COLS,ch:H/ROWS};}
+
+function cellAt(x,y){
+  const {cw,ch}=cellSize();
+  return {r:Math.floor(y/ch),c:Math.floor(x/cw)};
+}
+
+function resetGame(){
+  level=0;lawnsDone=0;
+  buildLawn();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d','W','A','S','D',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  if(e.key===' '&&gameOver)restart();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function restart(){
+  resetGame();
+}
+
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){restart();return;}
+  const r=c.getBoundingClientRect();
+  const t=e.touches[0];
+  joy={baseX:(t.clientX-r.left)*(W/r.width),baseY:(t.clientY-r.top)*(H/r.height)};
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(!joy)return;
+  const r=c.getBoundingClientRect();
+  const t=e.touches[0];
+  const px=(t.clientX-r.left)*(W/r.width);
+  const py=(t.clientY-r.top)*(H/r.height);
+  joy.dx=px-joy.baseX;joy.dy=py-joy.baseY;
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();joy=null;},{passive:false});
+c.addEventListener('click',()=>{if(gameOver)restart();});
+
+function markCut(r,col){
+  if(r<0||r>=ROWS||col<0||col>=COLS)return;
+  const cell=grid[r][col];
+  if(cell.obstacle)return;
+  if(!cell.cut){
+    cell.cut=true;
+    cutCount++;
+    SFX.point();
+  }
+}
+
+function update(dt){
+  if(gameOver)return;
+  let dx=0,dy=0;
+  if(keys['arrowup']||keys['w'])dy-=1;
+  if(keys['arrowdown']||keys['s'])dy+=1;
+  if(keys['arrowleft']||keys['a'])dx-=1;
+  if(keys['arrowright']||keys['d'])dx+=1;
+  if(joy&&(Math.abs(joy.dx)>4||Math.abs(joy.dy)>4)){
+    const len=Math.hypot(joy.dx,joy.dy)||1;
+    dx=joy.dx/len;dy=joy.dy/len;
+  }
+  const len=Math.hypot(dx,dy);
+  const moving=len>0.05;
+  if(moving){
+    if(!started)started=true;
+    dx/=len;dy/=len;
+    const speed=2.6;
+    const nx=mower.x+dx*speed*dt;
+    const ny=mower.y+dy*speed*dt;
+    // obstacle collision check on target cell center
+    const tc=cellAt(nx,ny);
+    const blocked=tc.r>=0&&tc.r<ROWS&&tc.c>=0&&tc.c<COLS&&grid[tc.r][tc.c].obstacle;
+    if(!blocked){
+      mower.x=Math.max(mower.r,Math.min(W-mower.r,nx));
+      mower.y=Math.max(mower.r,Math.min(H-mower.r,ny));
+    } else {
+      SFX.hit();
+    }
+    fuel-=dt*0.55;
+    if(fuel<0)fuel=0;
+  }
+  const cur=cellAt(mower.x,mower.y);
+  if(cur.r!==lastCell.r||cur.c!==lastCell.c){
+    if(cur.r>=0&&cur.r<ROWS&&cur.c>=0&&cur.c<COLS&&!grid[cur.r][cur.c].obstacle){
+      entries++;
+      markCut(cur.r,cur.c);
+    }
+    lastCell=cur;
+  }
+  if(cutCount>=mowable){
+    finishLawn(true);
+  } else if(fuel<=0 && started){
+    finishLawn(false);
+  }
+}
+
+function efficiency(){
+  return entries>0?Math.min(100,(cutCount/entries)*100):0;
+}
+
+function finishLawn(complete){
+  gameOver=true;
+  const eff=efficiency();
+  if(complete){
+    SFX.win();
+    lawnsDone++;
+    level++;
+  }else{
+    SFX.lose();
+  }
+  if(bestEff===null||eff>bestEff){
+    bestEff=eff;
+    localStorage.setItem('lawnmowing_best',bestEff.toFixed(1));
+  }
+  window._lastResult={complete,eff,pct:(cutCount/mowable)*100};
+}
+
+function drawObstacle(x,y,cw,ch,type){
+  const cx=x+cw/2,cy=y+ch/2;
+  if(type==='gnome'){
+    ctx.fillStyle='#e94560';ctx.beginPath();ctx.moveTo(cx,cy-ch*0.35);ctx.lineTo(cx-cw*0.25,cy+ch*0.05);ctx.lineTo(cx+cw*0.25,cy+ch*0.05);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#ffe0b2';ctx.beginPath();ctx.arc(cx,cy+ch*0.15,cw*0.16,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#3d8020';ctx.fillRect(cx-cw*0.18,cy+ch*0.25,cw*0.36,ch*0.15);
+  } else if(type==='flower'){
+    ctx.fillStyle='#5b3a29';ctx.beginPath();ctx.arc(cx,cy,cw*0.32,0,Math.PI*2);ctx.fill();
+    const colors=['#ff6b9d','#ffd54f','#ba68c8'];
+    for(let i=0;i<5;i++){
+      const a=i/5*Math.PI*2;
+      ctx.fillStyle=colors[i%colors.length];
+      ctx.beginPath();ctx.arc(cx+Math.cos(a)*cw*0.16,cy+Math.sin(a)*ch*0.16,cw*0.11,0,Math.PI*2);ctx.fill();
+    }
+    ctx.fillStyle='#fff59d';ctx.beginPath();ctx.arc(cx,cy,cw*0.09,0,Math.PI*2);ctx.fill();
+  } else if(type==='sprinkler'){
+    ctx.fillStyle='#607d8b';ctx.fillRect(cx-cw*0.06,cy-ch*0.3,cw*0.12,ch*0.35);
+    ctx.fillStyle='#90a4ae';ctx.beginPath();ctx.arc(cx,cy-ch*0.3,cw*0.14,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,.6)';ctx.lineWidth=2;
+    for(let i=0;i<3;i++){
+      ctx.beginPath();ctx.arc(cx,cy-ch*0.3,cw*(0.25+i*0.12),Math.PI*1.1,Math.PI*1.55);ctx.stroke();
+    }
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const {cw,ch}=cellSize();
+  for(let r=0;r<ROWS;r++){
+    for(let col=0;col<COLS;col++){
+      const cell=grid[r][col];
+      const x=col*cw,y=r*ch;
+      ctx.fillStyle=cell.cut?'#c8e6a0':((r+col)%2===0?'#7ec850':'#74bd49');
+      ctx.fillRect(x,y,cw,ch);
+      if(cell.obstacle)drawObstacle(x,y,cw,ch,cell.obstacle);
+    }
+  }
+  // grid lines
+  ctx.strokeStyle='rgba(0,0,0,.06)';
+  for(let r=0;r<=ROWS;r++){ctx.beginPath();ctx.moveTo(0,r*ch);ctx.lineTo(W,r*ch);ctx.stroke();}
+  for(let col=0;col<=COLS;col++){ctx.beginPath();ctx.moveTo(col*cw,0);ctx.lineTo(col*cw,H);ctx.stroke();}
+
+  // mower
+  ctx.save();
+  ctx.translate(mower.x,mower.y);
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(-mower.r,-mower.r*0.7,mower.r*2,mower.r*1.4);
+  ctx.fillStyle='#2a2a2a';
+  ctx.beginPath();ctx.arc(-mower.r*0.6,mower.r*0.7,mower.r*0.35,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(mower.r*0.6,mower.r*0.7,mower.r*0.35,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(-mower.r*0.3,-mower.r*1.0,mower.r*0.6,mower.r*0.4);
+  ctx.restore();
+
+  // fuel bar
+  const fw=200;
+  ctx.fillStyle='rgba(0,0,0,.35)';ctx.fillRect(W/2-fw/2,10,fw,14);
+  ctx.fillStyle=fuel/maxFuel<0.25?'#e94560':'#ffd54f';
+  ctx.fillRect(W/2-fw/2,10,fw*Math.max(0,fuel/maxFuel),14);
+  ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.strokeRect(W/2-fw/2,10,fw,14);
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('fuel_label','FUEL'),W/2,20);
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='rgba(0,0,0,.5)';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('mow_start_hint','Move to start mowing'),W/2,H/2);
+  }
+
+  if(gameOver){
+    const res=window._lastResult||{complete:false,eff:0,pct:0};
+    ctx.fillStyle='rgba(8,8,15,.72)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(res.complete?I18N.t('lawn_complete_title','🎉 LAWN COMPLETE!'):I18N.t('out_of_fuel_title','⛽ OUT OF FUEL'),W/2,H/2-40);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('mowed_pct_label','Mowed: {p}%').replace('{p}',res.pct.toFixed(0)),W/2,H/2-6);
+    ctx.fillText(I18N.t('efficiency_label','Efficiency: {e}%').replace('{e}',res.eff.toFixed(0)),W/2,H/2+22);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('tap_restart_hint','Tap / Click / Space to continue'),W/2,H/2+56);
+  }
+
+  document.getElementById('score-display').textContent=
+    I18N.t('lawns_best_label','Lawns: {l} | Best Efficiency: {e}')
+      .replace('{l}',lawnsDone)
+      .replace('{e}',bestEff===null?'--':bestEff.toFixed(0)+'%');
+}
+
+let lastT=null;
+function loop(t){
+  if(lastT===null)lastT=t;
+  const dt=Math.min((t-lastT)/16.6667,3);
+  lastT=t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+resetGame();
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,211 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>House Cleaning</title><meta name="description" content="Play House Cleaning free online — Click the messes in each room to clean them before the guest-arriving timer runs out. More rooms and messes appear as you go!"><link rel="canonical" href="https://games.multiportllc.com/games/housecleaning"><meta property="og:title" content="House Cleaning - Multiport Games"><meta property="og:description" content="Play House Cleaning free online — Click the messes in each room to clean them before the guest-arriving timer runs out. More rooms and messes appear as you go!"><meta property="og:url" content="https://games.multiportllc.com/games/housecleaning"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"House Cleaning","description":"Play House Cleaning free online instantly. Click the messes in each room to clean them before the guest-arriving timer runs out. More rooms and messes appear as you go! No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/housecleaning","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:linear-gradient(135deg,#0288d1,#b3e5fc);border-radius:14px;padding:16px}
+#hud{display:flex;justify-content:space-between;color:#08303c;font-weight:800;font-size:1.05rem;padding:2px 6px 10px}
+#rooms{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.room{background:rgba(255,255,255,.9);border-radius:10px;padding:8px;position:relative;min-height:150px;box-shadow:0 3px 8px rgba(0,0,0,.2)}
+.room-name{font-weight:800;color:#08303c;font-size:.85rem;text-align:center;margin-bottom:4px}
+.timerbar-bg{height:6px;background:#ddd;border-radius:3px;overflow:hidden;margin-bottom:6px}
+.timerbar{height:100%;background:#4caf50;transition:width .1s linear}
+.mess-area{position:relative;height:100px}
+.mess{position:absolute;font-size:1.8rem;cursor:pointer;user-select:none;transform:translate(-50%,-50%);transition:transform .1s}
+.mess:active{transform:translate(-50%,-50%) scale(.8)}
+.room.arriving{outline:3px solid #e94560}
+#overlay{position:absolute;inset:0;background:rgba(0,0,0,.75);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:14px;text-align:center;padding:20px}
+#overlay button{margin-top:14px;padding:10px 24px;background:#0288d1;border:none;border-radius:20px;color:#fff;font-size:1rem;cursor:pointer}
+.frame-wrap{position:relative}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">House Cleaning</div>
+  <div class="game-frame" style="padding:14px">
+    <div class="frame-wrap">
+      <div id="table">
+        <div id="hud"><span id="score-display">Cleaned: 0 | Hi: 0</span><span id="lives-display">Lives: 3</span></div>
+        <div id="rooms"></div>
+      </div>
+      <div id="overlay" style="display:none">
+        <div id="overlay-title" style="font-size:1.6rem;font-weight:900">GAME OVER</div>
+        <div id="overlay-sub" style="margin-top:8px"></div>
+        <button id="overlay-btn">Play Again</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click the <b>messes</b> in every room to clean them before that room's guest-arrival timer runs out. Missing a timer costs a life. More rooms and messes unlock as you clean!</div>
+</div>
+<script>
+const ROOM_NAMES=['Kitchen','Living Room','Bathroom','Bedroom','Garage','Playroom'];
+const MESS_ICONS=['🍽️','🧦','🗑️','🧻','🍕','📦','🧸','🍺','🥡','🧴'];
+let cleaned=0,hi=+(localStorage.getItem('housecleaning_hi')||0),lives=3,gameOver=false,rooms=[],level=1,tickInterval=null,started=false;
+
+const scoreEl=document.getElementById('score-display');
+const livesEl=document.getElementById('lives-display');
+const roomsEl=document.getElementById('rooms');
+const overlay=document.getElementById('overlay');
+const overlayTitle=document.getElementById('overlay-title');
+const overlaySub=document.getElementById('overlay-sub');
+const overlayBtn=document.getElementById('overlay-btn');
+
+function activeRoomCount(){ return Math.min(ROOM_NAMES.length, 2+Math.floor(cleaned/6)); }
+
+function makeRoom(idx){
+  return {
+    idx,
+    name:ROOM_NAMES[idx],
+    messes:[],
+    timeLeft:0,
+    maxTime:0,
+    active:false
+  };
+}
+
+function initRooms(){
+  rooms=[];
+  const n=activeRoomCount();
+  for(let i=0;i<n;i++)rooms.push(makeRoom(i));
+  roomsEl.innerHTML='';
+  rooms.forEach(r=>{
+    const div=document.createElement('div');
+    div.className='room';
+    div.id='room-'+r.idx;
+    div.innerHTML=`<div class="room-name">${r.name}</div><div class="timerbar-bg"><div class="timerbar" id="bar-${r.idx}" style="width:100%"></div></div><div class="mess-area" id="area-${r.idx}"></div>`;
+    roomsEl.appendChild(div);
+  });
+  // ensure at least one room has messes to start
+  spawnMessRound();
+}
+
+function spawnMessRound(){
+  const n=activeRoomCount();
+  // pick 1-2 rooms without active timers to activate
+  const candidates=rooms.filter(r=>!r.active);
+  if(candidates.length===0)return;
+  const howMany=Math.min(candidates.length, 1+Math.floor(Math.random()*Math.min(2,candidates.length)));
+  for(let k=0;k<howMany;k++){
+    const r=candidates[k];
+    const messCount=Math.min(5, 2+Math.floor(level/2)+Math.floor(Math.random()*2));
+    r.messes=[];
+    const area=document.getElementById('area-'+r.idx);
+    area.innerHTML='';
+    for(let i=0;i<messCount;i++){
+      const x=10+Math.random()*80;
+      const y=15+Math.random()*70;
+      const icon=MESS_ICONS[Math.floor(Math.random()*MESS_ICONS.length)];
+      const mess={id:'m'+r.idx+'_'+i+'_'+Date.now()+'_'+i,x,y,icon,cleaned:false};
+      r.messes.push(mess);
+      const el=document.createElement('div');
+      el.className='mess';
+      el.textContent=icon;
+      el.style.left=x+'%';
+      el.style.top=y+'%';
+      el.addEventListener('click',()=>cleanMess(r,mess,el));
+      el.addEventListener('touchstart',e=>{e.preventDefault();cleanMess(r,mess,el);},{passive:false});
+      area.appendChild(el);
+    }
+    r.maxTime=Math.max(4.5,9-level*0.35);
+    r.timeLeft=r.maxTime;
+    r.active=true;
+    document.getElementById('room-'+r.idx).classList.add('arriving');
+  }
+}
+
+function cleanMess(r,mess,el){
+  if(gameOver||mess.cleaned)return;
+  mess.cleaned=true;
+  el.style.transition='transform .15s, opacity .15s';
+  el.style.transform='translate(-50%,-50%) scale(0)';
+  el.style.opacity='0';
+  SFX.point();
+  cleaned++;
+  if(cleaned>hi){hi=cleaned;localStorage.setItem('housecleaning_hi',hi);}
+  updateHud();
+  if(r.messes.every(m=>m.cleaned)){
+    finishRoom(r,true);
+  }
+}
+
+function finishRoom(r,success){
+  r.active=false;
+  const roomDiv=document.getElementById('room-'+r.idx);
+  roomDiv.classList.remove('arriving');
+  document.getElementById('area-'+r.idx).innerHTML='';
+  if(success){
+    SFX.success();
+    level=1+Math.floor(cleaned/4);
+  }else{
+    SFX.hit();
+    loseLife();
+  }
+  // reactivate room list in case count grew
+  const n=activeRoomCount();
+  while(rooms.length<n){
+    const idx=rooms.length;
+    rooms.push(makeRoom(idx));
+    const div=document.createElement('div');
+    div.className='room';
+    div.id='room-'+idx;
+    div.innerHTML=`<div class="room-name">${ROOM_NAMES[idx]}</div><div class="timerbar-bg"><div class="timerbar" id="bar-${idx}" style="width:100%"></div></div><div class="mess-area" id="area-${idx}"></div>`;
+    roomsEl.appendChild(div);
+  }
+  setTimeout(()=>{ if(!gameOver)spawnMessRound(); },400+Math.random()*600);
+}
+
+function loseLife(){
+  lives--;
+  updateHud();
+  if(lives<=0){
+    endGame();
+  }
+}
+
+function updateHud(){
+  scoreEl.textContent=I18N.t('cleaned_hi_label','Cleaned: {s} | Hi: {h}').replace('{s}',cleaned).replace('{h}',hi);
+  livesEl.textContent=I18N.t('lives_label','Lives: {l}').replace('{l}',Math.max(0,lives));
+}
+
+function endGame(){
+  gameOver=true;
+  clearInterval(tickInterval);
+  SFX.lose();
+  overlayTitle.textContent=I18N.t('game_over_title','GAME OVER');
+  overlaySub.textContent=I18N.t('final_cleaned_label','You cleaned {s} messes! High score: {h}').replace('{s}',cleaned).replace('{h}',hi);
+  overlayBtn.textContent=I18N.t('play_again','Play Again');
+  overlay.style.display='flex';
+}
+
+function tick(){
+  if(gameOver)return;
+  rooms.forEach(r=>{
+    if(!r.active)return;
+    r.timeLeft-=0.1;
+    const bar=document.getElementById('bar-'+r.idx);
+    if(bar){
+      const pct=Math.max(0,r.timeLeft/r.maxTime*100);
+      bar.style.width=pct+'%';
+      bar.style.background=pct<30?'#e94560':(pct<60?'#ffb300':'#4caf50');
+    }
+    if(r.timeLeft<=0){
+      finishRoom(r,false);
+    }
+  });
+}
+
+function startGame(){
+  cleaned=0;lives=3;gameOver=false;level=1;started=true;
+  overlay.style.display='none';
+  updateHud();
+  initRooms();
+  clearInterval(tickInterval);
+  tickInterval=setInterval(tick,100);
+}
+
+overlayBtn.addEventListener('click',startGame);
+startGame();
+</script></body></html>

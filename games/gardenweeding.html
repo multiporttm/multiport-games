@@ -1,0 +1,229 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Garden Weeding</title><meta name="description" content="Play Garden Weeding free online — Click only the weeds in each garden plot before the round timer runs out. Watch out, weeds look more like plants each round!"><link rel="canonical" href="https://games.multiportllc.com/games/gardenweeding"><meta property="og:title" content="Garden Weeding - Multiport Games"><meta property="og:description" content="Play Garden Weeding free online — Click only the weeds in each garden plot before the round timer runs out. Watch out, weeds look more like plants each round!"><meta property="og:url" content="https://games.multiportllc.com/games/gardenweeding"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Garden Weeding","description":"Play Garden Weeding free online instantly. Click only the weeds in each garden plot before the round timer runs out. Weeds look more and more like real plants each round! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/gardenweeding","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#5d4037,#8d6e63);display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#c8e6c9;font-size:1.05rem;font-weight:700;padding:6px 4px}
+#timerbar-bg{height:8px;background:#3e2723;border-radius:4px;overflow:hidden;margin:0 4px 8px}
+#timerbar{height:100%;background:#4caf50;transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Garden Weeding</div>
+  <div class="game-frame">
+    <div id="hud"><span id="score-display">Plots: 0 | Hi: 0</span><span id="lives-display">Lives: 3</span></div>
+    <div id="timerbar-bg"><div id="timerbar" style="width:100%"></div></div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click only the <b>weeds</b> in the garden plot — leave the good plants alone! Clear all the weeds before the timer runs out to move to the next, trickier plot. A wrong click or a timeout costs a life.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const COLS=8,ROWS=5,CELL=100;
+let plots=0,hi=+(localStorage.getItem('gardenweeding_hi')||0),lives=3,gameOver=false,level=1;
+let cells=[],timeLeft=0,maxTime=0,roundActive=false;
+
+function rnd(a,b){return a+Math.random()*(b-a);}
+
+function makeCell(r,c,isWeed,subtlety){
+  // subtlety in [0,1]: higher = weed looks closer to a plant
+  const baseHue = isWeed ? 95 : 130; // weeds slightly yellower-green, plants richer green
+  const hue = isWeed ? baseHue + (1-subtlety)*(-25) : baseHue; // as subtlety rises, weed hue approaches plant hue
+  const leafShape = isWeed ? (subtlety>0.6?'round':'spiky') : 'round';
+  const hasFlower = !isWeed && Math.random()<0.5;
+  const flowerColor = ['#ff6b81','#ffd54f','#e57373','#ba68c8'][Math.floor(Math.random()*4)];
+  return {r,c,isWeed,hue,leafShape,hasFlower,flowerColor,removed:false,wrongFlash:0};
+}
+
+function genPlot(){
+  cells=[];
+  const subtlety=Math.min(0.9, 0.1+level*0.08);
+  const totalCells=COLS*ROWS;
+  const weedCount=Math.min(Math.floor(totalCells*0.35)+Math.floor(level/2), Math.floor(totalCells*0.5));
+  const positions=[];
+  for(let r=0;r<ROWS;r++)for(let cx=0;cx<COLS;cx++)positions.push([r,cx]);
+  // shuffle
+  for(let i=positions.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[positions[i],positions[j]]=[positions[j],positions[i]];}
+  const weedSet=new Set(positions.slice(0,weedCount).map(p=>p[0]+'_'+p[1]));
+  for(let r=0;r<ROWS;r++){
+    for(let cx=0;cx<COLS;cx++){
+      const isWeed=weedSet.has(r+'_'+cx);
+      cells.push(makeCell(r,cx,isWeed,subtlety));
+    }
+  }
+  maxTime=Math.max(8,16-level*0.6);
+  timeLeft=maxTime;
+  roundActive=true;
+}
+
+function weedsRemaining(){ return cells.filter(cl=>cl.isWeed&&!cl.removed).length; }
+
+function drawPlant(x,y,cell){
+  ctx.save();
+  ctx.translate(x+CELL/2,y+CELL/2);
+  // soil mound
+  ctx.fillStyle='rgba(62,39,35,0.5)';
+  ctx.beginPath();ctx.ellipse(0,30,34,12,0,0,Math.PI*2);ctx.fill();
+  // stem
+  ctx.strokeStyle=`hsl(${cell.hue},40%,25%)`;
+  ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(0,30);ctx.lineTo(0,-10);ctx.stroke();
+  // leaves
+  ctx.fillStyle=`hsl(${cell.hue},55%,${cell.isWeed?38:42}%)`;
+  const leafPositions=[[-14,8],[14,4],[-10,-8],[12,-14]];
+  leafPositions.forEach(([lx,ly],i)=>{
+    ctx.save();
+    ctx.translate(lx,ly);
+    ctx.rotate((i%2===0?-1:1)*0.5);
+    if(cell.leafShape==='spiky'){
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.lineTo(10,-4);
+      ctx.lineTo(14,0);
+      ctx.lineTo(10,4);
+      ctx.closePath();
+      ctx.fill();
+    }else{
+      ctx.beginPath();ctx.ellipse(7,0,10,6,0,0,Math.PI*2);ctx.fill();
+    }
+    ctx.restore();
+  });
+  // flower
+  if(cell.hasFlower){
+    ctx.fillStyle=cell.flowerColor;
+    for(let i=0;i<5;i++){
+      const ang=i*(Math.PI*2/5);
+      ctx.beginPath();
+      ctx.ellipse(Math.cos(ang)*7,-16+Math.sin(ang)*7,5,4,ang,0,Math.PI*2);
+      ctx.fill();
+    }
+    ctx.fillStyle='#fff59d';
+    ctx.beginPath();ctx.arc(0,-16,4,0,Math.PI*2);ctx.fill();
+  }
+  if(cell.wrongFlash>0){
+    ctx.fillStyle=`rgba(233,69,96,${cell.wrongFlash})`;
+    ctx.beginPath();ctx.arc(0,0,44,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,800,440);
+  // soil rows background
+  for(let r=0;r<ROWS;r++){
+    ctx.fillStyle=r%2===0?'#6d4c41':'#5d4037';
+    ctx.fillRect(0,r*CELL,COLS*CELL,CELL);
+  }
+  cells.forEach(cell=>{
+    const x=cell.c*CELL,y=cell.r*CELL;
+    if(!cell.removed)drawPlant(x,y,cell);
+    if(cell.wrongFlash>0)cell.wrongFlash-=0.05;
+  });
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.65)';
+    ctx.fillRect(0,0,800,440);
+    ctx.fillStyle='#fff';ctx.font='bold 40px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,200);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_plots_label','Plots cleared: {p} — Hi: {h}').replace('{p}',plots).replace('{h}',hi),400,235);
+    ctx.fillText(I18N.t('restart_hint2','Tap or Click to restart'),400,265);
+  }
+  requestAnimationFrame(draw);
+}
+
+function updateHud(){
+  document.getElementById('score-display').textContent=I18N.t('plots_hi_label','Plots: {p} | Hi: {h}').replace('{p}',plots).replace('{h}',hi);
+  document.getElementById('lives-display').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}',Math.max(0,lives));
+}
+
+function loseLife(){
+  lives--;
+  updateHud();
+  SFX.hit();
+  if(lives<=0){
+    endGame();
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  roundActive=false;
+  SFX.lose();
+}
+
+function nextPlot(success){
+  if(success){
+    plots++;
+    if(plots>hi){hi=plots;localStorage.setItem('gardenweeding_hi',hi);}
+    level++;
+    SFX.success();
+    updateHud();
+  }
+  genPlot();
+}
+
+function getCellAt(px,py){
+  const c=Math.floor(px/CELL),r=Math.floor(py/CELL);
+  if(r<0||r>=ROWS||c<0||c>=COLS)return null;
+  return cells.find(cl=>cl.r===r&&cl.c===c&&!cl.removed);
+}
+
+function handleClick(px,py){
+  if(gameOver){ startGame(); return; }
+  if(!roundActive)return;
+  const cell=getCellAt(px,py);
+  if(!cell)return;
+  if(cell.isWeed){
+    cell.removed=true;
+    SFX.point();
+    if(weedsRemaining()===0){
+      roundActive=false;
+      setTimeout(()=>nextPlot(true),300);
+    }
+  }else{
+    cell.wrongFlash=0.8;
+    loseLife();
+  }
+}
+
+function canvasPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(800/rect.width), y:cy*(440/rect.height)};
+}
+
+c.addEventListener('click',e=>{ const p=canvasPos(e); handleClick(p.x,p.y); });
+c.addEventListener('touchstart',e=>{ e.preventDefault(); const p=canvasPos(e); handleClick(p.x,p.y); },{passive:false});
+
+let tickInterval=null;
+function tick(){
+  if(gameOver||!roundActive)return;
+  timeLeft-=0.1;
+  const pct=Math.max(0,timeLeft/maxTime*100);
+  const bar=document.getElementById('timerbar');
+  bar.style.width=pct+'%';
+  bar.style.background=pct<30?'#e94560':(pct<60?'#ffb300':'#4caf50');
+  if(timeLeft<=0){
+    roundActive=false;
+    loseLife();
+    if(!gameOver)setTimeout(()=>nextPlot(false),300);
+  }
+}
+
+function startGame(){
+  plots=0;lives=3;gameOver=false;level=1;
+  updateHud();
+  genPlot();
+  clearInterval(tickInterval);
+  tickInterval=setInterval(tick,100);
+}
+
+startGame();
+draw();
+</script></body></html>

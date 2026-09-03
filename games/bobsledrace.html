@@ -1,0 +1,264 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bobsled Race</title><meta name="description" content="Play Bobsled Race free online — Mash Left/Right (or tap) to push off at the start, then steer with Arrow Keys / A-D or drag to lean into curves on the icy track and race to the finish."><link rel="canonical" href="https://games.multiportllc.com/games/bobsledrace"><meta property="og:title" content="Bobsled Race - Multiport Games"><meta property="og:description" content="Play Bobsled Race free online — Mash Left/Right (or tap) to push off at the start, then steer with Arrow Keys / A-D or drag to lean into curves on the icy track and race to the finish."><meta property="og:url" content="https://games.multiportllc.com/games/bobsledrace"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bobsled Race","description":"Play Bobsled Race free online instantly. Mash Left/Right (or tap) to push off at the start, then steer with Arrow Keys / A-D or drag to lean into curves on the icy track and race to the finish. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/bobsledrace","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#0d47a1,#90caf9);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#90caf9;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bobsled Race</div>
+  <div class="game-frame">
+    <div id="score-display">Wins: 0 | Best time: --</div>
+    <canvas id="c" width="800" height="450"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Mash <b>Left/Right Arrow</b> keys (or tap alternating sides) to push off at the start. Then use <b>Arrow Keys</b> / <b>A-D</b> or drag to steer and lean into curves, avoiding the walls, and race the AI teams to the finish!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=450;
+const TRACK_LEN=3200;
+let phase='push'; // push, race, done
+let pushPower=0,pushTaps=0;
+let raceTime=0,best=parseFloat(localStorage.getItem('bobsledrace_best')||'0');
+let wins=parseInt(localStorage.getItem('bobsledrace_wins')||'0',10);
+let lastTime=null,frame=0;
+let lastKey=null;
+
+// curve segments: array of {start,end,curve} curve in [-1,1], negative = left
+function genCurves(){
+  const segs=[];let pos=200;
+  while(pos<TRACK_LEN-200){
+    const len=150+Math.random()*150;
+    const curve=(Math.random()-0.5)*2;
+    segs.push({start:pos,end:pos+len,curve});
+    pos+=len;
+  }
+  return segs;
+}
+let curves=genCurves();
+
+const player={dist:0,speed:0,lane:0,laneV:0,crashT:0};
+let ai=[];
+
+function curveAt(d){
+  for(const s of curves){ if(d>=s.start&&d<s.end)return s.curve; }
+  return 0;
+}
+
+function reset(){
+  phase='push';pushPower=0;pushTaps=0;raceTime=0;lastTime=null;frame=0;
+  curves=genCurves();
+  player.dist=0;player.speed=0;player.lane=0;player.laneV=0;player.crashT=0;
+  ai=[
+    {dist:0,speed:5.4,skill:0.85},
+    {dist:0,speed:5.5,skill:0.9},
+    {dist:0,speed:5.3,skill:0.8},
+  ];
+}
+reset();
+
+let keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD'].includes(e.code))e.preventDefault();
+  if(phase==='push'){
+    if((e.code==='ArrowLeft'||e.code==='ArrowRight')&&lastKey!==e.code){
+      lastKey=e.code;pushPower+=1;pushTaps++;
+      SFX.tick();
+    }
+  } else {
+    keys[e.code]=true;
+  }
+  if(phase==='done'&&(e.code==='Space'||e.code==='Enter')){reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false; if(e.code===lastKey)lastKey=null;});
+
+let touchSide=null;
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.touches[0];
+  const rect=c.getBoundingClientRect();
+  const cx=(t.clientX-rect.left)/rect.width;
+  if(phase==='push'){
+    const side=cx<0.5?'L':'R';
+    if(touchSide!==side){touchSide=side;pushPower+=1;pushTaps++;SFX.tick();}
+  } else if(phase==='race'){
+    dragActive=true;
+    dragX=cx;
+  } else if(phase==='done'){
+    reset();
+  }
+},{passive:false});
+let dragActive=false,dragX=0.5;
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(phase==='race'){
+    const t=e.touches[0];
+    const rect=c.getBoundingClientRect();
+    dragX=(t.clientX-rect.left)/rect.width;
+  }
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();touchSide=null;dragActive=false;},{passive:false});
+
+function startRace(){
+  phase='race';
+  player.speed=3+Math.min(6,pushPower*0.35);
+  SFX.powerup();
+}
+
+function fmtTime(t){
+  return (t/1000).toFixed(2)+'s';
+}
+
+function drawTrack(){
+  const centerBase=W/2;
+  const viewLen=500;
+  ctx.fillStyle='#e3f2fd';
+  ctx.fillRect(0,0,W,H);
+  // draw track strips from far to near using curve offset accumulation
+  let offset=0;
+  for(let y=H;y>=0;y-=6){
+    const worldD=player.dist+ (H-y)/H*viewLen;
+    const cAt=curveAt(worldD);
+    offset+=cAt*0.9;
+    const perspective=1-y/H*0.55;
+    const trackW=260*perspective+40;
+    const cx=centerBase+offset*(1-y/H);
+    ctx.fillStyle=Math.floor(worldD/40)%2===0?'#bbdefb':'#e1f5fe';
+    ctx.fillRect(cx-trackW/2,y-6,trackW,7);
+  }
+}
+
+function laneToScreenX(laneVal,perspective,cx,trackW){
+  return cx+laneVal*(trackW/2-30);
+}
+
+function drawSled(x,y,color,scale){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(scale,scale);
+  ctx.fillStyle=color;
+  ctx.beginPath();
+  ctx.moveTo(-16,10);ctx.lineTo(16,10);ctx.lineTo(12,-8);ctx.lineTo(-12,-8);
+  ctx.closePath();ctx.fill();
+  ctx.fillStyle='#263238';
+  ctx.fillRect(-14,10,28,4);
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frame+=dt;
+
+  ctx.clearRect(0,0,W,H);
+
+  if(phase==='push'){
+    ctx.fillStyle='#e3f2fd';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#0d47a1';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('push_hint','Mash Left/Right or tap sides to push off!'),W/2,120);
+    ctx.font='bold 40px Arial';
+    ctx.fillText(Math.floor(pushPower),W/2,200);
+    // power bar
+    const bw=400,bx=W/2-bw/2;
+    ctx.fillStyle='#cfd8dc';ctx.fillRect(bx,240,bw,26);
+    ctx.fillStyle='#e53935';ctx.fillRect(bx,240,Math.min(bw,pushPower*14),26);
+    ctx.strokeStyle='#0d47a1';ctx.strokeRect(bx,240,bw,26);
+    if(pushTaps>=18){
+      startRace();
+    }
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(phase==='done'){
+    drawTrack();
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    const win=player._won;
+    ctx.fillText(win?I18N.t('finish_win','You Win!'):I18N.t('finish_lose','Finished'),W/2,H/2-30);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('time_label','Time: {t}').replace('{t}',fmtTime(raceTime)),W/2,H/2+10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press a key to restart'),W/2,H/2+46);
+    document.getElementById('score-display').textContent=I18N.t('wins_best_label','Wins: {w} | Best time: {b}').replace('{w}',wins).replace('{b}',best?fmtTime(best):'--');
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // RACE PHASE
+  raceTime+=dt*16.6667;
+  const curveHere=curveAt(player.dist);
+
+  let steer=0;
+  if(keys['ArrowLeft']||keys['KeyA'])steer-=1;
+  if(keys['ArrowRight']||keys['KeyD'])steer+=1;
+  if(dragActive)steer=(dragX-0.5)*2.4;
+
+  player.laneV+=(steer*0.06-curveHere*0.05)*dt;
+  player.laneV*=0.9;
+  player.lane+=player.laneV*dt;
+  player.lane=Math.max(-1.3,Math.min(1.3,player.lane));
+
+  if(player.crashT>0){
+    player.crashT-=dt;
+    player.speed*=0.9;
+  } else if(Math.abs(player.lane)>1){
+    player.crashT=30;
+    player.speed*=0.4;
+    SFX.hit();
+  } else {
+    player.speed+=(7.2-player.speed)*0.01*dt;
+  }
+  player.dist+=player.speed*dt;
+
+  ai.forEach(a=>{
+    const c2=curveAt(a.dist);
+    a.speed+= ( (5.6*a.skill) - a.speed)*0.01*dt;
+    if(Math.random()<0.02)a.speed*=0.94; // occasional wobble
+    a.dist+=a.speed*dt;
+  });
+
+  drawTrack();
+
+  // draw AI and player as dots scaled by relative distance
+  const all=[{who:'player',dist:player.dist,lane:player.lane,color:'#e53935'}]
+    .concat(ai.map((a,i)=>({who:'ai'+i,dist:a.dist,lane:Math.sin(a.dist/150+i)*0.4,color:['#43a047','#fb8c00','#8e24aa'][i]})));
+
+  all.sort((x,y)=>y.dist-x.dist);
+  all.forEach(o=>{
+    const rel=o.dist-player.dist;
+    const t=Math.max(-1,Math.min(1,rel/400));
+    const y=H*0.85-t*H*0.5;
+    const perspective=1-y/H*0.55;
+    const scale=Math.max(0.25,perspective);
+    const trackW=260*perspective+40;
+    const cx=W/2;
+    const sx=laneToScreenX(o.lane,perspective,cx,trackW);
+    drawSled(sx,y,o.color,scale);
+  });
+
+  if(player.dist>=TRACK_LEN&&phase==='race'){
+    phase='done';
+    const place=1+ai.filter(a=>a.dist>player.dist).length;
+    player._won=place===1;
+    if(player._won){
+      wins++;localStorage.setItem('bobsledrace_wins',wins);
+      if(!best||raceTime<best){best=raceTime;localStorage.setItem('bobsledrace_best',best);}
+      SFX.win();
+    } else {
+      SFX.fail();
+    }
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('wins_best_label','Wins: {w} | Best time: {b}').replace('{w}',wins).replace('{b}',best?fmtTime(best):'--')+' | '+I18N.t('time_label','Time: {t}').replace('{t}',fmtTime(raceTime));
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

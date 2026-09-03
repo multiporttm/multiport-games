@@ -1,0 +1,188 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Dot to Dot</title><meta name="description" content="Play Dot to Dot free online — Click the numbered dots in ascending order to draw connecting lines and reveal the hidden picture. Complete pictures fast for a better efficiency score."><link rel="canonical" href="https://games.multiportllc.com/games/dotconnect"><meta property="og:title" content="Dot to Dot - Multiport Games"><meta property="og:description" content="Play Dot to Dot free online — Click the numbered dots in ascending order to draw connecting lines and reveal the hidden picture. Complete pictures fast for a better efficiency score."><meta property="og:url" content="https://games.multiportllc.com/games/dotconnect"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Dot to Dot","description":"Play Dot to Dot free online instantly. Click the numbered dots in ascending order to draw connecting lines and reveal the hidden picture. Complete pictures fast for a better efficiency score. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/dotconnect","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#1b1035,#3a1c71);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#c9a4ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Dot to Dot</div>
+  <div class="game-frame">
+    <div id="score-display">Pictures: 0 | Best Time: --</div>
+    <canvas id="c" width="800" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click the dots in ascending numeric order (<b>1, 2, 3...</b>) to draw connecting lines and reveal the picture. Clicking a dot out of order does nothing — complete each picture to unlock a new one with more dots.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+const DOT_R=14;
+
+// Normalized (0..1) point sequences for hidden pictures, drawn in click order.
+const SHAPES=[
+  // house
+  [[0.5,0.15],[0.85,0.45],[0.75,0.45],[0.75,0.85],[0.25,0.85],[0.25,0.45],[0.15,0.45],[0.5,0.15]],
+  // star
+  [[0.5,0.08],[0.61,0.38],[0.93,0.38],[0.67,0.57],[0.77,0.88],[0.5,0.7],[0.23,0.88],[0.33,0.57],[0.07,0.38],[0.39,0.38]],
+  // envelope
+  [[0.12,0.25],[0.88,0.25],[0.88,0.75],[0.12,0.75],[0.12,0.25],[0.5,0.55],[0.88,0.25]],
+  // arrow
+  [[0.1,0.5],[0.6,0.5],[0.6,0.3],[0.9,0.5],[0.6,0.7],[0.6,0.5]],
+  // heart
+  [[0.5,0.85],[0.15,0.5],[0.15,0.25],[0.32,0.12],[0.5,0.3],[0.68,0.12],[0.85,0.25],[0.85,0.5],[0.5,0.85]],
+  // fish
+  [[0.15,0.5],[0.35,0.35],[0.65,0.3],[0.85,0.5],[0.65,0.7],[0.35,0.65],[0.15,0.5],[0.05,0.35],[0.15,0.5],[0.05,0.65]],
+  // sailboat
+  [[0.5,0.15],[0.5,0.65],[0.2,0.65],[0.5,0.15],[0.5,0.65],[0.8,0.65],[0.5,0.65],[0.1,0.85],[0.9,0.85],[0.1,0.85]],
+  // diamond
+  [[0.5,0.1],[0.8,0.35],[0.65,0.9],[0.35,0.9],[0.2,0.35],[0.5,0.1],[0.5,0.9]]
+];
+
+let picIndex=0,dots=[],nextExpected=1,linesDone=[],picturesDone=0,bestTime=null,startTime=null,gameStarted=false;
+let particles=[];
+
+function loadHi(){
+  bestTime=localStorage.getItem('dotconnect_best');
+  bestTime=bestTime?parseFloat(bestTime):null;
+}
+loadHi();
+
+function shapeForLevel(n){
+  if(n<SHAPES.length)return SHAPES[n];
+  // procedurally generate a bigger polygon for later levels
+  const count=8+ (n-SHAPES.length+1)*2;
+  const pts=[];
+  for(let i=0;i<count;i++){
+    const a=(i/count)*Math.PI*2 - Math.PI/2;
+    const r=0.28+ (Math.sin(i*2.4+n)*0.5+0.5)*0.16;
+    pts.push([0.5+Math.cos(a)*r,0.5+Math.sin(a)*r*0.9]);
+  }
+  return pts;
+}
+
+function newPicture(){
+  const shapePts=shapeForLevel(picIndex);
+  dots=shapePts.map(([nx,ny],i)=>({
+    x:60+nx*(W-120),
+    y:60+ny*(H-160),
+    n:i+1
+  }));
+  nextExpected=1;
+  linesDone=[];
+  startTime=null;
+  gameStarted=false;
+}
+
+function pointDist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function handlePick(px,py){
+  if(!dots.length)return;
+  // find nearest dot within radius
+  let best=null,bestD=Infinity;
+  dots.forEach(d=>{
+    const dd=pointDist({x:px,y:py},d);
+    if(dd<bestD){bestD=dd;best=d;}
+  });
+  if(!best||bestD>DOT_R+14)return;
+  if(best.n!==nextExpected){
+    SFX.error();
+    particles.push({x:best.x,y:best.y,life:18,bad:true});
+    return;
+  }
+  if(!gameStarted){gameStarted=true;startTime=performance.now();}
+  if(nextExpected>1){
+    const prev=dots.find(d=>d.n===nextExpected-1);
+    linesDone.push([prev,best]);
+  }
+  SFX.point();
+  particles.push({x:best.x,y:best.y,life:18,bad:false});
+  nextExpected++;
+  if(nextExpected>dots.length){
+    completePicture();
+  }
+}
+
+function completePicture(){
+  picturesDone++;
+  const elapsed=(performance.now()-startTime)/1000;
+  if(bestTime===null||elapsed<bestTime){
+    bestTime=elapsed;
+    localStorage.setItem('dotconnect_best',bestTime.toFixed(2));
+  }
+  SFX.levelup();
+  picIndex++;
+  setTimeout(()=>{newPicture();},1400);
+  window._justCompleted={elapsed};
+  setTimeout(()=>{window._justCompleted=null;},1400);
+}
+
+function canvasPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+c.addEventListener('click',e=>{const p=canvasPos(e);handlePick(p.x,p.y);});
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=canvasPos(e);handlePick(p.x,p.y);},{passive:false});
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#1b1035');bg.addColorStop(1,'#3a1c71');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // completed lines
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=4;ctx.lineCap='round';
+  linesDone.forEach(([a,b])=>{
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+  });
+
+  // dots
+  dots.forEach(d=>{
+    const done=d.n<nextExpected;
+    ctx.beginPath();
+    ctx.arc(d.x,d.y,DOT_R,0,Math.PI*2);
+    ctx.fillStyle=done?'#ffd54f':'#ffffff';
+    ctx.fill();
+    ctx.lineWidth=2;ctx.strokeStyle=done?'#e94560':'#3a1c71';ctx.stroke();
+    ctx.fillStyle='#1b1035';
+    ctx.font='bold 13px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(d.n,d.x,d.y+1);
+  });
+
+  // particles
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,DOT_R+ (18-p.life),0,Math.PI*2);
+    ctx.strokeStyle=p.bad?`rgba(233,69,96,${p.life/18})`:`rgba(255,213,79,${p.life/18})`;
+    ctx.lineWidth=3;ctx.stroke();
+    p.life--;
+  });
+
+  if(nextExpected>dots.length && dots.length){
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('picture_complete_msg','🎉 Picture Complete!'),W/2,H/2);
+  } else if(!gameStarted){
+    ctx.fillStyle='rgba(255,255,255,.55)';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_dot','Click dot 1 to begin'),W/2,30);
+  }
+
+  document.getElementById('score-display').textContent=
+    I18N.t('pictures_best_label','Pictures: {p} | Best Time: {t}')
+      .replace('{p}',picturesDone)
+      .replace('{t}',bestTime===null?'--':bestTime.toFixed(2)+'s');
+
+  requestAnimationFrame(draw);
+}
+
+newPicture();
+draw();
+</script></body></html>

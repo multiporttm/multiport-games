@@ -1,0 +1,230 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Tugboat Captain</title><meta name="description" content="Play Tugboat Captain free online — Use Arrow Keys/WASD or drag to steer your tug and push the big cargo ship safely into the harbor dock slip."><link rel="canonical" href="https://games.multiportllc.com/games/tugboatcaptain"><meta property="og:title" content="Tugboat Captain - Multiport Games"><meta property="og:description" content="Play Tugboat Captain free online — Use Arrow Keys/WASD or drag to steer your tug and push the big cargo ship safely into the harbor dock slip."><meta property="og:url" content="https://games.multiportllc.com/games/tugboatcaptain"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Tugboat Captain","description":"Play Tugboat Captain free online instantly. Use Arrow Keys/WASD or drag to steer your tug and push the big cargo ship safely into the harbor dock slip without colliding with the walls. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/tugboatcaptain","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#083344,#1c7a8c);display:block;border-radius:8px;touch-action:none}
+#hud{color:#d4f6ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Tugboat Captain</div>
+  <div class="game-frame">
+    <div id="hud">Docked: 0 | Score: 0 | Lives: 3 | Best Score: 0</div>
+    <canvas id="c" width="700" height="460"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> / <b>WASD</b> (or <b>drag</b> on mobile) to steer your tugboat. Nudge the big cargo ship into the harbor dock slip without letting it hit the walls or other docked ships!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=700,H=460;
+const hud=document.getElementById('hud');
+const KEY='tugboatcaptain_best';
+function loadBest(){return +(localStorage.getItem(KEY)||0);}
+function saveBest(v){if(v>loadBest())localStorage.setItem(KEY,v);}
+let best=loadBest();
+
+let docked=0,score=0,lives=3,keys={},state='play',dockTimer=0,shiftTimer=0,dragTarget=null,msg='',msgT=0;
+
+const slip={x:W-110,y:H/2-55,w:90,h:110};
+const walls=[
+  {x:0,y:0,w:W,h:20},{x:0,y:H-20,w:W,h:20},{x:0,y:0,w:20,h:H},
+  {x:W-20,y:0,w:20,h:slip.y-10},{x:W-20,y:slip.y+slip.h+10,w:20,h:H-(slip.y+slip.h+10)-20}
+];
+let otherShips=[];
+
+let tug,cargo;
+function spawnRound(){
+  tug={x:120,y:H/2,vx:0,vy:0,w:22,h:14,ang:0};
+  cargo={x:280+Math.random()*80,y:100+Math.random()*(H-200),vx:0,vy:0,w:90,h:44,ang:0,dvx:(Math.random()-0.5)*0.15,dvy:(Math.random()-0.5)*0.15};
+  otherShips=[];
+  if(docked>=2)otherShips.push({x:W-200,y:60,w:70,h:34});
+  if(docked>=4)otherShips.push({x:W-200,y:H-100,w:70,h:34});
+  dockTimer=0;shiftTimer=0;
+}
+spawnRound();
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function canvasPt(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+c.addEventListener('mousedown',e=>{dragTarget=canvasPt(e);});
+c.addEventListener('mousemove',e=>{if(dragTarget)dragTarget=canvasPt(e);});
+window.addEventListener('mouseup',()=>{dragTarget=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();dragTarget=canvasPt(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();dragTarget=canvasPt(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragTarget=null;},{passive:false});
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+function rectOf(o){return {x:o.x-o.w/2,y:o.y-o.h/2,w:o.w,h:o.h};}
+
+function resetAfterHit(){
+  lives--;
+  SFX.hit();
+  if(lives<=0){
+    state='over';
+    if(score>best)best=score;
+    saveBest(score);
+    SFX.lose();
+  } else {
+    msg=I18N.t('tug_collision_msg','COLLISION!');msgT=90;
+    spawnRound();
+  }
+}
+
+function update(){
+  if(state!=='play')return;
+  shiftTimer++;
+  // tug controls
+  let ax=0,ay=0;
+  if(keys['arrowleft']||keys['a'])ax-=0.35;
+  if(keys['arrowright']||keys['d'])ax+=0.35;
+  if(keys['arrowup']||keys['w'])ay-=0.35;
+  if(keys['arrowdown']||keys['s'])ay+=0.35;
+  if(dragTarget){
+    const dx=dragTarget.x-tug.x,dy=dragTarget.y-tug.y;
+    const d=Math.hypot(dx,dy)||1;
+    if(d>6){ax+=dx/d*0.35;ay+=dy/d*0.35;}
+  }
+  tug.vx=(tug.vx+ax)*0.92;
+  tug.vy=(tug.vy+ay)*0.92;
+  tug.x+=tug.vx;tug.y+=tug.vy;
+  tug.x=Math.max(20,Math.min(W-20,tug.x));
+  tug.y=Math.max(20,Math.min(H-20,tug.y));
+  if(Math.hypot(tug.vx,tug.vy)>0.4)tug.ang=Math.atan2(tug.vy,tug.vx);
+
+  // cargo drift
+  cargo.dvx+=(Math.random()-0.5)*0.01;
+  cargo.dvy+=(Math.random()-0.5)*0.01;
+  cargo.dvx=Math.max(-0.2,Math.min(0.2,cargo.dvx));
+  cargo.dvy=Math.max(-0.2,Math.min(0.2,cargo.dvy));
+
+  // push from tug when close
+  const dx=cargo.x-tug.x,dy=cargo.y-tug.y;
+  const dist=Math.hypot(dx,dy);
+  const pushRange=70;
+  if(dist<pushRange){
+    const f=(1-dist/pushRange)*0.55;
+    cargo.vx+=(dx/(dist||1))*f;
+    cargo.vy+=(dy/(dist||1))*f;
+  }
+  cargo.vx=(cargo.vx+cargo.dvx*0.05)*0.94;
+  cargo.vy=(cargo.vy+cargo.dvy*0.05)*0.94;
+  cargo.x+=cargo.vx;cargo.y+=cargo.vy;
+  if(Math.hypot(cargo.vx,cargo.vy)>0.15)cargo.ang=Math.atan2(cargo.vy,cargo.vx);
+
+  const cRect=rectOf(cargo);
+  // collisions with walls
+  for(const w of walls){
+    if(rectsOverlap(cRect,w)){resetAfterHit();return;}
+  }
+  for(const s of otherShips){
+    if(rectsOverlap(cRect,rectOf(s))){resetAfterHit();return;}
+  }
+  // keep tug in bounds of walls too (soft)
+  for(const w of walls){
+    const tR=rectOf({x:tug.x,y:tug.y,w:tug.w,h:tug.h});
+    if(rectsOverlap(tR,w)){
+      tug.x-=tug.vx*2;tug.y-=tug.vy*2;tug.vx*=-0.3;tug.vy*=-0.3;
+    }
+  }
+
+  // docking check
+  const inSlip=cargo.x-cargo.w/2>slip.x-5&&cargo.x+cargo.w/2<slip.x+slip.w+5&&
+               cargo.y-cargo.h/2>slip.y-5&&cargo.y+cargo.h/2<slip.y+slip.h+5;
+  const slow=Math.hypot(cargo.vx,cargo.vy)<0.6;
+  if(inSlip&&slow){
+    dockTimer++;
+    if(dockTimer>=75){
+      docked++;
+      const centerErr=Math.hypot(cargo.x-(slip.x+slip.w/2),cargo.y-(slip.y+slip.h/2));
+      const precisionPts=Math.max(0,Math.round(300-centerErr*4));
+      const timePts=Math.max(0,Math.round(400-shiftTimer/3));
+      const pts=precisionPts+timePts;
+      score+=pts;
+      SFX.success();
+      msg=I18N.t('tug_docked_msg','DOCKED! +{p}').replace('{p}',pts);msgT=90;
+      spawnRound();
+    }
+  } else {
+    dockTimer=Math.max(0,dockTimer-2);
+  }
+  if(msgT>0)msgT--;
+}
+
+function drawShip(o,color,lightColor){
+  ctx.save();ctx.translate(o.x,o.y);ctx.rotate(o.ang||0);
+  ctx.fillStyle=color;
+  ctx.fillRect(-o.w/2,-o.h/2,o.w,o.h);
+  ctx.fillStyle=lightColor;
+  ctx.fillRect(-o.w/2,-o.h/2,o.w*0.25,o.h);
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#083344');bg.addColorStop(1,'#1c7a8c');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // walls
+  ctx.fillStyle='#4a3c2b';
+  walls.forEach(w=>ctx.fillRect(w.x,w.y,w.w,w.h));
+
+  // slip
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+  ctx.strokeRect(slip.x,slip.y,slip.w,slip.h);
+  ctx.fillStyle='rgba(255,213,79,.12)';
+  ctx.fillRect(slip.x,slip.y,slip.w,slip.h);
+
+  otherShips.forEach(s=>drawShip(s,'#555','#777'));
+  drawShip(cargo,'#c0392b','#e0685a');
+  drawShip(tug,'#ffca28','#fff3c4');
+
+  if(msgT>0){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,40);
+  }
+
+  if(state==='over'){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('tug_shift_over_title','SHIFT OVER'),W/2,H/2-30);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('tug_final_score_label','Score: {s} | Ships Docked: {d}').replace('{s}',score).replace('{d}',docked),W/2,H/2+5);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('tug_restart_hint','Tap / press a key to start a new shift'),W/2,H/2+38);
+  }
+
+  hud.textContent=I18N.t('tug_hud_label','Docked: {d} | Score: {s} | Lives: {l} | Best Score: {b}')
+    .replace('{d}',docked).replace('{s}',score).replace('{l}',lives).replace('{b}',best);
+}
+
+function restartIfOver(){
+  if(state==='over'){
+    state='play';docked=0;score=0;lives=3;
+    spawnRound();
+  }
+}
+document.addEventListener('keydown',restartIfOver);
+c.addEventListener('click',restartIfOver);
+
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

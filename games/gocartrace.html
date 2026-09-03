@@ -1,0 +1,325 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Go Kart Race</title><meta name="description" content="Play Go Kart Race free online — Use Arrow Keys or WASD (or drag on mobile) to steer your kart around the winding track, dodge oil slicks and rival karts, grab boost pads, and finish 3 laps before the AI."><link rel="canonical" href="https://games.multiportllc.com/games/gocartrace"><meta property="og:title" content="Go Kart Race - Multiport Games"><meta property="og:description" content="Play Go Kart Race free online — Use Arrow Keys or WASD (or drag on mobile) to steer your kart around the winding track, dodge oil slicks and rival karts, grab boost pads, and finish 3 laps before the AI."><meta property="og:url" content="https://games.multiportllc.com/games/gocartrace"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Go Kart Race","description":"Play Go Kart Race free online instantly. Use Arrow Keys or WASD (or drag on mobile) to steer your kart around the winding track, dodge oil slicks and rival karts, grab boost pads, and finish 3 laps before the AI. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/gocartrace","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2e7d32;display:block;border-radius:8px;touch-action:none}
+#hud{color:#fff;font-size:1.05rem;font-weight:800;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Go Kart Race</div>
+  <div class="game-frame">
+    <div id="hud">Wins: 0 | Best Lap: —</div>
+    <canvas id="c" width="480" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> or <b>WASD</b> (or drag / touch to steer on mobile) to race your kart around the track. Dodge <b>oil slicks</b> and rival karts, grab yellow <b>boost pads</b>, and complete 3 laps before the other racers to win!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=480,H=480,CX=240,CY=240;
+const OUTER_A=200,OUTER_B=170,INNER_A=110,INNER_B=85;
+const TOTAL_LAPS=3;
+
+let wins=0,bestLap=null;
+wins=parseInt(localStorage.getItem('gocartrace_wins')||'0',10);
+const savedBest=localStorage.getItem('gocartrace_best');
+if(savedBest)bestLap=parseFloat(savedBest);
+
+function trackRadiusAt(theta){
+  // elliptical track with a pinch to make it winding
+  const wobble=1+0.18*Math.sin(theta*3);
+  return {outerA:OUTER_A*wobble,outerB:OUTER_B*wobble,innerA:INNER_A*wobble*0.75+INNER_A*0.25,innerB:INNER_B*wobble*0.75+INNER_B*0.25};
+}
+
+function pointOnCenterline(theta){
+  const r=trackRadiusAt(theta);
+  const a=(r.outerA+r.innerA)/2, b=(r.outerB+r.innerB)/2;
+  return {x:CX+Math.cos(theta)*a,y:CY+Math.sin(theta)*b};
+}
+
+function isOnTrack(x,y){
+  const dx=x-CX,dy=y-CY;
+  const theta=Math.atan2(dy,dx);
+  const r=trackRadiusAt(theta);
+  const outerVal=(dx*dx)/(r.outerA*r.outerA)+(dy*dy)/(r.outerB*r.outerB);
+  const innerVal=(dx*dx)/(r.innerA*r.innerA)+(dy*dy)/(r.innerB*r.innerB);
+  return outerVal<=1 && innerVal>=1;
+}
+
+let player,aiKarts,obstacles,boosts,keys={},gameState,lapStartTime,curLapBest,raceStartTime,touchTarget=null;
+
+function reset(){
+  player={x:CX,y:CY-((OUTER_B+INNER_B)/2),ang:-Math.PI/2,speed:0,lap:0,checkpoint:0,passedHalf:false,boostT:0};
+  aiKarts=[0.15,-0.1,0.25].map((off,i)=>({
+    theta:-Math.PI/2+off,speed:1.6+i*0.15,lap:0,color:['#e53935','#1e88e5','#8e24aa'][i],x:0,y:0,ang:0
+  }));
+  obstacles=[];
+  for(let i=0;i<8;i++){
+    const th=Math.random()*Math.PI*2;
+    const p=pointOnCenterline(th);
+    const jitter=(Math.random()-0.5)*40;
+    obstacles.push({x:p.x+Math.cos(th+Math.PI/2)*jitter,y:p.y+Math.sin(th+Math.PI/2)*jitter,type:'oil',r:14});
+  }
+  boosts=[];
+  for(let i=0;i<6;i++){
+    const th=(i/6)*Math.PI*2+0.3;
+    const p=pointOnCenterline(th);
+    boosts.push({x:p.x,y:p.y,r:14,active:true});
+  }
+  gameState='countdown';
+  countdownVal=3;
+  lapStartTime=null;curLapBest=null;raceStartTime=null;
+  lastCountdownTick=performance.now();
+}
+let countdownVal=3,lastCountdownTick=0;
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+c.addEventListener('touchstart',handleTouch,{passive:false});
+c.addEventListener('touchmove',handleTouch,{passive:false});
+c.addEventListener('touchend',()=>{touchTarget=null;});
+function handleTouch(e){
+  e.preventDefault();
+  const t=e.touches[0];
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  touchTarget={x:(t.clientX-rect.left)*scaleX,y:(t.clientY-rect.top)*scaleY};
+}
+c.addEventListener('click',()=>{
+  if(gameState==='over')reset();
+});
+
+function updHud(){
+  document.getElementById('hud').textContent=I18N.t('gk_hud','Wins: {w} | Best Lap: {b}')
+    .replace('{w}',wins).replace('{b}',bestLap!=null?bestLap.toFixed(2)+'s':'—');
+}
+
+function angleDiff(a,b){let d=(b-a)%(Math.PI*2);if(d>Math.PI)d-=Math.PI*2;if(d<-Math.PI)d+=Math.PI*2;return d;}
+
+function updatePlayer(dt){
+  if(gameState!=='racing')return;
+  let turn=0,accel=0;
+  if(keys['arrowleft']||keys['a'])turn-=1;
+  if(keys['arrowright']||keys['d'])turn+=1;
+  if(keys['arrowup']||keys['w'])accel=1;
+  if(keys['arrowdown']||keys['s'])accel=-0.6;
+  if(touchTarget){
+    const dx=touchTarget.x-player.x,dy=touchTarget.y-player.y;
+    const desired=Math.atan2(dy,dx);
+    const diff=angleDiff(player.ang,desired);
+    turn=Math.max(-1,Math.min(1,diff*2.5));
+    accel=Math.hypot(dx,dy)>10?1:0;
+  }
+  const maxSpeed=player.boostT>0?5.2:3.2;
+  player.ang+=turn*0.045*dt;
+  player.speed+=accel*0.12*dt;
+  player.speed*=0.985;
+  player.speed=Math.max(-1.2,Math.min(maxSpeed,player.speed));
+  const nx=player.x+Math.cos(player.ang)*player.speed*dt;
+  const ny=player.y+Math.sin(player.ang)*player.speed*dt;
+  const onTrack=isOnTrack(nx,ny);
+  if(!onTrack)player.speed*=0.9;
+  player.x=nx;player.y=ny;
+  if(!onTrack)player.speed*=0.92;
+  if(player.boostT>0)player.boostT-=dt;
+
+  // obstacles
+  obstacles.forEach(o=>{
+    if(Math.hypot(player.x-o.x,player.y-o.y)<o.r+10){
+      player.ang+=(Math.random()-0.5)*0.6;
+      player.speed*=0.5;
+      SFX.hit();
+    }
+  });
+  // boosts
+  boosts.forEach(b=>{
+    if(b.active&&Math.hypot(player.x-b.x,player.y-b.y)<b.r+10){
+      b.active=false;
+      player.boostT=1.6;
+      SFX.powerup();
+      setTimeout(()=>{b.active=true;},4000);
+    }
+  });
+  // AI kart collision (soft push)
+  aiKarts.forEach(k=>{
+    if(Math.hypot(player.x-k.x,player.y-k.y)<18){
+      player.speed*=0.85;
+    }
+  });
+
+  checkLap(player,true);
+}
+
+function updateAI(dt){
+  if(gameState!=='racing')return;
+  aiKarts.forEach(k=>{
+    k.theta+=0.008*k.speed*dt;
+    const p=pointOnCenterline(k.theta);
+    k.x=p.x+Math.cos(k.theta+Math.PI/2)*((Math.random()-0.5)*2);
+    k.y=p.y+Math.sin(k.theta+Math.PI/2)*((Math.random()-0.5)*2);
+    k.ang=k.theta+Math.PI/2;
+    if(k.theta - (k._lastTheta||k.theta) !== 0){}
+    k._lastTheta=k.theta;
+    if(k.theta>=Math.PI*2*(k.lap+1)-Math.PI*2 && false){}
+  });
+  aiKarts.forEach(k=>{
+    const wrapped=k.theta;
+    const lapsDone=Math.floor((wrapped+Math.PI/2)/(Math.PI*2));
+    if(lapsDone>k.lap){
+      k.lap=lapsDone;
+      if(k.lap>=TOTAL_LAPS){
+        endRace(false);
+      }
+    }
+  });
+}
+
+function checkLap(p,isPlayer){
+  // angle relative to start (-PI/2), track passing through halfway then back to start
+  const theta=Math.atan2(p.y-CY,p.x-CX);
+  const rel=((theta-(-Math.PI/2))+Math.PI*3)%(Math.PI*2); // 0 at start, increases going around (clockwise motion assumed)
+  if(rel>Math.PI*0.8 && rel<Math.PI*1.2)p.passedHalf=true;
+  if(p.passedHalf && rel<0.3){
+    p.passedHalf=false;
+    p.lap=(p.lap||0)+1;
+    const now=performance.now();
+    if(lapStartTime!=null){
+      const lapTime=(now-lapStartTime)/1000;
+      if(curLapBest===null||lapTime<curLapBest)curLapBest=lapTime;
+      SFX.point();
+    }
+    lapStartTime=now;
+    if(p.lap>=TOTAL_LAPS){
+      endRace(true);
+    }
+  }
+}
+
+function endRace(playerWon){
+  gameState='over';
+  if(playerWon){
+    wins++;
+    localStorage.setItem('gocartrace_wins',String(wins));
+    if(curLapBest!=null&&(bestLap===null||curLapBest<bestLap)){
+      bestLap=curLapBest;
+      localStorage.setItem('gocartrace_best',String(bestLap));
+    }
+    SFX.win();
+  }else{
+    SFX.lose();
+  }
+  updHud();
+}
+
+function drawTrack(){
+  ctx.fillStyle='#2e7d32';ctx.fillRect(0,0,W,H);
+  ctx.save();
+  ctx.beginPath();
+  for(let a=0;a<=Math.PI*2+0.05;a+=0.02){
+    const r=trackRadiusAt(a);
+    const x=CX+Math.cos(a)*r.outerA,y=CY+Math.sin(a)*r.outerB;
+    a===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.closePath();
+  ctx.fillStyle='#616161';
+  ctx.fill();
+  ctx.beginPath();
+  for(let a=0;a<=Math.PI*2+0.05;a+=0.02){
+    const r=trackRadiusAt(a);
+    const x=CX+Math.cos(a)*r.innerA,y=CY+Math.sin(a)*r.innerB;
+    a===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.closePath();
+  ctx.fillStyle='#2e7d32';
+  ctx.fill();
+  ctx.restore();
+  // start line
+  ctx.strokeStyle='#fff';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(CX,CY-INNER_B);ctx.lineTo(CX,CY-OUTER_B);ctx.stroke();
+
+  obstacles.forEach(o=>{
+    ctx.fillStyle='#212121';
+    ctx.beginPath();ctx.ellipse(o.x,o.y,o.r,o.r*0.6,0,0,Math.PI*2);ctx.fill();
+  });
+  boosts.forEach(b=>{
+    if(!b.active)return;
+    ctx.fillStyle='#ffee58';
+    ctx.beginPath();ctx.moveTo(b.x,b.y-10);ctx.lineTo(b.x+8,b.y);ctx.lineTo(b.x,b.y+10);ctx.lineTo(b.x-8,b.y);ctx.closePath();ctx.fill();
+  });
+}
+
+function drawKart(x,y,ang,color){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(ang);
+  ctx.fillStyle=color;
+  ctx.fillRect(-9,-6,18,12);
+  ctx.fillStyle='#222';
+  ctx.fillRect(-9,-8,6,4);
+  ctx.fillRect(-9,4,6,4);
+  ctx.fillRect(3,-8,6,4);
+  ctx.fillRect(3,4,6,4);
+  ctx.restore();
+}
+
+function loop(ts){
+  if(!lastTs)lastTs=ts;
+  const dt=Math.min((ts-lastTs)/16.6667,3);
+  lastTs=ts;
+
+  drawTrack();
+
+  if(gameState==='countdown'){
+    if(ts-lastCountdownTick>800){
+      countdownVal--;
+      lastCountdownTick=ts;
+      if(countdownVal<=0){
+        gameState='racing';
+        lapStartTime=performance.now();
+        raceStartTime=lapStartTime;
+      }else{
+        SFX.tick();
+      }
+    }
+    aiKarts.forEach(k=>{const p=pointOnCenterline(k.theta);k.x=p.x;k.y=p.y;k.ang=k.theta+Math.PI/2;drawKart(k.x,k.y,k.ang,k.color);});
+    drawKart(player.x,player.y,player.ang,'#ffd600');
+    ctx.fillStyle='#fff';ctx.font='bold 48px Arial';ctx.textAlign='center';
+    ctx.fillText(countdownVal>0?String(countdownVal):I18N.t('go_text','GO!'),CX,CY);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  updatePlayer(dt);
+  updateAI(dt);
+
+  aiKarts.forEach(k=>drawKart(k.x,k.y,k.ang,k.color));
+  drawKart(player.x,player.y,player.ang,'#ffd600');
+
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('lap_label','Lap {l}/{t}').replace('{l}',Math.min(player.lap+1,TOTAL_LAPS)).replace('{t}',TOTAL_LAPS),10,24);
+
+  if(gameState==='over'){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    const won=player.lap>=TOTAL_LAPS;
+    ctx.fillText(won?I18N.t('you_win','YOU WIN!'):I18N.t('you_lose','YOU LOSE'),CX,CY-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('tap_restart2','Tap to race again'),CX,CY+26);
+  }
+
+  updHud();
+  requestAnimationFrame(loop);
+}
+let lastTs=null;
+reset();
+requestAnimationFrame(loop);
+</script></body></html>
