@@ -1,0 +1,335 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Sailboat Regatta</title><meta name="description" content="Play Sailboat Regatta free online — Steer your sailboat and trim your sail relative to the shifting wind to round the buoys in order and beat the AI boats to the finish."><link rel="canonical" href="https://games.multiportllc.com/games/sailboatregatta"><meta property="og:title" content="Sailboat Regatta - Multiport Games"><meta property="og:description" content="Play Sailboat Regatta free online — Steer your sailboat and trim your sail relative to the shifting wind to round the buoys in order and beat the AI boats to the finish."><meta property="og:url" content="https://games.multiportllc.com/games/sailboatregatta"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Sailboat Regatta","description":"Play Sailboat Regatta free online instantly. Steer your sailboat and trim your sail relative to the shifting wind to round the buoys in order and beat the AI boats to the finish. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/sailboatregatta","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d4d6b;display:block;border-radius:8px;touch-action:none}
+#hud{color:#e0f7fa;font-size:1rem;font-weight:700;text-align:center;padding:6px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud b{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Sailboat Regatta</div>
+  <div class="game-frame">
+    <div id="hud">Leg <b id="legNum">1</b>/<b id="legTotal">3</b> | Place: <b id="place">1st</b> | Wins: <b id="wins">0</b> | Best: <b id="best">—</b></div>
+    <canvas id="c" width="800" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>drag on screen</b> to steer. Watch the <b>wind indicator</b>: sailing straight into the wind is nearly impossible, but reaching across or running with the wind is fast. Round each numbered buoy in order and cross the finish line ahead of the AI boats!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+let wins=0,best=null;
+wins=parseInt(localStorage.getItem('regatta_wins')||'0');
+best=localStorage.getItem('regatta_best')?parseFloat(localStorage.getItem('regatta_best')):null;
+document.getElementById('wins').textContent=wins;
+document.getElementById('best').textContent=best!=null?best.toFixed(1)+'s':'—';
+
+let wind={dir:0,target:0}; // radians, 0 = blowing toward +x (east)
+let buoys=[];
+let boats=[];
+let raceState='ready'; // ready, racing, finished
+let raceTime=0, startTime=0, lastTime=null;
+let keys={};
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function setupCourse(){
+  buoys=[];
+  const n=4;
+  for(let i=0;i<n;i++){
+    const ang=(i/n)*Math.PI*2 + Math.PI/6;
+    const r=180+rand(-30,30);
+    buoys.push({x:400+Math.cos(ang)*r*1.4, y:250+Math.sin(ang)*r, r:22, order:i+1});
+  }
+  document.getElementById('legTotal').textContent=n;
+}
+
+function makeBoat(isPlayer,color,x,y){
+  return {
+    isPlayer, color,
+    x,y,
+    heading: rand(0,Math.PI*2),
+    sailTrim: 0, // -1 (in) to 1 (out), auto for AI
+    speed:0,
+    leg:0, // next buoy index to hit
+    finished:false,
+    finishTime:0,
+    aiHeadingBias: rand(-0.15,0.15),
+  };
+}
+
+function resetRace(){
+  wind.dir = rand(0,Math.PI*2);
+  wind.target = wind.dir;
+  setupCourse();
+  boats=[];
+  boats.push(makeBoat(true,'#ff6b35',360,420));
+  boats.push(makeBoat(false,'#4fc3f7',380,440));
+  boats.push(makeBoat(false,'#81c784',400,440));
+  boats.push(makeBoat(false,'#ba68c8',420,420));
+  raceState='ready';
+  raceTime=0;
+  lastTime=null;
+  updateHud();
+}
+
+function windSpeedFactor(boatHeading){
+  // angle between boat heading and wind direction (wind blows FROM upwind TO downwind = wind.dir is direction wind blows toward)
+  // boat sailing angle relative to wind source: diff between heading and (wind.dir+PI) is angle off the wind source
+  let diff = Math.abs(normalizeAngle(boatHeading - (wind.dir+Math.PI)));
+  if(diff>Math.PI) diff = Math.PI*2-diff;
+  // diff=0 means heading directly into the wind source (upwind) -> slow/impossible
+  // diff=PI means heading directly downwind (with the wind) -> fast reach
+  const deg = diff*180/Math.PI;
+  if(deg<35) return 0.05+ (deg/35)*0.15; // in irons - very slow
+  if(deg<90) return 0.2 + ((deg-35)/55)*0.65; // close hauled to beam reach
+  if(deg<135) return 0.85 + ((deg-90)/45)*0.15; // reach - fastest
+  return 1.0 - ((deg-135)/45)*0.3; // running downwind - slightly slower than reach
+}
+
+function normalizeAngle(a){
+  while(a>Math.PI)a-=Math.PI*2;
+  while(a<-Math.PI)a+=Math.PI*2;
+  return a;
+}
+
+function updateHud(){
+  document.getElementById('legNum').textContent=Math.min(boats[0].leg+1, buoys.length+1);
+  const finishedOrRanked = boats.slice().sort((a,b)=>{
+    if(a.finished&&b.finished) return a.finishTime-b.finishTime;
+    if(a.finished) return -1;
+    if(b.finished) return 1;
+    return b.leg-a.leg || (distToNext(b)-distToNext(a));
+  });
+  const place = finishedOrRanked.indexOf(boats[0])+1;
+  const suffix = place===1?'st':place===2?'nd':place===3?'rd':'th';
+  document.getElementById('place').textContent=place+suffix;
+}
+
+function distToNext(boat){
+  const target = boat.leg<buoys.length?buoys[boat.leg]:{x:400,y:460};
+  return Math.hypot(target.x-boat.x,target.y-boat.y);
+}
+
+function steerInput(){
+  let turn=0;
+  if(keys['ArrowLeft']||keys['a']||keys['A'])turn-=1;
+  if(keys['ArrowRight']||keys['d']||keys['D'])turn+=1;
+  return turn;
+}
+let dragTurn=0;
+
+function updateBoat(boat,dt,isPlayer){
+  if(boat.finished)return;
+  let turn=0;
+  if(isPlayer){
+    turn = steerInput() + dragTurn;
+  } else {
+    // AI: steer toward next buoy, avoiding pointing directly into wind (basic tacking)
+    const target = boat.leg<buoys.length?buoys[boat.leg]:{x:400,y:460};
+    const desired = Math.atan2(target.y-boat.y, target.x-boat.x);
+    let diff = normalizeAngle(desired-boat.heading);
+    // if desired heading is too close to upwind, offset it (simple tack)
+    const testDiff = Math.abs(normalizeAngle(desired-(wind.dir+Math.PI)));
+    let effectiveDesired=desired;
+    if(testDiff<0.6){
+      effectiveDesired = desired + (boat.aiHeadingBias>=0?0.9:-0.9);
+    }
+    diff = normalizeAngle(effectiveDesired-boat.heading);
+    turn = Math.max(-1,Math.min(1,diff*2));
+  }
+  boat.heading += turn*1.8*dt;
+  boat.heading = normalizeAngle(boat.heading);
+  const factor = windSpeedFactor(boat.heading);
+  const maxSpeed = isPlayer?150:135;
+  boat.speed += (factor*maxSpeed - boat.speed)*Math.min(1,dt*1.5);
+  boat.x += Math.cos(boat.heading)*boat.speed*dt;
+  boat.y += Math.sin(boat.heading)*boat.speed*dt;
+  boat.x=Math.max(20,Math.min(W-20,boat.x));
+  boat.y=Math.max(20,Math.min(H-20,boat.y));
+  // check buoy rounding
+  if(boat.leg<buoys.length){
+    const b=buoys[boat.leg];
+    if(Math.hypot(b.x-boat.x,b.y-boat.y)<b.r+12){
+      boat.leg++;
+      if(isPlayer){SFX.point();}
+    }
+  } else {
+    // finish line near bottom center
+    if(Math.hypot(400-boat.x,470-boat.y)<28){
+      boat.finished=true;
+      boat.finishTime=raceTime;
+      if(isPlayer){
+        raceState='finished';
+        SFX.win();
+        const place = boats.filter(b=>b.finished&&b.finishTime<=boat.finishTime).length;
+        if(place===1){
+          wins++;
+          localStorage.setItem('regatta_wins',wins);
+          if(best==null||raceTime<best){best=raceTime;localStorage.setItem('regatta_best',best);}
+        }
+      }
+    }
+  }
+}
+
+function drawWater(){
+  ctx.fillStyle='#0d4d6b';
+  ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,0.08)';
+  ctx.lineWidth=1;
+  const t=performance.now()/800;
+  for(let i=0;i<18;i++){
+    const y=(i*30 + (t*20)%30)%H;
+    ctx.beginPath();
+    for(let x=0;x<=W;x+=20){
+      ctx.lineTo(x, y+Math.sin((x/40)+t+i)*3);
+    }
+    ctx.stroke();
+  }
+}
+
+function drawWindIndicator(){
+  const cx=730,cy=60,r=38;
+  ctx.save();
+  ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);
+  ctx.fillStyle='rgba(0,0,0,0.35)';ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+  ctx.translate(cx,cy);ctx.rotate(wind.dir);
+  ctx.beginPath();
+  ctx.moveTo(-r+8,0);ctx.lineTo(r-8,0);
+  ctx.lineTo(r-18,-8);ctx.moveTo(r-8,0);ctx.lineTo(r-18,8);
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('regatta_wind','WIND'),cx,cy+r+14);
+}
+
+function drawBuoys(){
+  buoys.forEach((b,i)=>{
+    ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);
+    ctx.fillStyle= i<boats[0].leg? '#4caf5099':'#ff5252';
+    ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(b.order,b.x,b.y);
+  });
+  // finish line
+  ctx.strokeStyle='#fff';ctx.lineWidth=3;
+  ctx.setLineDash([8,6]);
+  ctx.beginPath();ctx.moveTo(370,470);ctx.lineTo(430,470);ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.fillText(I18N.t('regatta_finish','FINISH'),400,485);
+}
+
+function drawBoat(boat){
+  ctx.save();
+  ctx.translate(boat.x,boat.y);
+  ctx.rotate(boat.heading);
+  ctx.beginPath();
+  ctx.moveTo(16,0);ctx.lineTo(-12,-7);ctx.lineTo(-8,0);ctx.lineTo(-12,7);ctx.closePath();
+  ctx.fillStyle=boat.color;ctx.fill();
+  ctx.strokeStyle='#0006';ctx.lineWidth=1;ctx.stroke();
+  // sail angle depends on wind
+  const relWind = normalizeAngle((wind.dir+Math.PI)-boat.heading);
+  const sailAngle = Math.max(-1.1,Math.min(1.1, relWind*0.5));
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  ctx.lineTo(Math.cos(sailAngle)*-14, Math.sin(sailAngle)*14);
+  ctx.strokeStyle='#fff';ctx.lineWidth=3;ctx.stroke();
+  ctx.restore();
+  if(boat.isPlayer){
+    ctx.fillStyle='#fff';ctx.font='10px Arial';ctx.textAlign='center';
+    ctx.fillText('YOU',boat.x,boat.y-18);
+  }
+}
+
+function loop(ts){
+  if(lastTime==null)lastTime=ts;
+  let dt=(ts-lastTime)/1000;
+  dt=Math.min(dt,0.05);
+  lastTime=ts;
+
+  if(raceState==='racing'){
+    raceTime+=dt;
+    wind.dir += Math.sin(raceTime*0.15)*0.15*dt*3;
+    boats.forEach(b=>updateBoat(b,dt,b.isPlayer));
+    updateHud();
+    if(raceState==='finished'){
+      // handled in updateBoat
+    }
+  }
+
+  drawWater();
+  drawBuoys();
+  boats.forEach(b=>{ if(!b.isPlayer) drawBoat(b); });
+  drawBoat(boats[0]);
+  drawWindIndicator();
+
+  ctx.fillStyle='rgba(255,255,255,0.85)';
+  ctx.font='12px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('regatta_time','Time: {t}s').replace('{t}',raceTime.toFixed(1)),10,20);
+
+  if(raceState==='ready'){
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('regatta_start_hint','Press Space or Tap to start the race'),W/2,H/2);
+  }
+  if(raceState==='finished'){
+    ctx.fillStyle='#000a';ctx.fillRect(W/2-170,H/2-60,340,120);
+    ctx.fillStyle='#ffd54f';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    const finishedRank = boats.filter(b=>b.finished).sort((a,b)=>a.finishTime-b.finishTime);
+    const place = finishedRank.findIndex(b=>b.isPlayer)+1;
+    const label = place===1?I18N.t('regatta_win_title','YOU WIN THE REGATTA!'):I18N.t('regatta_place_title','You finished {p}').replace('{p}',place+(place===2?'nd':place===3?'rd':'th'));
+    ctx.fillText(label,W/2,H/2-15);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('regatta_time_final','Time: {t}s').replace('{t}',raceTime.toFixed(1)),W/2,H/2+18);
+    ctx.font='14px Arial';
+    ctx.fillText(I18N.t('regatta_restart_hint','Press Space or Tap to race again'),W/2,H/2+45);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+function startOrRestart(){
+  if(raceState==='ready'){
+    raceState='racing';
+    SFX.jump();
+  } else if(raceState==='finished'){
+    resetRace();
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.key]=true;
+  if(e.code==='Space'){ e.preventDefault(); startOrRestart(); }
+});
+document.addEventListener('keyup',e=>{ keys[e.key]=false; });
+
+c.addEventListener('click',()=>{ if(raceState!=='racing') startOrRestart(); });
+
+let dragStartX=null;
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(raceState!=='racing'){ startOrRestart(); return; }
+  dragStartX=e.touches[0].clientX;
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(dragStartX==null)return;
+  const dx=e.touches[0].clientX-dragStartX;
+  dragTurn=Math.max(-1,Math.min(1,dx/60));
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  e.preventDefault();
+  dragStartX=null;
+  dragTurn=0;
+},{passive:false});
+
+resetRace();
+requestAnimationFrame(loop);
+</script></body></html>

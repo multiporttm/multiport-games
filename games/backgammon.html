@@ -1,0 +1,501 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Backgammon</title><meta name="description" content="Play Backgammon free online — Click Roll to roll the dice, then click a point with your checkers and click a legal destination to move. Bear off all your checkers before the AI to win."><link rel="canonical" href="https://games.multiportllc.com/games/backgammon"><meta property="og:title" content="Backgammon - Multiport Games"><meta property="og:description" content="Play Backgammon free online — Click Roll to roll the dice, then click a point with your checkers and click a legal destination to move. Bear off all your checkers before the AI to win."><meta property="og:url" content="https://games.multiportllc.com/games/backgammon"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Backgammon","description":"Play Backgammon free online instantly. Click Roll to roll the dice, then click a point with your checkers and click a legal destination to move. Bear off all your checkers before the AI to win. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/backgammon","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3e2723;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#ffe0b2;font-size:1.02rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span b{color:#fff}
+#controls{display:flex;justify-content:center;gap:10px;padding:0 0 12px}
+#controls button{padding:9px 22px;background:#6d4c41;border:1px solid #ffe0b255;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+#controls button:hover:not(:disabled){background:#8d6e63}
+#status{color:#ffe0b2;text-align:center;min-height:1.5em;font-weight:700;padding-bottom:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Backgammon</div>
+  <div class="game-frame">
+    <div id="hud"><span>Games won: <b id="wonDisp">0</b></span><span>Best score: <b id="bestDisp">0</b></span><span>Turn: <b id="turnDisp">You</b></span></div>
+    <canvas id="c" width="800" height="460"></canvas>
+    <div id="status">Click Roll to begin</div>
+    <div id="controls">
+      <button id="rollBtn">Roll Dice</button>
+      <button id="bearOffBtn" disabled>Bear Off Selected</button>
+      <button id="endTurnBtn" disabled>End Turn</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click <b>Roll Dice</b>, then click one of your (white) checker points and click a highlighted destination point to move it by that die's value. Move all 15 checkers into your home board, then <b>bear off</b> to win. A point held by 2+ enemy checkers is blocked; land on a lone enemy checker to send it to the bar!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=460;
+
+// Points 0..23. Player (white, 'P') moves from 0 toward 23 then bears off.
+// AI (black, 'A') moves from 23 toward 0 then bears off.
+// Standard start (from White's perspective moving 0->23):
+// point index : count : owner
+let won=parseInt(localStorage.getItem('bg_won')||'0',10);
+let best=parseInt(localStorage.getItem('bg_best')||'0',10);
+document.getElementById('wonDisp').textContent=won;
+document.getElementById('bestDisp').textContent=best;
+
+let board=[]; // 24 entries {owner:'P'|'A'|null, count}
+let barP=0,barA=0,offP=0,offA=0;
+let dice=[],diceUsed=[];
+let turn='P';
+let selected=null;
+let legalDest=[];
+let turnCount=0;
+let gameOver=false;
+let statusMsg='';
+
+function setup(){
+  board=new Array(24).fill(null).map(()=>({owner:null,count:0}));
+  function put(i,owner,n){board[i]={owner,count:n};}
+  // White (P) moves 0->23, standard positions mirrored to that direction
+  put(0,'P',2); put(11,'P',5); put(16,'P',3); put(18,'P',5);
+  put(23,'A',2); put(12,'A',5); put(7,'A',3); put(5,'A',5);
+  barP=0;barA=0;offP=0;offA=0;
+  dice=[];diceUsed=[];turn='P';selected=null;legalDest=[];turnCount=0;gameOver=false;
+  statusMsg=I18N.t('bg_click_roll','Click Roll to begin');
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('wonDisp').textContent=won;
+  document.getElementById('bestDisp').textContent=best;
+  document.getElementById('turnDisp').textContent=turn==='P'?I18N.t('bg_you','You'):I18N.t('bg_ai','AI');
+  document.getElementById('status').textContent=statusMsg;
+  document.getElementById('rollBtn').disabled=dice.length>0&&diceUsed.some(u=>!u)||turn!=='P';
+  document.getElementById('endTurnBtn').disabled=!(turn==='P'&&dice.length>0);
+  const canBearOffNow = turn==='P' && selected!==null && legalDest.some(d=>d.to==='off');
+  document.getElementById('bearOffBtn').disabled=!canBearOffNow;
+}
+
+function bearOffSelected(){
+  const destInfo=legalDest.find(d=>d.to==='off');
+  if(!destInfo||selected===null)return;
+  applyMove('P',selected,'off',destInfo.dieIdx);
+  SFX.select();
+  selected=null;legalDest=[];
+  checkWin();
+  if(!gameOver){
+    if(diceUsed.every(Boolean)){
+      statusMsg=I18N.t('bg_all_dice_used','All dice used — click End Turn.');
+    } else if(!hasAnyLegalMove('P')){
+      statusMsg=I18N.t('bg_no_more_moves','No more legal moves — click End Turn.');
+    } else {
+      statusMsg=I18N.t('bg_continue_move','Move another checker or End Turn.');
+    }
+  }
+  updateHud();
+}
+
+function rollDice(){
+  if(turn!=='P'||gameOver)return;
+  if(dice.length>0)return;
+  const d1=1+Math.floor(Math.random()*6),d2=1+Math.floor(Math.random()*6);
+  if(d1===d2)dice=[d1,d1,d1,d1];
+  else dice=[d1,d2];
+  diceUsed=dice.map(()=>false);
+  SFX.click();
+  if(!hasAnyLegalMove('P')){
+    statusMsg=I18N.t('bg_no_moves','No legal moves — turn passes.');
+    setTimeout(()=>{ endPlayerTurn(); },900);
+  } else {
+    statusMsg=I18N.t('bg_your_move','Your move — click a checker, then a destination.');
+  }
+  updateHud();
+}
+
+function pointDir(owner){ return owner==='P'?1:-1; }
+
+function canMove(owner,from,dieVal){
+  const dir=pointDir(owner);
+  const to=from+dir*dieVal;
+  if(from==='bar'){
+    const entry=owner==='P'? (dieVal-1) : (24-dieVal);
+    return isOpen(entry,owner)?entry:null;
+  }
+  if(to<0||to>23){
+    // bearing off
+    if(canBearOff(owner)){
+      if(to<0||to>23)return 'off';
+    }
+    return null;
+  }
+  return isOpen(to,owner)?to:null;
+}
+
+function isOpen(pt,owner){
+  const cell=board[pt];
+  if(!cell.owner||cell.count===0)return true;
+  if(cell.owner===owner)return true;
+  return cell.count<2;
+}
+
+function homeRange(owner){
+  return owner==='P'? [18,23] : [0,5];
+}
+
+function canBearOff(owner){
+  const [lo,hi]=homeRange(owner);
+  const bar=owner==='P'?barP:barA;
+  if(bar>0)return false;
+  for(let i=0;i<24;i++){
+    if(i>=lo&&i<=hi)continue;
+    if(board[i].owner===owner&&board[i].count>0)return false;
+  }
+  return true;
+}
+
+function hasAnyLegalMove(owner){
+  const remaining=dice.filter((d,i)=>!diceUsed[i]);
+  const uniqueVals=[...new Set(remaining)];
+  const bar=owner==='P'?barP:barA;
+  if(bar>0){
+    return uniqueVals.some(v=>canMove(owner,'bar',v)!==null);
+  }
+  for(let i=0;i<24;i++){
+    if(board[i].owner===owner&&board[i].count>0){
+      for(const v of uniqueVals){
+        if(canMove(owner,i,v)!==null)return true;
+      }
+    }
+  }
+  return false;
+}
+
+function applyMove(owner,from,to,dieIdx){
+  diceUsed[dieIdx]=true;
+  if(from==='bar'){
+    if(owner==='P')barP--; else barA--;
+  } else {
+    board[from].count--;
+    if(board[from].count===0)board[from].owner=null;
+  }
+  if(to==='off'){
+    if(owner==='P')offP++; else offA++;
+    return;
+  }
+  const cell=board[to];
+  if(cell.owner&&cell.owner!==owner&&cell.count===1){
+    // hit
+    if(cell.owner==='P')barP++; else barA++;
+    cell.owner=owner;cell.count=1;
+    SFX.hit();
+  } else if(!cell.owner||cell.count===0){
+    cell.owner=owner;cell.count=1;
+  } else {
+    cell.count++;
+  }
+}
+
+function pointForClick(px,py){
+  // board layout: top row points 12-23 left to right at y~40-190, bottom row points 11-0 left to right at y~270-420
+  // 12 columns across width, with a bar gap in middle
+  const colW=(W-60)/13; // 12 point columns + 1 bar column
+  for(let col=0;col<13;col++){
+    const x0=30+col*colW;
+    if(px<x0||px>x0+colW)continue;
+    if(col===6)return 'bar-hit';
+    const pointColIdx = col<6?col:col-1;
+    // top row: points 12..17 (cols0-5), 18..23(cols6-11 -> pointColIdx6-11)
+    if(py<230){
+      // top: left-to-right = points 12..23
+      const pt=12+pointColIdx;
+      return pt;
+    } else {
+      // bottom: left-to-right = points 11..0
+      const pt=11-pointColIdx;
+      return pt;
+    }
+  }
+  return null;
+}
+
+function handleClick(px,py){
+  if(gameOver){ setup(); return; }
+  if(turn!=='P')return;
+  if(dice.length===0)return;
+  const pt=pointForClick(px,py);
+  if(pt===null)return;
+
+  if(selected===null){
+    if(pt==='bar-hit'){
+      if(barP>0)selected='bar';
+    } else if(typeof pt==='number' && board[pt].owner==='P' && board[pt].count>0){
+      selected=pt;
+    }
+    if(selected!==null)computeLegalDest();
+    updateHud();
+    return;
+  }
+  // second click: try to move to pt (could be a number or bear-off zone click ignored)
+  if(pt==='bar-hit'){ selected=null;legalDest=[];updateHud();return; }
+  const destInfo=legalDest.find(d=>d.to===pt);
+  if(destInfo){
+    applyMove('P',selected,destInfo.to,destInfo.dieIdx);
+    SFX.select();
+    selected=null;legalDest=[];
+    checkWin();
+    if(!gameOver){
+      if(diceUsed.every(Boolean)){
+        statusMsg=I18N.t('bg_all_dice_used','All dice used — click End Turn.');
+      } else if(!hasAnyLegalMove('P')){
+        statusMsg=I18N.t('bg_no_more_moves','No more legal moves — click End Turn.');
+      } else {
+        statusMsg=I18N.t('bg_continue_move','Move another checker or End Turn.');
+      }
+    }
+  } else {
+    // reselect
+    if(typeof pt==='number' && board[pt].owner==='P' && board[pt].count>0){
+      selected=pt;computeLegalDest();
+    } else {
+      selected=null;legalDest=[];
+    }
+  }
+  updateHud();
+}
+
+function computeLegalDest(){
+  legalDest=[];
+  dice.forEach((d,idx)=>{
+    if(diceUsed[idx])return;
+    const res=canMove('P',selected,d);
+    if(res!==null)legalDest.push({to:res,dieIdx:idx,die:d});
+  });
+}
+
+function endPlayerTurn(){
+  dice=[];diceUsed=[];selected=null;legalDest=[];
+  turn='A';
+  updateHud();
+  setTimeout(aiTurn,600);
+}
+
+function checkWin(){
+  if(offP>=15){
+    gameOver=true;won++;
+    const score=Math.max(50,300-turnCount*4);
+    if(score>best){best=score;localStorage.setItem('bg_best',best);}
+    localStorage.setItem('bg_won',won);
+    statusMsg=I18N.t('bg_you_win','You win! All checkers borne off.');
+    SFX.win();
+    updateHud();
+  } else if(offA>=15){
+    gameOver=true;
+    statusMsg=I18N.t('bg_ai_win','AI wins this game. Click to play again.');
+    SFX.lose();
+    updateHud();
+  }
+}
+
+function aiTurn(){
+  turnCount++;
+  const d1=1+Math.floor(Math.random()*6),d2=1+Math.floor(Math.random()*6);
+  let aDice=d1===d2?[d1,d1,d1,d1]:[d1,d2];
+  let aUsed=aDice.map(()=>false);
+
+  function step(){
+    // find any legal move, prefer hits then furthest-progress
+    let bestMove=null;
+    if(barA>0){
+      for(let i=0;i<aDice.length;i++){
+        if(aUsed[i])continue;
+        const res=canMove('A','bar',aDice[i]);
+        if(res!==null){bestMove={from:'bar',to:res,dieIdx:i};break;}
+      }
+    } else {
+      let hitMove=null,anyMove=null;
+      for(let i=0;i<24;i++){
+        if(board[i].owner!=='A'||board[i].count===0)continue;
+        for(let di=0;di<aDice.length;di++){
+          if(aUsed[di])continue;
+          const res=canMove('A',i,aDice[di]);
+          if(res===null)continue;
+          const move={from:i,to:res,dieIdx:di};
+          if(!anyMove)anyMove=move;
+          if(res!=='off'&&board[res].owner==='P'&&board[res].count===1)hitMove=move;
+        }
+      }
+      bestMove=hitMove||anyMove;
+    }
+    if(bestMove){
+      applyMove('A',bestMove.from,bestMove.to,bestMove.dieIdx);
+      aUsed[bestMove.dieIdx]=true;
+      dice=aDice.filter((d,i)=>!aUsed[i]); // for display purposes only during AI turn (unused elsewhere)
+      checkWin();
+      if(!gameOver)setTimeout(step,500);
+      else finishAiTurn();
+    } else {
+      finishAiTurn();
+    }
+  }
+  function finishAiTurn(){
+    dice=[];diceUsed=[];
+    turn='P';
+    if(!gameOver){
+      statusMsg=I18N.t('bg_your_turn','Your turn — click Roll.');
+    }
+    updateHud();
+  }
+  // show ai dice briefly then act
+  dice=aDice;diceUsed=aUsed;
+  statusMsg=I18N.t('bg_ai_thinking','AI rolled {d1}-{d2}, thinking...').replace('{d1}',d1).replace('{d2}',d2);
+  updateHud();
+  setTimeout(step,700);
+}
+
+function getMousePos(e){
+  const r=c.getBoundingClientRect();
+  const scaleX=W/r.width,scaleY=H/r.height;
+  let cx,cy;
+  if(e.touches&&e.touches.length){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else if(e.changedTouches&&e.changedTouches.length){cx=e.changedTouches[0].clientX;cy=e.changedTouches[0].clientY;}
+  else{cx=e.clientX;cy=e.clientY;}
+  return {x:(cx-r.left)*scaleX,y:(cy-r.top)*scaleY};
+}
+c.addEventListener('click',e=>{const p=getMousePos(e);handleClick(p.x,p.y);});
+c.addEventListener('touchend',e=>{e.preventDefault();const p=getMousePos(e);handleClick(p.x,p.y);},{passive:false});
+
+document.getElementById('rollBtn').addEventListener('click',rollDice);
+document.getElementById('bearOffBtn').addEventListener('click',bearOffSelected);
+document.getElementById('endTurnBtn').addEventListener('click',()=>{
+  if(turn==='P')endPlayerTurn();
+});
+
+// ----- Drawing -----
+function pointX(pt){
+  const colW=(W-60)/13;
+  let col;
+  if(pt>=12&&pt<=23){ col = pt-12; if(col>=6)col++; }
+  else { col = 11-pt; if(col>=6)col++; }
+  return 30+col*colW+colW/2;
+}
+function isTop(pt){ return pt>=12&&pt<=23; }
+
+function drawTriangle(x,topY,dir,color){
+  const w=(W-60)/13*0.86;
+  ctx.beginPath();
+  if(dir==='down'){ // points down from top edge
+    ctx.moveTo(x-w/2,topY);
+    ctx.lineTo(x+w/2,topY);
+    ctx.lineTo(x,topY+170);
+  } else {
+    ctx.moveTo(x-w/2,topY);
+    ctx.lineTo(x+w/2,topY);
+    ctx.lineTo(x,topY-170);
+  }
+  ctx.closePath();
+  ctx.fillStyle=color;
+  ctx.fill();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#3e2723';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#4e342e';ctx.fillRect(20,20,W-40,H-40);
+  // bar
+  const colW=(W-60)/13;
+  ctx.fillStyle='#2b1a17';ctx.fillRect(30+6*colW,20,colW,H-40);
+
+  for(let pt=0;pt<24;pt++){
+    const x=pointX(pt);
+    const color=(pt%2===0)?'#8d6e63':'#a1887f';
+    if(isTop(pt))drawTriangle(x,20,'down',color);
+    else drawTriangle(x,H-20,'up',color);
+  }
+
+  // highlight legal dest & selected
+  if(selected!==null){
+    const sx=selected==='bar'? (30+6*colW+colW/2) : pointX(selected);
+    const sy=selected==='bar'? H/2 : (isTop(selected)?60:H-60);
+    ctx.beginPath();ctx.arc(sx,sy,22,0,Math.PI*2);ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;ctx.stroke();
+  }
+  legalDest.forEach(d=>{
+    if(d.to==='off')return;
+    const x=pointX(d.to);
+    const y=isTop(d.to)?38:H-38;
+    ctx.beginPath();ctx.arc(x,y,14,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,213,79,0.55)';ctx.fill();
+  });
+
+  // checkers
+  for(let pt=0;pt<24;pt++){
+    const cell=board[pt];
+    if(!cell.owner||cell.count===0)continue;
+    const x=pointX(pt);
+    const top=isTop(pt);
+    for(let k=0;k<Math.min(cell.count,5);k++){
+      const y=top? 40+k*32 : H-40-k*32;
+      drawChecker(x,y,cell.owner);
+    }
+    if(cell.count>5){
+      const y=top?40+4*32:H-40-4*32;
+      ctx.fillStyle='#000';ctx.font='bold 13px Arial';ctx.textAlign='center';
+      ctx.fillText('+'+(cell.count-5),x,y+4);
+    }
+  }
+
+  // bar checkers
+  const barX=30+6*colW+colW/2;
+  for(let k=0;k<barP;k++)drawChecker(barX,H-70-k*32,'P');
+  for(let k=0;k<barA;k++)drawChecker(barX,70+k*32,'A');
+
+  // off tray counts
+  ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('bg_off_you','Borne off — You: {n}').replace('{n}',offP),30,H-4);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('bg_off_ai','AI: {n}').replace('{n}',offA),W-30,16);
+
+  // dice
+  if(dice.length>0){
+    dice.forEach((d,i)=>{
+      const dx=W/2-60+i*40*(dice.length>2?0.7:1);
+      drawDie(dx,H/2-15,d,diceUsed[i]);
+    });
+  }
+}
+
+function drawChecker(x,y,owner){
+  ctx.beginPath();
+  ctx.arc(x,y,13,0,Math.PI*2);
+  ctx.fillStyle=owner==='P'?'#fafafa':'#212121';
+  ctx.fill();
+  ctx.strokeStyle=owner==='P'?'#bdbdbd':'#000';
+  ctx.lineWidth=1.5;
+  ctx.stroke();
+}
+
+function drawDie(x,y,val,used){
+  ctx.fillStyle=used?'#8886':'#fff';
+  ctx.fillRect(x,y,30,30);
+  ctx.strokeStyle='#000';ctx.strokeRect(x,y,30,30);
+  ctx.fillStyle='#000';
+  const pipPositions={
+    1:[[15,15]],
+    2:[[8,8],[22,22]],
+    3:[[8,8],[15,15],[22,22]],
+    4:[[8,8],[22,8],[8,22],[22,22]],
+    5:[[8,8],[22,8],[15,15],[8,22],[22,22]],
+    6:[[8,8],[22,8],[8,15],[22,15],[8,22],[22,22]]
+  };
+  (pipPositions[val]||[]).forEach(([px,py])=>{
+    ctx.beginPath();ctx.arc(x+px,y+py,2.6,0,Math.PI*2);ctx.fill();
+  });
+}
+
+function loop(){
+  draw();
+  requestAnimationFrame(loop);
+}
+setup();
+requestAnimationFrame(loop);
+</script></body></html>

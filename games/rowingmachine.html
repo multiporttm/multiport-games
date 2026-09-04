@@ -1,0 +1,206 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rowing Machine</title><meta name="description" content="Play Rowing Machine free online — Alternate the Pull and Recover keys (or tap the two on-screen buttons) in a steady rhythm to build speed and row 500m as fast as you can."><link rel="canonical" href="https://games.multiportllc.com/games/rowingmachine"><meta property="og:title" content="Rowing Machine - Multiport Games"><meta property="og:description" content="Play Rowing Machine free online — Alternate the Pull and Recover keys (or tap the two on-screen buttons) in a steady rhythm to build speed and row 500m as fast as you can."><meta property="og:url" content="https://games.multiportllc.com/games/rowingmachine"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rowing Machine","description":"Play Rowing Machine free online instantly. Alternate the Pull and Recover keys (or tap the two on-screen buttons) in a steady rhythm to build speed and row 500m as fast as you can, racing against two AI competitors. Erratic stroke timing slows you down! No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/rowingmachine","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#01579b,#4fc3f7);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#01579b;background:#e1f5fe;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;border-radius:6px}
+#btnRow{display:flex;gap:10px;justify-content:center;margin-top:10px}
+#btnRow button{flex:1;max-width:180px;padding:14px 0;border:none;border-radius:10px;font-size:1rem;font-weight:800;color:#fff;cursor:pointer;user-select:none;-webkit-user-select:none}
+#pullBtn{background:#0277bd}
+#recoverBtn{background:#00838f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rowing Machine</div>
+  <div class="game-frame">
+    <div id="score-display">Wins: 0 | Best Time: --</div>
+    <canvas id="c" width="800" height="280"></canvas>
+    <div id="btnRow">
+      <button id="pullBtn">PULL (←)</button>
+      <button id="recoverBtn">RECOVER (→)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Alternate <b>Left Arrow (Pull)</b> and <b>Right Arrow (Recover)</b> — or tap the buttons — in a steady rhythm to build boat speed. Keep your stroke timing consistent to race 500m against two rivals; rushed or uneven strokes slow you down!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=280;
+const RACE_LEN=500; // meters
+let hiTime=parseFloat(localStorage.getItem('rowingmachine_hi')||'0')||null;
+let wins=parseInt(localStorage.getItem('rowingmachine_wins')||'0',10);
+
+let boats,lastStroke,started,finished,raceTime,lastTime,strokeIntervals,speed,camX,flashTimer,flashMsg;
+
+function makeBoats(){
+  return [
+    {dist:0,color:'#ffca28',isPlayer:true},
+    {dist:0,color:'#ef5350',aiRhythm:32+Math.random()*10,aiTimer:0,aiJitter:0.06+Math.random()*0.05},
+    {dist:0,color:'#66bb6a',aiRhythm:30+Math.random()*12,aiTimer:0,aiJitter:0.05+Math.random()*0.06},
+  ];
+}
+
+function reset(){
+  boats=makeBoats();
+  lastStroke=null;started=false;finished=false;raceTime=0;lastTime=null;
+  strokeIntervals=[];speed=0;camX=0;flashTimer=0;flashMsg='';
+}
+reset();
+
+function stroke(side){
+  if(finished){reset();return;}
+  if(!started){started=true;lastTime=null;lastStroke=null;}
+  if(side===lastStroke){
+    // wrong phase - must alternate
+    speed=Math.max(0,speed-1.2);
+    flashTimer=25;flashMsg=I18N.t('row_wrong','WRONG PHASE!');
+    SFX.error();
+    return;
+  }
+  const now=performance.now();
+  if(lastStroke!==null&&lastStrokeTime!=null){
+    const dt=(now-lastStrokeTime)/1000;
+    strokeIntervals.push(dt);
+    if(strokeIntervals.length>6)strokeIntervals.shift();
+  }
+  lastStrokeTime=now;
+  lastStroke=side;
+  // consistency bonus: lower variance among recent intervals -> more power
+  let power=6;
+  if(strokeIntervals.length>=3){
+    const avg=strokeIntervals.reduce((a,b)=>a+b,0)/strokeIntervals.length;
+    const variance=strokeIntervals.reduce((a,b)=>a+(b-avg)*(b-avg),0)/strokeIntervals.length;
+    const consistency=Math.max(0,1-variance*20);
+    power=4+consistency*6;
+  }
+  speed=Math.min(14,speed+power*0.6);
+  SFX.jump();
+}
+let lastStrokeTime=null;
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'){e.preventDefault();stroke('P');}
+  else if(e.code==='ArrowRight'){e.preventDefault();stroke('R');}
+});
+document.getElementById('pullBtn').addEventListener('click',()=>stroke('P'));
+document.getElementById('recoverBtn').addEventListener('click',()=>stroke('R'));
+document.getElementById('pullBtn').addEventListener('touchstart',e=>{e.preventDefault();stroke('P');},{passive:false});
+document.getElementById('recoverBtn').addEventListener('touchstart',e=>{e.preventDefault();stroke('R');},{passive:false});
+
+function updateScoreDisplay(){
+  document.getElementById('score-display').textContent=
+    I18N.t('row_score_label','Wins: {w} | Best Time: {t}')
+      .replace('{w}',wins)
+      .replace('{t}',hiTime?hiTime.toFixed(1)+'s':'--');
+}
+
+function drawBoat(b,laneY,label){
+  const sx=Math.min(W-100,80+(b.dist/RACE_LEN)*(W-160));
+  ctx.fillStyle=b.color;
+  ctx.beginPath();
+  ctx.ellipse(sx,laneY,26,10,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#3e2723';
+  ctx.beginPath();ctx.arc(sx-10,laneY-10,7,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText(label,sx,laneY-24);
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+
+  ctx.clearRect(0,0,W,H);
+  const grad=ctx.createLinearGradient(0,0,W,H);
+  grad.addColorStop(0,'#0288d1');grad.addColorStop(1,'#4fc3f7');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+
+  const lanes=[70,140,210];
+  ctx.fillStyle='rgba(255,255,255,0.15)';
+  ctx.fillRect(0,50,W,180);
+  for(let i=1;i<3;i++){
+    ctx.strokeStyle='rgba(255,255,255,0.4)';ctx.lineWidth=2;ctx.setLineDash([10,10]);
+    ctx.beginPath();ctx.moveTo(0,50+i*60);ctx.lineTo(W,50+i*60);ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  if(!started){
+    ctx.fillStyle='#01323d';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('row_start_hint','Alternate Pull/Recover to start!'),W/2,30);
+    boats.forEach((b,i)=>drawBoat(b,50+i*60+30,i===0?I18N.t('row_you_label','YOU'):'CPU'));
+    requestAnimationFrame(loop);return;
+  }
+
+  if(finished){
+    ctx.fillStyle='#01323d';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    const won=boats.every((b,i)=>i===0||b.dist<=boats[0].dist);
+    ctx.fillText(won?I18N.t('row_win','YOU WIN!'):I18N.t('row_lose','YOU LOSE'),W/2,40);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or key to restart'),W/2,66);
+    boats.forEach((b,i)=>drawBoat(b,50+i*60+30,i===0?I18N.t('row_you_label','YOU'):'CPU'));
+    requestAnimationFrame(loop);return;
+  }
+
+  raceTime+=dt/60;
+  if(flashTimer>0)flashTimer-=dt;
+
+  // player drag decay
+  speed=Math.max(0,speed-0.03*dt);
+  boats[0].dist+=speed*0.12*dt;
+
+  // AI
+  boats.forEach((b,i)=>{
+    if(i===0)return;
+    b.aiTimer+=dt;
+    if(b.aiTimer>=b.aiRhythm){
+      b.aiTimer=(Math.random()<b.aiJitter)?-15:0;
+      b.dist+=0.6+Math.random()*0.5;
+    }
+  });
+
+  boats.forEach(b=>{ if(b.dist>RACE_LEN)b.dist=RACE_LEN; });
+
+  boats.forEach((b,i)=>drawBoat(b,50+i*60+30,i===0?I18N.t('row_you_label','YOU'):'CPU'));
+
+  if(flashTimer>0){
+    ctx.fillStyle='rgba(255,0,0,0.6)';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,110);
+  }
+
+  if(boats[0].dist>=RACE_LEN&&!finished){
+    finished=true;
+    const won=boats.every((b,i)=>i===0||b.dist<RACE_LEN);
+    if(won){
+      wins++;
+      localStorage.setItem('rowingmachine_wins',wins);
+      if(hiTime===null||raceTime<hiTime){
+        hiTime=raceTime;
+        localStorage.setItem('rowingmachine_hi',hiTime);
+      }
+      SFX.win();
+    }else{
+      SFX.lose();
+    }
+  } else if(!finished && boats.some((b,i)=>i>0&&b.dist>=RACE_LEN)){
+    finished=true;
+    SFX.lose();
+  }
+
+  ctx.fillStyle='#01323d';ctx.font='bold 14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('row_time_label','Time: {t}s').replace('{t}',raceTime.toFixed(1)),10,240);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('row_dist_label','{d}m / 500m').replace('{d}',Math.floor(boats[0].dist)),W-10,240);
+  ctx.textAlign='left';
+  ctx.fillText(I18N.t('row_speed_label','Speed: {s}').replace('{s}',speed.toFixed(1)),10,260);
+
+  updateScoreDisplay();
+  requestAnimationFrame(loop);
+}
+updateScoreDisplay();
+requestAnimationFrame(loop);
+</script></body></html>

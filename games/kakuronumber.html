@@ -1,0 +1,295 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Kakuro Number Puzzle</title><meta name="description" content="Play Kakuro Number Puzzle free online — Fill in the white cells with digits 1-9 so each run sums to its clue, with no repeated digit in a run, to solve the grid."><link rel="canonical" href="https://games.multiportllc.com/games/kakuronumber"><meta property="og:title" content="Kakuro Number Puzzle - Multiport Games"><meta property="og:description" content="Play Kakuro Number Puzzle free online — Fill in the white cells with digits 1-9 so each run sums to its clue, with no repeated digit in a run, to solve the grid."><meta property="og:url" content="https://games.multiportllc.com/games/kakuronumber"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Kakuro Number Puzzle","description":"Play Kakuro Number Puzzle free online instantly. Fill in the white cells with digits 1-9 so each run sums to its clue, with no repeated digit in a run, to solve the grid. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/kakuronumber","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:16px;text-align:center}
+#status{color:#fff;font-size:1.05rem;font-weight:800;margin:4px 0 10px;min-height:1.5em}
+#grid{display:inline-grid;gap:2px;background:#0b1830;padding:6px;border-radius:8px}
+.cell{width:52px;height:52px;display:flex;align-items:center;justify-content:center;position:relative;border-radius:3px;user-select:none}
+.blocked{background:#1a1a2e}
+.blocked .clue{position:absolute;font-size:.62rem;font-weight:800;color:#90a4ae}
+.blocked .clue.right{right:4px;top:4px}
+.blocked .clue.down{left:4px;bottom:4px}
+.blocked .diag{position:absolute;width:1px;height:70%;background:#37474f;transform:rotate(35deg)}
+.white{background:#eceff1;color:#222;font-weight:900;font-size:1.3rem;cursor:pointer;transition:background .12s}
+.white.sel{background:#90caf9}
+.white.bad{background:#ef9a9a}
+.white.good{background:#a5d6a7}
+#pad{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;margin:14px auto;max-width:340px}
+#pad button{width:44px;height:44px;border:none;border-radius:8px;background:#37474f;color:#fff;font-size:1.15rem;font-weight:800;cursor:pointer}
+#pad button:active{background:#546e7a}
+#pad button.clear{background:#e94560;width:96px}
+#controls{margin-top:6px}
+#controls button{padding:8px 20px;background:#37474f;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;margin:0 4px}
+#stats{color:#90a4ae;font-size:.85rem;margin-top:6px}
+@media(max-width:480px){ #grid .cell{width:42px;height:42px} .white{font-size:1.1rem} }
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Kakuro Number Puzzle</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="status">Select a white cell, then pick a digit</div>
+      <div id="grid"></div>
+      <div id="pad"></div>
+      <div id="controls">
+        <button id="newBtn">New Puzzle</button>
+      </div>
+      <div id="stats">Solved: 0 | Best time: —</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a <b>white cell</b> then click a <b>digit</b> (1-9) to fill it. Every run of consecutive white cells must sum to the clue number shown in the black cell above/left of it, with <b>no digit repeated</b> within a run. Fill the whole grid correctly to win.</div>
+</div>
+<script>
+const N=6; // 6x6 playable grid
+let solution=[]; // solution[r][c] digit or null for blocked
+let blocked=[]; // blocked[r][c] boolean
+let entries=[]; // player entries
+let clues=[]; // clues[r][c] = {right, down} for blocked cells
+let runs=[]; // list of {cells:[[r,c]...], sum}
+let sel=null;
+let solved=0, bestTime=null, startTime=null, timerInt=null, gameActive=false;
+
+solved = parseInt(localStorage.getItem('kakuro_solved')||'0');
+bestTime = localStorage.getItem('kakuro_best') ? parseFloat(localStorage.getItem('kakuro_best')) : null;
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+// Generate a solvable kakuro: start with a random full latin-ish grid of digits 1-9
+// on white cells (border blocked), respecting no-repeat-in-row-run / col-run naturally
+// by construction using a simple backtracking fill honoring run uniqueness.
+function generate(){
+  gameActive=false; clearInterval(timerInt);
+  // layout: first row & first col are blocked (clue headers), rest white,
+  // plus a few random interior blocked cells for variety.
+  blocked = Array.from({length:N},()=>Array(N).fill(false));
+  for(let c=0;c<N;c++)blocked[0][c]=true;
+  for(let r=0;r<N;r++)blocked[r][0]=true;
+  // sprinkle 2-4 extra blocked cells (not adjacent to keep runs>=2, not on edge)
+  let extra=2+Math.floor(Math.random()*3);
+  let tries=0;
+  while(extra>0 && tries<200){
+    tries++;
+    const r=1+Math.floor(Math.random()*(N-1));
+    const c=1+Math.floor(Math.random()*(N-1));
+    if(blocked[r][c])continue;
+    blocked[r][c]=true;
+    extra--;
+  }
+  solution = Array.from({length:N},()=>Array(N).fill(null));
+  // fill white cells with valid latin-square-like values via backtracking honoring runs
+  computeRuns();
+  if(!fillSolution()){ generate(); return; } // retry on rare failure
+  computeClues();
+  entries = Array.from({length:N},()=>Array(N).fill(null));
+  sel=null;
+  startTime=performance.now();
+  timerInt=setInterval(updateTimerDisplay,200);
+  gameActive=true;
+  render();
+  setStatus(I18N.t('kakuro_pick','Select a white cell, then pick a digit'));
+  updateStats();
+}
+
+function computeRuns(){
+  runs=[];
+  // horizontal runs
+  for(let r=0;r<N;r++){
+    let run=[];
+    for(let c=0;c<N;c++){
+      if(!blocked[r][c]){run.push([r,c]);}
+      else{ if(run.length>=2)runs.push({dir:'h',cells:run.slice()}); run=[]; }
+    }
+    if(run.length>=2)runs.push({dir:'h',cells:run.slice()});
+  }
+  // vertical runs
+  for(let c=0;c<N;c++){
+    let run=[];
+    for(let r=0;r<N;r++){
+      if(!blocked[r][c]){run.push([r,c]);}
+      else{ if(run.length>=2)runs.push({dir:'v',cells:run.slice()}); run=[]; }
+    }
+    if(run.length>=2)runs.push({dir:'v',cells:run.slice()});
+  }
+}
+
+function fillSolution(){
+  // simple randomized backtracking: assign digits 1-9 to each white cell respecting
+  // "no repeat within any run containing this cell"
+  const cellList=[];
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(!blocked[r][c])cellList.push([r,c]);
+  function cellRuns(r,c){
+    return runs.filter(run=>run.cells.some(([rr,cc])=>rr===r&&cc===c));
+  }
+  function backtrack(idx){
+    if(idx>=cellList.length)return true;
+    const [r,c]=cellList[idx];
+    const digits=[1,2,3,4,5,6,7,8,9].sort(()=>Math.random()-0.5);
+    const myRuns=cellRuns(r,c);
+    for(const d of digits){
+      let ok=true;
+      for(const run of myRuns){
+        for(const [rr,cc] of run.cells){
+          if((rr!==r||cc!==c) && solution[rr][cc]===d){ok=false;break;}
+        }
+        if(!ok)break;
+        // also cap run length feasibility loosely (sum ranges) - skip for simplicity
+      }
+      if(ok){
+        solution[r][c]=d;
+        if(backtrack(idx+1))return true;
+        solution[r][c]=null;
+      }
+    }
+    return false;
+  }
+  return backtrack(0);
+}
+
+function computeClues(){
+  clues = Array.from({length:N},()=>Array(N).fill(null));
+  runs.forEach(run=>{
+    const sum=run.cells.reduce((a,[r,c])=>a+solution[r][c],0);
+    const [r0,c0]=run.cells[0];
+    if(run.dir==='h'){
+      const hr=r0, hc=c0-1;
+      if(!clues[hr][hc])clues[hr][hc]={};
+      clues[hr][hc].right=sum;
+    } else {
+      const hr=r0-1, hc=c0;
+      if(!clues[hr][hc])clues[hr][hc]={};
+      clues[hr][hc].down=sum;
+    }
+  });
+}
+
+function render(){
+  const grid=document.getElementById('grid');
+  grid.style.gridTemplateColumns=`repeat(${N},52px)`;
+  grid.innerHTML='';
+  for(let r=0;r<N;r++){
+    for(let c=0;c<N;c++){
+      const div=document.createElement('div');
+      div.className='cell';
+      if(blocked[r][c]){
+        div.classList.add('blocked');
+        const cl=clues[r][c];
+        div.innerHTML='<div class="diag"></div>';
+        if(cl&&cl.right!=null){
+          const s=document.createElement('div');s.className='clue right';s.textContent=cl.right;div.appendChild(s);
+        }
+        if(cl&&cl.down!=null){
+          const s=document.createElement('div');s.className='clue down';s.textContent=cl.down;div.appendChild(s);
+        }
+      } else {
+        div.classList.add('white');
+        const val=entries[r][c];
+        div.textContent=val||'';
+        if(sel&&sel[0]===r&&sel[1]===c)div.classList.add('sel');
+        div.onclick=()=>selectCell(r,c);
+      }
+      grid.appendChild(div);
+    }
+  }
+  renderPad();
+}
+
+function renderPad(){
+  const pad=document.getElementById('pad');
+  pad.innerHTML='';
+  for(let d=1;d<=9;d++){
+    const b=document.createElement('button');
+    b.textContent=d;
+    b.onclick=()=>placeDigit(d);
+    pad.appendChild(b);
+  }
+  const clr=document.createElement('button');
+  clr.textContent=I18N.t('kakuro_clear','Clear');
+  clr.className='clear';
+  clr.onclick=()=>placeDigit(null);
+  pad.appendChild(clr);
+}
+
+function selectCell(r,c){
+  if(!gameActive)return;
+  sel=[r,c];
+  SFX.select();
+  render();
+}
+
+function placeDigit(d){
+  if(!gameActive||!sel)return;
+  const [r,c]=sel;
+  entries[r][c]=d;
+  SFX.click();
+  render();
+  checkComplete();
+}
+
+document.addEventListener('keydown',e=>{
+  if(!gameActive||!sel)return;
+  if(e.key>='1'&&e.key<='9'){placeDigit(parseInt(e.key));}
+  else if(e.key==='Backspace'||e.key==='Delete'||e.key==='0'){placeDigit(null);}
+});
+
+function checkComplete(){
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++){
+    if(!blocked[r][c] && entries[r][c]==null)return;
+  }
+  // full — verify all runs
+  let ok=true;
+  for(const run of runs){
+    const vals=run.cells.map(([r,c])=>entries[r][c]);
+    const sum=vals.reduce((a,b)=>a+b,0);
+    const uniq=new Set(vals);
+    const [r0,c0]=run.cells[0];
+    const clueVal = run.dir==='h'?clues[r0][c0-1].right:clues[r0-1][c0].down;
+    if(sum!==clueVal||uniq.size!==vals.length){ok=false;break;}
+  }
+  markResult(ok);
+}
+
+function markResult(ok){
+  gameActive=false;
+  clearInterval(timerInt);
+  const elapsed=(performance.now()-startTime)/1000;
+  document.querySelectorAll('.white').forEach(el=>el.classList.add(ok?'good':'bad'));
+  if(ok){
+    SFX.win();
+    solved++;
+    localStorage.setItem('kakuro_solved',solved);
+    if(bestTime==null||elapsed<bestTime){
+      bestTime=elapsed;
+      localStorage.setItem('kakuro_best',bestTime);
+    }
+    setStatus(I18N.t('kakuro_solved_msg','Solved! ')+elapsed.toFixed(1)+'s — '+I18N.t('kakuro_new_hint','click New Puzzle for another'));
+  } else {
+    SFX.fail();
+    setStatus(I18N.t('kakuro_wrong','Not quite right — check the highlighted cells, or start a New Puzzle'));
+    gameActive=true; // allow continuing to fix
+    setTimeout(()=>{ document.querySelectorAll('.white').forEach(el=>el.classList.remove('bad')); },900);
+  }
+  updateStats();
+}
+
+function updateTimerDisplay(){
+  if(!gameActive)return;
+  const elapsed=(performance.now()-startTime)/1000;
+  updateStats(elapsed);
+}
+
+function updateStats(liveElapsed){
+  const bestStr = bestTime!=null ? bestTime.toFixed(1)+'s' : '—';
+  const liveStr = liveElapsed!=null ? ' | '+I18N.t('kakuro_time','Time: {t}s').replace('{t}',liveElapsed.toFixed(1)) : '';
+  document.getElementById('stats').textContent = I18N.t('kakuro_stats','Solved: {n} | Best time: {b}').replace('{n}',solved).replace('{b}',bestStr) + liveStr;
+}
+
+document.getElementById('newBtn').onclick=()=>{ SFX.click(); generate(); };
+
+generate();
+</script></body></html>

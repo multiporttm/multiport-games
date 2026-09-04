@@ -1,0 +1,243 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Watchmaking</title><meta name="description" content="Play Watchmaking free online — Study the assembly diagram, then click the parts tray in the exact correct order to build the watch before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/watchmaking"><meta property="og:title" content="Watchmaking - Multiport Games"><meta property="og:description" content="Play Watchmaking free online — Study the assembly diagram, then click the parts tray in the exact correct order to build the watch before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/watchmaking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Watchmaking","description":"Play Watchmaking free online instantly. Study the assembly diagram, then click the parts tray in the exact correct order to build the watch before time runs out. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/watchmaking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#1c1508;border-radius:14px;padding:16px;text-align:center}
+#hud{display:flex;justify-content:space-between;align-items:center;max-width:460px;margin:0 auto 8px;color:#fff;font-weight:800;font-size:.95rem}
+#lives{color:#ff6b6b}
+#timerBarOuter{max-width:460px;margin:0 auto 10px;height:10px;background:#33260f;border-radius:6px;overflow:hidden}
+#timerBar{height:100%;background:linear-gradient(90deg,#d4af37,#f4d160);width:100%;transition:width .2s linear}
+#diagram{display:flex;flex-wrap:wrap;justify-content:center;gap:6px;max-width:480px;margin:0 auto 12px}
+.dpart{background:#33260f;border:2px solid #6b5525;border-radius:10px;padding:6px 8px;color:#f4d160;font-size:.78rem;font-weight:700;min-width:64px;display:flex;flex-direction:column;align-items:center;gap:2px}
+.dpart .num{background:#f4d160;color:#1c1508;border-radius:50%;width:18px;height:18px;font-size:.7rem;display:flex;align-items:center;justify-content:center;font-weight:900}
+.dpart.done{border-color:#4caf50;background:#1a3320;color:#a5d6a7}
+.dpart .emo{font-size:1.3rem}
+canvas#c{background:radial-gradient(circle,#2a2110,#120d05);border-radius:12px;display:block;margin:0 auto}
+#status{color:#fff;font-size:1rem;font-weight:800;margin:8px 0;min-height:1.5em}
+#tray{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;max-width:480px;margin:10px auto}
+#tray button{background:#33260f;border:2px solid #6b5525;border-radius:10px;padding:8px 10px;color:#f4d160;font-size:.85rem;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:70px}
+#tray button:active{transform:scale(.94)}
+#tray button:disabled{opacity:.25;cursor:default}
+#tray button .emo{font-size:1.5rem}
+#stats{color:#c9b17a;font-size:.85rem;margin-top:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Watchmaking</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span>Watch #<span id="watchNum">1</span></span><span id="lives">❤️❤️❤️</span></div>
+      <div id="timerBarOuter"><div id="timerBar"></div></div>
+      <div id="diagram"></div>
+      <canvas id="c" width="280" height="280"></canvas>
+      <div id="status">Click the parts below in the exact order shown in the diagram above</div>
+      <div id="tray"></div>
+      <div id="stats">Watches assembled: 0 | Best: 0</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Study the numbered <b>assembly diagram</b>, then click the parts in the <b>tray</b> in that exact order before the timer runs out. A wrong part resets the attempt and costs a life; running out of time does too. Complete the watch to score a point and move to a harder watch with more parts. Lose all your lives and the game ends.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const ALL_PARTS=[
+  {name:'Mainspring',emo:'🌀'},{name:'Gear Train',emo:'⚙️'},{name:'Escapement',emo:'🔻'},
+  {name:'Balance Wheel',emo:'🎡'},{name:'Jewels',emo:'💎'},{name:'Dial',emo:'🕐'},
+  {name:'Hands',emo:'🧭'},{name:'Crown',emo:'👑'},{name:'Crystal',emo:'🔵'},
+  {name:'Case',emo:'📦'},{name:'Winding Stem',emo:'🔧'},{name:'Barrel',emo:'🛢️'}
+];
+const MAX_LIVES=3;
+let level=1, lives=MAX_LIVES, assembled=0, best=0;
+let sequence=[], trayOrder=[], progress=0, timeLeft=0, timeTotal=0, timerId=null, active=false, gameOver=false;
+
+assembled = parseInt(localStorage.getItem('watchmaking_assembled')||'0');
+best = parseInt(localStorage.getItem('watchmaking_best')||'0');
+
+function shuffle(arr){ const a=arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+function partsCountForLevel(lv){ return Math.min(4+Math.floor((lv-1)/1),10); }
+
+function startWatch(){
+  const n = partsCountForLevel(level);
+  const pool = shuffle(ALL_PARTS.slice()).slice(0,n);
+  sequence = pool; // order in `pool` (already shuffled) is the correct assembly order
+  trayOrder = shuffle(pool);
+  progress = 0;
+  timeTotal = Math.max(10, 7*n - level*0.6);
+  timeLeft = timeTotal;
+  active = true;
+  gameOver = false;
+  renderDiagram();
+  renderTray();
+  drawWatch();
+  updateHud();
+  setStatus(I18N.t('wm_go','Assemble the watch in order!'));
+  clearInterval(timerId);
+  timerId = setInterval(tick, 100);
+}
+
+function tick(){
+  if(!active)return;
+  timeLeft -= 0.1;
+  updateTimerBar();
+  if(timeLeft<=0){
+    timeLeft=0;
+    updateTimerBar();
+    onFail(I18N.t('wm_timeout','Out of time!'));
+  }
+}
+
+function updateTimerBar(){
+  const pct = Math.max(0, (timeLeft/timeTotal)*100);
+  document.getElementById('timerBar').style.width = pct+'%';
+}
+
+function renderDiagram(){
+  const el=document.getElementById('diagram');
+  el.innerHTML='';
+  sequence.forEach((p,i)=>{
+    const d=document.createElement('div');
+    d.className='dpart'+(i<progress?' done':'');
+    d.innerHTML=`<div class="num">${i+1}</div><div class="emo">${p.emo}</div><div>${p.name}</div>`;
+    el.appendChild(d);
+  });
+}
+
+function renderTray(){
+  const el=document.getElementById('tray');
+  el.innerHTML='';
+  trayOrder.forEach(p=>{
+    const b=document.createElement('button');
+    b.innerHTML=`<span class="emo">${p.emo}</span><span>${p.name}</span>`;
+    b.onclick=()=>attemptPart(p, b);
+    el.appendChild(b);
+  });
+}
+
+function attemptPart(p, btn){
+  if(!active)return;
+  const expected = sequence[progress];
+  if(p.name===expected.name){
+    SFX.click();
+    progress++;
+    btn.disabled=true;
+    renderDiagram();
+    drawWatch();
+    if(progress>=sequence.length){
+      onWatchComplete();
+    } else {
+      setStatus(I18N.t('wm_good','Correct! Next part...'));
+    }
+  } else {
+    onFail(I18N.t('wm_wrong','Wrong part — attempt reset!'));
+  }
+}
+
+function onFail(msg){
+  if(!active)return;
+  active=false;
+  clearInterval(timerId);
+  SFX.hit();
+  lives--;
+  updateHud();
+  setStatus(msg);
+  if(lives<=0){
+    endGame();
+    return;
+  }
+  setTimeout(()=>{
+    // retry same watch: reset progress, reshuffle tray, fresh timer
+    progress=0;
+    trayOrder = shuffle(sequence);
+    timeLeft = timeTotal;
+    active = true;
+    renderDiagram();
+    renderTray();
+    drawWatch();
+    updateTimerBar();
+    setStatus(I18N.t('wm_retry','Try again from the start!'));
+    clearInterval(timerId);
+    timerId=setInterval(tick,100);
+  },1200);
+}
+
+function onWatchComplete(){
+  active=false;
+  clearInterval(timerId);
+  SFX.win();
+  assembled++;
+  level++;
+  localStorage.setItem('watchmaking_assembled',assembled);
+  if(assembled>best){ best=assembled; localStorage.setItem('watchmaking_best',best); }
+  updateHud();
+  updateStats();
+  setStatus(I18N.t('wm_complete','Watch assembled! Next watch...'));
+  setTimeout(()=>{ startWatch(); },1400);
+}
+
+function endGame(){
+  gameOver=true;
+  clearInterval(timerId);
+  SFX.lose();
+  setStatus(I18N.t('wm_gameover','Game Over! Watches assembled: {n}').replace('{n}',assembled));
+  updateStats();
+  const el=document.getElementById('tray');
+  el.innerHTML='';
+  const b=document.createElement('button');
+  b.textContent=I18N.t('wm_restart','Play Again');
+  b.style.minWidth='140px';
+  b.onclick=()=>{
+    level=1; lives=MAX_LIVES;
+    updateHud();
+    startWatch();
+  };
+  el.appendChild(b);
+}
+
+function updateHud(){
+  document.getElementById('watchNum').textContent = assembled+1;
+  document.getElementById('lives').textContent = '❤️'.repeat(Math.max(0,lives));
+}
+
+function updateStats(){
+  document.getElementById('stats').textContent = I18N.t('wm_stats','Watches assembled: {n} | Best: {b}').replace('{n}',assembled).replace('{b}',best);
+}
+
+function setStatus(t){ document.getElementById('status').textContent=t; }
+
+function drawWatch(){
+  ctx.clearRect(0,0,280,280);
+  const cx=140,cy=140;
+  // case
+  ctx.beginPath(); ctx.arc(cx,cy,110,0,Math.PI*2); ctx.fillStyle='#3a2c14'; ctx.fill();
+  ctx.lineWidth=6; ctx.strokeStyle='#6b5525'; ctx.stroke();
+  // face
+  ctx.beginPath(); ctx.arc(cx,cy,92,0,Math.PI*2); ctx.fillStyle='#12100a'; ctx.fill();
+  // assembled parts placed around inner circle
+  const n=sequence.length;
+  for(let i=0;i<progress;i++){
+    const ang = (i/n)*Math.PI*2 - Math.PI/2;
+    const px = cx + 62*Math.cos(ang);
+    const py = cy + 62*Math.sin(ang);
+    ctx.font='26px serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(sequence[i].emo, px, py);
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(px,py); ctx.strokeStyle='#f4d16055'; ctx.lineWidth=2; ctx.stroke();
+  }
+  // center hub
+  ctx.beginPath(); ctx.arc(cx,cy,10,0,Math.PI*2);
+  ctx.fillStyle = progress>=n? '#f4d160':'#555';
+  ctx.fill();
+  if(progress>=n){
+    ctx.font='bold 15px Arial'; ctx.fillStyle='#f4d160';
+    ctx.fillText(I18N.t('wm_done_label','DONE'), cx, cy+30);
+  }
+}
+
+updateStats();
+startWatch();
+</script></body></html>

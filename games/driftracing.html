@@ -1,0 +1,233 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Drift Racing</title><meta name="description" content="Play Drift Racing free online — Use Arrow Keys or WASD to drive, hold Shift as the handbrake to slide through corners for style points, and race the clock to complete laps."><link rel="canonical" href="https://games.multiportllc.com/games/driftracing"><meta property="og:title" content="Drift Racing - Multiport Games"><meta property="og:description" content="Play Drift Racing free online — Use Arrow Keys or WASD to drive, hold Shift as the handbrake to slide through corners for style points, and race the clock to complete laps."><meta property="og:url" content="https://games.multiportllc.com/games/driftracing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Drift Racing","description":"Play Drift Racing free online instantly. Use Arrow Keys or WASD to drive, hold Shift as the handbrake to slide through corners for style points, and race the clock to complete laps. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/driftracing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(135deg,#1b5e20,#0d47a1);display:block;border-radius:8px;touch-action:none}
+#score-display{color:#90caf9;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#drift-controls{display:flex;justify-content:center;gap:10px;margin-top:8px}
+#drift-controls button{padding:10px 20px;border:none;border-radius:20px;background:#0d47a1;color:#fff;font-weight:700;font-size:.95rem;cursor:pointer;user-select:none}
+#drift-controls button:active{transform:scale(.95)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Drift Racing</div>
+  <div class="game-frame">
+    <div id="score-display">Lap: 0/3 | Time: 0.0s | Combo: 0</div>
+    <canvas id="c" width="800" height="500"></canvas>
+    <div id="drift-controls">
+      <button id="leftBtn">◀ TURN</button>
+      <button id="brakeBtn">HANDBRAKE</button>
+      <button id="rightBtn">TURN ▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> or <b>WASD</b> to steer and accelerate. Hold <b>Shift</b> (or the <b>HANDBRAKE</b> button) while turning to drift through corners — stay on the track while sliding to rack up drift combo points. Complete 3 laps as fast as you can!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+let hiLap=parseFloat(localStorage.getItem('driftracing_hi_lap')||'0');
+let hiCombo=parseInt(localStorage.getItem('driftracing_hi_combo')||'0',10);
+
+// Track: a loop made of centerline points, with a fixed track half-width
+const trackPts=[
+  [150,400],[120,250],[180,120],[350,80],[500,120],[560,220],[500,300],
+  [420,320],[380,260],[300,240],[250,300],[280,400],[400,450],[560,440],
+  [680,380],[700,260],[650,140],[500,60],[300,50],[150,90],[70,200],[70,350],[150,400]
+];
+const trackHalfW=55;
+
+let car,keys={},started=false,finished=false;
+let lap=0,raceTime=0,lastTime=null,combo=0,comboActive=false,bestLapThis=Infinity;
+let checkpointIdx=0,lapStartTime=0;
+let particles=[];
+
+function resetCar(){
+  car={x:trackPts[0][0],y:trackPts[0][1]-0,angle:Math.atan2(trackPts[1][1]-trackPts[0][1],trackPts[1][0]-trackPts[0][0]),
+    speed:0,vx:0,vy:0,driftAngle:0,drifting:false};
+  lap=0;raceTime=0;lastTime=null;combo=0;comboActive=false;checkpointIdx=1;started=false;finished=false;lapStartTime=0;bestLapThis=Infinity;
+}
+
+function nearestSegDist(px,py){
+  let best=Infinity,bestIdx=0;
+  for(let i=0;i<trackPts.length-1;i++){
+    const [x1,y1]=trackPts[i],[x2,y2]=trackPts[i+1];
+    const dx=x2-x1,dy=y2-y1;
+    const len2=dx*dx+dy*dy;
+    let t=len2? ((px-x1)*dx+(py-y1)*dy)/len2 : 0;
+    t=Math.max(0,Math.min(1,t));
+    const cx=x1+t*dx,cy=y1+t*dy;
+    const d=Math.hypot(px-cx,py-cy);
+    if(d<best){best=d;bestIdx=i;}
+  }
+  return {dist:best,idx:bestIdx};
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(!started)started=true;
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function bindHold(id,key){
+  const el=document.getElementById(id);
+  const on=ev=>{ev.preventDefault();keys[key]=true;if(!started)started=true;};
+  const off=ev=>{ev.preventDefault();keys[key]=false;};
+  el.addEventListener('mousedown',on);el.addEventListener('mouseup',off);el.addEventListener('mouseleave',off);
+  el.addEventListener('touchstart',on,{passive:false});el.addEventListener('touchend',off,{passive:false});
+}
+bindHold('leftBtn','arrowleft');
+bindHold('rightBtn','arrowright');
+bindHold('brakeBtn','shift');
+c.addEventListener('touchstart',()=>{if(!started)started=true;},{passive:true});
+
+function drawTrack(){
+  ctx.lineWidth=trackHalfW*2;
+  ctx.strokeStyle='#333';
+  ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();
+  ctx.moveTo(trackPts[0][0],trackPts[0][1]);
+  for(let i=1;i<trackPts.length;i++)ctx.lineTo(trackPts[i][0],trackPts[i][1]);
+  ctx.stroke();
+  ctx.lineWidth=trackHalfW*2-8;
+  ctx.strokeStyle='#4a4a4a';
+  ctx.stroke();
+  // start/finish line
+  ctx.lineWidth=4;ctx.strokeStyle='#fff';
+  ctx.setLineDash([8,8]);
+  ctx.beginPath();
+  ctx.moveTo(trackPts[0][0]-trackHalfW,trackPts[0][1]);
+  ctx.lineTo(trackPts[0][0]+trackHalfW,trackPts[0][1]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawCar(){
+  ctx.save();
+  ctx.translate(car.x,car.y);
+  ctx.rotate(car.angle+car.driftAngle*0.4);
+  ctx.fillStyle=comboActive?'#ffca28':'#e53935';
+  ctx.fillRect(-12,-7,24,14);
+  ctx.fillStyle='#212121';
+  ctx.fillRect(-6,-8,10,16);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#1b5e20');bg.addColorStop(1,'#0d47a1');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  drawTrack();
+
+  if(finished){
+    drawCar();
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('dr_finish_title','RACE COMPLETE!'),400,220);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('dr_time_result','Total time: {t}s').replace('{t}',raceTime.toFixed(1)),400,256);
+    ctx.fillText(I18N.t('dr_combo_result','Best drift combo: {c}').replace('{c}',hiCombo),400,286);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press any key to restart'),400,320);
+    updateHUD();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('dr_start_hint','Press Arrow Keys / WASD to start driving'),400,250);
+    drawCar();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  raceTime+=dt/60;
+
+  const accel=keys['arrowup']||keys['w'];
+  const brake=keys['arrowdown']||keys['s'];
+  const left=keys['arrowleft']||keys['a'];
+  const right=keys['arrowright']||keys['d'];
+  const handbrake=keys['shift']||keys['arrowleft']&&keys['arrowright'];
+
+  if(accel)car.speed=Math.min(car.speed+0.18*dt,6.5);
+  else if(brake)car.speed=Math.max(car.speed-0.25*dt,-2.5);
+  else car.speed*=Math.pow(0.99,dt);
+
+  const turnRate=(0.045+Math.min(Math.abs(car.speed)/6.5,1)*0.01)*dt;
+  const drifting=handbrake&&(left||right)&&Math.abs(car.speed)>1.5;
+  if(left)car.angle-=turnRate*(drifting?1.6:1);
+  if(right)car.angle+=turnRate*(drifting?1.6:1);
+
+  // drift physics: velocity lags behind facing angle when drifting
+  const targetVx=Math.cos(car.angle)*car.speed;
+  const targetVy=Math.sin(car.angle)*car.speed;
+  const lerp=drifting?0.06:0.35;
+  car.vx+=(targetVx-car.vx)*lerp*dt;
+  car.vy+=(targetVy-car.vy)*lerp*dt;
+  car.driftAngle=Math.atan2(car.vy,car.vx)-car.angle;
+
+  car.x+=car.vx*dt;
+  car.y+=car.vy*dt;
+
+  const {dist,idx}=nearestSegDist(car.x,car.y);
+  const onTrack=dist<trackHalfW-8;
+
+  if(!onTrack){
+    car.speed*=0.9;
+    if(comboActive){comboActive=false;combo=0;SFX.error();}
+  } else if(drifting){
+    if(!car.wasD){SFX.swoosh();}
+    combo+=Math.round(1*dt);
+    comboActive=true;
+  } else if(comboActive){
+    // clean exit from drift while on track: bank the combo
+    if(combo>0){SFX.point();}
+    if(combo>hiCombo){hiCombo=combo;localStorage.setItem('driftracing_hi_combo',String(hiCombo));}
+    comboActive=false;
+  }
+  car.wasD=drifting;
+
+  // lap detection: crossing near start point after having gone around (idx wrapped)
+  if(idx>trackPts.length-4)checkpointIdx=Math.max(checkpointIdx,idx);
+  if(checkpointIdx>trackPts.length-4 && idx<3 && dist<trackHalfW){
+    const lapTime=raceTime-lapStartTime;
+    lapStartTime=raceTime;
+    lap++;
+    checkpointIdx=1;
+    SFX.levelup();
+    if(lapTime<bestLapThis)bestLapThis=lapTime;
+    if(lap>=3){
+      finished=true;
+      if(hiLap===0||raceTime<hiLap){hiLap=raceTime;localStorage.setItem('driftracing_hi_lap',String(hiLap));}
+      SFX.win();
+    }
+  }
+
+  drawCar();
+  updateHUD();
+  requestAnimationFrame(loop);
+}
+
+function updateHUD(){
+  document.getElementById('score-display').textContent=
+    I18N.t('dr_hud_label','Lap: {l}/3 | Time: {t}s | Combo: {c} | Best Lap Time: {b}')
+      .replace('{l}',lap).replace('{t}',raceTime.toFixed(1)).replace('{c}',combo)
+      .replace('{b}',hiLap>0?hiLap.toFixed(1)+'s':'--');
+}
+
+document.addEventListener('keydown',()=>{ if(finished){resetCar();} },{capture:true});
+c.addEventListener('click',()=>{ if(finished)resetCar(); });
+c.addEventListener('touchstart',()=>{ if(finished)resetCar(); },{passive:true});
+
+resetCar();
+loop();
+</script></body></html>

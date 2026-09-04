@@ -1,0 +1,327 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Plumbing Pipes</title><meta name="description" content="Play Plumbing Pipes free online — Click pipe tiles to rotate them, connect the water source to the drain with a continuous path, then click Start Flow to test your solution."><link rel="canonical" href="https://games.multiportllc.com/games/plumbingpipes"><meta property="og:title" content="Plumbing Pipes - Multiport Games"><meta property="og:description" content="Play Plumbing Pipes free online — Click pipe tiles to rotate them, connect the water source to the drain with a continuous path, then click Start Flow to test your solution."><meta property="og:url" content="https://games.multiportllc.com/games/plumbingpipes"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Plumbing Pipes","description":"Play Plumbing Pipes free online instantly. Click pipe tiles to rotate them, connect the water source to the drain with a continuous path, then click Start Flow to test your solution. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/plumbingpipes","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#37474f;display:block;border-radius:8px;touch-action:manipulation}
+#score-display{color:#80deea;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#pipe-controls{display:flex;justify-content:center;margin-top:8px}
+#pipe-controls button{padding:10px 26px;border:none;border-radius:20px;background:#00acc1;color:#fff;font-weight:800;font-size:1rem;cursor:pointer}
+#pipe-controls button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Plumbing Pipes</div>
+  <div class="game-frame">
+    <div id="score-display">Level: 1 | Score: 0 | Best Time: --</div>
+    <canvas id="c" width="480" height="480"></canvas>
+    <div id="pipe-controls">
+      <button id="flowBtn">Start Flow</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click any pipe tile to <b>rotate</b> it 90°. Connect the blue water source to the orange drain with a continuous, unbroken pipe path, then click <b>Start Flow</b> to test it. Solve it to advance to a larger, trickier grid!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+let level=1,score=0,bestTime=parseFloat(localStorage.getItem('plumbingpipes_besttime')||'0');
+let gridSize=4,cell=0,grid=[],src={},dst={};
+let flowing=false,flowProgress=0,flowPath=[],solvedThisLevel=false;
+let levelStartTime=performance.now();
+
+// Pipe type connections defined by which of N,E,S,W sides are open, as a base
+// rotation is 0..3 (each 90deg). types: 'straight' (N,S), 'elbow' (N,E), 't' (N,E,S)
+const BASE_CONN={
+  straight:[true,false,true,false], // N,E,S,W
+  elbow:[true,true,false,false],
+  t:[true,true,true,false]
+};
+function rotateConn(base,rot){
+  const out=[false,false,false,false];
+  for(let i=0;i<4;i++)out[(i+rot)%4]=base[i];
+  return out;
+}
+function tileConn(tile){
+  return rotateConn(BASE_CONN[tile.type],tile.rot);
+}
+
+const DX=[0,1,0,-1],DY=[-1,0,1,0],OPP=[2,3,0,1];
+
+function genLevel(){
+  gridSize=Math.min(4+Math.floor((level-1)/2),8);
+  cell=Math.floor(440/gridSize);
+  const offsetPad=(480-cell*gridSize)/2;
+  grid=[];
+  for(let y=0;y<gridSize;y++){
+    const row=[];
+    for(let x=0;x<gridSize;x++)row.push(null);
+    grid.push(row);
+  }
+  // pick source and dest at opposite-ish corners
+  src={x:0,y:Math.floor(Math.random()*gridSize)};
+  dst={x:gridSize-1,y:Math.floor(Math.random()*gridSize)};
+
+  // build a guaranteed random path from src to dst via random walk with backtracking (self-avoiding)
+  let path=null;
+  for(let attempt=0;attempt<50&&!path;attempt++)path=buildPath();
+  if(!path){ // fallback straight-ish path
+    path=[[src.x,src.y],[dst.x,dst.y]];
+  }
+
+  // mark path cells with correct connections (based on neighbors in path), everything else random pipe junk
+  const pathSet=new Set(path.map(p=>p[0]+','+p[1]));
+  for(let y=0;y<gridSize;y++){
+    for(let x=0;x<gridSize;x++){
+      const idx=path.findIndex(p=>p[0]===x&&p[1]===y);
+      if(idx>=0){
+        const dirsOpen=[false,false,false,false];
+        if(idx>0){
+          const [px,py]=path[idx-1];
+          const d=dirFromDelta(px-x,py-y);
+          dirsOpen[d]=true;
+        }
+        if(idx<path.length-1){
+          const [nx,ny]=path[idx+1];
+          const d=dirFromDelta(nx-x,ny-y);
+          dirsOpen[d]=true;
+        }
+        const openCount=dirsOpen.filter(Boolean).length;
+        let type= openCount<=1 ? 'elbow' : (isStraight(dirsOpen)?'straight':'elbow');
+        if(openCount===1){ // endpoint (source/dest) - use elbow-ish stub, treat as straight with only one used side (still fine visually)
+          type='straight';
+        }
+        const {type:t2,rot}=matchTypeRot(dirsOpen);
+        grid[y][x]={type:t2,rot,scrambleRot:Math.floor(Math.random()*4)};
+      } else {
+        const types=['straight','elbow','t'];
+        const type=types[Math.floor(Math.random()*types.length)];
+        grid[y][x]={type,rot:Math.floor(Math.random()*4),scrambleRot:Math.floor(Math.random()*4)};
+      }
+    }
+  }
+  // scramble rotations of path tiles too, so the player must solve them
+  for(const [x,y] of path){
+    grid[y][x].rot=grid[y][x].scrambleRot;
+  }
+  flowing=false;flowProgress=0;flowPath=[];solvedThisLevel=false;
+  levelStartTime=performance.now();
+  document.getElementById('flowBtn').disabled=false;
+}
+
+function dirFromDelta(dx,dy){
+  if(dx===1)return 1;if(dx===-1)return 3;if(dy===1)return 2;return 0;
+}
+function isStraight(dirsOpen){
+  return (dirsOpen[0]&&dirsOpen[2]&&!dirsOpen[1]&&!dirsOpen[3])||(dirsOpen[1]&&dirsOpen[3]&&!dirsOpen[0]&&!dirsOpen[2]);
+}
+function matchTypeRot(dirsOpen){
+  // find base type+rot combo that matches dirsOpen exactly (padding endpoint single-openings to a straight/elbow shape)
+  const openIdx=dirsOpen.map((v,i)=>v?i:-1).filter(i=>i>=0);
+  let want=dirsOpen.slice();
+  if(openIdx.length===1){
+    // endpoint stub: fabricate a second opening opposite for a straight pipe look, purely cosmetic
+    want[OPP[openIdx[0]]]=true;
+  }
+  for(const type of ['straight','elbow','t']){
+    for(let rot=0;rot<4;rot++){
+      const conn=rotateConn(BASE_CONN[type],rot);
+      if(conn.every((v,i)=>v===want[i]))return {type,rot};
+    }
+  }
+  return {type:'elbow',rot:0};
+}
+
+function buildPath(){
+  const visited=new Set();
+  const path=[[src.x,src.y]];
+  visited.add(src.x+','+src.y);
+  function step(x,y){
+    if(x===dst.x&&y===dst.y)return true;
+    const dirs=[0,1,2,3].sort(()=>Math.random()-0.5);
+    for(const d of dirs){
+      const nx=x+DX[d],ny=y+DY[d];
+      if(nx<0||ny<0||nx>=gridSize||ny>=gridSize)continue;
+      const key=nx+','+ny;
+      if(visited.has(key))continue;
+      // bias toward moving generally toward dst to avoid absurdly long paths
+      if(Math.random()<0.15 && Math.abs(nx-dst.x)+Math.abs(ny-dst.y) > Math.abs(x-dst.x)+Math.abs(y-dst.y)+2) continue;
+      visited.add(key);
+      path.push([nx,ny]);
+      if(step(nx,ny))return true;
+      path.pop();
+      visited.delete(key);
+    }
+    return false;
+  }
+  return step(src.x,src.y)?path:null;
+}
+
+function cellCenter(x,y){
+  const offsetPad=(480-cell*gridSize)/2;
+  return [offsetPad+x*cell+cell/2, offsetPad+y*cell+cell/2];
+}
+
+function drawPipeTile(tile,cx,cy,highlight){
+  const conn=tileConn(tile);
+  ctx.save();
+  ctx.strokeStyle=highlight?'#4fc3f7':'#b0bec5';
+  ctx.lineWidth=Math.max(6,cell*0.22);
+  ctx.lineCap='round';
+  const r=cell*0.42;
+  for(let d=0;d<4;d++){
+    if(conn[d]){
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      const ex=cx+DX[d]*r, ey=cy+DY[d]*r;
+      ctx.lineTo(ex,ey);
+      ctx.stroke();
+    }
+  }
+  ctx.fillStyle=highlight?'#4fc3f7':'#90a4ae';
+  ctx.beginPath();ctx.arc(cx,cy,cell*0.12,0,7);ctx.fill();
+  ctx.restore();
+}
+
+function connected(x,y,d){
+  const conn=tileConn(grid[y][x]);
+  return conn[d];
+}
+
+function computeFlowPath(){
+  // BFS from src to dst using actual current rotations, requiring bidirectional connection
+  const q=[[src.x,src.y]];
+  const prev=new Map();
+  const visited=new Set([src.x+','+src.y]);
+  while(q.length){
+    const [x,y]=q.shift();
+    if(x===dst.x&&y===dst.y){
+      const path=[];
+      let cur=[x,y];
+      while(cur){path.unshift(cur);cur=prev.get(cur[0]+','+cur[1]);}
+      return path;
+    }
+    for(let d=0;d<4;d++){
+      if(!connected(x,y,d))continue;
+      const nx=x+DX[d],ny=y+DY[d];
+      if(nx<0||ny<0||nx>=gridSize||ny>=gridSize)continue;
+      if(!connected(nx,ny,OPP[d]))continue;
+      const key=nx+','+ny;
+      if(visited.has(key))continue;
+      visited.add(key);
+      prev.set(key,[x,y]);
+      q.push([nx,ny]);
+    }
+  }
+  return null;
+}
+
+c.addEventListener('click',e=>{
+  if(flowing)return;
+  const r=c.getBoundingClientRect();
+  const mx=(e.clientX-r.left)*(c.width/r.width);
+  const my=(e.clientY-r.top)*(c.height/r.height);
+  const offsetPad=(480-cell*gridSize)/2;
+  const gx=Math.floor((mx-offsetPad)/cell);
+  const gy=Math.floor((my-offsetPad)/cell);
+  if(gx<0||gy<0||gx>=gridSize||gy>=gridSize)return;
+  grid[gy][gx].rot=(grid[gy][gx].rot+1)%4;
+  SFX.click();
+});
+
+document.getElementById('flowBtn').addEventListener('click',startFlow);
+
+function startFlow(){
+  if(flowing)return;
+  const path=computeFlowPath();
+  if(!path){
+    SFX.error();
+    flashMsg=I18N.t('pp_not_connected','Not connected yet — keep rotating!');
+    flashTimer=90;
+    return;
+  }
+  flowPath=path;
+  flowing=true;
+  flowProgress=0;
+  document.getElementById('flowBtn').disabled=true;
+  SFX.swoosh();
+}
+
+let flashMsg='',flashTimer=0;
+
+function updateHUD(){
+  document.getElementById('score-display').textContent=
+    I18N.t('pp_hud_label','Level: {l} | Score: {s} | Best Time: {b}')
+      .replace('{l}',level).replace('{s}',score)
+      .replace('{b}',bestTime>0?bestTime.toFixed(1)+'s':'--');
+}
+
+function loop(){
+  ctx.clearRect(0,0,480,480);
+  ctx.fillStyle='#37474f';ctx.fillRect(0,0,480,480);
+
+  for(let y=0;y<gridSize;y++){
+    for(let x=0;x<gridSize;x++){
+      const [cx,cy]=cellCenter(x,y);
+      ctx.strokeStyle='rgba(255,255,255,.06)';
+      ctx.strokeRect(cx-cell/2,cy-cell/2,cell,cell);
+      const isSrc=x===src.x&&y===src.y;
+      const isDst=x===dst.x&&y===dst.y;
+      drawPipeTile(grid[y][x],cx,cy,isSrc||isDst);
+    }
+  }
+  // source & dest markers
+  const [sx,sy]=cellCenter(src.x,src.y);
+  const [dx2,dy2]=cellCenter(dst.x,dst.y);
+  ctx.fillStyle='#29b6f6';ctx.beginPath();ctx.arc(sx,sy,cell*0.22,0,7);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font=Math.floor(cell*0.28)+'px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('S',sx,sy);
+  ctx.fillStyle='#ff7043';ctx.beginPath();ctx.arc(dx2,dy2,cell*0.22,0,7);ctx.fill();
+  ctx.fillStyle='#fff';ctx.fillText('D',dx2,dy2);
+  ctx.textBaseline='alphabetic';
+
+  if(flowing){
+    flowProgress+=0.035;
+    const total=flowPath.length-1;
+    const idx=Math.min(Math.floor(flowProgress*total),total);
+    ctx.strokeStyle='#4fc3f7';ctx.lineWidth=Math.max(6,cell*0.16);ctx.lineCap='round';
+    ctx.beginPath();
+    for(let i=0;i<=idx;i++){
+      const [px,py]=cellCenter(flowPath[i][0],flowPath[i][1]);
+      if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+    }
+    ctx.stroke();
+    if(flowProgress>=1){
+      flowing=false;
+      solveLevel();
+    }
+  }
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle='rgba(0,0,0,.75)';
+    ctx.fillRect(60,210,360,60);
+    ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,240,246);
+  }
+
+  updateHUD();
+  requestAnimationFrame(loop);
+}
+
+function solveLevel(){
+  const elapsed=(performance.now()-levelStartTime)/1000;
+  score+=Math.max(50,Math.round(500-elapsed*5)+level*20);
+  if(bestTime===0||elapsed<bestTime){bestTime=elapsed;localStorage.setItem('plumbingpipes_besttime',String(bestTime));}
+  SFX.win();
+  flashMsg=I18N.t('pp_solved','Level {l} solved in {t}s! +Score').replace('{l}',level).replace('{t}',elapsed.toFixed(1));
+  flashTimer=110;
+  level++;
+  setTimeout(genLevel,900);
+}
+
+genLevel();
+loop();
+</script></body></html>

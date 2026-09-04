@@ -1,0 +1,359 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bridge Builder</title><meta name="description" content="Play Bridge Builder free online — Drag between anchor points to place beams and span the gap with a limited budget, then click Test to see if your bridge holds under load."><link rel="canonical" href="https://games.multiportllc.com/games/bridgebuilder"><meta property="og:title" content="Bridge Builder - Multiport Games"><meta property="og:description" content="Play Bridge Builder free online — Drag between anchor points to place beams and span the gap with a limited budget, then click Test to see if your bridge holds under load."><meta property="og:url" content="https://games.multiportllc.com/games/bridgebuilder"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bridge Builder","description":"Play Bridge Builder free online instantly. Drag between anchor points to place beams and span the gap with a limited budget, then click Test to see if your bridge holds under load. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/bridgebuilder","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(#37474f,#607d8b);display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#cfd8dc;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#90a4ae}
+#controls{display:flex;justify-content:center;gap:10px;padding:0 0 12px}
+#controls button{padding:9px 20px;background:#37474f;border:1px solid #90a4ae55;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+#controls button:hover:not(:disabled){background:#455a64}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bridge Builder</div>
+  <div class="game-frame">
+    <div id="hud"><span>Beams left: <b id="beamsLeft">0</b></span><span>Attempts: <b id="attemptsLeft">0</b></span><span>Bridges built: <b id="built">0</b></span><span>Best: <b id="best">0</b></span></div>
+    <canvas id="c" width="800" height="400"></canvas>
+    <div id="controls">
+      <button id="testBtn">Test Bridge</button>
+      <button id="undoBtn">Undo Beam</button>
+      <button id="resetBtn">Reset Level</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click one <b>anchor point</b> then another (or <b>drag</b> between them) to place a beam across the gap. You have a limited beam budget — use triangulated supports so the structure doesn't collapse. Click <b>Test Bridge</b> to send a cart across; if it holds, you solve the level. Fewer beams used means a higher score!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+let level=1,beamBudget=10,beamsUsed=0,attemptsLeft=3,built=0,best=parseInt(localStorage.getItem('bb_best')||'0',10);
+let nodes=[],beams=[];
+let selected=null,dragPos=null;
+let testing=false,testT=0,cartX=0,collapsed=false,solved=false,failMsg='';
+let deflections=[]; // per-node displacement during test
+
+document.getElementById('best').textContent=best;
+
+function genLevel(){
+  const gapStart=150,gapEnd=650;
+  nodes=[];
+  // fixed anchors: two on each cliff (top of platform), plus some free anchor points above the gap for triangulation
+  nodes.push({x:gapStart-60,y:260,fixed:true}); //0 left cliff
+  nodes.push({x:gapStart,y:260,fixed:true});    //1 left edge
+  nodes.push({x:gapEnd,y:260,fixed:true});      //2 right edge
+  nodes.push({x:gapEnd+60,y:260,fixed:true});   //3 right cliff
+  // free floating anchor points that can be used as intermediate joints (movable conceptually, but for simplicity fixed position, player just connects beams to them)
+  const midCount=3+Math.min(level,3);
+  for(let i=0;i<midCount;i++){
+    const t=(i+1)/(midCount+1);
+    nodes.push({x:gapStart+ t*(gapEnd-gapStart), y:260,fixed:false,deck:true});
+  }
+  // upper support points
+  for(let i=0;i<2;i++){
+    const t=(i+1)/3;
+    nodes.push({x:gapStart+t*(gapEnd-gapStart),y:170,fixed:false,deck:false});
+  }
+  beams=[];
+  beamsUsed=0;
+  beamBudget=10+level*2;
+  attemptsLeft=3;
+  testing=false;collapsed=false;solved=false;failMsg='';
+  selected=null;dragPos=null;
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('beamsLeft').textContent=Math.max(0,beamBudget-beamsUsed);
+  document.getElementById('attemptsLeft').textContent=attemptsLeft;
+  document.getElementById('built').textContent=built;
+  document.getElementById('best').textContent=best;
+  document.getElementById('testBtn').disabled=testing;
+  document.getElementById('undoBtn').disabled=testing||beams.length===0;
+}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function nodeAt(px,py){
+  let best=null,bd=18;
+  nodes.forEach((n,i)=>{
+    const d=Math.hypot(n.x-px,n.y-py);
+    if(d<bd){bd=d;best=i;}
+  });
+  return best;
+}
+
+function beamExists(i,j){
+  return beams.some(b=>(b.a===i&&b.b===j)||(b.a===j&&b.b===i));
+}
+
+function addBeam(i,j){
+  if(i===j)return;
+  if(beamExists(i,j))return;
+  if(beamsUsed>=beamBudget){SFX.error();return;}
+  const na=nodes[i],nb=nodes[j];
+  if(dist(na,nb)>260)return; // too long
+  beams.push({a:i,b:j});
+  beamsUsed++;
+  SFX.click();
+  updateHud();
+}
+
+function undoBeam(){
+  if(testing||beams.length===0)return;
+  beams.pop();
+  beamsUsed=Math.max(0,beamsUsed-1);
+  SFX.tick();
+  updateHud();
+}
+
+function pointerDown(px,py){
+  if(testing)return;
+  const idx=nodeAt(px,py);
+  if(idx===null)return;
+  selected=idx;
+  dragPos={x:px,y:py};
+}
+function pointerMove(px,py){
+  if(selected===null)return;
+  dragPos={x:px,y:py};
+}
+function pointerUp(px,py){
+  if(selected===null)return;
+  const idx=nodeAt(px,py);
+  if(idx!==null&&idx!==selected)addBeam(selected,idx);
+  selected=null;dragPos=null;
+}
+
+function getMousePos(e){
+  const r=c.getBoundingClientRect();
+  const scaleX=W/r.width,scaleY=H/r.height;
+  let cx,cy;
+  if(e.touches&&e.touches.length){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else{cx=e.clientX;cy=e.clientY;}
+  return {x:(cx-r.left)*scaleX,y:(cy-r.top)*scaleY};
+}
+
+c.addEventListener('mousedown',e=>{const p=getMousePos(e);pointerDown(p.x,p.y);});
+c.addEventListener('mousemove',e=>{const p=getMousePos(e);pointerMove(p.x,p.y);});
+window.addEventListener('mouseup',e=>{const p=getMousePos(e);pointerUp(p.x,p.y);});
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=getMousePos(e);pointerDown(p.x,p.y);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();const p=getMousePos(e);pointerMove(p.x,p.y);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();
+  if(selected!==null&&dragPos!==null){pointerUp(dragPos.x,dragPos.y);}
+},{passive:false});
+
+// Simplified structural analysis: for each deck node not directly on a fixed anchor's beam chain,
+// compute "support quality" = number of independent beam paths (via triangulation) to fixed anchors.
+// A node with only 1 beam (a simple pendant) sags heavily under load = fail. A node braced by
+// beams to 2+ different non-collinear neighbors (forming a triangle to a fixed anchor) holds.
+function analyzeStructure(){
+  // adjacency
+  const adj=nodes.map(()=>[]);
+  beams.forEach(b=>{adj[b.a].push(b.b);adj[b.b].push(b.a);});
+  // support score via BFS distance (in beam hops) to nearest fixed anchor, plus triangle bonus
+  const distToFixed=nodes.map(()=>Infinity);
+  const q=[];
+  nodes.forEach((n,i)=>{if(n.fixed){distToFixed[i]=0;q.push(i);}});
+  let qi=0;
+  while(qi<q.length){
+    const u=q[qi++];
+    adj[u].forEach(v=>{if(distToFixed[v]>distToFixed[u]+1){distToFixed[v]=distToFixed[u]+1;q.push(v);}});
+  }
+  // triangulation check: a node is "well braced" if it has >=2 neighbors that are themselves
+  // connected to each other or to a fixed anchor forming a closed triangle
+  function hasTriangle(i){
+    const nb=adj[i];
+    for(let x=0;x<nb.length;x++)for(let y=x+1;y<nb.length;y++){
+      if(adj[nb[x]].includes(nb[y]))return true;
+    }
+    return false;
+  }
+  return nodes.map((n,i)=>{
+    if(n.fixed)return {reachable:true,braced:true,degree:adj[i].length};
+    return {
+      reachable:isFinite(distToFixed[i]),
+      braced:hasTriangle(i)||adj[i].length>=3,
+      degree:adj[i].length
+    };
+  });
+}
+
+function startTest(){
+  if(testing)return;
+  if(beams.length===0){SFX.error();return;}
+  // require deck path to exist connecting left edge(1) to right edge(2)
+  const adj=nodes.map(()=>[]);
+  beams.forEach(b=>{adj[b.a].push(b.b);adj[b.b].push(b.a);});
+  const seen=new Set([0]);
+  const stack=[0];
+  while(stack.length){const u=stack.pop();adj[u].forEach(v=>{if(!seen.has(v)){seen.add(v);stack.push(v);}});}
+  if(!seen.has(3)){
+    failMsg=I18N.t('bb_no_path','No connected path from cliff to cliff!');
+    SFX.error();
+    return;
+  }
+  testing=true;testT=0;cartX=nodes[0].x;collapsed=false;solved=false;
+  deflections=nodes.map(()=>0);
+  updateHud();
+}
+
+function stepTest(dt){
+  testT+=dt;
+  cartX+=2.2*dt;
+  // find deck nodes near cart, sag them if unbraced
+  const analysis=analyzeStructure();
+  let failHere=false;
+  nodes.forEach((n,i)=>{
+    if(n.fixed)return;
+    const distCart=Math.abs(n.x-cartX);
+    const near=distCart<70;
+    const a=analysis[i];
+    let targetSag=0;
+    if(!a.reachable){targetSag=80;} // totally disconnected -> falls
+    else if(near){
+      if(!a.braced && a.degree<=1)targetSag=45; // pendant collapses under load
+      else if(!a.braced)targetSag=14; // weak sway
+      else targetSag=3; // holds firm
+    } else if(!a.reachable){targetSag=80;}
+    deflections[i]+= (targetSag-deflections[i])*0.12*dt;
+    if(deflections[i]>38)failHere=true;
+  });
+  if(failHere && !collapsed){
+    collapsed=true;
+    SFX.fail();
+    attemptsLeft--;
+    updateHud();
+  }
+  if(!collapsed && cartX>=nodes[3].x-20){
+    solved=true;
+    testing=false;
+    const score=Math.max(10,(beamBudget-beamsUsed+5))*10*level;
+    built++;
+    if(score>best){best=score;localStorage.setItem('bb_best',best);}
+    SFX.win();
+    level++;
+    updateHud();
+  }
+  if(collapsed && testT>90){
+    testing=false;
+    if(attemptsLeft<=0){
+      failMsg=I18N.t('bb_out_of_attempts','Out of attempts! Resetting level.');
+    }
+    updateHud();
+  }
+}
+
+function drawNode(n,i){
+  const dy=deflections[i]||0;
+  ctx.beginPath();
+  ctx.arc(n.x,n.y+dy,n.fixed?7:6,0,Math.PI*2);
+  ctx.fillStyle=n.fixed?'#ffd54f':(n.deck?'#b0bec5':'#78909c');
+  ctx.fill();
+  ctx.strokeStyle='#263238';ctx.lineWidth=1.5;ctx.stroke();
+}
+
+function ny(i){return nodes[i].y+(deflections[i]||0);}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // sky
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#37474f');sky.addColorStop(1,'#78909c');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // cliffs
+  ctx.fillStyle='#455a64';
+  ctx.fillRect(0,260,150,H-260);
+  ctx.fillRect(650,260,150,H-260);
+  ctx.fillStyle='#37474f';
+  ctx.fillRect(0,260,150,10);
+  ctx.fillRect(650,260,150,10);
+  // chasm floor hint
+  ctx.fillStyle='#263238aa';
+  ctx.fillRect(150,H-30,500,30);
+
+  // beams
+  beams.forEach(b=>{
+    const na=nodes[b.a],nb=nodes[b.b];
+    const stressColor = testing||collapsed ? beamStressColor(b) : '#cfd8dc';
+    ctx.strokeStyle=stressColor;
+    ctx.lineWidth=5;
+    ctx.beginPath();
+    ctx.moveTo(na.x,ny(b.a));
+    ctx.lineTo(nb.x,ny(b.b));
+    ctx.stroke();
+  });
+
+  // preview drag line
+  if(selected!==null&&dragPos){
+    ctx.strokeStyle='#ffd54faa';
+    ctx.lineWidth=3;
+    ctx.setLineDash([6,4]);
+    ctx.beginPath();
+    ctx.moveTo(nodes[selected].x,nodes[selected].y);
+    ctx.lineTo(dragPos.x,dragPos.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  nodes.forEach((n,i)=>drawNode(n,i));
+
+  // cart
+  if(testing||collapsed){
+    const cy=260+(collapsed?Math.min(60,testT-0):0);
+    ctx.fillStyle='#ff6b35';
+    ctx.fillRect(cartX-14,cy-16,28,16);
+    ctx.beginPath();ctx.arc(cartX-8,cy,5,0,Math.PI*2);ctx.arc(cartX+8,cy,5,0,Math.PI*2);
+    ctx.fillStyle='#263238';ctx.fill();
+  }
+
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('bb_level_label','Level {n}').replace('{n}',level),400,30);
+
+  if(collapsed){
+    ctx.fillStyle='#ff5252';ctx.font='bold 26px Arial';
+    ctx.fillText(I18N.t('bb_collapsed','BRIDGE COLLAPSED!'),400,80);
+    ctx.font='16px Arial';
+    ctx.fillText(attemptsLeft>0?I18N.t('bb_retry','Rebuild and try again'):I18N.t('bb_reset_needed','No attempts left — Reset Level'),400,105);
+  }
+  if(solved){
+    // solved flag persists briefly via level change; show a quick banner using testT reset check
+  }
+  if(failMsg){
+    ctx.fillStyle='#ffab40';ctx.font='bold 16px Arial';
+    ctx.fillText(failMsg,400,H-12);
+  }
+}
+
+function beamStressColor(b){
+  const sag=(deflections[b.a]||0)+(deflections[b.b]||0);
+  if(sag>50)return '#ff5252';
+  if(sag>18)return '#ffb300';
+  return '#a5d6a7';
+}
+
+let lastTime=null;
+function loop(t){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  if(testing)stepTest(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('testBtn').addEventListener('click',startTest);
+document.getElementById('undoBtn').addEventListener('click',undoBeam);
+document.getElementById('resetBtn').addEventListener('click',()=>{
+  if(attemptsLeft<=0)level=Math.max(1,level-0); // keep same level, just refresh attempts
+  genLevel();
+});
+
+genLevel();
+requestAnimationFrame(loop);
+</script></body></html>
