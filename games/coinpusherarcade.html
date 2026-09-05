@@ -1,0 +1,206 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Coin Pusher Arcade</title><meta name="description" content="Play Coin Pusher Arcade free online — Tap the platform to drop a coin where you want it. A pusher bar sweeps back and forth, shoving coins toward the edge. Time your drops to push coins off for points before you run out!"><link rel="canonical" href="https://games.multiportllc.com/games/coinpusherarcade"><meta property="og:title" content="Coin Pusher Arcade - Multiport Games"><meta property="og:description" content="Play Coin Pusher Arcade free online — Tap the platform to drop a coin where you want it. A pusher bar sweeps back and forth, shoving coins toward the edge. Time your drops to push coins off for points before you run out!"><meta property="og:url" content="https://games.multiportllc.com/games/coinpusherarcade"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Coin Pusher Arcade","description":"Play Coin Pusher Arcade free online instantly. Tap the platform to drop a coin where you want it. A pusher bar sweeps back and forth, shoving coins toward the edge. Time your drops to push coins off for points before you run out! No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/coinpusherarcade","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#150f05}
+#score-display{color:#ffd54f;font-size:1.15rem;font-weight:800;text-align:center;padding:8px}
+#c{background:linear-gradient(#2a2010,#151005);display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hint{text-align:center;color:#c9b88f;font-size:.85rem;padding:0 0 8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Coin Pusher Arcade</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Coins left: 30 | Best: 0</div>
+    <canvas id="c" width="800" height="440"></canvas>
+    <div id="hint">Tap/click anywhere on the platform to drop a coin there</div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Tap or click anywhere on the platform to drop a coin at that spot. A pusher bar sweeps forward and back automatically, shoving coins toward the front edge — coins that fall off the edge count as your score. Watch for shiny gold bonus coins worth extra points. Time your drops for when the pusher is pulling back so your coins land in a good spot. You have 30 coins — maximize your score before they run out!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+const PLATFORM_TOP=40,PLATFORM_BOTTOM=380,PLATFORM_LEFT=60,PLATFORM_RIGHT=740;
+const EDGE_Y=PLATFORM_BOTTOM; // coins falling past this = scored
+let score=0,coinsLeft=30,best=parseInt(localStorage.getItem('coinpusherarcade_best')||'0',10);
+let coins=[]; // {x,y,vx,vy,r,bonus,resting,fallen}
+let pusherY=PLATFORM_TOP+40,pusherDir=1,pusherSpeed=1.1;
+const PUSHER_H=18,PUSHER_MIN=PLATFORM_TOP+30,PUSHER_MAX=PLATFORM_TOP+130;
+let dropTimer=0;
+let popups=[]; // floating score text
+
+function updateHud(){
+  document.getElementById('score-display').textContent=
+    I18N.t('cp_hud','Score: {s} | Coins left: {c} | Best: {b}')
+    .replace('{s}',score).replace('{c}',coinsLeft).replace('{b}',best);
+}
+updateHud();
+
+function pos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+
+function dropCoin(x){
+  if(coinsLeft<=0)return;
+  const bonus=Math.random()<0.12;
+  const r=14;
+  const cx=Math.max(PLATFORM_LEFT+r,Math.min(PLATFORM_RIGHT-r,x));
+  coins.push({x:cx,y:PLATFORM_TOP-20,vx:0,vy:2,r,bonus,resting:false,fallen:false,settleY:PLATFORM_TOP+150+Math.random()*20});
+  coinsLeft--;
+  SFX.click();
+  updateHud();
+}
+
+c.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  const p=pos(e);
+  if(p.y<PLATFORM_BOTTOM+40)dropCoin(p.x);
+});
+
+function circlesOverlap(a,b){
+  const dx=a.x-b.x, dy=a.y-b.y;
+  return Math.hypot(dx,dy) < a.r+b.r-2;
+}
+
+function drawPlatform(){
+  ctx.fillStyle='#3a2f1a';
+  ctx.fillRect(PLATFORM_LEFT-10,PLATFORM_TOP-10,PLATFORM_RIGHT-PLATFORM_LEFT+20,PLATFORM_BOTTOM-PLATFORM_TOP+20);
+  ctx.fillStyle='#5c4a28';
+  ctx.fillRect(PLATFORM_LEFT,PLATFORM_TOP,PLATFORM_RIGHT-PLATFORM_LEFT,PLATFORM_BOTTOM-PLATFORM_TOP);
+  // edge highlight
+  ctx.fillStyle='#c9a24a';
+  ctx.fillRect(PLATFORM_LEFT-10,PLATFORM_BOTTOM+6,PLATFORM_RIGHT-PLATFORM_LEFT+20,10);
+}
+
+function drawPusher(){
+  ctx.fillStyle='#8a6a30';
+  ctx.fillRect(PLATFORM_LEFT,pusherY,PLATFORM_RIGHT-PLATFORM_LEFT,PUSHER_H);
+  ctx.fillStyle='#c9a24a';
+  ctx.fillRect(PLATFORM_LEFT,pusherY,PLATFORM_RIGHT-PLATFORM_LEFT,4);
+}
+
+function drawCoin(coin){
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(coin.x,coin.y,coin.r,0,Math.PI*2);
+  ctx.fillStyle=coin.bonus?'#ffe17a':'#e0b84a';
+  ctx.fill();
+  ctx.strokeStyle=coin.bonus?'#fff3c0':'#a97f28';
+  ctx.lineWidth=2;
+  ctx.stroke();
+  ctx.fillStyle=coin.bonus?'#a97f28':'#8a6a20';
+  ctx.font='bold 11px Arial';
+  ctx.textAlign='center';
+  ctx.fillText(coin.bonus?'★':'¢',coin.x,coin.y+4);
+  ctx.restore();
+}
+
+function step(){
+  // pusher movement
+  pusherY+=pusherDir*pusherSpeed;
+  if(pusherY>=PUSHER_MAX){pusherY=PUSHER_MAX;pusherDir=-1;}
+  if(pusherY<=PUSHER_MIN){pusherY=PUSHER_MIN;pusherDir=1;SFX.tick();}
+
+  coins.forEach(coin=>{
+    if(coin.fallen)return;
+    // gravity toward settleY (simulated pile depth) unless being pushed
+    if(coin.y<coin.settleY){
+      coin.y+=3;
+      if(coin.y>coin.settleY)coin.y=coin.settleY;
+    }
+    // pusher contact: if pusher bottom edge overlaps coin and pusher moving forward (down)
+    const pusherBottom=pusherY+PUSHER_H;
+    if(pusherDir>0 && pusherBottom>coin.y-coin.r && pusherY<coin.y+coin.r){
+      coin.y=pusherBottom+coin.r-2;
+    }
+    // general forward push: any coin whose y is less than pusher bottom while pusher advancing gets nudged down over time by chain reaction
+  });
+
+  // resolve overlaps roughly (push coins apart horizontally, and downward chain push)
+  for(let iter=0;iter<3;iter++){
+    for(let i=0;i<coins.length;i++){
+      for(let j=i+1;j<coins.length;j++){
+        const a=coins[i],b=coins[j];
+        if(a.fallen||b.fallen)continue;
+        const dx=b.x-a.x,dy=b.y-a.y;
+        const dist=Math.hypot(dx,dy)||0.01;
+        const minDist=a.r+b.r-2;
+        if(dist<minDist){
+          const overlap=(minDist-dist)/2;
+          const nx=dx/dist,ny=dy/dist;
+          a.x-=nx*overlap;a.y-=ny*overlap*0.4;
+          b.x+=nx*overlap;b.y+=ny*overlap*0.4;
+        }
+      }
+    }
+  }
+  coins.forEach(coin=>{
+    coin.x=Math.max(PLATFORM_LEFT+coin.r,Math.min(PLATFORM_RIGHT-coin.r,coin.x));
+  });
+
+  // check for coins pushed past edge
+  coins.forEach(coin=>{
+    if(coin.fallen)return;
+    if(coin.y>EDGE_Y){
+      coin.fallen=true;
+      const pts=coin.bonus?50:10;
+      score+=pts;
+      if(score>best){best=score;localStorage.setItem('coinpusherarcade_best',best);}
+      SFX.coin();
+      popups.push({x:coin.x,y:PLATFORM_BOTTOM,text:'+'+pts,life:40});
+      updateHud();
+    }
+  });
+  coins=coins.filter(coin=>!coin.fallen);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawPlatform();
+  coins.forEach(drawCoin);
+  drawPusher();
+
+  step();
+
+  popups=popups.filter(p=>p.life>0);
+  popups.forEach(p=>{
+    p.y-=1;p.life--;
+    ctx.globalAlpha=Math.min(1,p.life/40);
+    ctx.fillStyle='#ffd54f';
+    ctx.font='bold 16px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(p.text,p.x,p.y);
+    ctx.globalAlpha=1;
+  });
+
+  if(coinsLeft<=0 && coins.length===0){
+    ctx.fillStyle='#ffffffee';
+    ctx.font='bold 32px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(I18N.t('cp_over','Out of coins! Final score: {s}').replace('{s}',score),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint3','Tap to play again'),W/2,H/2+24);
+    if(!loop.waiting){
+      loop.waiting=true;
+      c.addEventListener('pointerdown',restart,{once:true});
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+
+function restart(){
+  loop.waiting=false;
+  score=0;coinsLeft=30;coins=[];popups=[];pusherY=PLATFORM_TOP+40;pusherDir=1;
+  updateHud();
+}
+
+loop();
+</script></body></html>

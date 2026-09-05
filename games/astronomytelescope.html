@@ -1,0 +1,315 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Astronomy Telescope</title><meta name="description" content="Play Astronomy Telescope free online — Pan your telescope with drag or arrow keys to find the celestial objects shown in the target list, then click them before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/astronomytelescope"><meta property="og:title" content="Astronomy Telescope - Multiport Games"><meta property="og:description" content="Play Astronomy Telescope free online — Pan your telescope with drag or arrow keys to find the celestial objects shown in the target list, then click them before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/astronomytelescope"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Astronomy Telescope","description":"Play Astronomy Telescope free online instantly. Pan your telescope with drag or arrow keys across a huge starfield to find the celestial objects shown in the target list, then click them before time runs out. Each round the starfield grows and fills with more distractors. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/astronomytelescope","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#050510}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#dce7ff;font-weight:700;padding:6px 4px;flex-wrap:wrap;gap:6px}
+#hud span{font-size:.95rem}
+#targets{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;padding:8px;background:rgba(255,255,255,.04);border-radius:10px;margin-bottom:8px}
+.target-chip{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.06);border:2px solid transparent;min-width:56px}
+.target-chip.found{border-color:#4caf50;opacity:.5}
+.target-chip .glyph{font-size:1.6rem}
+.target-chip .lbl{font-size:.62rem;color:#b8c4e0;text-align:center}
+#viewportWrap{position:relative;overflow:hidden;border-radius:10px;border:3px solid #2c3760;background:#000;touch-action:none;cursor:grab}
+#viewportWrap.dragging{cursor:grabbing}
+#scope{position:absolute;top:0;left:0}
+#vignette{position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 90px 40px #000;border-radius:6px}
+#minimapWrap{text-align:center;margin-top:6px}
+#minimap{background:#000;border-radius:6px;border:1px solid #2c3760}
+#msg{text-align:center;color:#ffd54f;font-weight:800;min-height:1.5em;margin-top:4px}
+#startOverlay{position:absolute;inset:0;background:rgba(4,6,20,.88);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#fff;text-align:center;padding:20px;z-index:5}
+#startOverlay button{padding:12px 28px;font-size:1.1rem;font-weight:800;border:none;border-radius:24px;background:#6c8cff;color:#fff;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Astronomy Telescope</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="roundLbl">Round 1</span>
+      <span id="scoreLbl">Score: 0 | Best: 0</span>
+      <span id="timeLbl">Time: 60</span>
+    </div>
+    <div id="targets"></div>
+    <div id="viewportWrap">
+      <canvas id="scope" width="640" height="360"></canvas>
+      <div id="vignette"></div>
+      <div id="startOverlay">
+        <div style="font-size:2.2rem">🔭</div>
+        <div id="overlayTitle" style="font-size:1.3rem;font-weight:800">Find the Sky Objects</div>
+        <div id="overlayText" style="max-width:420px;font-size:.9rem;color:#cdd6f0">Drag the sky or use arrow keys to pan your telescope. Click each target object shown above before time runs out!</div>
+        <button id="startBtn">Start Round</button>
+      </div>
+    </div>
+    <div id="msg"></div>
+    <div id="minimapWrap"><canvas id="minimap" width="200" height="60"></canvas></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the starfield (or use <b>Arrow Keys</b>) to pan your telescope view. Find and click each celestial object shown in the target list above before time runs out. Objects get harder to spot as rounds increase!</div>
+</div>
+<script>
+const VW=640,VH=360;
+const scope=document.getElementById('scope'),sctx=scope.getContext('2d');
+const mini=document.getElementById('minimap'),mctx=mini.getContext('2d');
+const wrap=document.getElementById('viewportWrap');
+
+const OBJ_TYPES=[
+  {type:'planet',glyph:'🪐',label:'Planet',color:'#e0a458'},
+  {type:'redplanet',glyph:'🔴',label:'Red Planet',color:'#e05a4e'},
+  {type:'comet',glyph:'☄️',label:'Comet',color:'#8ee6ff'},
+  {type:'galaxy',glyph:'🌌',label:'Galaxy',color:'#b98eff'},
+  {type:'moon',glyph:'🌕',label:'Moon',color:'#f0f0d0'},
+  {type:'nebula',glyph:'🟣',label:'Nebula',color:'#ff8ee0'},
+  {type:'ufo',glyph:'🛸',label:'UFO', color:'#7cffb0'}
+];
+
+let round=1,score=0,best=+(localStorage.getItem('astronomytelescope_best')||0);
+let worldW=1600,worldH=1000;
+let camX=0,camY=0;
+let stars=[];
+let objects=[]; // {x,y,type index, found}
+let targets=[]; // indices into OBJ_TYPES to find this round
+let timeLeft=60,timerId=null,running=false;
+let keys={};
+let dragging=false,dragStartX=0,dragStartY=0,camStartX=0,camStartY=0;
+
+document.getElementById('scoreLbl').textContent=I18N.t('score_best_label','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+
+function rnd(a,b){return a+Math.random()*(b-a);}
+
+function genStars(n){
+  const arr=[];
+  for(let i=0;i<n;i++){
+    arr.push({x:rnd(0,worldW),y:rnd(0,worldH),r:rnd(0.4,1.8),tw:Math.random()*Math.PI*2,b:rnd(0.4,1)});
+  }
+  return arr;
+}
+
+function setupRound(){
+  worldW=1600+round*260;
+  worldH=1000+round*160;
+  const starCount=Math.min(1400,300+round*140);
+  stars=genStars(starCount);
+  objects=[];
+  const distractorCount=3+round*2;
+  const targetCount=Math.min(4,2+Math.floor(round/2));
+  targets=[];
+  const usedTypes=new Set();
+  for(let i=0;i<targetCount;i++){
+    let ti;
+    do{ti=Math.floor(Math.random()*OBJ_TYPES.length);}while(usedTypes.has(ti));
+    usedTypes.add(ti);
+    targets.push(ti);
+  }
+  // place one true instance of each target
+  targets.forEach(ti=>{
+    objects.push({x:rnd(60,worldW-60),y:rnd(60,worldH-60),type:ti,found:false,isTarget:true});
+  });
+  // distractors: random types (may repeat/non-target), don't count toward win
+  for(let i=0;i<distractorCount;i++){
+    const ti=Math.floor(Math.random()*OBJ_TYPES.length);
+    objects.push({x:rnd(60,worldW-60),y:rnd(60,worldH-60),type:ti,found:false,isTarget:false});
+  }
+  camX=Math.max(0,worldW/2-VW/2);
+  camY=Math.max(0,worldH/2-VH/2);
+  timeLeft=Math.max(30,60-round*2);
+  renderTargetChips();
+  document.getElementById('roundLbl').textContent=I18N.t('round_label','Round {r}').replace('{r}',round);
+}
+
+function renderTargetChips(){
+  const el=document.getElementById('targets');
+  el.innerHTML='';
+  targets.forEach(ti=>{
+    const o=objects.find(o=>o.isTarget&&o.type===ti);
+    const chip=document.createElement('div');
+    chip.className='target-chip'+(o&&o.found?' found':'');
+    chip.innerHTML=`<div class="glyph">${OBJ_TYPES[ti].glyph}</div><div class="lbl">${I18N.t('obj_'+OBJ_TYPES[ti].type,OBJ_TYPES[ti].label)}</div>`;
+    el.appendChild(chip);
+  });
+}
+
+function allFound(){
+  return objects.filter(o=>o.isTarget).every(o=>o.found);
+}
+
+function clampCam(){
+  camX=Math.max(0,Math.min(worldW-VW,camX));
+  camY=Math.max(0,Math.min(worldH-VH,camY));
+}
+
+function draw(){
+  sctx.fillStyle='#020208';
+  sctx.fillRect(0,0,VW,VH);
+  const t=performance.now()/500;
+  stars.forEach(s=>{
+    const sx=s.x-camX,sy=s.y-camY;
+    if(sx<-5||sx>VW+5||sy<-5||sy>VH+5)return;
+    const flick=0.6+0.4*Math.sin(t+s.tw);
+    sctx.globalAlpha=s.b*flick;
+    sctx.fillStyle='#ffffff';
+    sctx.beginPath();sctx.arc(sx,sy,s.r,0,7);sctx.fill();
+  });
+  sctx.globalAlpha=1;
+  objects.forEach(o=>{
+    if(o.found)return;
+    const sx=o.x-camX,sy=o.y-camY;
+    if(sx<-30||sx>VW+30||sy<-30||sy>VH+30)return;
+    const def=OBJ_TYPES[o.type];
+    sctx.save();
+    sctx.shadowColor=def.color;sctx.shadowBlur=14;
+    sctx.font='26px serif';
+    sctx.textAlign='center';sctx.textBaseline='middle';
+    sctx.fillText(def.glyph,sx,sy);
+    sctx.restore();
+  });
+  // minimap
+  mctx.fillStyle='#000';mctx.fillRect(0,0,200,60);
+  const sxr=200/worldW,syr=60/worldH;
+  stars.forEach(s=>{ if(Math.random()<0.3){mctx.fillStyle='rgba(255,255,255,.4)';mctx.fillRect(s.x*sxr,s.y*syr,1,1);} });
+  objects.forEach(o=>{
+    if(o.found)return;
+    mctx.fillStyle=o.isTarget?'#ffd54f':'rgba(255,255,255,.35)';
+    mctx.beginPath();mctx.arc(o.x*sxr,o.y*syr,o.isTarget?2.2:1.3,0,7);mctx.fill();
+  });
+  mctx.strokeStyle='#6c8cff';mctx.lineWidth=1.5;
+  mctx.strokeRect(camX*sxr,camY*syr,VW*sxr,VH*syr);
+}
+
+function panTick(){
+  const spd=8;
+  if(keys['ArrowLeft'])camX-=spd;
+  if(keys['ArrowRight'])camX+=spd;
+  if(keys['ArrowUp'])camY-=spd;
+  if(keys['ArrowDown'])camY+=spd;
+  clampCam();
+}
+
+let rafId=null;
+function loop(){
+  if(!running){rafId=requestAnimationFrame(loop);return;}
+  panTick();
+  draw();
+  rafId=requestAnimationFrame(loop);
+}
+loop();
+
+wrap.addEventListener('pointerdown',e=>{
+  if(!running)return;
+  dragging=true;wrap.classList.add('dragging');
+  dragStartX=e.clientX;dragStartY=e.clientY;
+  camStartX=camX;camStartY=camY;
+  wrap.setPointerCapture(e.pointerId);
+});
+wrap.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const rect=wrap.getBoundingClientRect();
+  const scale=VW/rect.width;
+  camX=camStartX-(e.clientX-dragStartX)*scale;
+  camY=camStartY-(e.clientY-dragStartY)*scale;
+  clampCam();
+});
+function endDrag(e){
+  if(!dragging)return;
+  dragging=false;wrap.classList.remove('dragging');
+  // treat as click if minimal movement
+  const moved=Math.hypot(e.clientX-dragStartX,e.clientY-dragStartY);
+  if(moved<6)tryClick(e);
+}
+wrap.addEventListener('pointerup',endDrag);
+wrap.addEventListener('pointercancel',()=>{dragging=false;wrap.classList.remove('dragging');});
+
+function tryClick(e){
+  if(!running)return;
+  const rect=scope.getBoundingClientRect();
+  const scaleX=VW/rect.width,scaleY=VH/rect.height;
+  const cx=(e.clientX-rect.left)*scaleX+camX;
+  const cy=(e.clientY-rect.top)*scaleY+camY;
+  let hit=null;
+  objects.forEach(o=>{
+    if(o.found)return;
+    if(Math.hypot(o.x-cx,o.y-cy)<22)hit=o;
+  });
+  if(hit){
+    if(hit.isTarget){
+      hit.found=true;
+      score+=Math.max(10,50-round*2);
+      SFX.success();
+      setMsg(I18N.t('found_msg','Found it! +points'));
+      renderTargetChips();
+      if(score>best){best=score;localStorage.setItem('astronomytelescope_best',best);}
+      updateHud();
+      if(allFound()){
+        clearInterval(timerId);
+        running=false;
+        setMsg(I18N.t('round_clear_msg','Round Clear! Next round starting...'));
+        SFX.levelup();
+        setTimeout(()=>{round++;startRound();},1400);
+      }
+    } else {
+      score=Math.max(0,score-5);
+      SFX.error();
+      setMsg(I18N.t('wrong_msg','Not a target — keep looking'));
+      updateHud();
+    }
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.code.replace('Arrow','Arrow'))){}
+  if(e.key.startsWith('Arrow')){e.preventDefault();keys[e.key]=true;}
+});
+document.addEventListener('keyup',e=>{ if(e.key.startsWith('Arrow'))keys[e.key]=false; });
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function updateHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_best_label','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+  document.getElementById('timeLbl').textContent=I18N.t('time_label','Time: {t}').replace('{t}',timeLeft);
+}
+
+function startRound(){
+  setupRound();
+  updateHud();
+  setMsg('');
+  running=true;
+  clearInterval(timerId);
+  timerId=setInterval(()=>{
+    timeLeft--;
+    updateHud();
+    if(timeLeft<=5)SFX.tick();
+    if(timeLeft<=0){
+      clearInterval(timerId);
+      running=false;
+      endGame();
+    }
+  },1000);
+}
+
+function endGame(){
+  setMsg(I18N.t('time_up_msg','Time\'s up! Final Score: {s}').replace('{s}',score));
+  SFX.lose();
+  showOverlay(I18N.t('game_over_title2','Time\'s Up!'),I18N.t('game_over_sub','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best),I18N.t('play_again_btn','Play Again'));
+}
+
+function showOverlay(title,text,btnLabel){
+  document.getElementById('overlayTitle').textContent=title;
+  document.getElementById('overlayText').textContent=text;
+  document.getElementById('startBtn').textContent=btnLabel;
+  document.getElementById('startOverlay').style.display='flex';
+}
+
+document.getElementById('startBtn').addEventListener('click',()=>{
+  document.getElementById('startOverlay').style.display='none';
+  if(!running && timeLeft<=0){
+    // restart
+    round=1;score=0;
+  }
+  startRound();
+});
+
+setupRound();
+draw();
+</script></body></html>

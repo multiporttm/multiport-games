@@ -1,0 +1,302 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Donut Glazing</title><meta name="description" content="Play Donut Glazing free online — Click each donut at the right moment as it passes under the glaze dispenser for an even coat, then add toppings with a second timed click. Belt speed increases each round."><link rel="canonical" href="https://games.multiportllc.com/games/donutglazing"><meta property="og:title" content="Donut Glazing - Multiport Games"><meta property="og:description" content="Play Donut Glazing free online — Click each donut at the right moment as it passes under the glaze dispenser for an even coat, then add toppings with a second timed click. Belt speed increases each round."><meta property="og:url" content="https://games.multiportllc.com/games/donutglazing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Donut Glazing","description":"Play Donut Glazing free online instantly. Donuts move along a conveyor belt — click each one at the right moment as it passes under the glaze dispenser to coat it evenly, then add toppings with a second timed click. Belt speed increases each round, testing your precision timing. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/donutglazing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1a1006}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:#ffe9c7;font-weight:700;padding:6px 4px}
+#belt{background:#2a1c10;border-radius:12px;display:block;margin:0 auto;border:3px solid #4a3018;touch-action:none}
+#msg{text-align:center;color:#ffd54f;font-weight:800;min-height:1.6em;margin-top:8px}
+#resultsPanel{display:none;text-align:center;color:#fff}
+#resultsPanel button{margin-top:10px;padding:10px 22px;background:#ff9f43;color:#2a1200;border:none;border-radius:20px;font-weight:800;cursor:pointer}
+#startOverlayD{position:relative;text-align:center;color:#fff;padding:14px}
+#startOverlayD button{padding:12px 28px;font-size:1.05rem;font-weight:800;border:none;border-radius:24px;background:#ff9f43;color:#2a1200;cursor:pointer;margin-top:10px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Donut Glazing</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="roundLbl">Round 1</span>
+      <span id="scoreLbl">Score: 0 | Best: 0</span>
+      <span id="livesLbl">Misses: 0 / 3</span>
+    </div>
+    <canvas id="belt" width="640" height="260"></canvas>
+    <div id="msg">Click Start to begin the shift!</div>
+    <div id="startOverlayD">
+      <button id="startBtnD">Start Shift</button>
+    </div>
+    <div id="resultsPanel">
+      <h3 id="resultsTitle">Shift Over!</h3>
+      <div id="resultsBody"></div>
+      <button id="restartBtnD">Play Again</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Donuts glide along the belt toward the glaze dispenser. Click/tap right when a donut is under the dispenser for an even glaze coat — a hit meter shows the sweet spot. Glazed donuts then need a second timed click to add toppings. Miss too many (3) and your shift ends. Belt speed increases each round!</div>
+</div>
+<script>
+const cv=document.getElementById('belt'),ctx=cv.getContext('2d');
+const W=640,H=260;
+const beltY=170,beltH=60;
+const dispenserX=420; // target zone center x
+const zoneHalfWidth=26;
+
+let round=1,score=0,best=+(localStorage.getItem('donutglazing_best')||0);
+let misses=0,maxMisses=3;
+let running=false;
+let donuts=[]; // {x,y,state:'plain'|'glazed'|'topped'|'missed', glazeQuality, speed}
+let spawnTimer=0,spawnInterval=1800;
+let lastTime=null;
+let beltSpeed=1.4;
+let rafId=null;
+
+document.getElementById('scoreLbl').textContent=I18N.t('score_best_label','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+
+function updateHud(){
+  document.getElementById('roundLbl').textContent=I18N.t('round_label','Round {r}').replace('{r}',round);
+  document.getElementById('livesLbl').textContent=I18N.t('misses_label','Misses: {m} / {x}').replace('{m}',misses).replace('{x}',maxMisses);
+  document.getElementById('scoreLbl').textContent=I18N.t('score_best_label','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function spawnDonut(){
+  donuts.push({
+    x:-40,
+    y:beltY+beltH/2,
+    state:'plain',
+    glazeQuality:0,
+    r:26,
+    toppingWindowActive:false,
+    toppingResolved:false,
+    scored:false
+  });
+}
+
+function startGame(){
+  round=1;score=0;misses=0;
+  document.getElementById('resultsPanel').style.display='none';
+  cv.style.display='block';
+  document.getElementById('startOverlayD').style.display='none';
+  updateHud();
+  startRound();
+}
+
+function startRound(){
+  donuts=[];
+  spawnTimer=0;
+  beltSpeed=1.3+round*0.22;
+  spawnInterval=Math.max(950,1900-round*130);
+  running=true;
+  lastTime=null;
+  setMsg(I18N.t('round_start_msg','Round {r} — belt speed up!').replace('{r}',round));
+  updateHud();
+}
+
+function endGame(){
+  running=false;
+  cancelAnimationFrame(rafId);
+  if(score>best){best=score;localStorage.setItem('donutglazing_best',best);}
+  updateHud();
+  cv.style.display='none';
+  const panel=document.getElementById('resultsPanel');
+  panel.style.display='block';
+  document.getElementById('resultsTitle').textContent=I18N.t('results_title','Shift Over!');
+  document.getElementById('resultsBody').textContent=I18N.t('results_body','Final Score: {s} | Best: {b} | Reached Round {r}').replace('{s}',score).replace('{b}',best).replace('{r}',round);
+  SFX.lose();
+}
+
+function glazeQualityAt(x){
+  const dist=Math.abs(x-dispenserX);
+  if(dist>zoneHalfWidth)return 0;
+  return Math.max(0,1-dist/zoneHalfWidth); // 1 = perfect center
+}
+
+function attemptGlaze(donut){
+  const q=glazeQualityAt(donut.x);
+  if(q<=0){
+    SFX.error();
+    setMsg(I18N.t('glaze_miss_msg','Missed the glaze window!'));
+    return;
+  }
+  donut.state='glazed';
+  donut.glazeQuality=q;
+  donut.toppingWindowActive=false;
+  SFX.click();
+  if(q>0.85){setMsg(I18N.t('glaze_perfect_msg','Perfect glaze!'));}
+  else if(q>0.5){setMsg(I18N.t('glaze_good_msg','Good glaze coat.'));}
+  else{setMsg(I18N.t('glaze_ok_msg','A bit uneven, but glazed.'));}
+}
+
+function handlePointer(clientX,clientY){
+  if(!running)return;
+  const rect=cv.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  const x=(clientX-rect.left)*scaleX;
+  const y=(clientY-rect.top)*scaleY;
+  // find nearest donut within reasonable click radius
+  let best_=null,bestDist=Infinity;
+  donuts.forEach(d=>{
+    if(d.state==='missed'||d.scored)return;
+    const dist=Math.hypot(d.x-x,d.y-y);
+    if(dist<40&&dist<bestDist){bestDist=dist;best_=d;}
+  });
+  if(!best_)return;
+  if(best_.state==='plain'){
+    attemptGlaze(best_);
+  } else if(best_.state==='glazed'&&!best_.toppingResolved){
+    finalizeDonut(best_);
+  }
+}
+
+function finalizeDonut(donut){
+  const toppingQ=glazeQualityAt(donut.x);
+  donut.toppingResolved=true;
+  const combined=(donut.glazeQuality*0.6+toppingQ*0.4);
+  const pts=Math.round(combined*100);
+  score+=pts;
+  donut.scored=true;
+  donut.state='topped';
+  if(combined>0.8){SFX.success();setMsg(I18N.t('topping_perfect_msg','Excellent! +{p} pts').replace('{p}',pts));}
+  else if(combined>0.4){SFX.point();setMsg(I18N.t('topping_ok_msg','Decent finish. +{p} pts').replace('{p}',pts));}
+  else{SFX.error();setMsg(I18N.t('topping_bad_msg','Messy finish. +{p} pts').replace('{p}',pts));}
+  updateHud();
+  if(score>best){best=score;localStorage.setItem('donutglazing_best',best);}
+}
+
+cv.addEventListener('pointerdown',e=>{
+  handlePointer(e.clientX,e.clientY);
+});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&running){
+    e.preventDefault();
+    // act on the donut closest to the dispenser zone that needs action
+    let target=null,bestDist=Infinity;
+    donuts.forEach(d=>{
+      if(d.scored||d.state==='missed')return;
+      const dist=Math.abs(d.x-dispenserX);
+      if(dist<bestDist){bestDist=dist;target=d;}
+    });
+    if(target){
+      if(target.state==='plain')attemptGlaze(target);
+      else if(target.state==='glazed'&&!target.toppingResolved)finalizeDonut(target);
+    }
+  }
+});
+
+function drawBelt(){
+  ctx.fillStyle='#3a2414';
+  ctx.fillRect(0,beltY,W,beltH);
+  ctx.strokeStyle='#5a3c22';
+  ctx.lineWidth=3;
+  for(let i=0;i<W;i+=30){
+    ctx.beginPath();
+    ctx.moveTo(i - (performance.now()/40)%30,beltY);
+    ctx.lineTo(i-10 - (performance.now()/40)%30,beltY+beltH);
+    ctx.stroke();
+  }
+  // dispenser zone marker
+  ctx.fillStyle='rgba(255,213,79,.18)';
+  ctx.fillRect(dispenserX-zoneHalfWidth,beltY-8,zoneHalfWidth*2,beltH+16);
+  ctx.strokeStyle='#ffd54f';
+  ctx.setLineDash([4,4]);
+  ctx.strokeRect(dispenserX-zoneHalfWidth,beltY-8,zoneHalfWidth*2,beltH+16);
+  ctx.setLineDash([]);
+  // dispenser device
+  ctx.fillStyle='#888';
+  ctx.fillRect(dispenserX-18,beltY-46,36,40);
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(dispenserX,beltY-6,6,0,7);ctx.fill();
+}
+
+function drawDonut(d){
+  ctx.save();
+  ctx.translate(d.x,d.y);
+  ctx.beginPath();ctx.arc(0,0,d.r,0,7);
+  ctx.fillStyle='#c98a4b';
+  ctx.fill();
+  if(d.state==='glazed'||d.state==='topped'){
+    ctx.save();
+    ctx.beginPath();ctx.arc(0,0,d.r-2,0,7);
+    ctx.clip();
+    const drip=6+ (1-d.glazeQuality)*10;
+    ctx.fillStyle=d.glazeQuality>0.85?'#ffb6d9':d.glazeQuality>0.5?'#ffd0e8':'#f0e0e8';
+    ctx.beginPath();
+    ctx.arc(0,-2,d.r-2,0,7);
+    ctx.fill();
+    // uneven edge suggestion
+    if(d.glazeQuality<0.9){
+      ctx.fillStyle='#c98a4b';
+      ctx.beginPath();
+      ctx.arc(d.r*0.5,d.r*0.5,d.r*(1-d.glazeQuality)*0.5,0,7);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  if(d.state==='topped'){
+    ctx.fillStyle='#5a3018';
+    for(let i=0;i<8;i++){
+      const ang=Math.random()*Math.PI*2;
+      const rr=Math.random()*(d.r-8);
+      ctx.fillRect(Math.cos(ang)*rr,Math.sin(ang)*rr,2,2);
+    }
+  }
+  // hole
+  ctx.fillStyle='#2a1c10';
+  ctx.beginPath();ctx.arc(0,0,d.r*0.3,0,7);ctx.fill();
+  ctx.restore();
+}
+
+function loop(ts){
+  if(!running){rafId=requestAnimationFrame(loop);return;}
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min(40,ts-lastTime);
+  lastTime=ts;
+
+  spawnTimer+=dt;
+  if(spawnTimer>=spawnInterval){spawnTimer=0;spawnDonut();}
+
+  donuts.forEach(d=>{
+    d.x+=beltSpeed*(dt/16.6667);
+    if(d.x>dispenserX+zoneHalfWidth+30&&d.state==='plain'&&!d.scored){
+      d.state='missed';
+      if(!d.countedMiss){
+        d.countedMiss=true;
+        misses++;
+        SFX.hurt();
+        setMsg(I18N.t('missed_donut_msg','A donut went by unglazed!'));
+        updateHud();
+        if(misses>=maxMisses){
+          endGame();
+        }
+      }
+    }
+    if(d.state==='glazed'&&d.x>W+20&&!d.toppingResolved){
+      d.toppingResolved=true; // fell off belt without topping — no bonus but no penalty beyond lost points
+    }
+  });
+  donuts=donuts.filter(d=>d.x<W+60);
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,beltY);
+  sky.addColorStop(0,'#3a2410');sky.addColorStop(1,'#1a1006');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,beltY);
+  drawBelt();
+  donuts.forEach(drawDonut);
+
+  if(running && score>0 && score> (round*400) ){
+    round++;
+    startRound();
+  }
+
+  rafId=requestAnimationFrame(loop);
+}
+rafId=requestAnimationFrame(loop);
+
+document.getElementById('startBtnD').addEventListener('click',startGame);
+document.getElementById('restartBtnD').addEventListener('click',startGame);
+cv.style.display='none';
+</script></body></html>

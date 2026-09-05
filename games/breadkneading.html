@@ -1,0 +1,208 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bread Kneading</title><meta name="description" content="Play Bread Kneading free online — Drag across the dough to knead it evenly. Cover every spot enough times before the timer runs out to score a perfectly kneaded loaf."><link rel="canonical" href="https://games.multiportllc.com/games/breadkneading"><meta property="og:title" content="Bread Kneading - Multiport Games"><meta property="og:description" content="Play Bread Kneading free online — Drag across the dough to knead it evenly. Cover every spot enough times before the timer runs out to score a perfectly kneaded loaf."><meta property="og:url" content="https://games.multiportllc.com/games/breadkneading"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bread Kneading","description":"Play Bread Kneading free online instantly. Drag across the dough to knead it evenly, covering every spot enough times before the timer runs out. Under-kneaded spots lower your score across multiple loaves with a shrinking time limit each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/breadkneading","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#bk-wrap{background:#241c14;border-radius:14px;padding:16px;max-width:560px;margin:0 auto;text-align:center}
+#bk-hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;margin-bottom:10px;flex-wrap:wrap;gap:6px}
+#bk-hud span{color:#ffcc80}
+#bk-canvas{background:#3a2b1c;border-radius:12px;touch-action:none;cursor:pointer;display:block;margin:0 auto;max-width:100%}
+#bk-timerbar{height:10px;border-radius:6px;background:#0006;overflow:hidden;margin:10px 0}
+#bk-timerbar-fill{height:100%;background:linear-gradient(90deg,#ffcc80,#ff8f00);width:100%}
+#bk-msg{color:#ffd54f;font-weight:700;min-height:1.6em;margin-top:6px}
+#bk-overlay{position:absolute;inset:0;background:#000c;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;border-radius:14px;text-align:center;gap:10px;padding:20px}
+#bk-wrap{position:relative}
+#bk-overlay button{padding:10px 26px;border:none;border-radius:22px;background:#ffd54f;font-weight:800;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bread Kneading</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="bk-wrap">
+      <div id="bk-hud"><div>Loaf: <span id="bk-loaf">1</span></div><div>Coverage: <span id="bk-coverage">0</span>%</div><div>Score: <span id="bk-score">0</span></div><div>Best: <span id="bk-best">0</span></div></div>
+      <div id="bk-timerbar"><div id="bk-timerbar-fill"></div></div>
+      <canvas id="bk-canvas" width="480" height="320"></canvas>
+      <div id="bk-msg"></div>
+      <div id="bk-overlay" style="display:none"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press and drag your mouse or finger back and forth across the dough to knead it. A heatmap tracks how evenly you've worked every spot — keep dragging until the whole loaf is evenly kneaded (shown by the coverage percentage) before time runs out. Under-kneaded patches cost you score, and each new loaf gives you less time!</div>
+</div>
+<script>
+const canvas=document.getElementById('bk-canvas'),ctx=canvas.getContext('2d');
+const W=canvas.width,H=canvas.height;
+const GRID=18;
+const cellW=W/GRID,cellH=H/GRID;
+let heat=[];
+let loaf=1,score=0,best=+(localStorage.getItem('breadkneading_best')||0);
+let timeLeft=0,timeTotal=0,gameOver=false,dragging=false,lastPt=null;
+let rafId=null,lastTs=null;
+document.getElementById('bk-best').textContent=best;
+
+function initHeat(){
+  heat=[];
+  for(let y=0;y<GRID;y++){
+    const row=[];
+    for(let x=0;x<GRID;x++)row.push(0);
+    heat.push(row);
+  }
+}
+
+function doughRadius(x,y){
+  // elliptical dough shape mask, centered
+  const cx=GRID/2,cy=GRID/2;
+  const dx=(x-cx)/(cx*0.95),dy=(y-cy)/(cy*0.95);
+  return dx*dx+dy*dy<=1;
+}
+
+function newLoaf(){
+  initHeat();
+  timeTotal=Math.max(9,22-loaf*1.5);
+  timeLeft=timeTotal;
+  gameOver=false;
+  document.getElementById('bk-loaf').textContent=loaf;
+  document.getElementById('bk-overlay').style.display='none';
+  msg('');
+  draw();
+}
+
+function coveragePct(){
+  let total=0,done=0;
+  for(let y=0;y<GRID;y++)for(let x=0;x<GRID;x++){
+    if(!doughRadius(x,y))continue;
+    total++;
+    if(heat[y][x]>=3)done++;
+  }
+  return total?Math.round(done/total*100):0;
+}
+
+function stampAt(px,py){
+  const gx=px/cellW,gy=py/cellH;
+  const radius=2.1;
+  for(let y=Math.floor(gy-radius);y<=Math.ceil(gy+radius);y++){
+    for(let x=Math.floor(gx-radius);x<=Math.ceil(gx+radius);x++){
+      if(x<0||y<0||x>=GRID||y>=GRID)continue;
+      if(!doughRadius(x,y))continue;
+      const d=Math.hypot(x-gx,y-gy);
+      if(d<=radius)heat[y][x]=Math.min(6,heat[y][x]+ (1-d/radius)*0.5);
+    }
+  }
+}
+
+function pos(e){
+  const rect=canvas.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+
+function onDown(e){
+  if(gameOver)return;
+  e.preventDefault();
+  dragging=true;
+  const p=pos(e);
+  lastPt=p;
+  stampAt(p.x,p.y);
+  draw();
+}
+function onMove(e){
+  if(!dragging||gameOver)return;
+  e.preventDefault();
+  const p=pos(e);
+  if(lastPt){
+    const dist=Math.hypot(p.x-lastPt.x,p.y-lastPt.y);
+    const steps=Math.max(1,Math.floor(dist/6));
+    for(let i=1;i<=steps;i++){
+      const t=i/steps;
+      stampAt(lastPt.x+(p.x-lastPt.x)*t,lastPt.y+(p.y-lastPt.y)*t);
+    }
+  }
+  lastPt=p;
+  draw();
+}
+function onUp(e){
+  dragging=false;lastPt=null;
+}
+
+canvas.addEventListener('mousedown',onDown);
+canvas.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+canvas.addEventListener('touchstart',onDown,{passive:false});
+canvas.addEventListener('touchmove',onMove,{passive:false});
+canvas.addEventListener('touchend',onUp);
+
+function heatColor(v){
+  // v 0..6 -> from raw dough tan to golden kneaded
+  const t=Math.min(1,v/3);
+  const r1=210,g1=170,b1=120; // raw
+  const r2=235,g2=196,b2=120; // kneaded golden
+  const r=Math.round(r1+(r2-r1)*t),g=Math.round(g1+(g2-g1)*t),b=Math.round(b1+(b2-b1)*t);
+  return `rgb(${r},${g},${b})`;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  for(let y=0;y<GRID;y++){
+    for(let x=0;x<GRID;x++){
+      if(!doughRadius(x,y))continue;
+      ctx.fillStyle=heatColor(heat[y][x]);
+      ctx.fillRect(x*cellW-1,y*cellH-1,cellW+2,cellH+2);
+    }
+  }
+  // subtle texture dots
+  ctx.strokeStyle='rgba(120,80,40,0.15)';
+  for(let y=0;y<GRID;y++)for(let x=0;x<GRID;x++){
+    if(!doughRadius(x,y))continue;
+    ctx.strokeRect(x*cellW,y*cellH,cellW,cellH);
+  }
+  const cov=coveragePct();
+  document.getElementById('bk-coverage').textContent=cov;
+  if(cov>=95&&!gameOver)finishLoaf(true);
+}
+
+function msg(t){document.getElementById('bk-msg').textContent=t;}
+
+function finishLoaf(success){
+  gameOver=true;
+  const cov=coveragePct();
+  const timeBonus=success?Math.round(timeLeft/timeTotal*40):0;
+  const roundScore=Math.round(cov*0.6)+timeBonus;
+  score+=roundScore;
+  document.getElementById('bk-score').textContent=score;
+  if(score>best){best=score;localStorage.setItem('breadkneading_best',best);document.getElementById('bk-best').textContent=best;}
+  if(success){SFX.win();msg(I18N.t('bk_perfect','Perfectly kneaded! +'+roundScore));}
+  else{SFX.fail();msg(I18N.t('bk_time_up','Time up! Coverage '+cov+'%. +'+roundScore));}
+  const ov=document.getElementById('bk-overlay');
+  setTimeout(()=>{
+    if(loaf>=6){
+      ov.style.display='flex';
+      ov.innerHTML=`<div style="font-size:1.6rem;font-weight:900">${I18N.t('bk_all_done','ALL LOAVES BAKED!')}</div>
+        <div>${I18N.t('final_score_label','Final Score: {s}').replace('{s}',score)}</div>
+        <button id="bk-restart">${I18N.t('restart_btn','Play Again')}</button>`;
+      document.getElementById('bk-restart').onclick=()=>{loaf=1;score=0;document.getElementById('bk-score').textContent=0;newLoaf();};
+    } else {
+      loaf++;
+      newLoaf();
+    }
+  },1500);
+}
+
+function loop(ts){
+  if(lastTs===null)lastTs=ts;
+  const dt=(ts-lastTs)/1000;
+  lastTs=ts;
+  if(!gameOver){
+    timeLeft=Math.max(0,timeLeft-dt);
+    document.getElementById('bk-timerbar-fill').style.width=(timeLeft/timeTotal*100)+'%';
+    if(timeLeft<=0)finishLoaf(false);
+  }
+  rafId=requestAnimationFrame(loop);
+}
+
+newLoaf();
+loop(performance.now());
+</script></body></html>

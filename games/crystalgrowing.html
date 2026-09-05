@@ -1,0 +1,267 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Crystal Growing</title><meta name="description" content="Play Crystal Growing free online — Add solution to grow your crystal without over-saturating it (it cracks) or under-growing it. Balance the saturation meter to grow the biggest, highest-quality crystal."><link rel="canonical" href="https://games.multiportllc.com/games/crystalgrowing"><meta property="og:title" content="Crystal Growing - Multiport Games"><meta property="og:description" content="Play Crystal Growing free online — Add solution to grow your crystal without over-saturating it (it cracks) or under-growing it. Balance the saturation meter to grow the biggest, highest-quality crystal."><meta property="og:url" content="https://games.multiportllc.com/games/crystalgrowing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Crystal Growing","description":"Play Crystal Growing free online instantly. Add solution to grow your crystal without over-saturating it (it cracks) or under-growing it (too small). Balance the saturation meter over time across multiple attempts to grow the biggest, highest-quality crystal. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/crystalgrowing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#060814}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:#dceeff;font-weight:700;padding:6px 4px}
+#chamberWrap{position:relative;text-align:center}
+#chamber{background:radial-gradient(circle at 50% 20%,#153353,#04070f 75%);border-radius:12px;border:3px solid #1c3a5e;display:block;margin:0 auto}
+#meterWrap{max-width:420px;margin:12px auto 4px;background:rgba(255,255,255,.06);border-radius:10px;padding:10px 14px}
+#meterLabel{color:#cfe3ff;font-size:.82rem;font-weight:700;margin-bottom:4px;display:flex;justify-content:space-between}
+#meterBar{position:relative;height:22px;border-radius:11px;background:linear-gradient(90deg,#2b6cff 0%,#2be0a0 45%,#ffd54f 75%,#ff5a5a 100%);overflow:hidden}
+#meterNeedle{position:absolute;top:-4px;width:4px;height:30px;background:#fff;border-radius:2px;box-shadow:0 0 6px #fff;left:0%}
+#zoneOptimal{position:absolute;top:0;bottom:0;background:rgba(255,255,255,.18);border-left:2px dashed rgba(255,255,255,.6);border-right:2px dashed rgba(255,255,255,.6)}
+#controls{display:flex;justify-content:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+#controls button{padding:12px 26px;font-size:1.05rem;font-weight:800;border:none;border-radius:24px;cursor:pointer}
+#addBtn{background:#2b6cff;color:#fff}
+#stopBtn{background:#e94560;color:#fff}
+#msg{text-align:center;color:#ffd54f;font-weight:800;min-height:1.6em;margin-top:8px}
+#resultsPanel{display:none;text-align:center;color:#fff}
+#resultsPanel button{margin-top:10px;padding:10px 22px;background:#2be0a0;color:#04150e;border:none;border-radius:20px;font-weight:800;cursor:pointer}
+.crackline{stroke:#0a0e18;stroke-width:1.4}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Crystal Growing</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="attemptLbl">Attempt 1 / 5</span>
+      <span id="scoreLbl">Score: 0 | Best: 0</span>
+      <span id="timeLbl">Time: 30</span>
+    </div>
+    <div id="chamberWrap">
+      <canvas id="chamber" width="360" height="280"></canvas>
+    </div>
+    <div id="meterWrap">
+      <div id="meterLabel"><span data-i18n="sat_label">Saturation</span><span id="satVal">0%</span></div>
+      <div id="meterBar"><div id="zoneOptimal"></div><div id="meterNeedle"></div></div>
+    </div>
+    <div id="controls">
+      <button id="addBtn">💧 Add Solution</button>
+      <button id="stopBtn">🏺 Harvest Crystal</button>
+    </div>
+    <div id="msg"></div>
+    <div id="resultsPanel">
+      <h3 id="resultsTitle">All Attempts Complete!</h3>
+      <div id="resultsBody"></div>
+      <button id="restartBtn">Play Again</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click <b>Add Solution</b> to raise saturation and grow your crystal. Keep the saturation needle inside the highlighted optimal zone as long as possible — too high and the crystal cracks, too low and it stays tiny. Click <b>Harvest Crystal</b> when you're happy with its size to lock in your score. You get 5 attempts.</div>
+</div>
+<script>
+const cv=document.getElementById('chamber'),ctx=cv.getContext('2d');
+const W=360,H=280;
+let attempt=1,maxAttempts=5;
+let score=0,best=+(localStorage.getItem('crystalgrowing_best')||0);
+let saturation=20; // 0-100
+let size=6; // crystal radius/size
+let quality=100;
+let cracked=false,harvested=false,running=false;
+let timeLeft=30;
+let timerId=null,decayId=null;
+let optimalLo=42,optimalHi=68;
+let seedPoints=[];
+
+document.getElementById('scoreLbl').textContent=I18N.t('score_best_label','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+
+function attemptLabel(){
+  document.getElementById('attemptLbl').textContent=I18N.t('attempt_label','Attempt {a} / {m}').replace('{a}',attempt).replace('{m}',maxAttempts);
+}
+
+function newAttempt(){
+  saturation=20+Math.random()*10;
+  size=6;
+  quality=100;
+  cracked=false;
+  harvested=false;
+  running=true;
+  timeLeft=30;
+  // optimal zone tightens as attempts progress for difficulty
+  const width=Math.max(14,26-attempt*2);
+  const center=45+Math.random()*10;
+  optimalLo=center-width/2;
+  optimalHi=center+width/2;
+  seedPoints=[];
+  for(let i=0;i<7;i++){
+    const ang=(i/7)*Math.PI*2+Math.random()*0.3;
+    seedPoints.push(ang);
+  }
+  attemptLabel();
+  setMsg('');
+  document.getElementById('resultsPanel').style.display='none';
+  document.getElementById('chamberWrap').style.display='block';
+  document.getElementById('meterWrap').style.display='block';
+  document.getElementById('controls').style.display='flex';
+  updateHud();
+  clearInterval(timerId);clearInterval(decayId);
+  timerId=setInterval(()=>{
+    if(!running)return;
+    timeLeft--;
+    updateHud();
+    if(timeLeft<=0){
+      clearInterval(timerId);
+      finishAttempt();
+    }
+  },1000);
+  decayId=setInterval(()=>{
+    if(!running)return;
+    saturation=Math.max(0,saturation-1.6);
+    tick();
+  },300);
+}
+
+function addSolution(){
+  if(!running)return;
+  saturation=Math.min(100,saturation+7);
+  SFX.click();
+  tick();
+}
+
+function tick(){
+  if(!running)return;
+  const inZone=saturation>=optimalLo&&saturation<=optimalHi;
+  if(inZone){
+    size=Math.min(70,size+0.6);
+  } else if(saturation>optimalHi){
+    // over-saturated: risk of cracking, grows fast but degrades quality
+    size=Math.min(70,size+0.3);
+    quality=Math.max(0,quality-1.4);
+    if(saturation>=94 && !cracked){
+      cracked=true;
+      quality=Math.max(0,quality-40);
+      SFX.hit();
+      setMsg(I18N.t('crack_msg','💥 The crystal cracked from over-saturation!'));
+    }
+  } else {
+    quality=Math.max(0,quality-0.2);
+  }
+  updateHud();
+  draw();
+}
+
+function updateHud(){
+  document.getElementById('timeLbl').textContent=I18N.t('time_label','Time: {t}').replace('{t}',timeLeft);
+  document.getElementById('satVal').textContent=Math.round(saturation)+'%';
+  document.getElementById('meterNeedle').style.left=Math.min(98,saturation)+'%';
+  const zone=document.getElementById('zoneOptimal');
+  zone.style.left=optimalLo+'%';
+  zone.style.width=(optimalHi-optimalLo)+'%';
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // liquid
+  const liquidGrad=ctx.createLinearGradient(0,0,0,H);
+  liquidGrad.addColorStop(0,'rgba(70,140,220,0.25)');
+  liquidGrad.addColorStop(1,'rgba(30,70,120,0.4)');
+  ctx.fillStyle=liquidGrad;
+  ctx.fillRect(20,20,W-40,H-40);
+  ctx.strokeStyle='#2c5a86';ctx.lineWidth=3;
+  ctx.strokeRect(20,20,W-40,H-40);
+
+  const cx=W/2,cy=H/2+20;
+  const hue=cracked?0:200-quality*1.2;
+  const alpha=cracked?0.55:0.85;
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.beginPath();
+  seedPoints.forEach((ang,i)=>{
+    const r=size*(0.8+0.2*Math.sin(i*2+size*0.1));
+    const x=Math.cos(ang)*r,y=Math.sin(ang)*r;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  });
+  ctx.closePath();
+  ctx.fillStyle=`hsla(${Math.max(0,hue)},80%,65%,${alpha})`;
+  ctx.shadowColor=`hsla(${Math.max(0,hue)},90%,70%,0.8)`;
+  ctx.shadowBlur=cracked?4:16;
+  ctx.fill();
+  ctx.lineWidth=1.5;
+  ctx.strokeStyle='rgba(255,255,255,.5)';
+  ctx.stroke();
+
+  if(cracked){
+    ctx.strokeStyle='#0a0e18';
+    ctx.lineWidth=1.4;
+    for(let i=0;i<5;i++){
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      const ang=Math.random()*Math.PI*2;
+      ctx.lineTo(Math.cos(ang)*size*1.1,Math.sin(ang)*size*1.1);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  // bubbles when adding
+  ctx.restore();
+}
+
+function finishAttempt(quiet){
+  if(!running)return;
+  running=false;
+  clearInterval(timerId);clearInterval(decayId);
+  const finalQuality=Math.max(0,Math.round(quality));
+  const sizeScore=Math.round(size*2);
+  const qualityBonus=Math.round(finalQuality*0.6);
+  const attemptScore=cracked?Math.round(sizeScore*0.3):sizeScore+qualityBonus;
+  score+=attemptScore;
+  if(score>best){best=score;localStorage.setItem('crystalgrowing_best',best);}
+  document.getElementById('scoreLbl').textContent=I18N.t('score_best_label','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+  if(!quiet){
+    if(cracked){
+      setMsg(I18N.t('attempt_cracked_result','Cracked! Only {p} points earned.').replace('{p}',attemptScore));
+      SFX.fail();
+    } else {
+      setMsg(I18N.t('attempt_result','Harvested! Size {sz}, Quality {q}% — +{p} points').replace('{sz}',Math.round(size)).replace('{q}',finalQuality).replace('{p}',attemptScore));
+      SFX.success();
+    }
+  }
+  setTimeout(()=>{
+    if(attempt>=maxAttempts){
+      showResults();
+    } else {
+      attempt++;
+      newAttempt();
+    }
+  },1600);
+}
+
+function harvest(){
+  if(!running)return;
+  finishAttempt(false);
+}
+
+function showResults(){
+  document.getElementById('chamberWrap').style.display='none';
+  document.getElementById('meterWrap').style.display='none';
+  document.getElementById('controls').style.display='none';
+  setMsg('');
+  const panel=document.getElementById('resultsPanel');
+  panel.style.display='block';
+  document.getElementById('resultsTitle').textContent=I18N.t('results_title','All Attempts Complete!');
+  document.getElementById('resultsBody').textContent=I18N.t('results_body','Final Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+  SFX.win();
+}
+
+document.getElementById('addBtn').addEventListener('click',addSolution);
+document.getElementById('stopBtn').addEventListener('click',harvest);
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();addSolution();}
+  if(e.code==='Enter'){e.preventDefault();harvest();}
+});
+document.getElementById('restartBtn').addEventListener('click',()=>{
+  attempt=1;score=0;
+  document.getElementById('scoreLbl').textContent=I18N.t('score_best_label','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+  newAttempt();
+});
+
+newAttempt();
+draw();
+</script></body></html>

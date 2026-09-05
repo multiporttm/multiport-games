@@ -1,0 +1,259 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Skee-Ball Alley</title><meta name="description" content="Play Skee-Ball Alley free online — Move to aim, hold to charge power, release to roll the ball up the ramp into a scoring ring. Small rings are worth more but are harder to reach. 10 balls per game — get the highest score!"><link rel="canonical" href="https://games.multiportllc.com/games/skeeballalley"><meta property="og:title" content="Skee-Ball Alley - Multiport Games"><meta property="og:description" content="Play Skee-Ball Alley free online — Move to aim, hold to charge power, release to roll the ball up the ramp into a scoring ring. Small rings are worth more but are harder to reach. 10 balls per game — get the highest score!"><meta property="og:url" content="https://games.multiportllc.com/games/skeeballalley"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Skee-Ball Alley","description":"Play Skee-Ball Alley free online instantly. Move to aim, hold to charge power, release to roll the ball up the ramp into a scoring ring. Small rings are worth more but are harder to reach. 10 balls per game — get the highest score! No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/skeeballalley","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0c1420}
+#score-display{color:#ffd54f;font-size:1.15rem;font-weight:800;text-align:center;padding:8px}
+#c{background:linear-gradient(#1c2b40,#0c1420);display:block;border-radius:8px;touch-action:none}
+#hint{text-align:center;color:#9fb3cc;font-size:.85rem;padding:0 0 8px}
+#power-bar{width:260px;height:14px;background:#222;border-radius:8px;margin:6px auto;overflow:hidden;border:1px solid #444}
+#power-fill{height:100%;width:0%;background:linear-gradient(90deg,#4caf50,#ffeb3b,#f44336)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Skee-Ball Alley</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Balls left: 10 | Best: 0</div>
+    <canvas id="c" width="800" height="460"></canvas>
+    <div id="power-bar"><div id="power-fill"></div></div>
+    <div id="hint">Arrow keys / drag to aim • Hold Space or press & hold the lane to charge • Release to roll</div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Aim left/right with the Arrow keys (or drag left/right on the lane), then press and hold Space or press-and-hold on the lane to charge your throw power, and release to roll the ball up the ramp. Land it in a scoring ring at the top — small rings are worth more points but are harder to hit. You get 10 balls per game. Get the highest score you can!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=460;
+const LANE_X=W/2, LANE_TOP=70, LANE_BOTTOM=420;
+let score=0,ballsLeft=10,best=parseInt(localStorage.getItem('skeeballalley_best')||'0',10);
+let aimOffset=0; // -1..1
+let charging=false,power=0;
+let ball=null; // {x,y,vx,vy,rolling}
+let lastScoreMsg='';
+let msgTimer=0;
+
+const RINGS=[
+  {r:26,pts:10,cy:LANE_TOP+18,color:'#4caf50'},
+  {r:20,pts:20,cy:LANE_TOP+18,color:'#2196f3'},
+  {r:15,pts:30,cy:LANE_TOP+18,color:'#ff9800'},
+  {r:10,pts:50,cy:LANE_TOP+18,color:'#e91e63'},
+];
+// horizontal offsets for rings, arranged left-to-right along top
+function ringLayout(){
+  const spacing=W/(RINGS.length+1);
+  return RINGS.map((r,i)=>({...r,cx:spacing*(i+1)}));
+}
+let layout=ringLayout();
+
+function updateHud(){
+  document.getElementById('score-display').textContent=
+    I18N.t('sb_hud','Score: {s} | Balls left: {b} | Best: {h}')
+    .replace('{s}',score).replace('{b}',ballsLeft).replace('{h}',best);
+}
+
+function resetBall(){
+  ball={x:LANE_X,y:LANE_BOTTOM,vx:0,vy:0,rolling:false,done:false};
+}
+resetBall();
+updateHud();
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'){aimOffset=Math.max(-1,aimOffset-0.08);e.preventDefault();}
+  if(e.code==='ArrowRight'){aimOffset=Math.min(1,aimOffset+0.08);e.preventDefault();}
+  if(e.code==='Space'){e.preventDefault();startCharge();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){e.preventDefault();releaseCharge();}
+});
+
+let dragStartX=null;
+function pos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+c.addEventListener('pointerdown',e=>{
+  if(ballsLeft<=0||ball.rolling)return;
+  dragStartX=pos(e).x;
+  startCharge();
+});
+c.addEventListener('pointermove',e=>{
+  if(dragStartX===null)return;
+  const p=pos(e);
+  const dx=p.x-dragStartX;
+  aimOffset=Math.max(-1,Math.min(1,aimOffset+dx/300));
+  dragStartX=p.x;
+});
+window.addEventListener('pointerup',()=>{
+  if(dragStartX!==null){dragStartX=null;releaseCharge();}
+});
+
+function startCharge(){
+  if(charging||ball.rolling||ballsLeft<=0)return;
+  charging=true;power=0;
+}
+function releaseCharge(){
+  if(!charging)return;
+  charging=false;
+  launchBall();
+}
+
+function launchBall(){
+  if(ball.rolling||ballsLeft<=0)return;
+  const speed=6+power*11;
+  ball.vy=-speed;
+  ball.vx=aimOffset*4.5;
+  ball.rolling=true;
+  ballsLeft--;
+  SFX.swoosh();
+  updateHud();
+}
+
+function drawLane(){
+  // side rails
+  ctx.fillStyle='#28405c';
+  ctx.fillRect(LANE_X-150,LANE_TOP,300,LANE_BOTTOM-LANE_TOP);
+  ctx.fillStyle='#3a5878';
+  ctx.fillRect(LANE_X-150,LANE_TOP,10,LANE_BOTTOM-LANE_TOP);
+  ctx.fillRect(LANE_X+140,LANE_TOP,10,LANE_BOTTOM-LANE_TOP);
+  // lane lines
+  ctx.strokeStyle='#ffffff22';
+  ctx.beginPath();ctx.moveTo(LANE_X,LANE_TOP);ctx.lineTo(LANE_X,LANE_BOTTOM);ctx.stroke();
+
+  // rings (drawn as ellipses receding)
+  layout.forEach(r=>{
+    ctx.save();
+    ctx.strokeStyle=r.color;
+    ctx.lineWidth=6;
+    ctx.beginPath();
+    ctx.ellipse(r.cx,r.cy,r.r,r.r*0.5,0,0,Math.PI*2);
+    ctx.stroke();
+    ctx.fillStyle='#fff';
+    ctx.font='bold 12px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(r.pts,r.cx,r.cy+4);
+    ctx.restore();
+  });
+}
+
+function drawAimer(){
+  const bx=LANE_X+aimOffset*130;
+  ctx.save();
+  ctx.strokeStyle='#ffd54f';
+  ctx.setLineDash([6,6]);
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(bx,LANE_BOTTOM);
+  ctx.lineTo(LANE_X+aimOffset*40,LANE_TOP+40);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function drawBall(){
+  ctx.save();
+  ctx.fillStyle='#f5f0e6';
+  ctx.beginPath();
+  ctx.arc(ball.x,ball.y,13,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle='#c9c0a8';
+  ctx.lineWidth=2;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function checkScore(){
+  for(const r of layout){
+    const dx=ball.x-r.cx, dy=ball.y-r.cy;
+    if(Math.hypot(dx,dy/0.5)<r.r*0.85){
+      return r;
+    }
+  }
+  return null;
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawLane();
+
+  if(charging){
+    power=Math.min(1,power+0.025);
+    document.getElementById('power-fill').style.width=(power*100)+'%';
+  }else{
+    document.getElementById('power-fill').style.width='0%';
+  }
+
+  if(!ball.rolling)drawAimer();
+
+  if(ball.rolling){
+    ball.y+=ball.vy;
+    ball.x+=ball.vx;
+    ball.x=Math.max(LANE_X-135,Math.min(LANE_X+135,ball.x));
+    ball.vy*=0.995;
+    if(ball.y<=LANE_TOP+30 && !ball.done){
+      const hit=checkScore();
+      ball.done=true;
+      if(hit){
+        score+=hit.pts;
+        if(score>best){best=score;localStorage.setItem('skeeballalley_best',best);}
+        SFX.win();
+        lastScoreMsg=I18N.t('sb_scored','+{p} points!').replace('{p}',hit.pts);
+      }else{
+        SFX.fail();
+        lastScoreMsg=I18N.t('sb_missed','Missed!');
+      }
+      msgTimer=90;
+      updateHud();
+      setTimeout(()=>{ if(ballsLeft>0)resetBall(); else endGame(); },700);
+    } else if(ball.y<LANE_TOP-30){
+      ball.rolling=false;
+    }
+  }
+
+  drawBall();
+
+  if(msgTimer>0){
+    msgTimer--;
+    ctx.fillStyle='#ffd54f';
+    ctx.font='bold 26px Arial';
+    ctx.textAlign='center';
+    ctx.globalAlpha=Math.min(1,msgTimer/30);
+    ctx.fillText(lastScoreMsg,W/2,LANE_TOP-10);
+    ctx.globalAlpha=1;
+  }
+
+  if(ballsLeft<=0 && !ball.rolling){
+    ctx.fillStyle='#ffffffee';
+    ctx.font='bold 32px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(I18N.t('sb_over','Game Over — Final: {s}').replace('{s}',score),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap or press R to play again'),W/2,H/2+24);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='KeyR' && ballsLeft<=0){restart();}
+});
+c.addEventListener('pointerdown',()=>{
+  if(ballsLeft<=0)restart();
+},true);
+
+function restart(){
+  score=0;ballsLeft=10;aimOffset=0;power=0;charging=false;
+  resetBall();
+  updateHud();
+}
+
+function endGame(){
+  SFX.lose();
+}
+
+loop();
+</script></body></html>
