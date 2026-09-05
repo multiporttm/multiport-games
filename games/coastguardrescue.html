@@ -1,0 +1,286 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Coast Guard Rescue</title><meta name="description" content="Play Coast Guard Rescue free online — Pilot your rescue boat with Arrow Keys / WASD, drag, or tap. Reach stranded swimmers and boats on the mini-map before their distress timer expires, dodge rocks and debris, and rack up rescues before time runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/coastguardrescue"><meta property="og:title" content="Coast Guard Rescue - Multiport Games"><meta property="og:description" content="Play Coast Guard Rescue free online — Pilot your rescue boat with Arrow Keys / WASD, drag, or tap. Reach stranded swimmers and boats on the mini-map before their distress timer expires, dodge rocks and debris, and rack up rescues before time runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/coastguardrescue"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Coast Guard Rescue","description":"Play Coast Guard Rescue free online instantly. Pilot your rescue boat with Arrow Keys, WASD, drag, or tap across rough top-down water to reach stranded swimmers and boats marked on a mini-map before their distress timer expires, while dodging rocks and debris. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/coastguardrescue","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1c5a7a;display:block;border-radius:8px;touch-action:none;cursor:grab}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:20px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#hud .low{color:#ff6b6b}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Coast Guard Rescue</div>
+  <div class="game-frame">
+    <div id="hud"><span>Rescues: <b id="score-display">0</b></span><span>Hull: <b id="hull-display">100</b></span><span>Time: <b id="timer-display">90</b>s</span><span>Best: <b id="best-display">0</b></span></div>
+    <canvas id="c" width="800" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Pilot your rescue boat with <b>Arrow Keys / WASD</b>, drag, or tap. Follow the mini-map arrow to reach stranded swimmers and boats (yellow markers) before their distress timer runs out. Dodge rocks and floating debris — hitting them damages your hull. Rescue as many as you can before time runs out!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+const WORLD_W=2000,WORLD_H=1400;
+const KEY='coastguardrescue_best';
+let best=parseInt(localStorage.getItem(KEY)||'0',10);
+document.getElementById('best-display').textContent=best;
+
+let boat,score,hull,targets,rocks,camX,camY,frame,gameOver,started,timeLeft,lastTime,rockRespawnTimer;
+let keys={left:false,right:false,up:false,down:false};
+let dragTargetX=null,dragTargetY=null;
+let waveOffset=0;
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function reset(){
+  boat={x:WORLD_W/2,y:WORLD_H/2,vx:0,vy:0,angle:0};
+  score=0;hull=100;targets=[];rocks=[];camX=boat.x-W/2;camY=boat.y-H/2;frame=0;gameOver=false;started=false;
+  timeLeft=90;lastTime=null;rockRespawnTimer=0;
+  for(let i=0;i<4;i++)spawnTarget();
+  for(let i=0;i<14;i++)spawnRock();
+}
+reset();
+
+function spawnTarget(){
+  let x,y;
+  do{ x=rand(60,WORLD_W-60); y=rand(60,WORLD_H-60); }while(Math.hypot(x-boat.x,y-boat.y)<250);
+  targets.push({x,y,r:16,timer:rand(18,26),max:26,type:Math.random()<0.5?'swimmer':'boat',bob:Math.random()*10});
+}
+function spawnRock(){
+  rocks.push({x:rand(40,WORLD_W-40),y:rand(40,WORLD_H-40),r:rand(14,26)});
+}
+
+function startIfNeeded(){ if(!started)started=true; if(gameOver)reset(); }
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS'].includes(e.code))e.preventDefault();
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keys.left=true;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keys.right=true;
+  if(e.code==='ArrowUp'||e.code==='KeyW')keys.up=true;
+  if(e.code==='ArrowDown'||e.code==='KeyS')keys.down=true;
+  startIfNeeded();
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keys.left=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keys.right=false;
+  if(e.code==='ArrowUp'||e.code==='KeyW')keys.up=false;
+  if(e.code==='ArrowDown'||e.code==='KeyS')keys.down=false;
+});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*(W/rect.width),y:(cy-rect.top)*(H/rect.height)};
+}
+function onPointerDown(e){ e.preventDefault(); startIfNeeded(); const p=pointerPos(e); dragTargetX=p.x;dragTargetY=p.y; }
+function onPointerMove(e){ if(dragTargetX===null)return; e.preventDefault(); const p=pointerPos(e); dragTargetX=p.x;dragTargetY=p.y; }
+function onPointerUp(){ dragTargetX=null;dragTargetY=null; }
+c.addEventListener('mousedown',onPointerDown);
+c.addEventListener('mousemove',onPointerMove);
+window.addEventListener('mouseup',onPointerUp);
+c.addEventListener('touchstart',onPointerDown,{passive:false});
+c.addEventListener('touchmove',onPointerMove,{passive:false});
+c.addEventListener('touchend',onPointerUp,{passive:false});
+
+function drawWater(){
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#1c5a7a');grad.addColorStop(1,'#0d3d54');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,.12)';ctx.lineWidth=2;
+  for(let i=0;i<24;i++){
+    const wy=((i*40-camY*0.5+waveOffset)%(H+40))-20;
+    ctx.beginPath();
+    for(let x=-20;x<=W+20;x+=20){
+      const yy=wy+Math.sin((x+camX*0.3)/50+i)*3;
+      if(x===-20)ctx.moveTo(x,yy);else ctx.lineTo(x,yy);
+    }
+    ctx.stroke();
+  }
+}
+function drawBoat(){
+  ctx.save();
+  ctx.translate(boat.x-camX,boat.y-camY);
+  ctx.rotate(boat.angle);
+  ctx.fillStyle='#e94560';
+  ctx.beginPath();
+  ctx.moveTo(18,0);ctx.lineTo(-14,-11);ctx.lineTo(-8,0);ctx.lineTo(-14,11);
+  ctx.closePath();ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.fillRect(-6,-6,10,12);
+  ctx.fillStyle='#2b4a68';
+  ctx.fillRect(-2,-4,5,8);
+  // wake
+  ctx.restore();
+}
+function drawTarget(t){
+  const sx=t.x-camX,sy=t.y-camY;
+  if(sx<-40||sx>W+40||sy<-40||sy>H+40)return;
+  ctx.save();
+  ctx.translate(sx,sy+Math.sin(frame*0.08+t.bob)*3);
+  const urgency=t.timer/t.max;
+  ctx.fillStyle=urgency<0.3?'#ff6b6b':'#ffd54f';
+  if(t.type==='swimmer'){
+    ctx.beginPath();ctx.arc(0,0,10,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle=ctx.fillStyle;ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(-14,-8);ctx.lineTo(-4,-2);ctx.moveTo(14,-8);ctx.lineTo(4,-2);ctx.stroke();
+  } else {
+    ctx.fillRect(-16,-8,32,16);
+    ctx.fillStyle='#333';ctx.fillRect(-6,-14,12,8);
+  }
+  ctx.restore();
+}
+function drawRock(r){
+  const sx=r.x-camX,sy=r.y-camY;
+  if(sx<-40||sx>W+40||sy<-40||sy>H+40)return;
+  ctx.save();
+  ctx.translate(sx,sy);
+  ctx.fillStyle='#4a4a52';
+  ctx.beginPath();ctx.arc(0,0,r.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#33333a';
+  ctx.beginPath();ctx.arc(-r.r*0.3,-r.r*0.3,r.r*0.4,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.3)';
+  ctx.beginPath();ctx.arc(0,0,r.r+4,0,Math.PI*2);ctx.stroke();
+  ctx.restore();
+}
+function drawMiniMap(){
+  const mw=150,mh=105,mx=W-mw-14,my=14;
+  ctx.save();
+  ctx.globalAlpha=0.85;
+  ctx.fillStyle='rgba(0,0,0,.5)';
+  ctx.fillRect(mx,my,mw,mh);
+  ctx.strokeStyle='rgba(255,255,255,.4)';ctx.strokeRect(mx,my,mw,mh);
+  const sx=mw/WORLD_W, sy=mh/WORLD_H;
+  ctx.fillStyle='#7ec850';
+  ctx.beginPath();ctx.arc(mx+boat.x*sx,my+boat.y*sy,3,0,Math.PI*2);ctx.fill();
+  targets.forEach(t=>{
+    ctx.fillStyle=t.timer/t.max<0.3?'#ff6b6b':'#ffd54f';
+    ctx.beginPath();ctx.arc(mx+t.x*sx,my+t.y*sy,3,0,Math.PI*2);ctx.fill();
+  });
+  ctx.globalAlpha=1;
+  ctx.restore();
+}
+function drawCompassArrow(){
+  if(targets.length===0)return;
+  let nearest=targets[0],d=Infinity;
+  targets.forEach(t=>{ const dd=Math.hypot(t.x-boat.x,t.y-boat.y); if(dd<d){d=dd;nearest=t;} });
+  const ang=Math.atan2(nearest.y-boat.y,nearest.x-boat.x);
+  ctx.save();
+  ctx.translate(W/2,H-40);
+  ctx.rotate(ang);
+  ctx.fillStyle='rgba(255,213,79,.85)';
+  ctx.beginPath();ctx.moveTo(16,0);ctx.lineTo(-8,-9);ctx.lineTo(-8,9);ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frame+=dt;
+  waveOffset+=dt*0.6;
+
+  drawWater();
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint3','Arrows/WASD or Drag to sail'),W/2,H/2);
+    drawBoat();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.45)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-30);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('rescued_count2','Rescues completed: {n}').replace('{n}',score),W/2,H/2+4);
+    ctx.fillText(I18N.t('restart_hint2','Press a key or Tap to restart'),W/2,H/2+34);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  timeLeft-=dt/60;
+  if(timeLeft<=0){timeLeft=0;endGame();}
+
+  let ax=0,ay=0;
+  if(keys.left)ax-=1;
+  if(keys.right)ax+=1;
+  if(keys.up)ay-=1;
+  if(keys.down)ay+=1;
+  if(dragTargetX!==null){
+    const screenX=boat.x-camX,screenY=boat.y-camY;
+    ax+=(dragTargetX-screenX)*0.02;
+    ay+=(dragTargetY-screenY)*0.02;
+  }
+  boat.vx+=ax*0.35*dt; boat.vx*=0.92;
+  boat.vy+=ay*0.35*dt; boat.vy*=0.92;
+  boat.vx=Math.max(-6,Math.min(6,boat.vx));
+  boat.vy=Math.max(-6,Math.min(6,boat.vy));
+  if(Math.abs(boat.vx)>0.15||Math.abs(boat.vy)>0.15){
+    const targetAngle=Math.atan2(boat.vy,boat.vx);
+    let diff=targetAngle-boat.angle;
+    while(diff>Math.PI)diff-=Math.PI*2;
+    while(diff<-Math.PI)diff+=Math.PI*2;
+    boat.angle+=diff*0.15*dt;
+  }
+  boat.x+=boat.vx*dt;
+  boat.y+=boat.vy*dt;
+  boat.x=Math.max(15,Math.min(WORLD_W-15,boat.x));
+  boat.y=Math.max(15,Math.min(WORLD_H-15,boat.y));
+
+  camX+=((boat.x-W/2)-camX)*0.12*dt;
+  camY+=((boat.y-H/2)-camY)*0.12*dt;
+
+  // rocks
+  rocks.forEach(r=>{
+    drawRock(r);
+    if(Math.hypot(r.x-boat.x,r.y-boat.y)<r.r+10){
+      hull-=0.6*dt; SFX.hit();
+      const push=Math.atan2(boat.y-r.y,boat.x-r.x);
+      boat.x+=Math.cos(push)*2*dt; boat.y+=Math.sin(push)*2*dt;
+    }
+  });
+
+  // targets
+  targets.forEach(t=>{ t.timer-=dt/60; });
+  targets=targets.filter(t=>{
+    if(t.timer<=0){ return false; }
+    drawTarget(t);
+    if(Math.hypot(t.x-boat.x,t.y-boat.y)<t.r+16){
+      score++; SFX.success();
+      if(score>best){best=score;localStorage.setItem(KEY,String(best));}
+      return false;
+    }
+    return true;
+  });
+  while(targets.length<4)spawnTarget();
+
+  drawBoat();
+  drawCompassArrow();
+  drawMiniMap();
+
+  if(hull<=0){hull=0;endGame();}
+
+  document.getElementById('score-display').textContent=score;
+  document.getElementById('hull-display').textContent=Math.max(0,Math.ceil(hull));
+  document.getElementById('hull-display').className=hull<30?'low':'';
+  document.getElementById('timer-display').textContent=Math.ceil(timeLeft);
+  document.getElementById('best-display').textContent=best;
+
+  requestAnimationFrame(loop);
+}
+
+function endGame(){
+  if(gameOver)return;
+  gameOver=true;
+  SFX.lose();
+}
+
+requestAnimationFrame(loop);
+</script></body></html>

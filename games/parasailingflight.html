@@ -1,0 +1,288 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Parasailing Flight</title><meta name="description" content="Play Parasailing Flight free online — Control your parasailer with Arrow Keys / WASD, drag, or tap. Ride wind thermals for height and speed bonuses, dodge birds, cliffs and other boats, and rack up distance and trick points at altitude peaks!"><link rel="canonical" href="https://games.multiportllc.com/games/parasailingflight"><meta property="og:title" content="Parasailing Flight - Multiport Games"><meta property="og:description" content="Play Parasailing Flight free online — Control your parasailer with Arrow Keys / WASD, drag, or tap. Ride wind thermals for height and speed bonuses, dodge birds, cliffs and other boats, and rack up distance and trick points at altitude peaks!"><meta property="og:url" content="https://games.multiportllc.com/games/parasailingflight"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Parasailing Flight","description":"Play Parasailing Flight free online instantly. Control your parasailer, towed behind a boat, with Arrow Keys, WASD, drag, or tap. Ride wind thermals for height and speed bonuses, dodge birds, cliffs and other boats, and score points for distance traveled and tricks performed at altitude peaks. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/parasailingflight","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#6ec6e8;display:block;border-radius:8px;touch-action:none;cursor:grab}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:20px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Parasailing Flight</div>
+  <div class="game-frame">
+    <div id="hud"><span>Distance: <b id="dist-display">0</b>m</span><span>Score: <b id="score-display">0</b></span><span>Best: <b id="best-display">0</b></span></div>
+    <canvas id="c" width="800" height="450"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Control your parasailer with <b>Arrow Keys / WASD</b>, drag, or tap. Ride the glowing wind thermals to gain height and speed bonuses, and perform tricks by looping at altitude peaks for bonus points. Avoid birds, cliffs and other boats — crashing ends your flight. Score is based on distance traveled and tricks landed!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=450;
+const KEY='parasailingflight_best';
+let best=parseInt(localStorage.getItem(KEY)||'0',10);
+document.getElementById('best-display').textContent=best;
+
+let flyer,score,distance,obstacles,thermals,frame,gameOver,started,scroll,lastTime,spawnTimer,thermalTimer,trickCooldown,peakStreak,trickFlip;
+let keys={up:false,down:false};
+let dragTargetY=null;
+
+const baseY=H*0.55;
+
+function reset(){
+  flyer={y:baseY,vy:0,x:180,trickTimer:0,inThermal:false,rotation:0};
+  score=0;distance=0;obstacles=[];thermals=[];frame=0;gameOver=false;started=false;
+  scroll=0;lastTime=null;spawnTimer=0;thermalTimer=0;trickCooldown=0;peakStreak=0;trickFlip=0;
+}
+reset();
+
+function startIfNeeded(){ if(!started)started=true; if(gameOver)reset(); }
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','KeyW','KeyS','Space'].includes(e.code))e.preventDefault();
+  if(e.code==='ArrowUp'||e.code==='KeyW')keys.up=true;
+  if(e.code==='ArrowDown'||e.code==='KeyS')keys.down=true;
+  startIfNeeded();
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp'||e.code==='KeyW')keys.up=false;
+  if(e.code==='ArrowDown'||e.code==='KeyS')keys.down=false;
+});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {y:(cy-rect.top)*(H/rect.height)};
+}
+function onPointerDown(e){ e.preventDefault(); startIfNeeded(); dragTargetY=pointerPos(e).y; }
+function onPointerMove(e){ if(dragTargetY===null)return; e.preventDefault(); dragTargetY=pointerPos(e).y; }
+function onPointerUp(){ dragTargetY=null; }
+c.addEventListener('mousedown',onPointerDown);
+c.addEventListener('mousemove',onPointerMove);
+window.addEventListener('mouseup',onPointerUp);
+c.addEventListener('touchstart',onPointerDown,{passive:false});
+c.addEventListener('touchmove',onPointerMove,{passive:false});
+c.addEventListener('touchend',onPointerUp,{passive:false});
+
+function spawnObstacle(){
+  const roll=Math.random();
+  if(roll<0.4){
+    obstacles.push({type:'bird',x:W+40,y:rand(60,baseY-20),w:32,h:18,flap:0});
+  } else if(roll<0.7){
+    obstacles.push({type:'boat',x:W+40,y:H-46,w:60,h:26});
+  } else {
+    const high=Math.random()<0.5;
+    obstacles.push({type:'cliff',x:W+40,y:high?0:H-90,w:50,h:110,high});
+  }
+}
+function spawnThermal(){
+  thermals.push({x:W+40,y:rand(H*0.3,H*0.75),r:38,phase:Math.random()*10});
+}
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function circleRect(cx,cy,r,rx,ry,rw,rh){
+  const nx=Math.max(rx,Math.min(cx,rx+rw));
+  const ny=Math.max(ry,Math.min(cy,ry+rh));
+  const dx=cx-nx,dy=cy-ny;
+  return dx*dx+dy*dy<r*r;
+}
+function circleCircle(x1,y1,r1,x2,y2,r2){
+  const dx=x1-x2,dy=y1-y2;
+  return dx*dx+dy*dy<(r1+r2)*(r1+r2);
+}
+
+function drawFlyer(){
+  ctx.save();
+  ctx.translate(flyer.x,flyer.y);
+  ctx.rotate(flyer.rotation);
+  // lines to boat
+  ctx.strokeStyle='rgba(255,255,255,.5)';ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.moveTo(-8,26);ctx.lineTo(-8,60);ctx.stroke();
+  // canopy
+  const grad=ctx.createLinearGradient(-34,-24,34,10);
+  grad.addColorStop(0,'#ff6b35');grad.addColorStop(0.5,'#ffd54f');grad.addColorStop(1,'#e94560');
+  ctx.fillStyle=grad;
+  ctx.beginPath();ctx.ellipse(0,-6,34,18,0,Math.PI,0);ctx.closePath();ctx.fill();
+  // rider
+  ctx.fillStyle='#2b4a68';
+  ctx.fillRect(-6,10,12,16);
+  ctx.fillStyle='#ffe08a';
+  ctx.beginPath();ctx.arc(0,6,7,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+function drawBird(o){
+  ctx.save();ctx.translate(o.x,o.y);
+  ctx.fillStyle='#2c2c3a';
+  const wing=Math.sin(o.flap)*9;
+  ctx.beginPath();
+  ctx.moveTo(-o.w/2,0);ctx.quadraticCurveTo(0,-wing-6,o.w/2,0);ctx.quadraticCurveTo(0,6,-o.w/2,0);
+  ctx.fill();
+  ctx.restore();
+}
+function drawBoat(o){
+  ctx.save();ctx.translate(o.x,o.y);
+  ctx.fillStyle='#e94560';
+  ctx.beginPath();ctx.moveTo(-o.w/2,0);ctx.lineTo(o.w/2,0);ctx.lineTo(o.w/2-10,-o.h/2);ctx.lineTo(-o.w/2+6,-o.h/2);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#fff';ctx.fillRect(-10,-o.h/2-10,20,10);
+  ctx.restore();
+}
+function drawCliff(o){
+  ctx.save();
+  ctx.fillStyle='#6b5a4a';
+  if(o.high){ ctx.fillRect(o.x,0,o.w,o.h); ctx.fillStyle='#7ec850'; ctx.fillRect(o.x-6,o.h-6,o.w+12,10); }
+  else { ctx.fillRect(o.x,H-o.h,o.w,o.h); ctx.fillStyle='#7ec850'; ctx.fillRect(o.x-6,H-o.h-4,o.w+12,10); }
+  ctx.restore();
+}
+function drawThermal(t){
+  ctx.save();
+  ctx.translate(t.x,t.y);
+  const pulse=1+Math.sin(frame*0.1+t.phase)*0.12;
+  ctx.scale(pulse,pulse);
+  const grad=ctx.createRadialGradient(0,0,4,0,0,t.r);
+  grad.addColorStop(0,'rgba(255,213,79,.55)');grad.addColorStop(1,'rgba(255,213,79,0)');
+  ctx.fillStyle=grad;
+  ctx.beginPath();ctx.arc(0,0,t.r,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='rgba(255,213,79,.6)';ctx.lineWidth=2;
+  for(let i=0;i<3;i++){
+    ctx.beginPath();ctx.arc(0,-(frame*0.6+i*14)%60,4+i*3,0,Math.PI*2);ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frame+=dt;
+
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#3d8fc7');sky.addColorStop(0.7,'#6ec6e8');sky.addColorStop(1,'#1c5a7a');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // sun
+  ctx.fillStyle='rgba(255,255,255,.7)';
+  ctx.beginPath();ctx.arc(W-90,70,36,0,Math.PI*2);ctx.fill();
+  // clouds
+  ctx.fillStyle='rgba(255,255,255,.5)';
+  for(let i=0;i<5;i++){
+    const cx=((i*180-scroll*0.3)%(W+200))-60;
+    const cy=40+((i*53)%80);
+    ctx.beginPath();ctx.ellipse(cx,cy,36,14,0,0,Math.PI*2);ctx.fill();
+  }
+  // water at bottom
+  ctx.fillStyle='#0d3d54';
+  ctx.fillRect(0,H-40,W,40);
+  ctx.strokeStyle='rgba(255,255,255,.2)';
+  for(let i=0;i<20;i++){
+    const wx=((i*44-scroll)%(W+44))-22;
+    ctx.beginPath();ctx.moveTo(wx,H-30);ctx.lineTo(wx+18,H-30);ctx.stroke();
+  }
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint4','Arrows/WASD or Drag to fly'),W/2,H/2-40);
+    drawFlyer();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawFlyer();
+    ctx.fillStyle='rgba(0,0,0,.45)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-30);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('distance_traveled','Distance: {d}m').replace('{d}',Math.floor(distance)),W/2,H/2+4);
+    ctx.fillText(I18N.t('restart_hint2','Press a key or Tap to restart'),W/2,H/2+34);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  let ay=0;
+  if(keys.up)ay-=1;
+  if(keys.down)ay+=1;
+  if(dragTargetY!==null)ay+=(dragTargetY-flyer.y)*0.05;
+
+  flyer.inThermal=false;
+  thermals=thermals.filter(t=>t.x>-60);
+  thermals.forEach(t=>{
+    t.x-=(5)*dt;
+    drawThermal(t);
+    if(circleCircle(flyer.x,flyer.y,20,t.x,t.y,t.r)){
+      flyer.inThermal=true;
+      ay-=0.9;
+    }
+  });
+
+  flyer.vy+=ay*0.5*dt;
+  flyer.vy*=0.88;
+  flyer.vy=Math.max(-6,Math.min(6,flyer.vy));
+  flyer.y+=flyer.vy*dt;
+  flyer.y=Math.max(20,Math.min(H-50,flyer.y));
+
+  const speed=flyer.inThermal?8.5:6+Math.min(3,distance/2000);
+  scroll+=speed*dt;
+  distance+=speed*dt*0.12;
+  score+=speed*dt*0.02;
+
+  // trick: reaching near top counts as a peak — reward looping there
+  if(flyer.y<50){
+    peakStreak+=dt;
+    if(peakStreak>30 && trickCooldown<=0){
+      score+=50; trickCooldown=90; peakStreak=0; SFX.levelup();
+      flyer.rotation=0.001; // trigger flip animation below
+      trickFlip=1;
+    }
+  } else { peakStreak=0; }
+  if(trickCooldown>0)trickCooldown-=dt;
+  if(trickFlip>0){ flyer.rotation+=0.35*dt; if(flyer.rotation>Math.PI*2){flyer.rotation=0;trickFlip=0;} }
+  else { flyer.rotation*=0.8; }
+
+  spawnTimer+=dt;
+  const spawnInterval=Math.max(45,90-distance/60);
+  if(spawnTimer>=spawnInterval){spawnTimer-=spawnInterval;spawnObstacle();}
+  thermalTimer+=dt;
+  if(thermalTimer>=160){thermalTimer-=160;spawnThermal();}
+
+  obstacles=obstacles.filter(o=>o.x>-80);
+  obstacles.forEach(o=>{
+    o.x-=speed*dt;
+    if(o.type==='bird'){
+      o.flap+=0.3*dt;
+      drawBird(o);
+      if(circleRect(flyer.x,flyer.y,18,o.x-o.w/2,o.y-o.h/2,o.w,o.h))crash();
+    } else if(o.type==='boat'){
+      drawBoat(o);
+      if(circleRect(flyer.x,flyer.y,18,o.x-o.w/2,o.y-o.h,o.w,o.h))crash();
+    } else {
+      drawCliff(o);
+      const cy=o.high?0:H-o.h;
+      if(circleRect(flyer.x,flyer.y,18,o.x,cy,o.w,o.h))crash();
+    }
+  });
+
+  drawFlyer();
+
+  if(score>best){best=score;}
+
+  document.getElementById('dist-display').textContent=Math.floor(distance);
+  document.getElementById('score-display').textContent=Math.floor(score);
+  document.getElementById('best-display').textContent=Math.floor(best);
+
+  requestAnimationFrame(loop);
+}
+
+function crash(){
+  if(gameOver)return;
+  gameOver=true;
+  SFX.lose();
+  if(best>parseInt(localStorage.getItem(KEY)||'0',10)){
+    localStorage.setItem(KEY,String(Math.floor(best)));
+  }
+}
+
+requestAnimationFrame(loop);
+</script></body></html>

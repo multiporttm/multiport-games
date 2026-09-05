@@ -1,0 +1,205 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Maple Syrup Tapping</title><meta name="description" content="Play Maple Syrup Tapping free online — Tap trees to start the sap flowing, then collect each bucket right when it hits the sweet zone. Don't let buckets overflow or run dry!"><link rel="canonical" href="https://games.multiportllc.com/games/maplesyruptapping"><meta property="og:title" content="Maple Syrup Tapping - Multiport Games"><meta property="og:description" content="Play Maple Syrup Tapping free online — Tap trees to start the sap flowing, then collect each bucket right when it hits the sweet zone. Don't let buckets overflow or run dry!"><meta property="og:url" content="https://games.multiportllc.com/games/maplesyruptapping"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Maple Syrup Tapping","description":"Play Maple Syrup Tapping free online instantly. Tap trees to start the sap flowing, then collect each bucket right when it hits the sweet zone. Don't let buckets overflow or run dry! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/maplesyruptapping","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;max-width:760px;margin:0 auto 8px;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffb347}
+#grove{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:14px;max-width:760px;margin:0 auto;padding:10px}
+.tree{background:#16213e;border-radius:14px;padding:10px;text-align:center;cursor:pointer;user-select:none;position:relative;border:2px solid transparent;transition:border-color .15s}
+.tree.ready{border-color:#ffd54f}
+.tree .trunk{font-size:2.2rem}
+.bucket{width:60px;height:70px;margin:6px auto 0;background:#3a2a1a;border-radius:0 0 10px 10px;position:relative;overflow:hidden;border:2px solid #5c4530}
+.bucket .sap{position:absolute;bottom:0;left:0;right:0;background:linear-gradient(#c77b2c,#8a4b12);height:0%;transition:height .05s linear}
+.bucket .zone{position:absolute;left:0;right:0;background:rgba(76,175,80,.35);border-top:1px solid #4caf50;border-bottom:1px solid #4caf50}
+.tree .state{font-size:.7rem;color:#9fd8ff;font-weight:700;margin-top:4px;min-height:1.2em}
+.tree.overflow{border-color:#e94560}
+#msgBar{color:#fff;text-align:center;font-weight:800;min-height:1.6em;margin-top:6px}
+#startOverlay{position:absolute;inset:0;background:rgba(0,0,0,.6);border-radius:14px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:#fff;z-index:5}
+#startBtn{padding:10px 24px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+#gameArea{position:relative}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Maple Syrup Tapping</div>
+  <div class="game-frame">
+    <div id="hud"><span id="timeLabel">Time: 60</span><span id="sapLabel">Sap: 0</span><span id="bestLabel">Best: 0</span></div>
+    <div id="gameArea">
+      <div id="grove"></div>
+      <div id="msgBar"></div>
+      <div id="startOverlay">
+        <div style="font-size:1.2rem;font-weight:800;text-align:center;padding:0 12px">Tap a tree to start tapping it, then collect each bucket in the green sweet zone!</div>
+        <button id="startBtn">Start</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a tree to start tapping it — sap fills its bucket over time. Click the bucket again to collect once the fill meter is inside the green sweet zone. Collect too early and you waste sap; wait too long and the bucket overflows and spills. More trees start tapping as time goes on — keep watch on all of them and collect as much sap as you can before time runs out!</div>
+</div>
+<script>
+const NUM_TREES=6;
+let trees=[],sap=0,best=+localStorage.getItem('maplesyruptapping_best')||0,timeLeft=60,running=false,tickId=null,spawnTimer=0,activeCount=2;
+
+function initTrees(){
+  trees=[];
+  for(let i=0;i<NUM_TREES;i++){
+    trees.push({id:i,state:'idle',fill:0,speed:0,zoneStart:0,zoneEnd:0,el:null});
+  }
+}
+
+function renderGrove(){
+  const grove=document.getElementById('grove');
+  grove.innerHTML='';
+  trees.forEach(t=>{
+    const div=document.createElement('div');
+    div.className='tree';
+    div.innerHTML=`<div class="trunk">🌳</div>
+      <div class="bucket"><div class="zone"></div><div class="sap"></div></div>
+      <div class="state"></div>`;
+    div.onclick=()=>handleTreeClick(t.id);
+    grove.appendChild(div);
+    t.el=div;
+  });
+  trees.forEach(t=>updateTreeVisual(t));
+}
+
+function activateTree(t){
+  t.state='filling';
+  t.fill=0;
+  t.speed=0.35+Math.random()*0.25+ (60-timeLeft)*0.003; // gets faster later
+  const zoneLen=Math.max(10,22-(60-timeLeft)*0.15);
+  const zoneStart=55+Math.random()*20;
+  t.zoneStart=zoneStart;
+  t.zoneEnd=Math.min(96,zoneStart+zoneLen);
+}
+
+function handleTreeClick(id){
+  if(!running)return;
+  if(id>=activeCount)return;
+  const t=trees[id];
+  if(t.state==='idle'){
+    activateTree(t);
+    SFX.click();
+  } else if(t.state==='filling'){
+    // collect attempt
+    if(t.fill>=t.zoneStart&&t.fill<=t.zoneEnd){
+      const bonus=Math.round(20+ (t.fill-t.zoneStart));
+      sap+=bonus;
+      SFX.coin();
+      flashState(t,'+'+bonus+' sap!','#4caf50');
+    } else if(t.fill<t.zoneStart){
+      sap+=Math.max(1,Math.round(t.fill/6));
+      SFX.error();
+      flashState(t,'Too early!','#ffb347');
+    } else {
+      sap+=Math.max(1,Math.round(t.fill/10));
+      SFX.hit();
+      flashState(t,'Overflowed!','#e94560');
+    }
+    t.state='idle';
+    t.fill=0;
+    updateHud();
+  }
+  updateTreeVisual(t);
+}
+
+function flashState(t,text,color){
+  const s=t.el.querySelector('.state');
+  s.textContent=text;
+  s.style.color=color;
+  setTimeout(()=>{ if(s)s.textContent=''; },900);
+}
+
+function updateTreeVisual(t){
+  const locked=t.id>=activeCount;
+  t.el.style.opacity=locked?'0.3':'1';
+  t.el.style.cursor=locked?'default':'pointer';
+  t.el.classList.toggle('ready', !locked&&t.state==='filling'&&t.fill>=t.zoneStart&&t.fill<=t.zoneEnd);
+  t.el.classList.toggle('overflow', !locked&&t.state==='filling'&&t.fill>t.zoneEnd);
+  const sapEl=t.el.querySelector('.sap');
+  sapEl.style.height=Math.min(100,t.fill)+'%';
+  const zoneEl=t.el.querySelector('.zone');
+  if(t.state==='filling'){
+    zoneEl.style.display='block';
+    zoneEl.style.bottom=t.zoneStart+'%';
+    zoneEl.style.height=(t.zoneEnd-t.zoneStart)+'%';
+  } else {
+    zoneEl.style.display='none';
+  }
+}
+
+function updateHud(){
+  document.getElementById('timeLabel').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+  document.getElementById('sapLabel').textContent=I18N.t('sap_label','Sap: {s}').replace('{s}',sap);
+  document.getElementById('bestLabel').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+}
+
+function gameTick(dt){
+  timeLeft-=dt;
+  if(timeLeft<=0){endGame();return;}
+  spawnTimer+=dt;
+  const spawnInterval=Math.max(4,10-((60-timeLeft)*0.08));
+  if(spawnTimer>=spawnInterval && activeCount<NUM_TREES){
+    spawnTimer=0;
+    activeCount++;
+    trees.forEach(updateTreeVisual);
+  }
+  trees.forEach((t,idx)=>{
+    if(idx<activeCount && t.state==='idle' && Math.random()<0.004){
+      // idle trees occasionally auto-nudge visual hint (no-op, kept simple)
+    }
+    if(t.state==='filling'){
+      t.fill+=t.speed*dt*10;
+      if(t.fill>120){
+        // spilled completely, reset
+        t.state='idle';t.fill=0;
+        flashState(t,'Spilled!','#e94560');
+        SFX.fail();
+      }
+      updateTreeVisual(t);
+    }
+  });
+  updateHud();
+}
+
+let lastTs=null;
+function loop(ts){
+  if(!running)return;
+  if(lastTs===null)lastTs=ts;
+  const dt=Math.min((ts-lastTs)/1000,0.2);
+  lastTs=ts;
+  gameTick(dt);
+  requestAnimationFrame(loop);
+}
+
+function startGame(){
+  initTrees();
+  renderGrove();
+  sap=0;timeLeft=60;activeCount=2;spawnTimer=0;lastTs=null;running=true;
+  document.getElementById('startOverlay').style.display='none';
+  document.getElementById('msgBar').textContent='';
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function endGame(){
+  running=false;
+  if(sap>best){best=sap;localStorage.setItem('maplesyruptapping_best',best);}
+  updateHud();
+  SFX.win();
+  const ov=document.getElementById('startOverlay');
+  ov.innerHTML=`<div style="font-size:1.3rem;font-weight:900;text-align:center">Time's up!</div>
+    <div style="font-size:1rem;text-align:center">You collected <b>${sap}</b> sap</div>
+    <button id="startBtn2">Play Again</button>`;
+  ov.style.display='flex';
+  document.getElementById('startBtn2').onclick=startGame;
+}
+
+document.getElementById('startBtn').onclick=startGame;
+initTrees();
+renderGrove();
+updateHud();
+</script></body></html>

@@ -1,0 +1,240 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Hayride Adventure</title><meta name="description" content="Play Hayride Adventure free online — Steer your hay wagon with Arrow Keys/WASD or drag on touch. Dodge potholes and fences, collect pumpkins and apples, and go as far as you can!"><link rel="canonical" href="https://games.multiportllc.com/games/hayrideadventure"><meta property="og:title" content="Hayride Adventure - Multiport Games"><meta property="og:description" content="Play Hayride Adventure free online — Steer your hay wagon with Arrow Keys/WASD or drag on touch. Dodge potholes and fences, collect pumpkins and apples, and go as far as you can!"><meta property="og:url" content="https://games.multiportllc.com/games/hayrideadventure"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Hayride Adventure","description":"Play Hayride Adventure free online instantly. Steer a hay wagon along a bumpy farm path, dodging potholes and fences while collecting pumpkins and apples for points. Speed increases over time; hitting an obstacle ends the run. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/hayrideadventure","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#8a6d3b;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:center;gap:18px;color:#fff8e6;font-size:1.05rem;font-weight:700;padding:8px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Hayride Adventure</div>
+  <div class="game-frame">
+    <div id="hud"><span>Distance: <b id="distEl">0</b>m</span><span>Score: <b id="scoreEl">0</b></span><span>Best: <b id="bestEl">0</b></span></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Steer your hay wagon with <b>Arrow Keys</b>/<b>WASD</b> or <b>drag</b> on touch. Dodge potholes and fences, and collect pumpkins and apples for bonus points. Speed increases the farther you go — hitting an obstacle ends the ride!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const distEl=document.getElementById('distEl'),scoreEl=document.getElementById('scoreEl'),bestEl=document.getElementById('bestEl');
+let best=parseInt(localStorage.getItem('hayrideadventure_best')||'0',10);
+bestEl.textContent=best;
+
+const LANE_LEFT=60,LANE_RIGHT=740;
+const wagon={x:400,y:330,w:70,h:56,vx:0};
+const keys={};
+let dragX=null;
+let obstacles=[],collectibles=[],dust=[];
+let dist=0,score=0,speed=4.5,gameOver=false,started=false,frame=0;
+let spawnTimer=0,lastTime=null;
+
+function reset(){
+  wagon.x=400;wagon.vx=0;
+  obstacles=[];collectibles=[];dust=[];
+  dist=0;score=0;speed=4.5;gameOver=false;started=false;frame=0;spawnTimer=0;lastTime=null;
+}
+
+function startGame(){ if(!started)started=true; else if(gameOver){reset();started=true;} }
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','a','d','A','D',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  startGame();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=e.touches?e.touches[0].clientX:e.clientX;
+  return (cx-rect.left)*(W/rect.width);
+}
+c.addEventListener('pointerdown',e=>{startGame();dragX=pointerPos(e);});
+c.addEventListener('pointermove',e=>{if(dragX!==null)dragX=pointerPos(e);});
+window.addEventListener('pointerup',()=>{dragX=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();startGame();dragX=pointerPos(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(dragX!==null)dragX=pointerPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragX=null;},{passive:false});
+
+function laneX(frac){ return LANE_LEFT+ (LANE_RIGHT-LANE_LEFT)*frac; }
+
+function spawnObstacle(){
+  const type=Math.random()<0.5?'pothole':'fence';
+  const frac=Math.random();
+  if(type==='pothole'){
+    obstacles.push({x:laneX(frac),y:-40,r:26,type});
+  }else{
+    const w=90+Math.random()*40;
+    obstacles.push({x:Math.max(LANE_LEFT,Math.min(LANE_RIGHT-w,laneX(frac)-w/2)),y:-30,w,h:26,type});
+  }
+}
+function spawnCollectible(){
+  const type=Math.random()<0.5?'pumpkin':'apple';
+  collectibles.push({x:laneX(Math.random()),y:-30,r:16,type});
+}
+
+function rectHit(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+function circleRectHit(circ,rect){
+  const cx=Math.max(rect.x,Math.min(circ.x,rect.x+rect.w));
+  const cy=Math.max(rect.y,Math.min(circ.y,rect.y+rect.h));
+  const dx=circ.x-cx,dy=circ.y-cy;
+  return (dx*dx+dy*dy)<circ.r*circ.r;
+}
+
+function drawWagon(){
+  ctx.save();
+  ctx.translate(wagon.x,wagon.y);
+  const tilt=Math.max(-0.15,Math.min(0.15,wagon.vx*0.03));
+  ctx.rotate(tilt);
+  ctx.fillStyle='#6b4423';
+  ctx.fillRect(-wagon.w/2,-wagon.h/2+10,wagon.w,wagon.h-18);
+  ctx.fillStyle='#d4a24c';
+  for(let i=0;i<5;i++){
+    ctx.fillRect(-wagon.w/2+i*(wagon.w/5)+2,-wagon.h/2,10,16);
+  }
+  ctx.fillStyle='#3e2b1a';
+  ctx.beginPath();ctx.arc(-wagon.w/2+12,wagon.h/2-4,10,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(wagon.w/2-12,wagon.h/2-4,10,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#8b5a2b';
+  ctx.beginPath();ctx.arc(-wagon.w/2+12,wagon.h/2-4,4,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(wagon.w/2-12,wagon.h/2-4,4,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawObstacle(o){
+  if(o.type==='pothole'){
+    ctx.fillStyle='#2b1f14';
+    ctx.beginPath();ctx.ellipse(o.x,o.y,o.r,o.r*0.6,0,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#1a130c';ctx.lineWidth=3;ctx.stroke();
+  }else{
+    ctx.fillStyle='#c9a15c';
+    for(let i=0;i<Math.ceil(o.w/22);i++){
+      ctx.fillRect(o.x+i*22,o.y-o.h/2,6,o.h);
+    }
+    ctx.strokeStyle='#8a6d3b';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(o.x,o.y-6);ctx.lineTo(o.x+o.w,o.y-6);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(o.x,o.y+8);ctx.lineTo(o.x+o.w,o.y+8);ctx.stroke();
+  }
+}
+function drawCollectible(item){
+  ctx.save();
+  if(item.type==='pumpkin'){
+    ctx.fillStyle='#e07a1f';
+    ctx.beginPath();ctx.arc(item.x,item.y,item.r,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#a85a12';ctx.lineWidth=2;
+    for(let i=-1;i<=1;i++){ctx.beginPath();ctx.moveTo(item.x+i*6,item.y-item.r);ctx.lineTo(item.x+i*6,item.y+item.r);ctx.stroke();}
+    ctx.fillStyle='#4a7c2a';ctx.fillRect(item.x-2,item.y-item.r-6,4,7);
+  }else{
+    ctx.fillStyle='#e53935';
+    ctx.beginPath();ctx.arc(item.x,item.y,item.r,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#4a7c2a';ctx.fillRect(item.x-1,item.y-item.r-5,3,6);
+  }
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#87ceeb');bg.addColorStop(0.35,'#c9a15c');bg.addColorStop(1,'#8a6d3b');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  // path edges
+  ctx.fillStyle='#6b8e3a';
+  ctx.fillRect(0,140,LANE_LEFT,H-140);
+  ctx.fillRect(LANE_RIGHT,140,W-LANE_RIGHT,H-140);
+  // dashed center guide lines
+  ctx.strokeStyle='rgba(255,255,255,.25)';ctx.lineWidth=4;ctx.setLineDash([20,18]);
+  const offset=(frame*3)%38;
+  ctx.beginPath();ctx.moveTo(laneX(0.33),140-offset);ctx.lineTo(laneX(0.33),H);
+  ctx.moveTo(laneX(0.66),140-offset);ctx.lineTo(laneX(0.66),H);
+  ctx.stroke();ctx.setLineDash([]);
+
+  if(!started){
+    ctx.fillStyle='#3e2b1a';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('hayride_start','Press a key or drag to start the ride'),W/2,H/2);
+    drawWagon();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('hayride_restart','Score: {s} — Tap or press a key to ride again').replace('{s}',Math.floor(score+dist)),W/2,H/2+16);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frame+=dt;
+
+  let steer=0;
+  if(keys['arrowleft']||keys['a'])steer-=1;
+  if(keys['arrowright']||keys['d'])steer+=1;
+  if(dragX!==null){
+    const diff=dragX-wagon.x;
+    steer=Math.max(-1,Math.min(1,diff/50));
+  }
+  wagon.vx += (steer*6-wagon.vx)*0.2*dt;
+  wagon.x+=wagon.vx*dt;
+  wagon.x=Math.max(LANE_LEFT+wagon.w/2,Math.min(LANE_RIGHT-wagon.w/2,wagon.x));
+
+  dist+=speed*dt*0.05;
+  speed=4.5+dist/60;
+
+  spawnTimer+=dt;
+  const interval=Math.max(28,60-dist/8);
+  if(spawnTimer>=interval){
+    spawnTimer=0;
+    if(Math.random()<0.65)spawnObstacle(); else spawnCollectible();
+  }
+
+  const wagonHit={x:wagon.x-wagon.w/2+6,y:wagon.y-wagon.h/2+8,w:wagon.w-12,h:wagon.h-14};
+
+  obstacles=obstacles.filter(o=>o.y<H+60);
+  obstacles.forEach(o=>{
+    o.y+=speed*dt;
+    drawObstacle(o);
+    let hit=false;
+    if(o.type==='pothole'){
+      hit=circleRectHit({x:o.x,y:o.y,r:o.r*0.8},wagonHit);
+    }else{
+      hit=rectHit(wagonHit,{x:o.x,y:o.y-o.h/2,w:o.w,h:o.h});
+    }
+    if(hit&&!gameOver)endGame();
+  });
+
+  collectibles=collectibles.filter(it=>it.y<H+40);
+  collectibles.forEach(it=>{
+    it.y+=speed*dt;
+    drawCollectible(it);
+    if(circleRectHit({x:it.x,y:it.y,r:it.r},wagonHit)){
+      it.y=H+999;
+      score+=it.type==='pumpkin'?20:10;
+      SFX.coin();
+    }
+  });
+
+  drawWagon();
+
+  distEl.textContent=Math.floor(dist);
+  scoreEl.textContent=Math.floor(score+dist);
+  requestAnimationFrame(loop);
+}
+
+function endGame(){
+  if(gameOver)return;
+  gameOver=true;
+  SFX.lose();
+  const total=Math.floor(score+dist);
+  if(total>best){best=total;localStorage.setItem('hayrideadventure_best',best);bestEl.textContent=best;}
+}
+
+loop();
+</script></body></html>

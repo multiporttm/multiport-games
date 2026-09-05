@@ -1,0 +1,251 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Horseshoe Forge</title><meta name="description" content="Play Horseshoe Forge free online — Hold Space/click to heat the horseshoe. Release when the gauge is in the glowing orange target zone, then tap Hammer (H or tap the shoe) in rhythm while it's hot to shape it. Don't overheat or hammer cold!"><link rel="canonical" href="https://games.multiportllc.com/games/horseshoeforge"><meta property="og:title" content="Horseshoe Forge - Multiport Games"><meta property="og:description" content="Play Horseshoe Forge free online — Hold Space/click to heat the horseshoe. Release when the gauge is in the glowing orange target zone, then tap Hammer (H or tap the shoe) in rhythm while it's hot to shape it. Don't overheat or hammer cold!"><meta property="og:url" content="https://games.multiportllc.com/games/horseshoeforge"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Horseshoe Forge","description":"Play Horseshoe Forge free online instantly. Hold Space/click to heat the horseshoe. Release when the gauge is in the glowing orange target zone, then tap Hammer (H or tap the shoe) in rhythm while it's hot to shape it. Don't overheat or hammer cold! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/horseshoeforge","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1410;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{display:flex;justify-content:space-between;max-width:700px;margin:0 auto 8px;color:#eee;font-weight:700;font-size:1rem;flex-wrap:wrap;gap:6px}
+#hud span{background:rgba(0,0,0,.3);padding:4px 10px;border-radius:8px}
+#msg{text-align:center;color:#ffd54f;font-weight:800;min-height:1.6em;margin-top:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Horseshoe Forge</div>
+  <div class="game-frame">
+    <div id="hud"><span id="round-display">Round: 1</span><span id="score-display">Forged: 0</span><span id="hits-display">Hits: 0/0</span></div>
+    <canvas id="c" width="700" height="420"></canvas>
+    <div id="msg"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Space</b>/click to heat the horseshoe. Release when the gauge is in the glowing orange target zone, then tap <b>Hammer</b> (H or tap the shoe) in rhythm while it's hot to shape it. Don't overheat or hammer cold!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=700,H=420;
+let round=1,forged=0,best=parseInt(localStorage.getItem('horseshoeforge_best')||'0',10);
+let hitsNeeded=5,hitsGood=0;
+
+// phases: 'heating' -> 'hammering' -> 'done'/'ruined'
+let phase='heating';
+let heat=0; // 0-100
+let heating=false;
+let targetLo=55,targetHi=75;
+let hammerWindowActive=false;
+let hammerBeat=0;
+let hammerTimer=null;
+let msgTimeout=null;
+
+function setupRound(){
+  phase='heating';
+  heat=0;
+  heating=false;
+  const shrink=Math.min(round*2,15);
+  const width=Math.max(10,20-shrink);
+  const center=50+Math.random()*20;
+  targetLo=center-width/2;
+  targetHi=center+width/2;
+  hitsNeeded=4+Math.min(Math.floor(round/2),6);
+  hitsGood=0;
+  hammerBeat=0;
+  hammerWindowActive=false;
+  clearInterval(hammerTimer);
+  updateHud();
+  setMsg(I18N.t('heat_hint','Hold to heat the shoe up to the glowing zone...'),'#ffd54f');
+}
+
+function setMsg(t,color){
+  document.getElementById('msg').textContent=t;
+  document.getElementById('msg').style.color=color||'#ffd54f';
+}
+
+function updateHud(){
+  document.getElementById('round-display').textContent=I18N.t('round_label','Round: {r}').replace('{r}',round);
+  document.getElementById('score-display').textContent=I18N.t('forged_label','Forged: {f} (Best: {b})').replace('{f}',forged).replace('{b}',best);
+  document.getElementById('hits-display').textContent=I18N.t('hits_label','Hits: {h}/{n}').replace('{h}',hitsGood).replace('{n}',hitsNeeded);
+}
+
+function startHeating(){
+  if(phase!=='heating')return;
+  heating=true;
+}
+function stopHeating(){
+  if(phase!=='heating')return;
+  heating=false;
+  if(heat>=targetLo&&heat<=targetHi){
+    beginHammering();
+  }
+  // if released outside zone, just stays put, player can resume heating unless overheated already handled in loop
+}
+
+function beginHammering(){
+  phase='hammering';
+  SFX.select();
+  setMsg(I18N.t('hammer_hint','Now hammer! Tap in rhythm with the glow.'),'#ff9040');
+  let beatsAllowed=hitsNeeded+2;
+  let beatCount=0;
+  hammerWindowActive=true;
+  pulseHammer();
+  hammerTimer=setInterval(()=>{
+    beatCount++;
+    if(beatCount>=beatsAllowed||hitsGood>=hitsNeeded){
+      clearInterval(hammerTimer);
+      finishHammering();
+      return;
+    }
+    pulseHammer();
+  },650);
+}
+
+let pulsePhase=0,pulseActiveWindow=false;
+function pulseHammer(){
+  pulsePhase=performance.now();
+  pulseActiveWindow=true;
+  setTimeout(()=>{pulseActiveWindow=false;},260);
+}
+
+function hammer(){
+  if(phase!=='hammering')return;
+  if(pulseActiveWindow){
+    hitsGood++;
+    SFX.hit();
+    if(hitsGood>=hitsNeeded){
+      clearInterval(hammerTimer);
+      finishHammering();
+    }
+  }else{
+    SFX.error();
+    heat-=8; // cold/offbeat hit cools and wastes shoe integrity slightly
+    setMsg(I18N.t('offbeat_msg','Off-beat! Wait for the glow.'),'#ff6b6b');
+  }
+  updateHud();
+}
+
+function finishHammering(){
+  hammerWindowActive=false;
+  if(hitsGood>=hitsNeeded){
+    phase='done';
+    forged++;
+    if(forged>best){best=forged;localStorage.setItem('horseshoeforge_best',String(best));}
+    SFX.success();
+    setMsg(I18N.t('forged_msg','Horseshoe forged perfectly!'),'#7ec850');
+    round++;
+    setTimeout(setupRound,1500);
+  }else{
+    phase='ruined';
+    SFX.fail();
+    setMsg(I18N.t('ruined_msg','Not enough good hits — the shoe is ruined. Try again!'),'#ff6b6b');
+    setTimeout(setupRound,1600);
+  }
+}
+
+function overheat(){
+  phase='ruined';
+  SFX.hurt();
+  setMsg(I18N.t('overheat_msg','Overheated! The shoe melted. Try again!'),'#ff6b6b');
+  clearInterval(hammerTimer);
+  setTimeout(setupRound,1600);
+}
+
+// input
+window.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();startHeating();}
+  if(e.key.toLowerCase()==='h'){e.preventDefault();hammer();}
+});
+window.addEventListener('keyup',e=>{
+  if(e.code==='Space'){e.preventDefault();stopHeating();}
+});
+c.addEventListener('mousedown',e=>{
+  if(phase==='heating')startHeating();
+  else if(phase==='hammering')hammer();
+});
+c.addEventListener('mouseup',()=>{ if(phase==='heating')stopHeating(); });
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(phase==='heating')startHeating();
+  else if(phase==='hammering')hammer();
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  e.preventDefault();
+  if(phase==='heating')stopHeating();
+},{passive:false});
+
+function drawGauge(){
+  const gx=60,gy=340,gw=580,gh=34;
+  ctx.fillStyle='#333';
+  ctx.fillRect(gx,gy,gw,gh);
+  // target zone
+  const loX=gx+gw*(targetLo/100), hiX=gx+gw*(targetHi/100);
+  ctx.fillStyle='rgba(255,140,0,0.55)';
+  ctx.fillRect(loX,gy,hiX-loX,gh);
+  // heat fill
+  const grad=ctx.createLinearGradient(gx,0,gx+gw,0);
+  grad.addColorStop(0,'#2255cc');grad.addColorStop(0.5,'#ffcc00');grad.addColorStop(1,'#ff2200');
+  ctx.fillStyle=grad;
+  ctx.fillRect(gx,gy,gw*Math.min(heat,100)/100,gh);
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;
+  ctx.strokeRect(gx,gy,gw,gh);
+  ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('temp_label','Temperature'),gx+gw/2,gy-8);
+}
+
+function heatColor(){
+  if(heat<targetLo-15)return '#666';
+  if(heat<targetLo)return '#c94a1a';
+  if(heat<=targetHi)return '#ffae42';
+  if(heat<95)return '#ff5533';
+  return '#fff';
+}
+
+function drawShoe(){
+  ctx.save();
+  ctx.translate(W/2,180);
+  const color=phase==='hammering'?(pulseActiveWindow?'#ffdd55':'#cc5522'):heatColor();
+  ctx.strokeStyle=color;
+  ctx.lineWidth=26;
+  ctx.lineCap='round';
+  ctx.beginPath();
+  ctx.arc(0,0,70,Math.PI*0.15,Math.PI*0.85,false);
+  ctx.stroke();
+  // glow
+  if(phase==='hammering'&&pulseActiveWindow){
+    ctx.shadowColor='#ffdd55';ctx.shadowBlur=30;
+    ctx.stroke();
+    ctx.shadowBlur=0;
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#1a1410';ctx.fillRect(0,0,W,H);
+  // anvil
+  ctx.fillStyle='#333';
+  ctx.fillRect(W/2-90,250,180,30);
+  ctx.fillRect(W/2-40,280,80,20);
+
+  if(phase==='heating'&&heating){
+    heat+=0.9;
+    if(heat>=100){heat=100;overheat();}
+  }else if(phase==='heating'&&!heating){
+    heat=Math.max(0,heat-0.4);
+  }
+
+  drawShoe();
+  drawGauge();
+
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  if(phase==='heating'){
+    ctx.fillText(I18N.t('heating_phase_label','HEATING — release in the orange zone'),W/2,40);
+  }else if(phase==='hammering'){
+    ctx.fillText(I18N.t('hammering_phase_label','HAMMERING — tap when the shoe glows bright!'),W/2,40);
+  }
+
+  requestAnimationFrame(draw);
+}
+
+setupRound();
+draw();
+</script></body></html>

@@ -1,0 +1,257 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Sheep Shearing</title><meta name="description" content="Play Sheep Shearing free online — Drag the shears across the sheep to shear off all the wool. Cover the whole sheep without straying onto the pink skin zones. Clear it before time runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/sheepshearing"><meta property="og:title" content="Sheep Shearing - Multiport Games"><meta property="og:description" content="Play Sheep Shearing free online — Drag the shears across the sheep to shear off all the wool. Cover the whole sheep without straying onto the pink skin zones. Clear it before time runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/sheepshearing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Sheep Shearing","description":"Play Sheep Shearing free online instantly. Drag the shears across the sheep to shear off all the wool. Cover the whole sheep without straying onto the pink skin zones. Clear it before time runs out! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/sheepshearing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#8fc7e8;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{display:flex;justify-content:space-between;max-width:700px;margin:0 auto 8px;color:#eee;font-weight:700;font-size:1rem;flex-wrap:wrap;gap:6px}
+#hud span{background:rgba(0,0,0,.3);padding:4px 10px;border-radius:8px}
+#msg{text-align:center;color:#ffd54f;font-weight:800;min-height:1.6em;margin-top:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Sheep Shearing</div>
+  <div class="game-frame">
+    <div id="hud"><span id="round-display">Round: 1</span><span id="score-display">Sheared: 0</span><span id="time-display">Time: 30</span></div>
+    <canvas id="c" width="700" height="420"></canvas>
+    <div id="msg"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the shears across the sheep to shear off all the wool. Cover the whole sheep without straying onto the pink skin zones. Clear it before time runs out!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=700,H=420;
+let round=1,sheared=0,timeLeft=30,gameActive=false,dragging=false;
+let best=parseInt(localStorage.getItem('sheepshearing_best')||'0',10);
+
+// Sheep body defined as an ellipse region; wool cells inside it need shearing.
+// Skin "nick zones" are small circles inside the sheep that must not be touched.
+let sheep,cellSize,cols,rows,coverage,skinZones,lastPt;
+
+function initSheep(){
+  sheep={cx:W/2,cy:H/2+10,rx:190,ry:120};
+  cellSize=14;
+  cols=Math.ceil((sheep.rx*2)/cellSize);
+  rows=Math.ceil((sheep.ry*2)/cellSize);
+  coverage=[];
+  for(let r=0;r<rows;r++){coverage.push(new Array(cols).fill(0));}
+  // skin zones: fewer, smaller as rounds progress means harder to avoid... actually more zones as rounds increase
+  const numZones=2+Math.min(round,5);
+  skinZones=[];
+  for(let i=0;i<numZones;i++){
+    const ang=Math.random()*Math.PI*2;
+    const rad=Math.random()*0.7;
+    skinZones.push({
+      x:sheep.cx+Math.cos(ang)*sheep.rx*rad,
+      y:sheep.cy+Math.sin(ang)*sheep.ry*rad,
+      r:14+Math.random()*8
+    });
+  }
+  lastPt=null;
+}
+
+function inSheep(x,y){
+  const dx=(x-sheep.cx)/sheep.rx,dy=(y-sheep.cy)/sheep.ry;
+  return dx*dx+dy*dy<=1;
+}
+function cellCenter(cIdx,rIdx){
+  return {x:sheep.cx-sheep.rx+cIdx*cellSize+cellSize/2, y:sheep.cy-sheep.ry+rIdx*cellSize+cellSize/2};
+}
+
+let nicked=false;
+function shearAt(x,y){
+  if(!inSheep(x,y))return;
+  // check skin zone nick
+  for(const z of skinZones){
+    const d=Math.hypot(x-z.x,y-z.y);
+    if(d<z.r){
+      if(!nicked){nicked=true;SFX.hurt();flashMsg(I18N.t('nicked_msg','Ouch! Nicked the skin — be more careful!'),'#ff6b6b');}
+      return;
+    }
+  }
+  for(let r=0;r<rows;r++){
+    for(let col=0;col<cols;col++){
+      if(coverage[r][col]>=1)continue;
+      const {x:cx,y:cy}=cellCenter(col,r);
+      if(!inSheep(cx,cy))continue;
+      const d=Math.hypot(x-cx,y-cy);
+      if(d<16){coverage[r][col]=1;}
+    }
+  }
+}
+
+function totalCells(){
+  let t=0;
+  for(let r=0;r<rows;r++)for(let col=0;col<cols;col++){
+    const {x,y}=cellCenter(col,r);
+    if(inSheep(x,y))t++;
+  }
+  return t;
+}
+function coveredCells(){
+  let t=0;
+  for(let r=0;r<rows;r++)for(let col=0;col<cols;col++){
+    const {x,y}=cellCenter(col,r);
+    if(inSheep(x,y)&&coverage[r][col]>=1)t++;
+  }
+  return t;
+}
+
+function flashMsg(text,color){
+  const m=document.getElementById('msg');
+  m.textContent=text;m.style.color=color||'#ffd54f';
+  clearTimeout(flashMsg._t);
+  flashMsg._t=setTimeout(()=>{m.textContent='';},1400);
+}
+
+function getPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  let clientX,clientY;
+  if(e.touches&&e.touches.length){clientX=e.touches[0].clientX;clientY=e.touches[0].clientY;}
+  else{clientX=e.clientX;clientY=e.clientY;}
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+
+function pointerDown(e){
+  e.preventDefault();
+  if(!gameActive)return;
+  dragging=true;
+  const p=getPos(e);
+  lastPt=p;
+  shearAt(p.x,p.y);
+}
+function pointerMove(e){
+  if(!dragging||!gameActive)return;
+  e.preventDefault();
+  const p=getPos(e);
+  if(lastPt){
+    const dist=Math.hypot(p.x-lastPt.x,p.y-lastPt.y);
+    const steps=Math.max(1,Math.floor(dist/6));
+    for(let i=1;i<=steps;i++){
+      const t=i/steps;
+      shearAt(lastPt.x+(p.x-lastPt.x)*t, lastPt.y+(p.y-lastPt.y)*t);
+    }
+  }else{
+    shearAt(p.x,p.y);
+  }
+  lastPt=p;
+}
+function pointerUp(e){dragging=false;lastPt=null;}
+
+c.addEventListener('mousedown',pointerDown);
+c.addEventListener('mousemove',pointerMove);
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',pointerDown,{passive:false});
+c.addEventListener('touchmove',pointerMove,{passive:false});
+c.addEventListener('touchend',pointerUp);
+c.addEventListener('touchcancel',pointerUp);
+
+let timerId=null;
+function startRound(){
+  initSheep();
+  nicked=false;
+  timeLeft=Math.max(10,30-Math.floor(round/2)*3);
+  gameActive=true;
+  document.getElementById('msg').textContent='';
+  updateHud();
+  clearInterval(timerId);
+  timerId=setInterval(()=>{
+    timeLeft--;
+    updateHud();
+    if(timeLeft<=0){endRound(false);}
+  },1000);
+}
+
+function endRound(success){
+  gameActive=false;
+  clearInterval(timerId);
+  if(success){
+    sheared++;
+    if(sheared>best){best=sheared;localStorage.setItem('sheepshearing_best',String(best));}
+    SFX.success();
+    flashMsg(I18N.t('sheep_clean_msg','Sheep sheared clean! Next one coming up...'),'#7ec850');
+    round++;
+    setTimeout(startRound,1400);
+  }else{
+    SFX.fail();
+    flashMsg(I18N.t('time_up_msg','Time\'s up! Final sheared: {n}').replace('{n}',sheared),'#ff6b6b');
+    setTimeout(()=>{ round=1; sheared=0; startRound(); },2000);
+  }
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('round-display').textContent=I18N.t('round_label','Round: {r}').replace('{r}',round);
+  document.getElementById('score-display').textContent=I18N.t('sheared_label','Sheared: {s} (Best: {b})').replace('{s}',sheared).replace('{b}',best);
+  document.getElementById('time-display').textContent=I18N.t('time_label','Time: {t}').replace('{t}',timeLeft);
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#8fc7e8');sky.addColorStop(1,'#c9e8c0');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#7ec850';ctx.fillRect(0,H-40,W,40);
+
+  // sheep body outline
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(sheep.cx,sheep.cy,sheep.rx,sheep.ry,0,0,Math.PI*2);
+  ctx.clip();
+
+  // wool cells
+  for(let r=0;r<rows;r++){
+    for(let col=0;col<cols;col++){
+      const {x,y}=cellCenter(col,r);
+      if(!inSheep(x,y))continue;
+      if(coverage[r][col]>=1){
+        ctx.fillStyle='#e8b896';
+      }else{
+        ctx.fillStyle='#fdfdf5';
+      }
+      ctx.fillRect(x-cellSize/2,y-cellSize/2,cellSize-1,cellSize-1);
+    }
+  }
+  // wool texture dots on uncovered
+  ctx.restore();
+
+  // skin nick zones (shown faintly under wool, visible once nearby covered)
+  skinZones.forEach(z=>{
+    ctx.beginPath();
+    ctx.fillStyle='rgba(255,105,140,0.55)';
+    ctx.arc(z.x,z.y,z.r,0,Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle='#ff3860';ctx.lineWidth=2;ctx.stroke();
+  });
+
+  // head
+  ctx.fillStyle='#5a4a3a';
+  ctx.beginPath();ctx.ellipse(sheep.cx+sheep.rx+15,sheep.cy-30,26,20,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#222';
+  ctx.beginPath();ctx.arc(sheep.cx+sheep.rx+30,sheep.cy-33,3,0,Math.PI*2);ctx.fill();
+  // legs
+  ctx.fillStyle='#5a4a3a';
+  for(const lx of [-0.5,0.5]){
+    ctx.fillRect(sheep.cx+lx*sheep.rx*0.8-6,sheep.cy+sheep.ry-10,12,34);
+  }
+
+  const covered=coveredCells(),total=totalCells();
+  const pct=total?Math.floor(covered/total*100):0;
+  ctx.fillStyle='#222';
+  ctx.font='bold 18px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('pct_sheared_label','{p}% sheared').replace('{p}',pct),W/2,30);
+
+  if(gameActive&&covered>=total*0.97){
+    endRound(true);
+  }
+  requestAnimationFrame(draw);
+}
+
+startRound();
+draw();
+</script></body></html>

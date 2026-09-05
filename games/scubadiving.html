@@ -1,0 +1,279 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Scuba Diving</title><meta name="description" content="Play Scuba Diving free online — Swim with Arrow Keys/WASD or drag on touch. Collect treasure and photo-ops, refill oxygen at air pockets, and avoid jellyfish and sharp coral."><link rel="canonical" href="https://games.multiportllc.com/games/scubadiving"><meta property="og:title" content="Scuba Diving - Multiport Games"><meta property="og:description" content="Play Scuba Diving free online — Swim with Arrow Keys/WASD or drag on touch. Collect treasure and photo-ops, refill oxygen at air pockets, and avoid jellyfish and sharp coral."><meta property="og:url" content="https://games.multiportllc.com/games/scubadiving"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Scuba Diving","description":"Play Scuba Diving free online instantly. Swim through a coral reef collecting treasure and photo-ops while managing your oxygen meter. Refill at air pockets and avoid jellyfish and sharp coral. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/scubadiving","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0a3d5c;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:center;gap:18px;color:#dff6ff;font-size:1.05rem;font-weight:700;padding:8px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#oxywrap{width:220px;height:14px;background:rgba(255,255,255,.15);border-radius:8px;overflow:hidden;margin:0 auto 4px;border:1px solid rgba(255,255,255,.3)}
+#oxybar{height:100%;background:linear-gradient(90deg,#4fc3f7,#29b6f6);width:100%;transition:width .15s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Scuba Diving</div>
+  <div class="game-frame">
+    <div id="oxywrap"><div id="oxybar"></div></div>
+    <div id="hud"><span>Score: <b id="scoreEl">0</b></span><span>Best: <b id="bestEl">0</b></span></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Swim with <b>Arrow Keys</b>/<b>WASD</b> or <b>drag</b> on touch. Collect treasure and photo-ops, refill oxygen at air-pocket bubbles, and avoid jellyfish and sharp coral. Score as much as you can before your oxygen runs out or you're hit!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const scoreEl=document.getElementById('scoreEl'),bestEl=document.getElementById('bestEl'),oxybar=document.getElementById('oxybar');
+let best=parseInt(localStorage.getItem('scubadiving_best')||'0',10);
+bestEl.textContent=best;
+
+const diver={x:120,y:210,r:18,vx:0,vy:0};
+const keys={};
+let dragTarget=null;
+let items=[],hazards=[],bubbles=[];
+let oxygen=100,score=0,gameOver=false,started=false,frame=0;
+let itemTimer=0,hazTimer=0,airTimer=0,lastTime=null;
+
+function reset(){
+  diver.x=120;diver.y=210;diver.vx=0;diver.vy=0;
+  items=[];hazards=[];bubbles=[];
+  oxygen=100;score=0;gameOver=false;started=false;frame=0;
+  itemTimer=0;hazTimer=0;airTimer=0;lastTime=null;
+}
+
+function startGame(){ if(!started){started=true;} else if(gameOver){reset();started=true;} }
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d','W','A','S','D',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  if(!started||gameOver)startGame();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=e.touches?e.touches[0].clientX:e.clientX;
+  const cy=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(cx-rect.left)*(W/rect.width),y:(cy-rect.top)*(H/rect.height)};
+}
+c.addEventListener('pointerdown',e=>{startGame();dragTarget=pointerPos(e);});
+c.addEventListener('pointermove',e=>{if(dragTarget)dragTarget=pointerPos(e);});
+window.addEventListener('pointerup',()=>{dragTarget=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();startGame();dragTarget=pointerPos(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(dragTarget)dragTarget=pointerPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragTarget=null;},{passive:false});
+
+function spawnItem(){
+  const type=Math.random()<0.5?'treasure':'photo';
+  items.push({x:W+30,y:40+Math.random()*(H-100),r:14,type,bob:Math.random()*Math.PI*2});
+}
+function spawnHazard(){
+  const type=Math.random()<0.5?'jelly':'coral';
+  if(type==='jelly'){
+    hazards.push({x:W+30,y:40+Math.random()*(H-100),r:20,type,bob:Math.random()*Math.PI*2,vy:0.4+Math.random()*0.4});
+  }else{
+    const fromTop=Math.random()<0.5;
+    hazards.push({x:W+30,y:fromTop?0:H-70,w:34,h:70,type,fromTop});
+  }
+}
+function spawnBubble(){
+  bubbles.push({x:W+30,y:40+Math.random()*(H-80),r:26});
+}
+
+function circleHit(a,b){ const dx=a.x-b.x,dy=a.y-b.y; return Math.sqrt(dx*dx+dy*dy) < (a.r+b.r); }
+function rectHit(circ,rect){
+  const cx=Math.max(rect.x,Math.min(circ.x,rect.x+rect.w));
+  const cy=Math.max(rect.y,Math.min(circ.y,rect.y+rect.h));
+  const dx=circ.x-cx,dy=circ.y-cy;
+  return (dx*dx+dy*dy) < circ.r*circ.r;
+}
+
+function drawDiver(){
+  ctx.save();
+  ctx.translate(diver.x,diver.y);
+  const finFlap=Math.sin(frame/6)*6;
+  ctx.fillStyle='#ffcc80';
+  ctx.beginPath();ctx.arc(10,0,10,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#333';
+  ctx.beginPath();ctx.arc(13,-2,4,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ff7043';
+  ctx.beginPath();ctx.ellipse(-8,0,18,12,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#455a64';
+  ctx.fillRect(-14,-10,10,20);
+  ctx.fillStyle='#ffca28';
+  ctx.beginPath();
+  ctx.moveTo(-24,0);ctx.lineTo(-38,-10+finFlap);ctx.lineTo(-38,10+finFlap);
+  ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+function drawItem(it){
+  ctx.save();
+  const y=it.y+Math.sin(frame/12+it.bob)*4;
+  if(it.type==='treasure'){
+    ctx.fillStyle='#8d5524';ctx.fillRect(it.x-16,y-10,32,20);
+    ctx.fillStyle='#ffd700';ctx.beginPath();ctx.arc(it.x,y,9,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#5d3a1a';ctx.lineWidth=2;ctx.strokeRect(it.x-16,y-10,32,20);
+  }else{
+    ctx.fillStyle='#455a64';ctx.fillRect(it.x-14,y-10,28,20);
+    ctx.fillStyle='#90caf9';ctx.fillRect(it.x-9,y-6,18,12);
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(it.x,y,5,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
+}
+function drawHazard(h){
+  ctx.save();
+  if(h.type==='jelly'){
+    const y=h.y+Math.sin(frame/10+h.bob)*8;
+    ctx.fillStyle='rgba(255,138,255,0.85)';
+    ctx.beginPath();ctx.ellipse(h.x,y,h.r,h.r*0.8,0,Math.PI,0);
+    ctx.fill();
+    ctx.strokeStyle='rgba(255,200,255,.8)';ctx.lineWidth=2;
+    for(let i=-2;i<=2;i++){
+      ctx.beginPath();ctx.moveTo(h.x+i*7,y);
+      ctx.quadraticCurveTo(h.x+i*7+Math.sin(frame/8+i)*4,y+14,h.x+i*7,y+22);
+      ctx.stroke();
+    }
+    h._drawY=y;
+  }else{
+    ctx.fillStyle='#d84315';
+    const n=4;
+    for(let i=0;i<n;i++){
+      const px=h.x+ (h.w/n)*i;
+      const spikeH=h.fromTop? h.h*0.5+((i%2)*10) : h.h*0.5+((i%2)*10);
+      if(h.fromTop){
+        ctx.beginPath();ctx.moveTo(px,0);ctx.lineTo(px+h.w/n/2,spikeH);ctx.lineTo(px+h.w/n,0);ctx.closePath();ctx.fill();
+      }else{
+        ctx.beginPath();ctx.moveTo(px,H);ctx.lineTo(px+h.w/n/2,H-spikeH);ctx.lineTo(px+h.w/n,H);ctx.closePath();ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+}
+function drawBubble(b){
+  ctx.save();
+  ctx.strokeStyle='rgba(255,255,255,.9)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,.15)';ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText('O2',b.x,b.y+4);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#1a6a92');sky.addColorStop(1,'#03263b');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  for(let i=0;i<6;i++){
+    ctx.fillStyle='rgba(255,255,255,'+(0.03+0.01*i)+')';
+    ctx.beginPath();ctx.arc((i*140+frame*0.3)%(W+100)-50, (i*70)%H, 2+i%3,0,Math.PI*2);ctx.fill();
+  }
+  // seabed
+  ctx.fillStyle='#c2a15c';ctx.fillRect(0,H-16,W,16);
+
+  if(!started){
+    ctx.fillStyle='#dff6ff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('scuba_start','Press any key or tap/drag to dive in'),W/2,H/2);
+    drawDiver();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('scuba_restart','Score: {s} — Tap or press a key to dive again').replace('{s}',Math.floor(score)),W/2,H/2+18);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frame+=dt;
+
+  // movement
+  const speed=4.2;
+  let ax=0,ay=0;
+  if(keys['arrowup']||keys['w'])ay-=1;
+  if(keys['arrowdown']||keys['s'])ay+=1;
+  if(keys['arrowleft']||keys['a'])ax-=1;
+  if(keys['arrowright']||keys['d'])ax+=1;
+  if(dragTarget){
+    const dx=dragTarget.x-diver.x,dy=dragTarget.y-diver.y;
+    const dist=Math.sqrt(dx*dx+dy*dy);
+    if(dist>4){ax=dx/dist;ay=dy/dist;}
+  }
+  const mag=Math.sqrt(ax*ax+ay*ay);
+  if(mag>0){ax/=mag;ay/=mag;}
+  diver.x+=ax*speed*dt;
+  diver.y+=ay*speed*dt;
+  diver.x=Math.max(24,Math.min(W-24,diver.x));
+  diver.y=Math.max(24,Math.min(H-24,diver.y));
+
+  // oxygen depletes, faster over time
+  const depletion=0.06+score/4000;
+  oxygen-=depletion*dt;
+  if(oxygen<=0){oxygen=0;endGame();}
+  oxybar.style.width=oxygen+'%';
+  oxybar.style.background = oxygen<25? 'linear-gradient(90deg,#ff5252,#ff1744)' : 'linear-gradient(90deg,#4fc3f7,#29b6f6)';
+
+  score+=0.08*dt;
+
+  // spawn
+  itemTimer+=dt; hazTimer+=dt; airTimer+=dt;
+  const itemInterval=Math.max(38,70-score/20);
+  const hazInterval=Math.max(50,100-score/15);
+  if(itemTimer>=itemInterval){itemTimer=0;spawnItem();}
+  if(hazTimer>=hazInterval){hazTimer=0;spawnHazard();}
+  if(airTimer>=220){airTimer=0;spawnBubble();}
+
+  const spd=2.4+score/300;
+
+  const diverHit={x:diver.x,y:diver.y,r:16};
+
+  items=items.filter(it=>it.x>-40);
+  items.forEach(it=>{it.x-=spd*dt;drawItem(it);
+    if(circleHit(diverHit,it)){
+      it.x=-999;score+=it.type==='treasure'?15:10;SFX.coin();
+    }
+  });
+
+  hazards=hazards.filter(h=>h.x>-60);
+  hazards.forEach(h=>{
+    h.x-=spd*dt;
+    drawHazard(h);
+    let hit=false;
+    if(h.type==='jelly'){
+      hit=circleHit(diverHit,{x:h.x,y:h._drawY!==undefined?h._drawY:h.y,r:h.r*0.7});
+    }else{
+      hit=rectHit(diverHit,{x:h.x,y:h.fromTop?0:H-h.h,w:h.w,h:h.h});
+    }
+    if(hit&&!gameOver){endGame();}
+  });
+
+  bubbles=bubbles.filter(b=>b.x>-40);
+  bubbles.forEach(b=>{b.x-=spd*dt;drawBubble(b);
+    if(circleHit(diverHit,b)){
+      b.x=-999;oxygen=Math.min(100,oxygen+35);SFX.powerup();
+    }
+  });
+
+  drawDiver();
+  scoreEl.textContent=Math.floor(score);
+  requestAnimationFrame(loop);
+}
+
+function endGame(){
+  if(gameOver)return;
+  gameOver=true;
+  SFX.lose();
+  if(score>best){best=Math.floor(score);localStorage.setItem('scubadiving_best',best);bestEl.textContent=best;}
+}
+
+loop();
+</script></body></html>

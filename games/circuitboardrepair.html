@@ -1,0 +1,230 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Circuit Board Repair</title><meta name="description" content="Play Circuit Board Repair free online — Drag a wire from each colored terminal to its matching pair. Wires can't cross each other or leave the board. Connect every pair before you run out of wire placements to power up the board!"><link rel="canonical" href="https://games.multiportllc.com/games/circuitboardrepair"><meta property="og:title" content="Circuit Board Repair - Multiport Games"><meta property="og:description" content="Play Circuit Board Repair free online — Drag a wire from each colored terminal to its matching pair. Wires can't cross each other or leave the board. Connect every pair before you run out of wire placements to power up the board!"><meta property="og:url" content="https://games.multiportllc.com/games/circuitboardrepair"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Circuit Board Repair","description":"Play Circuit Board Repair free online instantly. Drag a wire from each colored terminal to its matching pair. Wires can't cross each other or leave the board. Connect every pair before you run out of wire placements to power up the board! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/circuitboardrepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d2818;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{display:flex;justify-content:space-between;max-width:700px;margin:0 auto 8px;color:#eee;font-weight:700;font-size:1rem;flex-wrap:wrap;gap:6px}
+#hud span{background:rgba(0,0,0,.3);padding:4px 10px;border-radius:8px}
+#msg{text-align:center;color:#ffd54f;font-weight:800;min-height:1.6em;margin-top:6px}
+#resetBtn{display:block;margin:8px auto 0;padding:8px 20px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Circuit Board Repair</div>
+  <div class="game-frame">
+    <div id="hud"><span id="round-display">Board: 1</span><span id="score-display">Solved: 0</span><span id="moves-display">Wires left: 0</span></div>
+    <canvas id="c" width="700" height="440"></canvas>
+    <div id="msg"></div>
+    <button id="resetBtn" onclick="restartBoard()">Restart Board</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag a wire from each colored terminal to its matching pair. Wires can't cross each other or leave the board. Connect every pair before you run out of wire placements to power up the board!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=700,H=440;
+let boardNum=1,solved=0,best=parseInt(localStorage.getItem('circuitboardrepair_best')||'0',10);
+let terminals=[],connections=[],movesLeft=0,dragging=null,dragPos=null;
+const COLORS=['#ff5555','#55ff88','#55aaff','#ffcc33','#ff66dd','#66ffee','#ffffff','#ff9944'];
+
+function segsIntersect(p1,p2,p3,p4){
+  function ccw(a,b,cc){return (cc.y-a.y)*(b.x-a.x)>(b.y-a.y)*(cc.x-a.x);}
+  return ccw(p1,p3,p4)!==ccw(p2,p3,p4) && ccw(p1,p2,p3)!==ccw(p1,p2,p4);
+}
+function sharesEndpoint(p1,p2,p3,p4){
+  const eq=(a,b)=>Math.abs(a.x-b.x)<0.01&&Math.abs(a.y-b.y)<0.01;
+  return eq(p1,p3)||eq(p1,p4)||eq(p2,p3)||eq(p2,p4);
+}
+
+function genBoard(){
+  const numPairs=Math.min(3+Math.floor((boardNum-1)/1),8);
+  const margin=60;
+  const positions=[];
+  // place terminals around the perimeter for a solvable, planar-friendly layout
+  const perim=[];
+  const step=W*2/ (numPairs*2) ; // not used precisely; place on top/bottom edges evenly
+  const slots=numPairs*2;
+  for(let i=0;i<slots;i++){
+    const t=i/slots;
+    let x,y;
+    if(i%2===0){ x=margin+ (W-2*margin)*(Math.floor(i/2)/(numPairs)); y=40; }
+    else { x=margin+ (W-2*margin)*(Math.floor(i/2)/(numPairs)); y=H-40; }
+    perim.push({x,y});
+  }
+  // shuffle assignment of colors to perim slots (top and bottom) while keeping distinct pairs
+  const colors=[];
+  for(let i=0;i<numPairs;i++)colors.push(COLORS[i%COLORS.length]);
+  const colorPairs=[];
+  colors.forEach(col=>{colorPairs.push(col,col);});
+  // shuffle
+  for(let i=colorPairs.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [colorPairs[i],colorPairs[j]]=[colorPairs[j],colorPairs[i]];
+  }
+  terminals=perim.map((p,i)=>({x:p.x,y:p.y,color:colorPairs[i],id:i,connected:false}));
+  connections=[];
+  movesLeft=numPairs+Math.max(2,Math.floor(numPairs/2));
+  updateHud();
+}
+
+function startBoard(){
+  genBoard();
+  document.getElementById('msg').textContent='';
+}
+
+function restartBoard(){
+  SFX.click();
+  genBoard();
+  setMsg('');
+}
+
+function setMsg(t,color){
+  document.getElementById('msg').textContent=t;
+  document.getElementById('msg').style.color=color||'#ffd54f';
+}
+
+function updateHud(){
+  document.getElementById('round-display').textContent=I18N.t('board_label','Board: {b}').replace('{b}',boardNum);
+  document.getElementById('score-display').textContent=I18N.t('solved_label','Solved: {s} (Best: {b})').replace('{s}',solved).replace('{b}',best);
+  document.getElementById('moves-display').textContent=I18N.t('wires_left_label','Wires left: {w}').replace('{w}',movesLeft);
+}
+
+function getPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  let clientX,clientY;
+  if(e.touches&&e.touches.length){clientX=e.touches[0].clientX;clientY=e.touches[0].clientY;}
+  else if(e.changedTouches&&e.changedTouches.length){clientX=e.changedTouches[0].clientX;clientY=e.changedTouches[0].clientY;}
+  else{clientX=e.clientX;clientY=e.clientY;}
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+
+function findTerminalAt(p){
+  return terminals.find(t=>!t.connected && Math.hypot(t.x-p.x,t.y-p.y)<20);
+}
+
+function pointerDown(e){
+  e.preventDefault();
+  const p=getPos(e);
+  const t=findTerminalAt(p);
+  if(t){dragging=t;dragPos=p;}
+}
+function pointerMove(e){
+  if(!dragging)return;
+  e.preventDefault();
+  dragPos=getPos(e);
+}
+function pointerUp(e){
+  if(!dragging)return;
+  e.preventDefault();
+  const p=getPos(e);
+  const target=terminals.find(t=>t!==dragging && !t.connected && Math.hypot(t.x-p.x,t.y-p.y)<24);
+  if(target && target.color===dragging.color){
+    // check crossing with existing connections
+    const p1=dragging,p2=target;
+    let crosses=false;
+    for(const conn of connections){
+      if(sharesEndpoint(p1,p2,conn.a,conn.b))continue;
+      if(segsIntersect(p1,p2,conn.a,conn.b)){crosses=true;break;}
+    }
+    if(crosses){
+      SFX.error();
+      setMsg(I18N.t('crossed_msg','Wires can\'t cross! Try a different path.'),'#ff6b6b');
+      movesLeft--;
+    }else{
+      connections.push({a:{x:p1.x,y:p1.y},b:{x:p2.x,y:p2.y},color:p1.color});
+      dragging.connected=true;target.connected=true;
+      SFX.point();
+      movesLeft--;
+      setMsg('');
+      if(terminals.every(t=>t.connected)){
+        solved++;
+        if(solved>best){best=solved;localStorage.setItem('circuitboardrepair_best',String(best));}
+        SFX.win();
+        setMsg(I18N.t('board_powered_msg','Board powered up! Next board...'),'#7ec850');
+        boardNum++;
+        setTimeout(startBoard,1500);
+      }
+    }
+  }else if(target && target.color!==dragging.color){
+    SFX.error();
+    setMsg(I18N.t('mismatch_msg','That terminal doesn\'t match — colors must connect to colors.'),'#ff6b6b');
+    movesLeft--;
+  }
+  dragging=null;dragPos=null;
+  updateHud();
+  if(movesLeft<=0 && !terminals.every(t=>t.connected)){
+    SFX.fail();
+    setMsg(I18N.t('out_of_wire_msg','Out of wire placements! Board reset.'),'#ff6b6b');
+    setTimeout(()=>{genBoard();setMsg('');},1600);
+  }
+}
+
+c.addEventListener('mousedown',pointerDown);
+c.addEventListener('mousemove',pointerMove);
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',pointerDown,{passive:false});
+c.addEventListener('touchmove',pointerMove,{passive:false});
+c.addEventListener('touchend',pointerUp,{passive:false});
+
+function drawTerminal(t){
+  ctx.beginPath();
+  ctx.arc(t.x,t.y,12,0,Math.PI*2);
+  ctx.fillStyle=t.connected?'#333':t.color;
+  ctx.fill();
+  ctx.strokeStyle=t.color;
+  ctx.lineWidth=3;
+  ctx.stroke();
+  if(dragging===t){
+    ctx.beginPath();
+    ctx.arc(t.x,t.y,18,0,Math.PI*2);
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+  }
+}
+
+function drawGrid(){
+  ctx.strokeStyle='rgba(0,255,150,0.08)';
+  ctx.lineWidth=1;
+  for(let x=0;x<W;x+=30){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<H;y+=30){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0d2818';ctx.fillRect(0,0,W,H);
+  drawGrid();
+
+  connections.forEach(conn=>{
+    ctx.strokeStyle=conn.color;
+    ctx.lineWidth=5;
+    ctx.shadowColor=conn.color;ctx.shadowBlur=8;
+    ctx.beginPath();
+    ctx.moveTo(conn.a.x,conn.a.y);
+    ctx.lineTo(conn.b.x,conn.b.y);
+    ctx.stroke();
+    ctx.shadowBlur=0;
+  });
+
+  if(dragging&&dragPos){
+    ctx.strokeStyle=dragging.color;
+    ctx.lineWidth=4;
+    ctx.setLineDash([6,4]);
+    ctx.beginPath();
+    ctx.moveTo(dragging.x,dragging.y);
+    ctx.lineTo(dragPos.x,dragPos.y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  terminals.forEach(drawTerminal);
+
+  requestAnimationFrame(draw);
+}
+
+startBoard();
+draw();
+</script></body></html>

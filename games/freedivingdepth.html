@@ -1,0 +1,230 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Freediving Depth</title><meta name="description" content="Play Freediving Depth free online — Hold Space/click to dive deeper, release to surface and bank your depth. Watch your breath meter — go too deep too long and you'll black out!"><link rel="canonical" href="https://games.multiportllc.com/games/freedivingdepth"><meta property="og:title" content="Freediving Depth - Multiport Games"><meta property="og:description" content="Play Freediving Depth free online — Hold Space/click to dive deeper, release to surface and bank your depth. Watch your breath meter — go too deep too long and you'll black out!"><meta property="og:url" content="https://games.multiportllc.com/games/freedivingdepth"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Freediving Depth","description":"Play Freediving Depth free online instantly. Hold to dive deeper on a single breath, manage your breath meter, and surface in time to bank your depth across multiple dives. Dive too deep without surfacing and you'll black out. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/freedivingdepth","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#062a44;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:center;gap:18px;color:#dff6ff;font-size:1.05rem;font-weight:700;padding:8px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#breathwrap{width:220px;height:14px;background:rgba(255,255,255,.15);border-radius:8px;overflow:hidden;margin:0 auto 4px;border:1px solid rgba(255,255,255,.3)}
+#breathbar{height:100%;background:linear-gradient(90deg,#4fc3f7,#29b6f6);width:100%;transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Freediving Depth</div>
+  <div class="game-frame">
+    <div id="breathwrap"><div id="breathbar"></div></div>
+    <div id="hud"><span>Dive Depth: <b id="depthEl">0m</b></span><span>Best Depth: <b id="bestEl">0m</b></span><span>Dives Left: <b id="divesEl">3</b></span></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Space</b>/<b>click</b>/<b>touch</b> to dive deeper on one breath. The deeper you go, the faster your breath meter drains. Release early to surface and bank your depth — but dive too deep for too long without surfacing and you'll black out, losing the dive! You get 3 dives — score is your best safely-banked depth.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const depthEl=document.getElementById('depthEl'),bestEl=document.getElementById('bestEl'),divesEl=document.getElementById('divesEl'),breathbar=document.getElementById('breathbar');
+let best=parseFloat(localStorage.getItem('freedivingdepth_best')||'0');
+bestEl.textContent=Math.floor(best)+'m';
+
+const SURFACE_Y=60;
+const MAX_DIVE_Y=380;
+let diverY=SURFACE_Y;
+let depth=0; // meters
+let breath=100;
+let holding=false;
+let diving=false; // true while below surface (in a dive)
+let surfacing=false;
+let blackout=false;
+let divesLeft=3;
+let gameOver=false;
+let bubbles=[];
+let frame=0,lastTime=null;
+let message='';
+
+function meterFromY(y){ return Math.max(0,((y-SURFACE_Y)/(MAX_DIVE_Y-SURFACE_Y))*60); }
+
+function resetGame(){
+  diverY=SURFACE_Y;depth=0;breath=100;holding=false;diving=false;surfacing=false;blackout=false;
+  divesLeft=3;gameOver=false;bubbles=[];frame=0;lastTime=null;message='';
+  divesEl.textContent=divesLeft;
+}
+resetGame();
+
+function startInput(){
+  if(gameOver){resetGame();return;}
+  holding=true;
+}
+function endInput(){ holding=false; }
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();startInput();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){e.preventDefault();endInput();}
+});
+c.addEventListener('pointerdown',e=>{e.preventDefault();startInput();});
+window.addEventListener('pointerup',()=>{endInput();});
+c.addEventListener('touchstart',e=>{e.preventDefault();startInput();},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();endInput();},{passive:false});
+
+function spawnBubble(){
+  bubbles.push({x:Math.random()*W,y:diverY+20+Math.random()*20,r:2+Math.random()*3,vy:1+Math.random()*1.5});
+}
+
+function drawWater(){
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#1a8bc7');
+  sky.addColorStop(0.15,'#0e5f92');
+  sky.addColorStop(0.5,'#083a5c');
+  sky.addColorStop(1,'#021420');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // depth marker lines every 10m
+  ctx.strokeStyle='rgba(255,255,255,.12)';
+  ctx.font='11px Arial';ctx.fillStyle='rgba(255,255,255,.35)';
+  ctx.textAlign='left';
+  for(let m=0;m<=60;m+=10){
+    const y=SURFACE_Y+(m/60)*(MAX_DIVE_Y-SURFACE_Y);
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+    ctx.fillText(m+'m',6,y-4);
+  }
+  // surface line
+  ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(0,SURFACE_Y);ctx.lineTo(W,SURFACE_Y);ctx.stroke();
+  ctx.lineWidth=1;
+}
+
+function drawDiver(){
+  ctx.save();
+  ctx.translate(W/2,diverY);
+  const finFlap=Math.sin(frame/8)*8;
+  ctx.rotate(Math.PI/2);
+  ctx.fillStyle='#ffcc80';
+  ctx.beginPath();ctx.arc(-16,0,9,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ff7043';
+  ctx.beginPath();ctx.ellipse(0,0,16,11,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffca28';
+  ctx.beginPath();
+  ctx.moveTo(18,0);ctx.lineTo(30,-8+finFlap);ctx.lineTo(30,8+finFlap);
+  ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+
+function drawBubbles(){
+  ctx.fillStyle='rgba(255,255,255,.6)';
+  bubbles.forEach(b=>{
+    ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fill();
+  });
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawWater();
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frame+=dt;
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('freediving_restart','Best depth: {d}m — Tap/Space to dive again').replace('{d}',Math.floor(best)),W/2,H/2+16);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(divesLeft<=0){
+    divesLeft=0; // safety
+    gameOver=true;
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(!blackout){
+    if(holding){
+      diving=true;surfacing=false;
+      diverY=Math.min(MAX_DIVE_Y,diverY+2.4*dt);
+    } else if(diving){
+      surfacing=true;
+      diverY=Math.max(SURFACE_Y,diverY-3.2*dt);
+      if(diverY<=SURFACE_Y+0.5){
+        // surfaced successfully
+        bankDive();
+      }
+    }
+    depth=meterFromY(diverY);
+
+    // breath drains faster the deeper
+    if(diving||surfacing){
+      const drainRate=0.12+ (depth/60)*0.5;
+      breath-=drainRate*dt;
+    } else {
+      breath=Math.min(100,breath+0.6*dt);
+    }
+
+    if(breath<=0){
+      breath=0;
+      blackout=true;
+      SFX.lose();
+      message=I18N.t('freediving_blackout','Blacked out! Dive lost.');
+    }
+
+    if(Math.random()<0.15*dt)spawnBubble();
+  } else {
+    // blackout: float back to surface, lose the dive
+    diverY=Math.max(SURFACE_Y,diverY-1.5*dt);
+    if(diverY<=SURFACE_Y+0.5){
+      endDive(false);
+    }
+  }
+
+  bubbles.forEach(b=>{b.y-=b.vy*dt;});
+  bubbles=bubbles.filter(b=>b.y>0);
+
+  drawBubbles();
+  drawDiver();
+
+  breathbar.style.width=breath+'%';
+  breathbar.style.background = breath<25? 'linear-gradient(90deg,#ff5252,#ff1744)' : 'linear-gradient(90deg,#4fc3f7,#29b6f6)';
+  depthEl.textContent=Math.floor(depth)+'m';
+
+  if(message){
+    ctx.fillStyle='#ff8a80';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(message,W/2,H/2);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+function bankDive(){
+  const banked=Math.floor(depth);
+  if(banked>best){
+    best=banked;
+    localStorage.setItem('freedivingdepth_best',best);
+    bestEl.textContent=Math.floor(best)+'m';
+    SFX.success();
+  } else {
+    SFX.point();
+  }
+  message=I18N.t('freediving_banked','Surfaced! Banked {d}m').replace('{d}',banked);
+  endDive(true);
+}
+
+function endDive(success){
+  diving=false;surfacing=false;blackout=false;holding=false;
+  divesLeft--;
+  divesEl.textContent=Math.max(0,divesLeft);
+  diverY=SURFACE_Y;depth=0;breath=100;
+  if(divesLeft<=0){
+    setTimeout(()=>{ gameOver=true; },600);
+  }
+  setTimeout(()=>{message='';},900);
+}
+
+loop();
+</script></body></html>

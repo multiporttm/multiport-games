@@ -1,0 +1,159 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Cider Pressing</title><meta name="description" content="Play Cider Pressing free online — Alternate the two press handles (or tap left/right) in a steady, even rhythm to fill the pressing meter and squeeze out batches of fresh cider."><link rel="canonical" href="https://games.multiportllc.com/games/ciderpressing"><meta property="og:title" content="Cider Pressing - Multiport Games"><meta property="og:description" content="Play Cider Pressing free online — Alternate the two press handles (or tap left/right) in a steady, even rhythm to fill the pressing meter and squeeze out batches of fresh cider."><meta property="og:url" content="https://games.multiportllc.com/games/ciderpressing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Cider Pressing","description":"Play Cider Pressing free online instantly. Alternate the two press handles (or tap left/right) in a steady, even rhythm to fill the pressing meter and squeeze out batches of fresh cider. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/ciderpressing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;max-width:600px;margin:0 auto 8px;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffb347}
+#press{max-width:600px;margin:0 auto;background:#16213e;border-radius:14px;padding:20px;text-align:center;position:relative}
+#pressVisual{font-size:3.5rem;margin-bottom:6px;transition:transform .05s}
+#meterOuter{width:100%;height:28px;background:#0b1a2e;border-radius:14px;overflow:hidden;border:2px solid #244;position:relative}
+#meterFill{height:100%;background:linear-gradient(90deg,#8a4b12,#c77b2c);width:0%;transition:width .08s linear}
+#rhythmZone{position:absolute;top:0;bottom:0;background:rgba(76,175,80,.4);border-left:2px solid #4caf50;border-right:2px solid #4caf50}
+#pace{margin-top:8px;color:#9fd8ff;font-weight:700;min-height:1.4em}
+#handles{display:flex;justify-content:center;gap:24px;margin-top:16px}
+.handle{width:100px;height:70px;background:#e94560;border:none;border-radius:12px;color:#fff;font-size:1.3rem;font-weight:900;cursor:pointer;user-select:none;touch-action:manipulation}
+.handle.left.active,.handle.right.active{background:#ffb347;transform:scale(.94)}
+#batchCount{margin-top:10px;color:#fff}
+#startOverlay{position:absolute;inset:0;background:rgba(0,0,0,.6);border-radius:14px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:#fff;z-index:5}
+#startBtn{padding:10px 24px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Cider Pressing</div>
+  <div class="game-frame">
+    <div id="hud"><span id="batchLabel">Batch: 1</span><span id="scoreLabel">Cider: 0</span><span id="bestLabel">Best: 0</span></div>
+    <div id="press">
+      <div id="pressVisual">🍎🧃</div>
+      <div id="meterOuter"><div id="rhythmZone"></div><div id="meterFill"></div></div>
+      <div id="pace">Alternate LEFT / RIGHT evenly!</div>
+      <div id="handles">
+        <button class="handle left" id="leftHandle">LEFT<br>(A / ←)</button>
+        <button class="handle right" id="rightHandle">RIGHT<br>(D / →)</button>
+      </div>
+      <div id="batchCount">Batches pressed: 0</div>
+      <div id="startOverlay">
+        <div style="font-size:1.15rem;font-weight:800;text-align:center;padding:0 12px">Alternate LEFT and RIGHT in a steady rhythm to press cider!</div>
+        <button id="startBtn">Start</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press the LEFT and RIGHT handles one after another in a steady, evenly-paced rhythm (use the A/D or Left/Right arrow keys, or tap the buttons) to operate the apple press. Keeping each stroke inside the green rhythm zone fills the pressing meter efficiently — button-mashing or uneven timing wastes effort. Fill the meter fully to score a batch of cider; each new batch shrinks the ideal rhythm window, so stay smooth and consistent!</div>
+</div>
+<script>
+let batch=1,cider=0,best=+localStorage.getItem('ciderpressing_best')||0,progress=0,running=false;
+let lastStrokeTime=0,expectedSide='left',idealInterval=650,toleranceMs=220;
+let strokeHistory=[];
+
+function updateHud(){
+  document.getElementById('batchLabel').textContent=I18N.t('batch_label','Batch: {b}').replace('{b}',batch);
+  document.getElementById('scoreLabel').textContent=I18N.t('cider_label','Cider: {c}').replace('{c}',cider);
+  document.getElementById('bestLabel').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+  document.getElementById('batchCount').textContent=I18N.t('batches_pressed','Batches pressed: {n}').replace('{n}',batch-1);
+}
+
+function setRhythmZoneVisual(){
+  const zone=document.getElementById('rhythmZone');
+  const centerPct=55;
+  const widthPct=Math.max(6,18-batch*1.2);
+  zone.style.left=(centerPct-widthPct/2)+'%';
+  zone.style.width=widthPct+'%';
+}
+
+function resetPress(){
+  progress=0;
+  expectedSide='left';
+  lastStrokeTime=0;
+  idealInterval=Math.max(380,650-batch*20);
+  toleranceMs=Math.max(90,220-batch*10);
+  document.getElementById('meterFill').style.width='0%';
+  setRhythmZoneVisual();
+  document.getElementById('pace').textContent=I18N.t('press_start_hint','Start pressing: LEFT first!');
+}
+
+function stroke(side){
+  if(!running)return;
+  const btn=document.getElementById(side+'Handle');
+  btn.classList.add('active');
+  setTimeout(()=>btn.classList.remove('active'),100);
+
+  const now=performance.now();
+  if(side!==expectedSide){
+    // wrong side — small penalty, no progress
+    SFX.error();
+    document.getElementById('pace').textContent=I18N.t('wrong_side','Wrong handle! Alternate sides.');
+    progress=Math.max(0,progress-3);
+  } else {
+    if(lastStrokeTime===0){
+      // first stroke of the batch
+      progress+=6;
+      SFX.click();
+      document.getElementById('pace').textContent=I18N.t('good_start','Good — keep the rhythm!');
+    } else {
+      const interval=now-lastStrokeTime;
+      const diff=Math.abs(interval-idealInterval);
+      if(diff<=toleranceMs){
+        const gain=12-(diff/toleranceMs)*5;
+        progress+=gain;
+        SFX.point();
+        document.getElementById('pace').textContent=I18N.t('perfect_pace','Perfect pace!');
+      } else if(diff<=toleranceMs*2){
+        progress+=3;
+        SFX.click();
+        document.getElementById('pace').textContent = interval<idealInterval?I18N.t('too_fast','Too fast — ease up!'):I18N.t('too_slow','Too slow — press faster!');
+      } else {
+        progress+=0.5;
+        SFX.error();
+        document.getElementById('pace').textContent = interval<idealInterval?I18N.t('too_fast','Too fast — ease up!'):I18N.t('too_slow','Too slow — press faster!');
+      }
+    }
+    lastStrokeTime=now;
+    expectedSide=expectedSide==='left'?'right':'left';
+  }
+  progress=Math.max(0,Math.min(100,progress));
+  document.getElementById('meterFill').style.width=progress+'%';
+  document.getElementById('pressVisual').style.transform='scale('+(1+progress/300)+')';
+
+  if(progress>=100){
+    completeBatch();
+  }
+}
+
+function completeBatch(){
+  running=false;
+  const reward=10+batch*2;
+  cider+=reward;
+  if(cider>best){best=cider;localStorage.setItem('ciderpressing_best',best);}
+  updateHud();
+  SFX.win();
+  document.getElementById('pace').textContent=I18N.t('batch_complete','Batch pressed! +{r} cider').replace('{r}',reward);
+  batch++;
+  setTimeout(()=>{
+    resetPress();
+    updateHud();
+    running=true;
+  },1400);
+}
+
+document.getElementById('leftHandle').addEventListener('pointerdown',()=>stroke('left'));
+document.getElementById('rightHandle').addEventListener('pointerdown',()=>stroke('right'));
+document.addEventListener('keydown',e=>{
+  if(e.repeat)return;
+  if(e.code==='KeyA'||e.code==='ArrowLeft'){e.preventDefault();stroke('left');}
+  else if(e.code==='KeyD'||e.code==='ArrowRight'){e.preventDefault();stroke('right');}
+});
+
+document.getElementById('startBtn').onclick=()=>{
+  document.getElementById('startOverlay').style.display='none';
+  batch=1;cider=0;running=true;
+  resetPress();
+  updateHud();
+};
+
+updateHud();
+setRhythmZoneVisual();
+</script></body></html>

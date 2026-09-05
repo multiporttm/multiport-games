@@ -1,0 +1,214 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Wheat Harvest</title><meta name="description" content="Play Wheat Harvest free online — Steer your harvester through the field with arrow keys, WASD, or touch-drag. Cut wheat for points and dodge rocks before your fuel runs out."><link rel="canonical" href="https://games.multiportllc.com/games/wheatharvest"><meta property="og:title" content="Wheat Harvest - Multiport Games"><meta property="og:description" content="Play Wheat Harvest free online — Steer your harvester through the field with arrow keys, WASD, or touch-drag. Cut wheat for points and dodge rocks before your fuel runs out."><meta property="og:url" content="https://games.multiportllc.com/games/wheatharvest"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Wheat Harvest","description":"Play Wheat Harvest free online instantly. Steer your harvester through the field with arrow keys, WASD, or touch-drag. Cut wheat for points and dodge rocks before your fuel runs out. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/wheatharvest","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#d9a441;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;max-width:800px;margin:0 auto 6px;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffb347}
+#fuelOuter{width:100%;max-width:800px;height:12px;background:#222;border-radius:6px;margin:0 auto 8px;overflow:hidden}
+#fuelFill{height:100%;background:linear-gradient(90deg,#4caf50,#8bc34a);width:100%;transition:width .15s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Wheat Harvest</div>
+  <div class="game-frame">
+    <div id="hud"><span id="scoreLabel">Wheat: 0</span><span id="bestLabel">Best: 0</span></div>
+    <div id="fuelOuter"><div id="fuelFill"></div></div>
+    <canvas id="c" width="800" height="360"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Steer your harvester with the Arrow Keys or WASD (or drag/touch on mobile) as the field scrolls past. Drive over golden wheat to cut it for points, and steer around rocks and stumps — hitting one drains your fuel/health. The field gets denser and obstacles more frequent the longer you last. Harvest as much wheat as you can before your fuel runs out!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=360;
+let score=0,best=+localStorage.getItem('wheatharvest_best')||0,fuel=100,gameOver=false,started=false;
+let harvester={x:100,y:H/2,w:56,h:36,vy:0,vx:0};
+let wheatItems=[],rocks=[],speed=4,frame=0,spawnTimerW=0,spawnTimerR=0,dustParticles=[];
+let keys={};
+let dragTarget=null;
+
+function reset(){
+  score=0;fuel=100;gameOver=false;started=false;speed=4;frame=0;
+  wheatItems=[];rocks=[];spawnTimerW=0;spawnTimerR=0;dustParticles=[];
+  harvester.x=100;harvester.y=H/2;harvester.vy=0;harvester.vx=0;
+  updateHud();
+  document.getElementById('fuelFill').style.width='100%';
+}
+reset();
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD','Space'].includes(e.code))e.preventDefault();
+  if(!started){started=true;}
+  if(gameOver&&e.code==='Space'){reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function pointerToGame(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(!started)started=true;
+  if(gameOver){reset();return;}
+  dragTarget=pointerToGame(e);
+});
+c.addEventListener('pointermove',e=>{
+  if(dragTarget){dragTarget=pointerToGame(e);}
+});
+window.addEventListener('pointerup',()=>{dragTarget=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(!started)started=true;if(gameOver){reset();return;}dragTarget=pointerToGame(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(dragTarget)dragTarget=pointerToGame(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragTarget=null;},{passive:false});
+
+function spawnWheat(){
+  const y=20+Math.random()*(H-70);
+  wheatItems.push({x:W+20,y,w:26,h:26,cut:false});
+}
+function spawnRock(){
+  const y=20+Math.random()*(H-70);
+  rocks.push({x:W+20,y,w:34,h:30});
+}
+
+function rect(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function updateHud(){
+  document.getElementById('scoreLabel').textContent=I18N.t('wheat_label','Wheat: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('bestLabel').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+}
+
+function drawHarvester(){
+  ctx.save();
+  ctx.translate(harvester.x,harvester.y);
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(-harvester.w/2,-harvester.h/2,harvester.w,harvester.h);
+  ctx.fillStyle='#c72c47';
+  ctx.fillRect(-harvester.w/2-10,-10,14,20);
+  ctx.fillStyle='#333';
+  ctx.beginPath();ctx.arc(-harvester.w/2+8,harvester.h/2,7,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(harvester.w/2-8,harvester.h/2,7,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(harvester.w/2-6,-6,10,12);
+  ctx.restore();
+}
+
+function drawWheat(w){
+  ctx.font='24px serif';
+  ctx.fillText('🌾',w.x,w.y+20);
+}
+function drawRock(r){
+  ctx.font='26px serif';
+  ctx.fillText('🪨',r.x,r.y+22);
+}
+
+function drawField(){
+  ctx.fillStyle='#d9a441';
+  ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(0,0,0,0.06)';
+  ctx.lineWidth=2;
+  const rowH=30;
+  const offset=(frame*speed)%rowH;
+  for(let y=-rowH;y<H+rowH;y+=rowH){
+    ctx.beginPath();ctx.moveTo(0,y+offset);ctx.lineTo(W,y+offset);ctx.stroke();
+  }
+}
+
+function loop(){
+  drawField();
+
+  if(!started){
+    ctx.fillStyle='#4a3410';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_wh','Move to start — Arrows/WASD or Drag'),W/2,H/2);
+    drawHarvester();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('out_of_fuel','OUT OF FUEL'),W/2,H/2-16);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint_wh','Tap or Space to restart'),W/2,H/2+22);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  frame++;
+  speed=4+score/500;
+  const accel=0.9;
+
+  if(dragTarget){
+    harvester.x+= (dragTarget.x-harvester.x)*0.15;
+    harvester.y+= (dragTarget.y-harvester.y)*0.15;
+  } else {
+    let dx=0,dy=0;
+    if(keys['ArrowUp']||keys['KeyW'])dy-=1;
+    if(keys['ArrowDown']||keys['KeyS'])dy+=1;
+    if(keys['ArrowLeft']||keys['KeyA'])dx-=1;
+    if(keys['ArrowRight']||keys['KeyD'])dx+=1;
+    harvester.vx+= (dx*4-harvester.vx)*0.25;
+    harvester.vy+= (dy*4-harvester.vy)*0.25;
+    harvester.x+=harvester.vx*accel;
+    harvester.y+=harvester.vy*accel;
+  }
+  harvester.x=Math.max(harvester.w/2,Math.min(W*0.6,harvester.x));
+  harvester.y=Math.max(harvester.h/2,Math.min(H-harvester.h/2,harvester.y));
+
+  // spawn
+  spawnTimerW++;
+  const wInterval=Math.max(14,34-score/60);
+  if(spawnTimerW>=wInterval){spawnTimerW=0;spawnWheat();}
+
+  spawnTimerR++;
+  const rInterval=Math.max(35,90-score/20);
+  if(spawnTimerR>=rInterval){spawnTimerR=0;spawnRock();}
+
+  // fuel drains slowly
+  fuel-=0.045;
+  if(fuel<=0){fuel=0;gameOver=true;SFX.lose();}
+  document.getElementById('fuelFill').style.width=fuel+'%';
+  document.getElementById('fuelFill').style.background = fuel<25?'linear-gradient(90deg,#e94560,#ff6b35)':'linear-gradient(90deg,#4caf50,#8bc34a)';
+
+  const hitbox={x:harvester.x-harvester.w/2,y:harvester.y-harvester.h/2,w:harvester.w,h:harvester.h};
+
+  wheatItems=wheatItems.filter(w=>w.x>-30&&!w.cut);
+  wheatItems.forEach(w=>{
+    w.x-=speed;
+    if(rect(hitbox,{x:w.x,y:w.y,w:w.w,h:w.h})){
+      w.cut=true;
+      score+=10;
+      SFX.coin();
+    } else {
+      drawWheat(w);
+    }
+  });
+
+  rocks=rocks.filter(r=>r.x>-40);
+  rocks.forEach(r=>{
+    r.x-=speed;
+    drawRock(r);
+    if(rect(hitbox,{x:r.x+4,y:r.y+4,w:r.w-8,h:r.h-8})){
+      fuel-=14;
+      r.x=-999; // consumed
+      SFX.hurt();
+      if(fuel<=0){fuel=0;gameOver=true;SFX.lose();}
+    }
+  });
+  rocks=rocks.filter(r=>r.x>-40);
+
+  drawHarvester();
+  if(score>best){best=score;localStorage.setItem('wheatharvest_best',best);}
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
