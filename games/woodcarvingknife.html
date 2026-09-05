@@ -1,0 +1,330 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Wood Carving Knife</title><meta name="description" content="Play Wood Carving Knife free online — Drag the knife across the wood block to carve away chunks and reveal the faint target shape underneath. Match the silhouette as closely as you can before you run out of cuts!"><link rel="canonical" href="https://games.multiportllc.com/games/woodcarvingknife"><meta property="og:title" content="Wood Carving Knife - Multiport Games"><meta property="og:description" content="Play Wood Carving Knife free online — Drag the knife across the wood block to carve away chunks and reveal the faint target shape underneath. Match the silhouette as closely as you can before you run out of cuts!"><meta property="og:url" content="https://games.multiportllc.com/games/woodcarvingknife"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Wood Carving Knife","description":"Play Wood Carving Knife free online instantly. Drag the knife across the wood block to carve away chunks and reveal the faint target shape underneath. Match the silhouette as closely as you can before you run out of cuts, across shapes of increasing complexity. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/woodcarvingknife","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1b120a}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#f2d9b8;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#e0a852}
+#c{background:#5c3a21;border-radius:10px;touch-action:none;cursor:crosshair;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+#msg{min-height:1.6em;color:#ffd88a;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#8a5a2e;border:none;border-radius:20px;color:#fff3e0;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+#knifeSizeRow{color:#f2d9b8;margin-top:6px;font-size:.9rem}
+#knifeSizeRow input{vertical-align:middle}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Wood Carving Knife</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span>Shape: <b id="shapeLabel">1</b></span>
+        <span>Cuts left: <b id="cutsLabel">40</b></span>
+        <span>Match: <b id="matchLabel">0%</b></span>
+        <span>Best: <b id="bestLabel">0%</b></span>
+      </div>
+      <canvas id="c" width="520" height="420"></canvas>
+      <div id="msg"></div>
+      <div id="knifeSizeRow">Knife width: <input type="range" id="knifeSize" min="8" max="34" value="18"></div>
+      <div id="controls">
+        <button id="finishBtn">Finish Carving</button>
+        <button id="resetBtn">Reset Shape</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the <b>knife</b> (mouse or finger) across the wood block to carve away chunks. A faint outline shows the <b>target shape</b> — carve wood from outside it and leave wood inside it to score high. You have a limited number of cuts (strokes) per shape. Click <b>Finish Carving</b> when ready, or run out of cuts to see your score. Each new shape is trickier than the last!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const knifeSizeInput=document.getElementById('knifeSize');
+const shapeLabel=document.getElementById('shapeLabel');
+const cutsLabel=document.getElementById('cutsLabel');
+const matchLabel=document.getElementById('matchLabel');
+const bestLabel=document.getElementById('bestLabel');
+const msg=document.getElementById('msg');
+const finishBtn=document.getElementById('finishBtn');
+const resetBtn=document.getElementById('resetBtn');
+
+let shapeIndex=0;
+let cutsLeft=40;
+let carving=false;
+let roundOver=false;
+let bestOverall=parseFloat(localStorage.getItem('woodcarvingknife_best')||'0');
+bestLabel.textContent=Math.round(bestOverall)+'%';
+
+// Wood grid: 1 = wood present, 0 = carved away
+let grid, gridCols=W, gridRows=H;
+// Target mask (boolean) built on an offscreen canvas from vector shapes
+let target=null;
+
+function shapeDef(n){
+  // increasingly complex silhouettes, centered in canvas coords
+  const cx=W/2, cy=H/2;
+  const shapes=[
+    ()=>{ // circle (easy)
+      return {draw:(g)=>{g.beginPath();g.arc(cx,cy,120,0,7);g.fill();}};
+    },
+    ()=>{ // heart
+      return {draw:(g)=>{
+        g.beginPath();
+        const s=6.5;
+        g.moveTo(cx,cy+90);
+        for(let t=0;t<=Math.PI*2+0.1;t+=0.05){
+          const x=16*Math.pow(Math.sin(t),3);
+          const y=13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t);
+          g.lineTo(cx+x*s,cy-y*s+20);
+        }
+        g.closePath();g.fill();
+      }};
+    },
+    ()=>{ // star
+      return {draw:(g)=>{
+        g.beginPath();
+        const spikes=5,outerR=140,innerR=60;
+        let rot=Math.PI/2*3;
+        const step=Math.PI/spikes;
+        g.moveTo(cx,cy-outerR);
+        for(let i=0;i<spikes;i++){
+          let x=cx+Math.cos(rot)*outerR,y=cy+Math.sin(rot)*outerR;
+          g.lineTo(x,y);rot+=step;
+          x=cx+Math.cos(rot)*innerR;y=cy+Math.sin(rot)*innerR;
+          g.lineTo(x,y);rot+=step;
+        }
+        g.lineTo(cx,cy-outerR);g.closePath();g.fill();
+      }};
+    },
+    ()=>{ // tree (trunk + triangle layers)
+      return {draw:(g)=>{
+        g.beginPath();
+        g.rect(cx-16,cy+60,32,60);
+        g.moveTo(cx,cy-140);g.lineTo(cx+90,cy-20);g.lineTo(cx-90,cy-20);g.closePath();
+        g.moveTo(cx,cy-90);g.lineTo(cx+110,cy+40);g.lineTo(cx-110,cy+40);g.closePath();
+        g.fill('evenodd');
+      }};
+    },
+    ()=>{ // bird / swan-ish blob with detail (hardest)
+      return {draw:(g)=>{
+        g.beginPath();
+        g.ellipse(cx-10,cy+20,110,70,0.15,0,7);
+        g.fill();
+        g.beginPath();
+        g.ellipse(cx+90,cy-70,45,35,0.4,0,7);
+        g.fill();
+        g.beginPath();
+        g.moveTo(cx+120,cy-80);g.lineTo(cx+165,cy-70);g.lineTo(cx+118,cy-58);g.closePath();
+        g.fill();
+      }};
+    }
+  ];
+  return shapes[Math.min(n,shapes.length-1)]();
+}
+
+function buildTarget(){
+  const off=document.createElement('canvas');off.width=W;off.height=H;
+  const og=off.getContext('2d');
+  og.clearRect(0,0,W,H);
+  og.fillStyle='#000';
+  shapeDef(shapeIndex).draw(og);
+  const data=og.getImageData(0,0,W,H).data;
+  target=new Uint8Array(W*H);
+  for(let i=0;i<W*H;i++)target[i]=data[i*4+3]>128?1:0;
+}
+
+function newShape(){
+  buildTarget();
+  grid=new Uint8Array(W*H).fill(1);
+  cutsLeft=Math.max(14,40-shapeIndex*4);
+  roundOver=false;
+  carving=false;
+  msg.textContent='';
+  finishBtn.disabled=false;
+  shapeLabel.textContent=(shapeIndex+1);
+  cutsLabel.textContent=cutsLeft;
+  render();
+  updateMatch();
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  // background (carved-away areas show a darker "pit" background)
+  ctx.fillStyle='#241609';
+  ctx.fillRect(0,0,W,H);
+  // draw wood pixels via ImageData for perf
+  const img=ctx.createImageData(W,H);
+  const d=img.data;
+  for(let i=0;i<W*H;i++){
+    const idx=i*4;
+    if(grid[i]){
+      // wood color with subtle grain based on target overlay for guide
+      d[idx]=139+ (target[i]?10:0);d[idx+1]=90;d[idx+2]=43;d[idx+3]=255;
+    } else {
+      d[idx]=36;d[idx+1]=22;d[idx+2]=9;d[idx+3]=255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  // faint target outline guide
+  ctx.save();
+  ctx.globalAlpha=0.35;
+  ctx.strokeStyle='#ffe9b0';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  shapeDef(shapeIndex).draw({beginPath:()=>ctx.beginPath(),moveTo:(x,y)=>ctx.moveTo(x,y),lineTo:(x,y)=>ctx.lineTo(x,y),arc:(...a)=>ctx.arc(...a),ellipse:(...a)=>ctx.ellipse(...a),rect:(...a)=>ctx.rect(...a),closePath:()=>ctx.closePath(),fill:()=>{}});
+  ctx.stroke();
+  ctx.restore();
+  // wood grain lines
+  ctx.save();
+  ctx.globalAlpha=0.06;
+  ctx.strokeStyle='#000';
+  for(let y=10;y<H;y+=14){
+    ctx.beginPath();ctx.moveTo(0,y+Math.sin(y)*4);ctx.lineTo(W,y+Math.cos(y)*4);ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function carveAt(x,y,r){
+  x=Math.round(x);y=Math.round(y);
+  const r2=r*r;
+  let changed=false;
+  for(let dy=-r;dy<=r;dy++){
+    const yy=y+dy;
+    if(yy<0||yy>=H)continue;
+    for(let dx=-r;dx<=r;dx++){
+      if(dx*dx+dy*dy>r2)continue;
+      const xx=x+dx;
+      if(xx<0||xx>=W)continue;
+      const i=yy*W+xx;
+      if(grid[i]){grid[i]=0;changed=true;}
+    }
+  }
+  return changed;
+}
+
+function updateMatch(){
+  // percent match = (wood correctly kept inside target + wood correctly removed outside target) / total
+  let correct=0;
+  for(let i=0;i<W*H;i++){
+    const inside=target[i]===1;
+    const hasWood=grid[i]===1;
+    if((inside&&hasWood)||(!inside&&!hasWood))correct++;
+  }
+  const pct=Math.round(correct/(W*H)*100);
+  matchLabel.textContent=pct+'%';
+  return pct;
+}
+
+let lastPt=null;
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*scaleX,y:cy*scaleY};
+}
+
+function strokeCarve(p){
+  const r=parseInt(knifeSizeInput.value,10);
+  if(lastPt){
+    const dist=Math.hypot(p.x-lastPt.x,p.y-lastPt.y);
+    const steps=Math.max(1,Math.ceil(dist/(r/2)));
+    for(let s=0;s<=steps;s++){
+      const t=s/steps;
+      carveAt(lastPt.x+(p.x-lastPt.x)*t, lastPt.y+(p.y-lastPt.y)*t, r);
+    }
+  } else {
+    carveAt(p.x,p.y,r);
+  }
+  lastPt=p;
+}
+
+function startCarve(e){
+  if(roundOver)return;
+  e.preventDefault();
+  if(cutsLeft<=0)return;
+  carving=true;
+  cutsLeft--;
+  cutsLabel.textContent=cutsLeft;
+  lastPt=null;
+  strokeCarve(pointerPos(e));
+  render();
+  SFX.click();
+}
+function moveCarve(e){
+  if(!carving||roundOver)return;
+  e.preventDefault();
+  strokeCarve(pointerPos(e));
+  render();
+}
+function endCarve(){
+  if(!carving)return;
+  carving=false;
+  lastPt=null;
+  const pct=updateMatch();
+  if(cutsLeft<=0)finishRound();
+}
+
+c.addEventListener('mousedown',startCarve);
+c.addEventListener('mousemove',moveCarve);
+window.addEventListener('mouseup',endCarve);
+c.addEventListener('touchstart',startCarve,{passive:false});
+c.addEventListener('touchmove',moveCarve,{passive:false});
+c.addEventListener('touchend',endCarve);
+
+// keyboard support: arrow keys move a virtual knife cursor and space carves
+let kx=W/2, ky=H/2;
+document.addEventListener('keydown',e=>{
+  if(roundOver)return;
+  let handled=true;
+  const step=14;
+  if(e.code==='ArrowLeft')kx=Math.max(0,kx-step);
+  else if(e.code==='ArrowRight')kx=Math.min(W,kx+step);
+  else if(e.code==='ArrowUp')ky=Math.max(0,ky-step);
+  else if(e.code==='ArrowDown')ky=Math.min(H,ky+step);
+  else if(e.code==='Space'){
+    if(cutsLeft>0){
+      cutsLeft--;cutsLabel.textContent=cutsLeft;
+      carveAt(kx,ky,parseInt(knifeSizeInput.value,10));
+      render();updateMatch();SFX.click();
+      if(cutsLeft<=0)finishRound();
+    }
+  } else handled=false;
+  if(handled)e.preventDefault();
+});
+
+function finishRound(){
+  if(roundOver)return;
+  roundOver=true;
+  finishBtn.disabled=true;
+  const pct=updateMatch();
+  if(pct>bestOverall){
+    bestOverall=pct;
+    localStorage.setItem('woodcarvingknife_best',String(bestOverall));
+    bestLabel.textContent=Math.round(bestOverall)+'%';
+  }
+  if(pct>=85){
+    msg.textContent=I18N.t('wck_great','Beautiful carving! ')+pct+'% match — next shape unlocked!';
+    SFX.win();
+    shapeIndex=Math.min(shapeIndex+1,4);
+    setTimeout(newShape,1600);
+  } else if(pct>=60){
+    msg.textContent=I18N.t('wck_good','Decent work — ')+pct+'% match. Try again for a cleaner cut!';
+    SFX.success();
+    setTimeout(newShape,1800);
+  } else {
+    msg.textContent=I18N.t('wck_rough','Rough cut — ')+pct+'% match. Give this shape another go.';
+    SFX.fail();
+    setTimeout(newShape,1800);
+  }
+}
+
+finishBtn.addEventListener('click',finishRound);
+resetBtn.addEventListener('click',()=>{ shapeIndex=Math.max(0,shapeIndex); newShape(); });
+
+newShape();
+</script></body></html>

@@ -1,0 +1,268 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Paper Mache Craft</title><meta name="description" content="Play Paper Mache Craft free online — Drag your mouse or finger across the form to smear paper mache strips over it. Cover the whole shape as evenly as you can, then wait for the layer to dry before starting the next one."><link rel="canonical" href="https://games.multiportllc.com/games/papermachecraft"><meta property="og:title" content="Paper Mache Craft - Multiport Games"><meta property="og:description" content="Play Paper Mache Craft free online — Drag your mouse or finger across the form to smear paper mache strips over it. Cover the whole shape as evenly as you can, then wait for the layer to dry before starting the next one."><meta property="og:url" content="https://games.multiportllc.com/games/papermachecraft"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Paper Mache Craft","description":"Play Paper Mache Craft free online instantly. Drag your mouse or finger across the form to smear paper mache strips over it. Cover the whole shape as evenly as you can, then wait for the layer to dry before starting the next one. Complete every required layer within the time budget for a top score. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/papermachecraft","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:16px;text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#fff;font-weight:800;margin-bottom:8px;font-size:.95rem}
+#hud span{background:rgba(255,255,255,.08);border-radius:8px;padding:5px 12px}
+#hud b{color:#ffd54f}
+#stage{position:relative;margin:0 auto;touch-action:none;cursor:crosshair}
+#stage canvas{display:block;border-radius:10px;background:#0b3d2e}
+#msg{color:#fff;font-size:1.1rem;font-weight:800;margin:10px 0;min-height:1.6em}
+#btnRow{margin-top:8px}
+#btnRow button{padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:0 5px;font-weight:700}
+#btnRow button:disabled{opacity:.35;cursor:not-allowed}
+#dryBar{width:260px;height:14px;background:rgba(255,255,255,.15);border-radius:7px;margin:8px auto;overflow:hidden}
+#dryFill{height:100%;width:0%;background:linear-gradient(90deg,#ffb347,#ffd54f);transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Paper Mache Craft</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud">
+        <span>Round <b id="roundLbl">1</b></span>
+        <span>Layer <b id="layerLbl">1</b>/<b id="layerTotal">2</b></span>
+        <span>Coverage <b id="covLbl">0%</b></span>
+        <span>Score <b id="scoreLbl">0</b></span>
+        <span>Best <b id="bestLbl">0</b></span>
+      </div>
+      <div id="stage"><canvas id="c" width="420" height="420"></canvas></div>
+      <div id="msg">Drag across the form to apply paper mache</div>
+      <div id="dryBar" style="display:none"><div id="dryFill"></div></div>
+      <div id="btnRow"><button id="startBtn">Start</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag your mouse or finger across the form to smear paper mache strips over it. Cover the whole shape as evenly as you can, then wait for the layer to dry before starting the next one. Complete every required layer within the time budget for a top score — later rounds use bigger forms and need more layers.</div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const W=420,H=420;
+const CELL=14, GRID=Math.floor(W/CELL);
+const BEST_KEY='papermachecraft_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+document.getElementById('bestLbl').textContent=best;
+
+const SHAPES=[
+  {name:'Balloon',layers:2,timeBudget:26,fn:(x,y)=>{const dx=x-GRID/2,dy=y-GRID/2*1.05;return (dx*dx)/(9.5*9.5)+(dy*dy)/(11*11)<=1;}},
+  {name:'Mask',layers:3,timeBudget:32,fn:(x,y)=>{const dx=x-GRID/2,dy=y-GRID/2;const oval=(dx*dx)/(10*10)+(dy*dy)/(12.5*12.5)<=1;const eye1=Math.hypot(x-(GRID/2-5),y-(GRID/2-3))<2.2;const eye2=Math.hypot(x-(GRID/2+5),y-(GRID/2-3))<2.2;return oval&&!eye1&&!eye2;}},
+  {name:'Piñata Star',layers:4,timeBudget:40,fn:(x,y)=>{const dx=x-GRID/2,dy=y-GRID/2;const ang=Math.atan2(dy,dx);const r=Math.hypot(dx,dy);const spikes=5;const rMax=8+5*Math.pow(Math.abs(Math.cos(spikes*ang/2)),3);return r<=rMax;}}
+];
+
+let round=0,layer=1,layerTotal=2,timeBudget=26,score=0;
+let mask=[]; // boolean target mask
+let coverage=[]; // 0..1 coverage amount per cell (current layer)
+let cumulative=[]; // total coverage across all done layers (visual paint darkness)
+let painting=false,drying=false,gameActive=false;
+let roundTimer=0,roundTimerId=null;
+let dryTimer=0,dryTimerId=null;
+const DRY_TIME=3.2;
+
+function buildShape(){
+  const s=SHAPES[Math.min(round,SHAPES.length-1)];
+  layerTotal=s.layers+Math.floor(round/SHAPES.length);
+  timeBudget=s.timeBudget+round*3;
+  mask=[];
+  for(let y=0;y<GRID;y++){const row=[];for(let x=0;x<GRID;x++)row.push(s.fn(x,y));mask.push(row);}
+  cumulative=mask.map(row=>row.map(()=>0));
+  document.getElementById('layerTotal').textContent=layerTotal;
+  document.getElementById('roundLbl').textContent=round+1;
+  return s;
+}
+
+function resetLayer(){
+  coverage=mask.map(row=>row.map(()=>0));
+  document.getElementById('layerLbl').textContent=layer;
+  document.getElementById('covLbl').textContent='0%';
+}
+
+function targetCellCount(){let n=0;for(const row of mask)for(const v of row)if(v)n++;return n;}
+
+function currentCoverageFraction(){
+  let total=0,filled=0;
+  for(let y=0;y<GRID;y++)for(let x=0;x<GRID;x++){if(mask[y][x]){total++;if(coverage[y][x]>0.35)filled++;}}
+  return total?filled/total:0;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0b3d2e';ctx.fillRect(0,0,W,H);
+  // outline reference
+  for(let y=0;y<GRID;y++){
+    for(let x=0;x<GRID;x++){
+      if(!mask[y][x])continue;
+      const cum=Math.min(1,cumulative[y][x]+coverage[y][x]);
+      if(cum>0){
+        const shade=Math.floor(120+cum*100);
+        ctx.fillStyle=`rgb(${Math.floor(210-cum*40)},${Math.floor(180-cum*60)},${Math.floor(120-cum*40)})`;
+        ctx.fillRect(x*CELL,y*CELL,CELL-1,CELL-1);
+      } else {
+        ctx.fillStyle='rgba(255,255,255,0.10)';
+        ctx.fillRect(x*CELL,y*CELL,CELL-1,CELL-1);
+      }
+    }
+  }
+  ctx.strokeStyle='rgba(255,255,255,.35)';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  for(let y=0;y<GRID;y++){
+    for(let x=0;x<GRID;x++){
+      if(!mask[y][x])continue;
+      const neighbors=[[1,0],[-1,0],[0,1],[0,-1]];
+      for(const[dx,dy] of neighbors){
+        const nx=x+dx,ny=y+dy;
+        if(nx<0||ny<0||nx>=GRID||ny>=GRID||!mask[ny][nx]){
+          // draw edge
+          if(dx===1){ctx.moveTo((x+1)*CELL,y*CELL);ctx.lineTo((x+1)*CELL,(y+1)*CELL);}
+          if(dx===-1){ctx.moveTo(x*CELL,y*CELL);ctx.lineTo(x*CELL,(y+1)*CELL);}
+          if(dy===1){ctx.moveTo(x*CELL,(y+1)*CELL);ctx.lineTo((x+1)*CELL,(y+1)*CELL);}
+          if(dy===-1){ctx.moveTo(x*CELL,y*CELL);ctx.lineTo((x+1)*CELL,y*CELL);}
+        }
+      }
+    }
+  }
+  ctx.stroke();
+}
+
+function applyAt(px,py){
+  const rect=cv.getBoundingClientRect();
+  const scaleX=cv.width/rect.width, scaleY=cv.height/rect.height;
+  const cx=(px-rect.left)*scaleX, cy=(py-rect.top)*scaleY;
+  const gx=Math.floor(cx/CELL), gy=Math.floor(cy/CELL);
+  const R=1;
+  let painted=false;
+  for(let dy=-R;dy<=R;dy++)for(let dx=-R;dx<=R;dx++){
+    const x=gx+dx,y=gy+dy;
+    if(x<0||y<0||x>=GRID||y>=GRID)continue;
+    if(!mask[y][x])continue;
+    const dist=Math.hypot(dx,dy);
+    const amt=Math.max(0,1-dist/1.6)*0.22;
+    if(amt>0){coverage[y][x]=Math.min(1,coverage[y][x]+amt);painted=true;}
+  }
+  if(painted&&Math.random()<0.15)SFX.tick();
+}
+
+function pointerPos(e){
+  if(e.touches&&e.touches.length)return{x:e.touches[0].clientX,y:e.touches[0].clientY};
+  return{x:e.clientX,y:e.clientY};
+}
+
+cv.addEventListener('pointerdown',e=>{if(!gameActive||drying)return;painting=true;const p=pointerPos(e);applyAt(p.x,p.y);draw();updateCov();});
+cv.addEventListener('pointermove',e=>{if(!painting||!gameActive||drying)return;const p=pointerPos(e);applyAt(p.x,p.y);draw();updateCov();});
+window.addEventListener('pointerup',()=>{painting=false;});
+cv.addEventListener('touchstart',e=>{e.preventDefault();if(!gameActive||drying)return;painting=true;const p=pointerPos(e);applyAt(p.x,p.y);draw();updateCov();},{passive:false});
+cv.addEventListener('touchmove',e=>{e.preventDefault();if(!painting||!gameActive||drying)return;const p=pointerPos(e);applyAt(p.x,p.y);draw();updateCov();},{passive:false});
+cv.addEventListener('touchend',e=>{e.preventDefault();painting=false;},{passive:false});
+
+function updateCov(){
+  const frac=currentCoverageFraction();
+  document.getElementById('covLbl').textContent=Math.round(frac*100)+'%';
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function startRoundTimer(){
+  roundTimer=timeBudget;
+  clearInterval(roundTimerId);
+  roundTimerId=setInterval(()=>{
+    roundTimer-=0.1;
+    if(roundTimer<=0){
+      clearInterval(roundTimerId);
+      endGame(false);
+    }
+  },100);
+}
+
+function finishLayer(){
+  const frac=currentCoverageFraction();
+  if(frac<0.55){
+    setMsg(I18N.t('need_more_coverage','Not enough coverage yet — keep smoothing it on!'));
+    return;
+  }
+  // fold into cumulative, score based on evenness + coverage
+  let evenSum=0,evenCount=0;
+  for(let y=0;y<GRID;y++)for(let x=0;x<GRID;x++){if(mask[y][x]){cumulative[y][x]=Math.min(1,cumulative[y][x]*0.4+coverage[y][x]);evenSum+=coverage[y][x];evenCount++;}}
+  const avg=evenCount?evenSum/evenCount:0;
+  let variance=0;
+  for(let y=0;y<GRID;y++)for(let x=0;x<GRID;x++){if(mask[y][x]){variance+=(coverage[y][x]-avg)*(coverage[y][x]-avg);}}
+  variance=evenCount?variance/evenCount:0;
+  const evenness=Math.max(0,1-variance*4);
+  const layerScore=Math.round(frac*400+evenness*300);
+  score+=layerScore;
+  document.getElementById('scoreLbl').textContent=score;
+  SFX.success();
+  setMsg(I18N.t('layer_drying','Layer applied! Score +{s}. Drying...').replace('{s}',layerScore));
+
+  if(layer>=layerTotal){
+    endGame(true);
+    return;
+  }
+  drying=true;
+  document.getElementById('dryBar').style.display='block';
+  dryTimer=0;
+  clearInterval(dryTimerId);
+  dryTimerId=setInterval(()=>{
+    dryTimer+=0.1;
+    const pct=Math.min(100,(dryTimer/DRY_TIME)*100);
+    document.getElementById('dryFill').style.width=pct+'%';
+    if(dryTimer>=DRY_TIME){
+      clearInterval(dryTimerId);
+      drying=false;
+      document.getElementById('dryBar').style.display='none';
+      layer++;
+      resetLayer();
+      setMsg(I18N.t('layer_ready','Layer dried! Apply the next one.'));
+    }
+  },100);
+}
+
+function endGame(won){
+  gameActive=false;
+  clearInterval(roundTimerId);
+  clearInterval(dryTimerId);
+  document.getElementById('dryBar').style.display='none';
+  if(won){
+    score+=Math.round(roundTimer*5);
+    document.getElementById('scoreLbl').textContent=score;
+    SFX.win();
+    setMsg(I18N.t('round_complete','Round complete! Starting next round...'));
+    round++;
+    if(score>best){best=score;localStorage.setItem(BEST_KEY,String(best));document.getElementById('bestLbl').textContent=best;}
+    setTimeout(()=>{beginRound();},1400);
+  } else {
+    SFX.lose();
+    if(score>best){best=score;localStorage.setItem(BEST_KEY,String(best));document.getElementById('bestLbl').textContent=best;}
+    setMsg(I18N.t('out_of_time','Out of time! Final score: {s}').replace('{s}',score));
+    document.getElementById('startBtn').textContent=I18N.t('play_again','Play Again');
+    document.getElementById('startBtn').disabled=false;
+  }
+}
+
+function beginRound(){
+  buildShape();
+  layer=1;
+  resetLayer();
+  draw();
+  gameActive=true;
+  drying=false;
+  document.getElementById('startBtn').disabled=true;
+  setMsg(I18N.t('go_smear','Smear it on!'));
+  startRoundTimer();
+}
+
+document.getElementById('startBtn').addEventListener('click',()=>{
+  score=0;round=0;
+  document.getElementById('scoreLbl').textContent=0;
+  document.getElementById('startBtn').textContent=I18N.t('start_label','Start');
+  beginRound();
+});
+
+buildShape();
+resetLayer();
+draw();
+</script></body></html>

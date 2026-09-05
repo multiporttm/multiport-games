@@ -1,0 +1,350 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Chalk Art Street</title><meta name="description" content="Play Chalk Art Street free online — Drag your chalk along the glowing outline to trace the 3D sidewalk art, staying inside the tolerance band. Then click each region and pick the right color to complete the piece."><link rel="canonical" href="https://games.multiportllc.com/games/chalkartstreet"><meta property="og:title" content="Chalk Art Street - Multiport Games"><meta property="og:description" content="Play Chalk Art Street free online — Drag your chalk along the glowing outline to trace the 3D sidewalk art, staying inside the tolerance band. Then click each region and pick the right color to complete the piece."><meta property="og:url" content="https://games.multiportllc.com/games/chalkartstreet"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Chalk Art Street","description":"Play Chalk Art Street free online instantly. Drag your chalk along the glowing outline to trace the 3D sidewalk art, staying inside the tolerance band, then click each region and pick the right color to complete the piece. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/chalkartstreet","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#2b2b2b;border-radius:14px;padding:14px;text-align:center}
+#c{background:#4a4a4a;display:block;border-radius:8px;margin:0 auto;touch-action:none;cursor:crosshair;max-width:100%}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:700;max-width:640px;margin:0 auto 8px;font-size:.95rem;flex-wrap:wrap;gap:6px}
+#hud span{background:rgba(0,0,0,.35);padding:4px 10px;border-radius:8px}
+#phaseMsg{color:#ffd54f;font-weight:800;margin:8px 0;min-height:1.4em}
+#palette{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.swatch{width:38px;height:38px;border-radius:8px;border:3px solid #fff8;cursor:pointer}
+.swatch.sel{border-color:#ffd54f;transform:scale(1.1)}
+#btnRow{margin-top:10px}
+#btnRow button{padding:8px 20px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;margin:0 5px}
+#btnRow button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Chalk Art Street</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span id="roundDisp">Round 1</span><span id="scoreDisp">Score: 0</span><span id="bestDisp">Best: 0</span></div>
+      <div id="phaseMsg">Trace the glowing outline with your chalk!</div>
+      <canvas id="c" width="640" height="420"></canvas>
+      <div id="palette" hidden></div>
+      <div id="btnRow"><button id="nextBtn" onclick="startNextRound()" disabled>Next Design</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag your chalk (mouse or finger) along the glowing outline to trace the 3D sidewalk art, staying inside the pale tolerance band — a full pass fills the trace bar. Then click each numbered region and pick the matching color from the palette below to color it in. Score comes from trace accuracy and correct color matches. Each round brings a bigger, more intricate design!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+let round=1,score=0,best=parseInt(localStorage.getItem('chalkartstreet_best')||'0',10);
+document.getElementById('bestDisp').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+
+// ---- Design generation: closed outline path + regions ----
+function genDesign(r){
+  // Build a 3D-star / gem-like closed polygon that scales in complexity with round
+  const points=6+Math.min(r,6); // 7..12 sided star
+  const cx=W/2, cy=H/2-10;
+  const outerR=150+Math.min(r*4,40);
+  const innerR=outerR*0.5;
+  const pts=[];
+  for(let i=0;i<points*2;i++){
+    const ang=(Math.PI*2*i)/(points*2)-Math.PI/2;
+    const rad=(i%2===0?outerR:innerR)*(0.9+0.2*Math.sin(i*1.7+r));
+    pts.push({x:cx+Math.cos(ang)*rad,y:cy+Math.sin(ang)*rad*0.85});
+  }
+  // regions: triangles from center to each edge, colored alternately from a palette
+  const palette=['#ff6b6b','#ffd166','#06d6a0','#4d96ff','#c77dff','#ff9f1c','#ef476f','#118ab2'];
+  const regionCount=points*2;
+  const usedColors=[];
+  for(let i=0;i<regionCount;i++)usedColors.push(palette[i%palette.length]);
+  return {pts,cx,cy,palette:Array.from(new Set(usedColors)),regionColors:usedColors};
+}
+
+let design=genDesign(round);
+let phase='trace'; // 'trace' -> 'color' -> 'done'
+let traceCoverage=new Array(0);
+const SEG_COUNT=120; // resolution of outline sampling for coverage tracking
+let coveredSegs=null;
+let drawing=false;
+let lastPt=null;
+let selectedColor=null;
+let regionFilled=null;
+let traceAccuracyHits=0, traceAccuracyTotal=0;
+
+function sampleOutline(n){
+  // sample n points evenly along the closed polygon design.pts
+  const pts=design.pts;
+  const segLens=[];
+  let total=0;
+  for(let i=0;i<pts.length;i++){
+    const a=pts[i], b=pts[(i+1)%pts.length];
+    const d=Math.hypot(b.x-a.x,b.y-a.y);
+    segLens.push(d); total+=d;
+  }
+  const samples=[];
+  for(let i=0;i<n;i++){
+    let target=(i/n)*total;
+    let idx=0;
+    while(target>segLens[idx]){target-=segLens[idx];idx++;}
+    const a=pts[idx], b=pts[(idx+1)%pts.length];
+    const t=segLens[idx]>0?target/segLens[idx]:0;
+    samples.push({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t});
+  }
+  return samples;
+}
+let outlineSamples=[];
+
+function resetRound(){
+  design=genDesign(round);
+  outlineSamples=sampleOutline(SEG_COUNT);
+  coveredSegs=new Array(SEG_COUNT).fill(false);
+  phase='trace';
+  regionFilled=new Array(design.pts.length).fill(false);
+  selectedColor=null;
+  traceAccuracyHits=0;traceAccuracyTotal=0;
+  document.getElementById('palette').hidden=true;
+  document.getElementById('nextBtn').disabled=true;
+  document.getElementById('phaseMsg').textContent=I18N.t('trace_hint','Trace the glowing outline with your chalk!');
+  document.getElementById('roundDisp').textContent=I18N.t('round_label','Round {r}').replace('{r}',round);
+}
+resetRound();
+
+const TOL=22; // tolerance band px
+
+function nearestOutlineDist(x,y){
+  let min=Infinity;
+  for(const p of outlineSamples){
+    const d=Math.hypot(p.x-x,p.y-y);
+    if(d<min)min=d;
+  }
+  return min;
+}
+function markCoverage(x,y){
+  for(let i=0;i<outlineSamples.length;i++){
+    const p=outlineSamples[i];
+    if(Math.hypot(p.x-x,p.y-y)<TOL*0.8)coveredSegs[i]=true;
+  }
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*(W/rect.width), y:(cy-rect.top)*(H/rect.height)};
+}
+
+function pointDown(e){
+  e.preventDefault();
+  const p=pointerPos(e);
+  if(phase==='trace'){
+    drawing=true; lastPt=p;
+    handleTracePoint(p);
+  } else if(phase==='color'){
+    handleColorClick(p);
+  }
+}
+function pointMove(e){
+  if(!drawing||phase!=='trace')return;
+  e.preventDefault();
+  const p=pointerPos(e);
+  handleTracePoint(p);
+  lastPt=p;
+}
+function pointUp(){ drawing=false; lastPt=null; }
+
+function handleTracePoint(p){
+  traceAccuracyTotal++;
+  const d=nearestOutlineDist(p.x,p.y);
+  if(d<TOL){traceAccuracyHits++;markCoverage(p.x,p.y);}
+  chalkTrail.push({x:p.x,y:p.y,life:1});
+  if(chalkTrail.length>400)chalkTrail.shift();
+}
+
+let chalkTrail=[];
+
+c.addEventListener('mousedown',pointDown);
+c.addEventListener('mousemove',pointMove);
+window.addEventListener('mouseup',pointUp);
+c.addEventListener('touchstart',pointDown,{passive:false});
+c.addEventListener('touchmove',pointMove,{passive:false});
+c.addEventListener('touchend',pointUp);
+
+function coveragePct(){
+  return coveredSegs.filter(Boolean).length/coveredSegs.length;
+}
+
+function checkTraceDone(){
+  if(coveragePct()>=0.9){
+    finishTrace();
+  }
+}
+
+function finishTrace(){
+  phase='color';
+  const acc=traceAccuracyTotal>0?traceAccuracyHits/traceAccuracyTotal:0;
+  const traceScore=Math.round(acc*100)+Math.round(coveragePct()*100);
+  score+=traceScore;
+  SFX.success();
+  document.getElementById('phaseMsg').textContent=I18N.t('color_hint','Great tracing! Now click a region and pick its color.');
+  buildPalette();
+  updateHud();
+}
+
+function buildPalette(){
+  const pal=document.getElementById('palette');
+  pal.innerHTML='';
+  pal.hidden=false;
+  design.palette.forEach(col=>{
+    const sw=document.createElement('div');
+    sw.className='swatch';
+    sw.style.background=col;
+    sw.onclick=()=>{
+      document.querySelectorAll('.swatch').forEach(s=>s.classList.remove('sel'));
+      sw.classList.add('sel');
+      selectedColor=col;
+      SFX.select();
+    };
+    pal.appendChild(sw);
+  });
+}
+
+function pointInTriangle(px,py,ax,ay,bx,by,cxp,cyp){
+  const d1=(px-bx)*(ay-by)-(ax-bx)*(py-by);
+  const d2=(px-cxp)*(by-cyp)-(bx-cxp)*(py-cyp);
+  const d3=(px-ax)*(cyp-ay)-(cxp-ax)*(py-ay);
+  const hasNeg=(d1<0)||(d2<0)||(d3<0);
+  const hasPos=(d1>0)||(d2>0)||(d3>0);
+  return !(hasNeg&&hasPos);
+}
+
+function regionAt(x,y){
+  const pts=design.pts;
+  for(let i=0;i<pts.length;i++){
+    const a=pts[i], b=pts[(i+1)%pts.length];
+    if(pointInTriangle(x,y,design.cx,design.cy,a.x,a.y,b.x,b.y))return i;
+  }
+  return -1;
+}
+
+let colorHits=0, colorTotal=0;
+function handleColorClick(p){
+  const idx=regionAt(p.x,p.y);
+  if(idx<0)return;
+  if(regionFilled[idx])return;
+  if(!selectedColor){
+    document.getElementById('phaseMsg').textContent=I18N.t('pick_color_first','Pick a color from the palette first!');
+    return;
+  }
+  colorTotal++;
+  if(selectedColor===design.regionColors[idx]){
+    regionFilled[idx]=selectedColor;
+    colorHits++;
+    score+=15;
+    SFX.point();
+  } else {
+    score=Math.max(0,score-3);
+    SFX.error();
+  }
+  if(regionFilled.every(Boolean))finishColoring();
+  updateHud();
+}
+
+function finishColoring(){
+  phase='done';
+  SFX.win();
+  document.getElementById('phaseMsg').textContent=I18N.t('round_done','Design complete! Score +{s}').replace('{s}','');
+  document.getElementById('nextBtn').disabled=false;
+  if(score>best){best=score;localStorage.setItem('chalkartstreet_best',String(best));}
+  updateHud();
+}
+
+function startNextRound(){
+  round++;
+  resetRound();
+}
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('bestDisp').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // pavement texture background
+  ctx.fillStyle='#4a4a4a';
+  ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,0.04)';
+  for(let i=0;i<W;i+=40){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,H);ctx.stroke();}
+  for(let j=0;j<H;j+=40){ctx.beginPath();ctx.moveTo(0,j);ctx.lineTo(W,j);ctx.stroke();}
+
+  const pts=design.pts;
+
+  if(phase==='color'){
+    // draw filled/unfilled regions
+    for(let i=0;i<pts.length;i++){
+      const a=pts[i], b=pts[(i+1)%pts.length];
+      ctx.beginPath();
+      ctx.moveTo(design.cx,design.cy);
+      ctx.lineTo(a.x,a.y);
+      ctx.lineTo(b.x,b.y);
+      ctx.closePath();
+      if(regionFilled[i]){
+        ctx.fillStyle=regionFilled[i];
+        ctx.fill();
+      } else {
+        ctx.fillStyle='rgba(255,255,255,0.06)';
+        ctx.fill();
+        ctx.strokeStyle='rgba(255,255,255,0.5)';
+        ctx.stroke();
+      }
+    }
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;
+    ctx.beginPath();
+    pts.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+    ctx.closePath();ctx.stroke();
+  } else {
+    // trace phase: draw tolerance band + outline glow, covered portions brighter
+    ctx.lineWidth=TOL*2;
+    ctx.strokeStyle='rgba(255,255,255,0.08)';
+    ctx.beginPath();
+    pts.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+    ctx.closePath();ctx.stroke();
+
+    // covered segments glow green
+    ctx.lineWidth=6;
+    for(let i=0;i<outlineSamples.length;i++){
+      if(!coveredSegs[i])continue;
+      const p=outlineSamples[i];
+      ctx.fillStyle='#7ec850';
+      ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);ctx.fill();
+    }
+    // outline itself
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+    ctx.beginPath();
+    pts.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+    ctx.closePath();ctx.stroke();
+
+    // chalk trail
+    ctx.strokeStyle='#fff';
+    ctx.lineWidth=4;
+    ctx.lineCap='round';
+    for(let i=1;i<chalkTrail.length;i++){
+      ctx.globalAlpha=chalkTrail[i].life;
+      ctx.beginPath();
+      ctx.moveTo(chalkTrail[i-1].x,chalkTrail[i-1].y);
+      ctx.lineTo(chalkTrail[i].x,chalkTrail[i].y);
+      ctx.stroke();
+    }
+    ctx.globalAlpha=1;
+
+    // coverage bar
+    const pct=coveragePct();
+    ctx.fillStyle='#222';ctx.fillRect(20,H-30,W-40,14);
+    ctx.fillStyle='#7ec850';ctx.fillRect(20,H-30,(W-40)*pct,14);
+    ctx.strokeStyle='#fff';ctx.strokeRect(20,H-30,W-40,14);
+    checkTraceDone();
+  }
+  requestAnimationFrame(draw);
+}
+draw();
+</script></body></html>

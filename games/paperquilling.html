@@ -1,0 +1,229 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Paper Quilling</title><meta name="description" content="Play Paper Quilling free online — Press and drag in a circle to roll the paper strip into a tight coil, releasing when the gauge matches the target size. Place finished coils into the design outline to complete each pattern!"><link rel="canonical" href="https://games.multiportllc.com/games/paperquilling"><meta property="og:title" content="Paper Quilling - Multiport Games"><meta property="og:description" content="Play Paper Quilling free online — Press and drag in a circle to roll the paper strip into a tight coil, releasing when the gauge matches the target size. Place finished coils into the design outline to complete each pattern!"><meta property="og:url" content="https://games.multiportllc.com/games/paperquilling"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Paper Quilling","description":"Play Paper Quilling free online instantly. Press and drag in a circle to roll the paper strip into a tight coil, releasing when the gauge matches the target size. Place finished coils into the design outline to complete each pattern! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/paperquilling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#f7ecd8;border-radius:14px;padding:16px;text-align:center;max-width:560px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#5a3e28;font-weight:800;font-size:.95rem;margin-bottom:6px;flex-wrap:wrap;gap:6px}
+#hud b{color:#c0392b}
+#stage{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin:8px 0}
+#rollArea{background:#fffaf0;border-radius:10px;border:2px solid #d8c090;touch-action:none}
+#designArea{background:#fffaf0;border-radius:10px;border:2px solid #d8c090}
+#gauge{width:220px;height:18px;background:#e5d3ad;border-radius:9px;overflow:hidden;margin:6px auto;position:relative}
+#gaugeFill{height:100%;background:linear-gradient(90deg,#7ec850,#4a9020);width:0%}
+#gaugeTarget{position:absolute;top:0;bottom:0;width:4px;background:#c0392b}
+#msg{color:#c0392b;font-weight:800;min-height:1.5em;margin-top:6px}
+#coilTray{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;min-height:40px;margin:6px 0}
+.trayCoil{width:34px;height:34px;border-radius:50%;cursor:grab}
+label.small{font-size:.8rem;color:#5a3e28}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Paper Quilling</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span>Design: <b id="designNum">1</b></span><span>Score: <b id="score">0</b></span><span>Best: <b id="best">0</b></span></div>
+      <div class="small" id="targetLabel">Roll a coil to this size:</div>
+      <div id="gauge"><div id="gaugeFill"></div><div id="gaugeTarget"></div></div>
+      <div id="stage">
+        <canvas id="rollArea" width="220" height="220"></canvas>
+        <canvas id="designArea" width="220" height="220"></canvas>
+      </div>
+      <div id="coilTray"></div>
+      <div id="msg"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Click/tap and drag in circles inside the left canvas to roll the paper strip into a coil — the gauge fills as it tightens. Release when the gauge needle lands inside the red target zone to finish a good coil. Then click the coil in the tray and click an empty outline slot on the right to place it. Fill every slot to complete the design and move on!</div>
+</div>
+<script>
+const rc=document.getElementById('rollArea'),rctx=rc.getContext('2d');
+const dc=document.getElementById('designArea'),dctx=dc.getContext('2d');
+const colors=['#e94560','#f0a500','#4a9020','#2980b9','#9b59b6','#e67e22'];
+let design=1,score=0,best=0;
+let rollAmount=0,rolling=false,lastAngle=0,cx=110,cy=110,totalAngle=0;
+let targetSize=0,tolerance=0.12;
+let tray=[]; // completed coils not yet placed {size,color}
+let slots=[]; // design slots {x,y,r,filled,color}
+let selectedTrayIdx=-1;
+
+function loadBest(){ best=parseInt(localStorage.getItem('paperquilling_best')||'0',10); document.getElementById('best').textContent=best; }
+function saveBest(){ if(score>best){ best=score; localStorage.setItem('paperquilling_best',String(best)); document.getElementById('best').textContent=best; } }
+
+function genDesign(){
+  const numSlots=Math.min(3+Math.floor((design-1)/1),8);
+  tolerance=Math.max(0.05,0.14-design*0.01);
+  slots=[];
+  const cxr=110,cyr=110,R=70;
+  for(let i=0;i<numSlots;i++){
+    const ang=(i/numSlots)*Math.PI*2 - Math.PI/2;
+    slots.push({x:cxr+Math.cos(ang)*R,y:cyr+Math.sin(ang)*R,r:22,filled:false,color:null});
+  }
+  document.getElementById('designNum').textContent=design;
+  drawDesign();
+  nextTarget();
+}
+
+function nextTarget(){
+  targetSize=0.35+Math.random()*0.5;
+  document.getElementById('gaugeTarget').style.left=(targetSize*100-2)+'%';
+}
+
+function drawDesign(){
+  dctx.clearRect(0,0,220,220);
+  dctx.strokeStyle='#d8c090';dctx.lineWidth=2;
+  slots.forEach(s=>{
+    dctx.beginPath();dctx.arc(s.x,s.y,s.r,0,Math.PI*2);
+    if(s.filled){ dctx.fillStyle=s.color; dctx.fill(); }
+    dctx.stroke();
+  });
+}
+
+function resetRoll(){
+  rollAmount=0;totalAngle=0;
+  drawRoll();
+  document.getElementById('gaugeFill').style.width='0%';
+}
+
+function drawRoll(){
+  rctx.clearRect(0,0,220,220);
+  rctx.fillStyle='#fdf6e3';rctx.fillRect(0,0,220,220);
+  rctx.strokeStyle='#e0c896';
+  rctx.beginPath();rctx.arc(cx,cy,90,0,Math.PI*2);rctx.stroke();
+  // draw coil as spiral based on rollAmount
+  const turns=rollAmount*6;
+  rctx.strokeStyle='#c9a86a';
+  rctx.lineWidth=3;
+  rctx.beginPath();
+  for(let a=0;a<turns*Math.PI*2;a+=0.1){
+    const r=2+a*1.6;
+    if(r>85)break;
+    const x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r;
+    if(a===0)rctx.moveTo(x,y);else rctx.lineTo(x,y);
+  }
+  rctx.stroke();
+}
+
+function angleAt(x,y){ return Math.atan2(y-cy,x-cx); }
+
+function pointerPos(e,canvas){
+  const rect=canvas.getBoundingClientRect();
+  const cxp=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cyp=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cxp*(canvas.width/rect.width),y:cyp*(canvas.height/rect.height)};
+}
+
+function startRoll(e){
+  e.preventDefault();
+  const p=pointerPos(e,rc);
+  rolling=true;
+  lastAngle=angleAt(p.x,p.y);
+}
+function moveRoll(e){
+  if(!rolling)return;
+  e.preventDefault();
+  const p=pointerPos(e,rc);
+  const a=angleAt(p.x,p.y);
+  let delta=a-lastAngle;
+  while(delta>Math.PI)delta-=Math.PI*2;
+  while(delta<-Math.PI)delta+=Math.PI*2;
+  totalAngle+=Math.abs(delta);
+  lastAngle=a;
+  rollAmount=Math.min(1,totalAngle/(Math.PI*10));
+  document.getElementById('gaugeFill').style.width=(rollAmount*100)+'%';
+  drawRoll();
+  if(Math.floor(totalAngle/Math.PI)%2===0){} // no-op tick reserved
+}
+function endRoll(e){
+  if(!rolling)return;
+  rolling=false;
+  evaluateCoil();
+}
+
+rc.addEventListener('mousedown',startRoll);
+rc.addEventListener('mousemove',moveRoll);
+window.addEventListener('mouseup',endRoll);
+rc.addEventListener('touchstart',startRoll,{passive:false});
+rc.addEventListener('touchmove',moveRoll,{passive:false});
+rc.addEventListener('touchend',endRoll,{passive:false});
+
+function evaluateCoil(){
+  if(rollAmount<0.05){ resetRoll(); return; }
+  const diff=Math.abs(rollAmount-targetSize);
+  if(diff<=tolerance){
+    SFX.success();
+    score+=Math.max(1,Math.round((1-diff/tolerance)*10));
+    document.getElementById('score').textContent=score;
+    const color=colors[Math.floor(Math.random()*colors.length)];
+    tray.push({size:rollAmount,color});
+    renderTray();
+    setMsg(I18N.t('coil_good','Nice coil! Click it, then click a slot to place it.'),1800);
+  } else {
+    SFX.fail();
+    setMsg(diff>0 && rollAmount>targetSize?I18N.t('coil_tight','Rolled too tight! Try again.'):I18N.t('coil_loose','Not tight enough! Try again.'),1500);
+  }
+  resetRoll();
+  nextTarget();
+}
+
+function renderTray(){
+  const el=document.getElementById('coilTray');
+  el.innerHTML='';
+  tray.forEach((c,i)=>{
+    const d=document.createElement('div');
+    d.className='trayCoil';
+    d.style.background=c.color;
+    d.style.outline=i===selectedTrayIdx?'3px solid #333':'none';
+    d.onclick=()=>{ selectedTrayIdx=i; renderTray(); };
+    el.appendChild(d);
+  });
+}
+
+dc.addEventListener('click',e=>{
+  if(selectedTrayIdx<0||selectedTrayIdx>=tray.length)return;
+  const p=pointerPos(e,dc);
+  const slot=slots.find(s=>!s.filled && Math.hypot(s.x-p.x,s.y-p.y)<s.r+6);
+  if(slot){
+    slot.filled=true;
+    slot.color=tray[selectedTrayIdx].color;
+    tray.splice(selectedTrayIdx,1);
+    selectedTrayIdx=-1;
+    SFX.click();
+    drawDesign();
+    renderTray();
+    if(slots.every(s=>s.filled)){
+      completeDesign();
+    }
+  }
+});
+
+function setMsg(t,ms){
+  document.getElementById('msg').textContent=t;
+  if(ms) setTimeout(()=>{ if(document.getElementById('msg').textContent===t) document.getElementById('msg').textContent=''; },ms);
+}
+
+function completeDesign(){
+  saveBest();
+  SFX.win();
+  setMsg(I18N.t('design_complete','🎉 Design complete! Next design...'),1600);
+  setTimeout(()=>{
+    design++;
+    tray=[];
+    renderTray();
+    genDesign();
+  },1700);
+}
+
+function newGame(){
+  design=1;score=0;
+  document.getElementById('score').textContent=0;
+  loadBest();
+  tray=[];renderTray();
+  resetRoll();
+  genDesign();
+}
+newGame();
+</script></body></html>

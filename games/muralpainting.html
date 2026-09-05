@@ -1,0 +1,219 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mural Painting</title><meta name="description" content="Play Mural Painting free online — Study the numbered reference mural, then click each matching region on the blank wall and pick its color from the palette before time runs out. Bigger, more detailed murals each round."><link rel="canonical" href="https://games.multiportllc.com/games/muralpainting"><meta property="og:title" content="Mural Painting - Multiport Games"><meta property="og:description" content="Play Mural Painting free online — Study the numbered reference mural, then click each matching region on the blank wall and pick its color from the palette before time runs out. Bigger, more detailed murals each round."><meta property="og:url" content="https://games.multiportllc.com/games/muralpainting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mural Painting","description":"Play Mural Painting free online instantly. Study the numbered reference mural, then click each matching region on the blank wall and pick its color from the palette before time runs out. Bigger, more detailed murals each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/muralpainting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:14px;text-align:center}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:#fff;font-weight:700;max-width:680px;margin:0 auto 8px;font-size:.9rem}
+#hud span{background:rgba(0,0,0,.3);padding:4px 10px;border-radius:8px}
+#timerBar{max-width:680px;margin:0 auto 8px;height:10px;background:#0b3d2e;border-radius:6px;overflow:hidden}
+#timerFill{height:100%;background:#4caf50;width:100%;transition:width .2s linear}
+#boards{display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+.boardCol{text-align:center}
+.boardLabel{color:#ffd54f;font-weight:800;margin-bottom:4px;font-size:.9rem}
+canvas.board{background:#e9e2d0;border-radius:8px;display:block;touch-action:none}
+#palette{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.swatch{width:34px;height:34px;border-radius:8px;border:3px solid #fff8;cursor:pointer}
+.swatch.sel{border-color:#ffd54f;transform:scale(1.12)}
+#msg{color:#ffd54f;font-weight:800;margin:8px 0;min-height:1.4em}
+#btnRow{margin-top:8px}
+#btnRow button{padding:8px 20px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;margin:0 5px}
+#btnRow button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mural Painting</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span id="roundDisp">Round 1</span><span id="scoreDisp">Score: 0</span><span id="bestDisp">Best: 0</span><span id="timeDisp">Time: 60</span></div>
+      <div id="timerBar"><div id="timerFill"></div></div>
+      <div id="msg">Match the reference mural on the wall canvas before time runs out!</div>
+      <div id="boards">
+        <div class="boardCol"><div class="boardLabel">Reference</div><canvas id="ref" class="board" width="260" height="260"></canvas></div>
+        <div class="boardCol"><div class="boardLabel">Your Wall</div><canvas id="wall" class="board" width="260" height="260"></canvas></div>
+      </div>
+      <div id="palette"></div>
+      <div id="btnRow"><button id="nextBtn" onclick="startNextRound()" disabled>Next Mural</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Study the reference mural on the left — each numbered region has a target color. Pick a color from the palette below, then click the matching region on your blank wall (right) to paint it. Color every region correctly before time runs out to complete the mural. Score comes from regions painted correctly; each round brings a larger, more detailed mural and a tighter clock.</div>
+</div>
+<script>
+const refC=document.getElementById('ref'),refCtx=refC.getContext('2d');
+const wallC=document.getElementById('wall'),wallCtx=wallC.getContext('2d');
+const W=refC.width,H=refC.height;
+let round=1,score=0,best=parseInt(localStorage.getItem('muralpainting_best')||'0',10);
+let timeLeft=60,timerId=null;
+let regions=[],palette=[],selectedColor=null,wallFilled=[];
+let gameActive=false;
+
+document.getElementById('bestDisp').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+
+const COLOR_POOL=['#ff6b6b','#ffd166','#06d6a0','#4d96ff','#c77dff','#ff9f1c','#ef476f','#118ab2','#8ac926','#f15bb5'];
+
+function genMural(r){
+  // grid-based mosaic mural: gridSize grows with round
+  const gridSize=Math.min(3+Math.floor(r/2),8);
+  const cell=W/gridSize;
+  const nColors=Math.min(3+Math.floor(r/2),COLOR_POOL.length);
+  const pal=COLOR_POOL.slice(0,nColors);
+  const regs=[];
+  for(let ry=0;ry<gridSize;ry++){
+    for(let rx=0;rx<gridSize;rx++){
+      regs.push({x:rx*cell,y:ry*cell,w:cell,h:cell,color:pal[Math.floor(Math.random()*pal.length)]});
+    }
+  }
+  return {regs,pal,gridSize};
+}
+
+function timeForRound(r){ return Math.max(25,60-r*3); }
+
+function resetRound(){
+  const m=genMural(round);
+  regions=m.regs;
+  palette=m.pal;
+  wallFilled=new Array(regions.length).fill(null);
+  selectedColor=null;
+  timeLeft=timeForRound(round);
+  gameActive=true;
+  document.getElementById('nextBtn').disabled=true;
+  document.getElementById('msg').textContent=I18N.t('mural_hint','Match the reference mural on the wall canvas before time runs out!');
+  document.getElementById('roundDisp').textContent=I18N.t('round_label','Round {r}').replace('{r}',round);
+  buildPalette();
+  clearInterval(timerId);
+  timerId=setInterval(tick,1000);
+  updateHud();
+  drawAll();
+}
+
+function tick(){
+  if(!gameActive)return;
+  timeLeft--;
+  if(timeLeft<=0){
+    timeLeft=0;
+    endRound(false);
+  }
+  updateHud();
+}
+
+function buildPalette(){
+  const pal=document.getElementById('palette');
+  pal.innerHTML='';
+  palette.forEach(col=>{
+    const sw=document.createElement('div');
+    sw.className='swatch';
+    sw.style.background=col;
+    sw.onclick=()=>{
+      document.querySelectorAll('.swatch').forEach(s=>s.classList.remove('sel'));
+      sw.classList.add('sel');
+      selectedColor=col;
+      SFX.select();
+    };
+    pal.appendChild(sw);
+  });
+}
+
+function pointerPos(e,canvas){
+  const rect=canvas.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*(W/rect.width), y:(cy-rect.top)*(H/rect.height)};
+}
+
+function regionIndexAt(x,y){
+  for(let i=0;i<regions.length;i++){
+    const r=regions[i];
+    if(x>=r.x&&x<r.x+r.w&&y>=r.y&&y<r.y+r.h)return i;
+  }
+  return -1;
+}
+
+function handleWallClick(e){
+  if(!gameActive)return;
+  e.preventDefault();
+  const p=pointerPos(e,wallC);
+  const idx=regionIndexAt(p.x,p.y);
+  if(idx<0)return;
+  if(wallFilled[idx]===regions[idx].color)return; // already correct
+  if(!selectedColor){
+    document.getElementById('msg').textContent=I18N.t('pick_color_first','Pick a color from the palette first!');
+    return;
+  }
+  if(selectedColor===regions[idx].color){
+    wallFilled[idx]=selectedColor;
+    score+=10;
+    SFX.point();
+    if(wallFilled.every((v,i)=>v===regions[i].color))endRound(true);
+  } else {
+    score=Math.max(0,score-2);
+    SFX.error();
+  }
+  updateHud();
+  drawAll();
+}
+wallC.addEventListener('mousedown',handleWallClick);
+wallC.addEventListener('touchstart',handleWallClick,{passive:false});
+
+function endRound(success){
+  gameActive=false;
+  clearInterval(timerId);
+  if(success){
+    const bonus=timeLeft*2;
+    score+=bonus;
+    SFX.win();
+    document.getElementById('msg').textContent=I18N.t('mural_complete','Mural complete! Time bonus +{b}').replace('{b}',bonus);
+  } else {
+    SFX.fail();
+    document.getElementById('msg').textContent=I18N.t('time_up','Time\'s up! Click Next Mural to try a new one.');
+  }
+  document.getElementById('nextBtn').disabled=false;
+  if(score>best){best=score;localStorage.setItem('muralpainting_best',String(best));}
+  updateHud();
+  drawAll();
+}
+
+function startNextRound(){
+  round++;
+  resetRound();
+}
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('bestDisp').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+  document.getElementById('timeDisp').textContent=I18N.t('time_label','Time: {t}').replace('{t}',timeLeft);
+  const maxT=timeForRound(round);
+  document.getElementById('timerFill').style.width=Math.max(0,(timeLeft/maxT)*100)+'%';
+}
+
+function drawAll(){
+  refCtx.clearRect(0,0,W,H);
+  wallCtx.clearRect(0,0,W,H);
+  refCtx.fillStyle='#e9e2d0';refCtx.fillRect(0,0,W,H);
+  wallCtx.fillStyle='#e9e2d0';wallCtx.fillRect(0,0,W,H);
+  regions.forEach((r,i)=>{
+    refCtx.fillStyle=r.color;
+    refCtx.fillRect(r.x,r.y,r.w,r.h);
+    refCtx.strokeStyle='rgba(0,0,0,0.15)';
+    refCtx.strokeRect(r.x,r.y,r.w,r.h);
+
+    if(wallFilled[i]){
+      wallCtx.fillStyle=wallFilled[i];
+      wallCtx.fillRect(r.x,r.y,r.w,r.h);
+    }
+    wallCtx.strokeStyle='rgba(0,0,0,0.25)';
+    wallCtx.strokeRect(r.x,r.y,r.w,r.h);
+    if(!wallFilled[i]||wallFilled[i]!==r.color){
+      wallCtx.fillStyle='rgba(0,0,0,0.35)';
+      wallCtx.font='10px Arial';
+      wallCtx.textAlign='center';
+      wallCtx.fillText(String(i+1),r.x+r.w/2,r.y+r.h/2+3);
+    }
+  });
+}
+
+resetRound();
+</script></body></html>

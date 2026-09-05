@@ -1,0 +1,284 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Stencil Spray</title><meta name="description" content="Play Stencil Spray free online — Hold and move the spray can across the stencil cutout to fill it with even coverage, avoiding drips from over-spraying one spot, before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/stencilspray"><meta property="og:title" content="Stencil Spray - Multiport Games"><meta property="og:description" content="Play Stencil Spray free online — Hold and move the spray can across the stencil cutout to fill it with even coverage, avoiding drips from over-spraying one spot, before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/stencilspray"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Stencil Spray","description":"Play Stencil Spray free online instantly. Hold and move the spray can across the stencil cutout to fill it with even coverage, avoiding drips from over-spraying one spot, before time runs out. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/stencilspray","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#222;border-radius:14px;padding:14px;text-align:center}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:#fff;font-weight:700;max-width:600px;margin:0 auto 8px;font-size:.9rem}
+#hud span{background:rgba(0,0,0,.35);padding:4px 10px;border-radius:8px}
+#c{background:#3a3a3a;display:block;border-radius:8px;margin:0 auto;touch-action:none;cursor:crosshair;max-width:100%}
+#meters{display:flex;justify-content:center;gap:20px;max-width:600px;margin:8px auto}
+.meterBox{flex:1}
+.meterLabel{color:#fff;font-size:.8rem;font-weight:700;margin-bottom:3px}
+.meterBar{height:12px;background:#111;border-radius:6px;overflow:hidden}
+#coverFill{height:100%;background:#4caf50;width:0%}
+#dripFill{height:100%;background:#e94560;width:0%}
+#msg{color:#ffd54f;font-weight:800;margin:8px 0;min-height:1.4em}
+#btnRow button{padding:8px 20px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;margin:0 5px}
+#btnRow button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Stencil Spray</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span id="roundDisp">Stencil 1</span><span id="scoreDisp">Score: 0</span><span id="bestDisp">Best: 0</span><span id="timeDisp">Time: 20</span></div>
+      <canvas id="c" width="560" height="360"></canvas>
+      <div id="meters">
+        <div class="meterBox"><div class="meterLabel">Coverage</div><div class="meterBar"><div id="coverFill"></div></div></div>
+        <div class="meterBox"><div class="meterLabel">Drips</div><div class="meterBar"><div id="dripFill"></div></div></div>
+      </div>
+      <div id="msg">Hold and drag across the stencil to spray it evenly!</div>
+      <div id="btnRow"><button id="nextBtn" onclick="startNextRound()" disabled>Next Stencil</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press and hold (mouse or finger) over the stencil cutout and move the spray can across it to build up even paint coverage — watch the Coverage meter rise. Don't linger too long in one spot or it drips (the Drips meter rises and hurts your score). Cover the whole shape evenly before time runs out. Each round brings a new stencil shape and a tighter clock.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+let round=1,score=0,best=parseInt(localStorage.getItem('stencilspray_best')||'0',10);
+document.getElementById('bestDisp').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+
+let stencilPath=null; // Path2D-like: array of points for polygon
+let cellSize=8;
+let grid=null; // 2D array of paint amount 0..255 within stencil bounding box
+let gridW=0,gridH=0,offX=0,offY=0;
+let timeLeft=20,timerId=null,spraying=false,gameActive=false;
+let sprayPos=null;
+let totalCells=0;
+
+function genStencilShape(r){
+  // alternate between star, heart-ish blob, and flower shapes; grows more complex with round
+  const shapes=['star','flower','blob'];
+  const type=shapes[(r-1)%shapes.length];
+  const cx=W/2, cy=H/2;
+  const pts=[];
+  if(type==='star'){
+    const spikes=5+Math.min(Math.floor(r/2),3);
+    const outerR=120,innerR=55;
+    for(let i=0;i<spikes*2;i++){
+      const ang=(Math.PI*2*i)/(spikes*2)-Math.PI/2;
+      const rad=i%2===0?outerR:innerR;
+      pts.push({x:cx+Math.cos(ang)*rad,y:cy+Math.sin(ang)*rad});
+    }
+  } else if(type==='flower'){
+    const petals=5+Math.min(Math.floor(r/3),4);
+    const n=petals*8;
+    for(let i=0;i<n;i++){
+      const ang=(Math.PI*2*i)/n;
+      const rad=70+40*Math.sin(ang*petals);
+      pts.push({x:cx+Math.cos(ang)*rad,y:cy+Math.sin(ang)*rad});
+    }
+  } else {
+    const n=40;
+    for(let i=0;i<n;i++){
+      const ang=(Math.PI*2*i)/n;
+      const rad=90+30*Math.sin(ang*3+r)+15*Math.cos(ang*5-r);
+      pts.push({x:cx+Math.cos(ang)*rad,y:cy+Math.sin(ang)*rad});
+    }
+  }
+  return pts;
+}
+
+function pointInPoly(x,y,pts){
+  let inside=false;
+  for(let i=0,j=pts.length-1;i<pts.length;j=i++){
+    const xi=pts[i].x,yi=pts[i].y,xj=pts[j].x,yj=pts[j].y;
+    const intersect=((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi);
+    if(intersect)inside=!inside;
+  }
+  return inside;
+}
+
+function timeForRound(r){ return Math.max(14,20-Math.floor(r/2)); }
+
+function resetRound(){
+  stencilPath=genStencilShape(round);
+  // bounding box
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  stencilPath.forEach(p=>{minX=Math.min(minX,p.x);minY=Math.min(minY,p.y);maxX=Math.max(maxX,p.x);maxY=Math.max(maxY,p.y);});
+  offX=minX;offY=minY;
+  gridW=Math.ceil((maxX-minX)/cellSize);
+  gridH=Math.ceil((maxY-minY)/cellSize);
+  grid=[];
+  totalCells=0;
+  for(let gy=0;gy<gridH;gy++){
+    const row=[];
+    for(let gx=0;gx<gridW;gx++){
+      const wx=offX+gx*cellSize+cellSize/2, wy=offY+gy*cellSize+cellSize/2;
+      const inside=pointInPoly(wx,wy,stencilPath);
+      row.push(inside?0:-1); // -1 means outside stencil, not counted
+      if(inside)totalCells++;
+    }
+    grid.push(row);
+  }
+  timeLeft=timeForRound(round);
+  gameActive=true;
+  spraying=false;
+  document.getElementById('nextBtn').disabled=true;
+  document.getElementById('msg').textContent=I18N.t('spray_hint','Hold and drag across the stencil to spray it evenly!');
+  document.getElementById('roundDisp').textContent=I18N.t('stencil_label','Stencil {r}').replace('{r}',round);
+  clearInterval(timerId);
+  timerId=setInterval(tick,1000);
+  updateHud();
+}
+resetRound();
+
+function tick(){
+  if(!gameActive)return;
+  timeLeft--;
+  if(timeLeft<=0){timeLeft=0;endRound();}
+  updateHud();
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*(W/rect.width), y:(cy-rect.top)*(H/rect.height)};
+}
+
+function applySpray(x,y){
+  const radius=28;
+  const gx0=Math.max(0,Math.floor((x-offX-radius)/cellSize));
+  const gx1=Math.min(gridW-1,Math.ceil((x-offX+radius)/cellSize));
+  const gy0=Math.max(0,Math.floor((y-offY-radius)/cellSize));
+  const gy1=Math.min(gridH-1,Math.ceil((y-offY+radius)/cellSize));
+  for(let gy=gy0;gy<=gy1;gy++){
+    for(let gx=gx0;gx<=gx1;gx++){
+      if(grid[gy][gx]<0)continue;
+      const wx=offX+gx*cellSize+cellSize/2, wy=offY+gy*cellSize+cellSize/2;
+      const d=Math.hypot(wx-x,wy-y);
+      if(d<radius){
+        const amt=(1-d/radius)*10;
+        grid[gy][gx]=Math.min(255,grid[gy][gx]+amt);
+      }
+    }
+  }
+}
+
+function pointDown(e){
+  if(!gameActive)return;
+  e.preventDefault();
+  spraying=true;
+  sprayPos=pointerPos(e);
+}
+function pointMove(e){
+  if(!gameActive||!spraying)return;
+  e.preventDefault();
+  sprayPos=pointerPos(e);
+}
+function pointUp(){ spraying=false; sprayPos=null; }
+c.addEventListener('mousedown',pointDown);
+c.addEventListener('mousemove',pointMove);
+window.addEventListener('mouseup',pointUp);
+c.addEventListener('touchstart',pointDown,{passive:false});
+c.addEventListener('touchmove',pointMove,{passive:false});
+c.addEventListener('touchend',pointUp);
+
+function computeMetrics(){
+  let covered=0,dripCells=0,sum=0;
+  for(let gy=0;gy<gridH;gy++){
+    for(let gx=0;gx<gridW;gx++){
+      const v=grid[gy][gx];
+      if(v<0)continue;
+      if(v>15)covered++;
+      if(v>150)dripCells++;
+      sum+=Math.max(0,v);
+    }
+  }
+  return {coveragePct: totalCells>0?covered/totalCells:0, dripPct: totalCells>0?dripCells/totalCells:0};
+}
+
+function endRound(){
+  gameActive=false;
+  spraying=false;
+  clearInterval(timerId);
+  const m=computeMetrics();
+  const coverScore=Math.round(m.coveragePct*100);
+  const dripPenalty=Math.round(m.dripPct*150);
+  const roundScore=Math.max(0,coverScore-dripPenalty);
+  score+=roundScore;
+  if(m.coveragePct>0.85&&m.dripPct<0.1){SFX.win();document.getElementById('msg').textContent=I18N.t('spray_great','Great even coverage! +{s}').replace('{s}',roundScore);}
+  else{SFX.fail();document.getElementById('msg').textContent=I18N.t('spray_done','Time\'s up! +{s} points').replace('{s}',roundScore);}
+  document.getElementById('nextBtn').disabled=false;
+  if(score>best){best=score;localStorage.setItem('stencilspray_best',String(best));}
+  updateHud();
+}
+
+function startNextRound(){
+  round++;
+  resetRound();
+}
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('bestDisp').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+  document.getElementById('timeDisp').textContent=I18N.t('time_label','Time: {t}').replace('{t}',timeLeft);
+  const m=computeMetrics();
+  document.getElementById('coverFill').style.width=Math.round(m.coveragePct*100)+'%';
+  document.getElementById('dripFill').style.width=Math.min(100,Math.round(m.dripPct*300))+'%';
+}
+
+let lastSoundTime=0;
+function loop(ts){
+  if(gameActive&&spraying&&sprayPos){
+    applySpray(sprayPos.x,sprayPos.y);
+    if(!lastSoundTime||ts-lastSoundTime>180){SFX.tick();lastSoundTime=ts;}
+    updateHud();
+  }
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#3a3a3a';ctx.fillRect(0,0,W,H);
+
+  // draw the surrounding wall texture faintly
+  ctx.strokeStyle='rgba(255,255,255,0.03)';
+  for(let i=0;i<W;i+=30){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,H);ctx.stroke();}
+
+  // clip to stencil for painted grid
+  ctx.save();
+  ctx.beginPath();
+  stencilPath.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+  ctx.closePath();
+  ctx.clip();
+  for(let gy=0;gy<gridH;gy++){
+    for(let gx=0;gx<gridW;gx++){
+      const v=grid[gy][gx];
+      if(v<=0)continue;
+      const wx=offX+gx*cellSize, wy=offY+gy*cellSize;
+      let color;
+      if(v>150)color='rgba(233,69,96,'+Math.min(1,v/255)+')'; // drip = red-ish
+      else color='rgba(255,209,102,'+Math.min(0.95,v/140)+')';
+      ctx.fillStyle=color;
+      ctx.fillRect(wx,wy,cellSize+1,cellSize+1);
+    }
+  }
+  ctx.restore();
+
+  // stencil outline (cutout edge)
+  ctx.strokeStyle='#111';
+  ctx.lineWidth=10;
+  ctx.beginPath();
+  stencilPath.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+  ctx.closePath();
+  ctx.stroke();
+  ctx.strokeStyle='#888';
+  ctx.lineWidth=3;
+  ctx.stroke();
+
+  // spray can cursor
+  if(sprayPos){
+    ctx.fillStyle=spraying?'rgba(255,255,255,0.25)':'rgba(255,255,255,0.12)';
+    ctx.beginPath();ctx.arc(sprayPos.x,sprayPos.y,28,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(sprayPos.x,sprayPos.y,4,0,Math.PI*2);ctx.fill();
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

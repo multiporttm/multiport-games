@@ -1,0 +1,227 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Leather Craft</title><meta name="description" content="Play Leather Craft free online — Punch the glowing stitch holes in order around the leather piece, then drag the thread through each hole in the same order to stitch it up. Score for accuracy and speed as pieces get bigger and harder."><link rel="canonical" href="https://games.multiportllc.com/games/leathercraft"><meta property="og:title" content="Leather Craft - Multiport Games"><meta property="og:description" content="Play Leather Craft free online — Punch the glowing stitch holes in order around the leather piece, then drag the thread through each hole in the same order to stitch it up. Score for accuracy and speed as pieces get bigger and harder."><meta property="og:url" content="https://games.multiportllc.com/games/leathercraft"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Leather Craft","description":"Play Leather Craft free online instantly. Punch the glowing stitch holes in order around the leather piece, then drag the thread through each hole in the same order to stitch it up. Score for accuracy and speed as pieces get bigger and harder. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/leathercraft","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:linear-gradient(135deg,#6b3f1d,#a9743a);border-radius:14px;padding:16px;text-align:center}
+#status{color:#fff5e6;font-size:1.05rem;font-weight:800;margin:4px 0;min-height:1.6em}
+#stats{color:#ffe0b2;font-weight:700;margin:2px 0 8px}
+#stage{position:relative;margin:0 auto;background:#c99a5b;border-radius:10px;box-shadow:inset 0 0 30px rgba(0,0,0,.35);touch-action:none;overflow:hidden}
+.hole{position:absolute;width:22px;height:22px;margin-left:-11px;margin-top:-11px;border-radius:50%;background:#3e2712;box-shadow:inset 0 0 4px #000;cursor:pointer;transition:transform .1s}
+.hole.pending{outline:3px solid rgba(255,255,255,.35)}
+.hole.next{outline:3px solid #ffd54f;box-shadow:0 0 14px 4px #ffd54f,inset 0 0 4px #000;animation:pulse 0.7s infinite alternate}
+.hole.done{background:#5a3a1a}
+.hole.punched::after{content:'';position:absolute;left:4px;top:4px;width:14px;height:14px;border-radius:50%;background:#1a0f08}
+@keyframes pulse{from{transform:scale(1)}to{transform:scale(1.18)}}
+.thread{position:absolute;height:4px;background:#c0392b;border-radius:2px;transform-origin:left center;pointer-events:none}
+#modeLabel{color:#fff5e6;font-weight:800;margin:6px 0}
+#buttons{margin:10px 0}
+#buttons button{padding:9px 22px;background:#c0392b;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:0 5px}
+#buttons button:disabled{opacity:.4;cursor:not-allowed}
+#timerBarWrap{width:280px;height:10px;background:rgba(0,0,0,.3);border-radius:5px;margin:8px auto;overflow:hidden}
+#timerBar{height:100%;background:#ffb300;width:100%}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Leather Craft</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="status">Punch the glowing hole, in order!</div>
+      <div id="stats">Pieces: 0 | Best: 0 | Accuracy: 100%</div>
+      <div id="modeLabel">Step 1: PUNCH</div>
+      <div id="timerBarWrap"><div id="timerBar"></div></div>
+      <div id="stage"></div>
+      <div id="buttons">
+        <button id="restartBtn" style="display:none">Play Again</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Each leather piece has a ring of numbered stitch holes. First, click/tap the <b>glowing hole</b> in order all the way around to punch every hole. Then <b>stitch</b> it: click or drag from each hole to the next in the same order to pull the thread through. Punching or stitching out of order costs accuracy. Finish before the timer runs out — pieces get bigger and more complex (wallets, bags) as you go!</div>
+</div>
+<script>
+const stage=document.getElementById('stage');
+const STAGE_W=Math.min(560,window.innerWidth-40), STAGE_H=340;
+stage.style.width=STAGE_W+'px';
+stage.style.height=STAGE_H+'px';
+
+let pieces=0,best=parseInt(localStorage.getItem('leathercraft_best')||'0',10);
+let totalActions=0,goodActions=0;
+let holes=[]; // {x,y,el,punched,stitched}
+let phase='punch'; // punch | stitch | done
+let nextIndex=0;
+let timeLeft=0,timerLen=0,timerInt=null;
+let gameOver=false;
+let threadEls=[];
+
+function updateStats(){
+  const acc = totalActions? Math.round(100*goodActions/totalActions) : 100;
+  document.getElementById('stats').textContent = I18N.t('leather_stats_label','Pieces: {p} | Best: {b} | Accuracy: {a}%')
+    .replace('{p}',pieces).replace('{b}',best).replace('{a}',acc);
+}
+
+function shapeForLevel(level){
+  // number of holes grows with level; shape alternates between simple loop and bag-like outline
+  const n = Math.min(6+level*2, 22);
+  const cx=STAGE_W/2, cy=STAGE_H/2;
+  const pts=[];
+  if(level%2===0){
+    // rounded rectangle (wallet-ish)
+    const w=Math.min(STAGE_W-80,180+level*8), h=Math.min(STAGE_H-70,110+level*4);
+    const perim=2*(w+h);
+    for(let i=0;i<n;i++){
+      const d=(i/n)*perim;
+      let x,y;
+      if(d<w){x=-w/2+d;y=-h/2;}
+      else if(d<w+h){x=w/2;y=-h/2+(d-w);}
+      else if(d<2*w+h){x=w/2-(d-w-h);y=h/2;}
+      else {x=-w/2;y=h/2-(d-2*w-h);}
+      pts.push([cx+x,cy+y]);
+    }
+  } else {
+    // organic bag-like ellipse
+    const rx=Math.min(STAGE_W/2-40,90+level*6), ry=Math.min(STAGE_H/2-40,70+level*4);
+    for(let i=0;i<n;i++){
+      const a=(i/n)*Math.PI*2 - Math.PI/2;
+      pts.push([cx+Math.cos(a)*rx, cy+Math.sin(a)*ry*(1+0.15*Math.sin(a*2))]);
+    }
+  }
+  return pts;
+}
+
+function buildPiece(level){
+  stage.innerHTML='';
+  threadEls=[];
+  const pts=shapeForLevel(level);
+  holes=pts.map((p,i)=>({x:p[0],y:p[1],idx:i,punched:false,stitched:false}));
+  holes.forEach(h=>{
+    const el=document.createElement('div');
+    el.className='hole pending';
+    el.style.left=h.x+'px';
+    el.style.top=h.y+'px';
+    el.title=(h.idx+1);
+    el.addEventListener('pointerdown',e=>{e.preventDefault();handleHole(h);});
+    stage.appendChild(el);
+    h.el=el;
+  });
+  phase='punch';
+  nextIndex=0;
+  refreshHighlight();
+}
+
+function refreshHighlight(){
+  holes.forEach(h=>h.el.classList.remove('next'));
+  if(nextIndex<holes.length) holes[nextIndex].el.classList.add('next');
+  document.getElementById('modeLabel').textContent = phase==='punch'
+    ? I18N.t('step_punch_label','Step 1: PUNCH the glowing hole in order')
+    : I18N.t('step_stitch_label','Step 2: STITCH — click each hole in order to pull thread');
+}
+
+function handleHole(h){
+  if(gameOver||phase==='done')return;
+  totalActions++;
+  if(h.idx===nextIndex){
+    goodActions++;
+    if(phase==='punch'){
+      h.punched=true;
+      h.el.classList.add('punched','done');
+      SFX.click();
+      nextIndex++;
+      if(nextIndex>=holes.length){
+        phase='stitch';
+        nextIndex=0;
+        holes.forEach(hh=>hh.el.classList.remove('done'));
+        SFX.select();
+      }
+    } else {
+      h.stitched=true;
+      SFX.point();
+      if(nextIndex>0) drawThread(holes[nextIndex-1],h);
+      nextIndex++;
+      if(nextIndex>=holes.length){
+        // close the loop
+        drawThread(holes[holes.length-1],holes[0]);
+        finishPiece();
+        return;
+      }
+    }
+    refreshHighlight();
+  } else {
+    SFX.error();
+    document.getElementById('status').textContent = I18N.t('wrong_hole_msg','Wrong hole! Follow the numbered order — glowing hole is next.');
+    h.el.style.transform='scale(0.85)';
+    setTimeout(()=>{h.el.style.transform='';},120);
+  }
+}
+
+function drawThread(a,b){
+  const dx=b.x-a.x, dy=b.y-a.y;
+  const len=Math.sqrt(dx*dx+dy*dy);
+  const ang=Math.atan2(dy,dx)*180/Math.PI;
+  const t=document.createElement('div');
+  t.className='thread';
+  t.style.left=a.x+'px';
+  t.style.top=a.y+'px';
+  t.style.width=len+'px';
+  t.style.transform=`rotate(${ang}deg)`;
+  stage.appendChild(t);
+  threadEls.push(t);
+}
+
+function finishPiece(){
+  phase='done';
+  pieces++;
+  SFX.win();
+  clearInterval(timerInt);
+  document.getElementById('status').textContent = I18N.t('piece_done_msg','Piece complete! Starting the next one...');
+  if(pieces>best){best=pieces;localStorage.setItem('leathercraft_best',String(best));}
+  updateStats();
+  setTimeout(newPiece,1300);
+}
+
+function newPiece(){
+  buildPiece(pieces);
+  document.getElementById('status').textContent = I18N.t('punch_prompt_msg','Punch the glowing hole, in order!');
+  timerLen=14+pieces*4;
+  timeLeft=timerLen;
+  clearInterval(timerInt);
+  timerInt=setInterval(tick,100);
+  updateStats();
+}
+
+function tick(){
+  timeLeft-=0.1;
+  const pct=Math.max(0,timeLeft/timerLen*100);
+  document.getElementById('timerBar').style.width=pct+'%';
+  document.getElementById('timerBar').style.background=pct>30?'#ffb300':'#e53935';
+  if(timeLeft<=0){
+    clearInterval(timerInt);
+    endGame();
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  document.getElementById('status').textContent = I18N.t('leather_gameover_msg','Time up! Pieces finished: {p}').replace('{p}',pieces);
+  document.getElementById('restartBtn').style.display='inline-block';
+}
+
+document.getElementById('restartBtn').onclick=()=>{
+  pieces=0;totalActions=0;goodActions=0;gameOver=false;
+  document.getElementById('restartBtn').style.display='none';
+  newPiece();
+};
+
+window.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){
+    document.getElementById('restartBtn').click();
+  }
+});
+
+updateStats();
+newPiece();
+</script></body></html>

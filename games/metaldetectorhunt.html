@@ -1,0 +1,263 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Metal Detector Hunt</title><meta name="description" content="Play Metal Detector Hunt free online — Sweep your detector across the beach with the mouse, finger, or arrow keys. Watch the signal meter and dig when it peaks to uncover coins, relics, and treasure before time runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/metaldetectorhunt"><meta property="og:title" content="Metal Detector Hunt - Multiport Games"><meta property="og:description" content="Play Metal Detector Hunt free online — Sweep your detector across the beach with the mouse, finger, or arrow keys. Watch the signal meter and dig when it peaks to uncover coins, relics, and treasure before time runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/metaldetectorhunt"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Metal Detector Hunt","description":"Play Metal Detector Hunt free online instantly. Sweep your detector across the beach with the mouse, finger, or arrow keys. Watch the signal meter and dig when it peaks to uncover coins, relics, and treasure before time runs out, with harder-to-find loot each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/metaldetectorhunt","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0c1420}
+#hud{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;color:#ffe6b0;font-weight:800;margin-bottom:8px;font-size:1.02rem}
+#hud span b{color:#ffd54f}
+#c{background:#d8c493;border-radius:10px;touch-action:none;cursor:crosshair;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+#meterWrap{width:320px;max-width:90%;margin:10px auto 0;background:#1a2233;border-radius:20px;padding:4px;border:2px solid #33415a}
+#meterBar{height:18px;border-radius:16px;background:linear-gradient(90deg,#2ecc71,#f1c40f,#e74c3c);width:0%;transition:width .08s linear}
+#msg{min-height:1.6em;color:#ffd88a;font-weight:800;margin-top:8px;font-size:1.1rem;text-align:center}
+#controls{text-align:center;margin-top:8px}
+#controls button{padding:9px 22px;background:#2b6cb0;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Metal Detector Hunt</div>
+  <div class="game-frame">
+    <div style="text-align:center">
+      <div id="hud">
+        <span>Round: <b id="roundLabel">1</b></span>
+        <span>Time: <b id="timeLabel">60</b>s</span>
+        <span>Digs left: <b id="digsLabel">6</b></span>
+        <span>Score: <b id="scoreLabel">0</b></span>
+        <span>Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="560" height="360"></canvas>
+      <div id="meterWrap"><div id="meterBar"></div></div>
+      <div id="msg">Sweep the beach to find a signal, then dig at the peak!</div>
+      <div id="controls">
+        <button id="startBtn">Start Hunting</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move the <b>detector</b> with your mouse, finger drag, or <b>Arrow keys</b> across the sandy beach. The <b>signal meter</b> rises as you get closer to buried treasure. Click/tap (or press <b>Space</b>) to <b>dig</b> when the signal peaks — dig too early or too far away and you'll waste one of your limited digs. Find valuable coins and relics before time runs out. Each round hides trickier, more valuable loot!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const roundLabel=document.getElementById('roundLabel');
+const timeLabel=document.getElementById('timeLabel');
+const digsLabel=document.getElementById('digsLabel');
+const scoreLabel=document.getElementById('scoreLabel');
+const bestLabel=document.getElementById('bestLabel');
+const meterBar=document.getElementById('meterBar');
+const msg=document.getElementById('msg');
+const startBtn=document.getElementById('startBtn');
+
+let best=parseInt(localStorage.getItem('metaldetectorhunt_best')||'0',10);
+bestLabel.textContent=best;
+
+let round=1, score=0, digsLeft=6, timeLeft=60;
+let detector={x:W/2,y:H/2};
+let items=[]; // {x,y,r,type,found,value,label,color}
+let holes=[]; // dug spots
+let running=false, timerId=null;
+let signal=0;
+
+const TYPES=[
+  {type:'junk',value:0,label:'Rusty Can',color:'#7a7a6a',emoji:'🥫',weight:5},
+  {type:'junk',value:0,label:'Bottle Cap',color:'#8a8a8a',emoji:'⚙️',weight:4},
+  {type:'coin',value:10,label:'Coin',color:'#e0a852',emoji:'🪙',weight:5},
+  {type:'coin',value:25,label:'Gold Coin',color:'#ffd54f',emoji:'🟡',weight:3},
+  {type:'relic',value:50,label:'Ring',color:'#c0c0ff',emoji:'💍',weight:2},
+  {type:'relic',value:100,label:'Ancient Relic',color:'#b06fd6',emoji:'🏺',weight:1},
+];
+
+function pickType(roundNum){
+  // higher rounds bias toward rarer/valuable but harder-to-pinpoint items
+  const pool=[];
+  TYPES.forEach(t=>{ for(let i=0;i<t.weight;i++)pool.push(t); });
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+
+function spawnItems(){
+  items=[];
+  const count=Math.min(4+round,10);
+  for(let i=0;i<count;i++){
+    let x,y,tries=0;
+    do{
+      x=40+Math.random()*(W-80);
+      y=40+Math.random()*(H-80);
+      tries++;
+    } while(items.some(it=>Math.hypot(it.x-x,it.y-y)<50)&&tries<50);
+    const t=pickType(round);
+    // detection radius shrinks as rounds progress (harder to find)
+    const r=Math.max(18,50-round*3);
+    items.push({x,y,r,found:false,...t});
+  }
+}
+
+function startRound(){
+  digsLeft=Math.max(4,7-Math.floor(round/2));
+  timeLeft=60;
+  holes=[];
+  spawnItems();
+  digsLabel.textContent=digsLeft;
+  timeLabel.textContent=timeLeft;
+  roundLabel.textContent=round;
+  running=true;
+  startBtn.disabled=true;
+  msg.textContent='Sweep to find a signal...';
+  clearInterval(timerId);
+  timerId=setInterval(()=>{
+    timeLeft--;
+    timeLabel.textContent=timeLeft;
+    if(timeLeft<=0||digsLeft<=0){ endRound(); }
+  },1000);
+}
+
+function endRound(){
+  running=false;
+  clearInterval(timerId);
+  startBtn.disabled=false;
+  startBtn.textContent='Next Round';
+  const unfound=items.filter(it=>!it.found&&it.type!=='junk').length;
+  msg.textContent=`Round over! Score: ${score}. `+(unfound?`${unfound} treasure(s) left buried.`:'You found everything!');
+  if(score>best){
+    best=score;
+    localStorage.setItem('metaldetectorhunt_best',String(best));
+    bestLabel.textContent=best;
+  }
+  round++;
+}
+
+function computeSignal(){
+  let maxSig=0;
+  items.forEach(it=>{
+    if(it.found)return;
+    const d=Math.hypot(detector.x-it.x,detector.y-it.y);
+    const sig=Math.max(0,1-d/(it.r*2.4));
+    if(sig>maxSig)maxSig=sig;
+  });
+  return maxSig;
+}
+
+function dig(){
+  if(!running||digsLeft<=0)return;
+  digsLeft--;
+  digsLabel.textContent=digsLeft;
+  let hit=null,bestDist=Infinity;
+  items.forEach(it=>{
+    if(it.found)return;
+    const d=Math.hypot(detector.x-it.x,detector.y-it.y);
+    if(d<it.r*0.9&&d<bestDist){bestDist=d;hit=it;}
+  });
+  holes.push({x:detector.x,y:detector.y});
+  if(hit){
+    hit.found=true;
+    if(hit.type==='junk'){
+      msg.textContent=`Just a ${hit.label}. ${hit.emoji}`;
+      SFX.click();
+    } else {
+      score+=hit.value;
+      scoreLabel.textContent=score;
+      msg.textContent=`Found a ${hit.label}! ${hit.emoji} +${hit.value}`;
+      SFX.coin();
+    }
+  } else {
+    msg.textContent='Nothing here. Keep sweeping...';
+    SFX.error();
+  }
+  if(digsLeft<=0){ setTimeout(endRound,400); }
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:Math.max(0,Math.min(W,cx*scaleX)),y:Math.max(0,Math.min(H,cy*scaleY))};
+}
+
+let sweeping=false;
+c.addEventListener('mousedown',e=>{ sweeping=true; detector=pointerPos(e); });
+c.addEventListener('mousemove',e=>{ if(sweeping){detector=pointerPos(e);} });
+window.addEventListener('mouseup',()=>{ sweeping=false; });
+c.addEventListener('click',e=>{ detector=pointerPos(e); dig(); });
+c.addEventListener('touchstart',e=>{ e.preventDefault(); detector=pointerPos(e); },{passive:false});
+c.addEventListener('touchmove',e=>{ e.preventDefault(); detector=pointerPos(e); },{passive:false});
+c.addEventListener('touchend',e=>{ e.preventDefault(); dig(); },{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(!running)return;
+  const step=12;
+  let handled=true;
+  if(e.code==='ArrowLeft')detector.x=Math.max(0,detector.x-step);
+  else if(e.code==='ArrowRight')detector.x=Math.min(W,detector.x+step);
+  else if(e.code==='ArrowUp')detector.y=Math.max(0,detector.y-step);
+  else if(e.code==='ArrowDown')detector.y=Math.min(H,detector.y+step);
+  else if(e.code==='Space')dig();
+  else handled=false;
+  if(handled)e.preventDefault();
+});
+
+function drawBeach(){
+  ctx.clearRect(0,0,W,H);
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#e8d4a0');
+  grad.addColorStop(1,'#c9ac6e');
+  ctx.fillStyle=grad;
+  ctx.fillRect(0,0,W,H);
+  // texture dots
+  ctx.fillStyle='rgba(120,95,50,0.15)';
+  for(let i=0;i<140;i++){
+    const x=(i*97)%W, y=(i*53)%H;
+    ctx.fillRect(x,y,2,2);
+  }
+  // holes
+  holes.forEach(h=>{
+    ctx.beginPath();
+    ctx.fillStyle='#8a6b3d';
+    ctx.arc(h.x,h.y,10,0,7);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.strokeStyle='#5c4826';
+    ctx.lineWidth=2;
+    ctx.arc(h.x,h.y,10,0,7);
+    ctx.stroke();
+  });
+  // found items markers
+  items.forEach(it=>{
+    if(it.found){
+      ctx.font='20px serif';
+      ctx.textAlign='center';
+      ctx.fillText(it.emoji,it.x,it.y-14);
+    }
+  });
+  // detector
+  ctx.beginPath();
+  ctx.strokeStyle='#2b6cb0';
+  ctx.lineWidth=3;
+  ctx.arc(detector.x,detector.y,20,0,7);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.fillStyle='rgba(43,108,176,0.15)';
+  ctx.arc(detector.x,detector.y,20,0,7);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.fillStyle='#1a3d5c';
+  ctx.arc(detector.x,detector.y,4,0,7);
+  ctx.fill();
+}
+
+function loop(){
+  drawBeach();
+  if(running){
+    signal=computeSignal();
+    meterBar.style.width=(signal*100)+'%';
+  }
+  requestAnimationFrame(loop);
+}
+loop();
+
+startBtn.addEventListener('click',()=>{
+  startBtn.textContent='Start Hunting';
+  startRound();
+});
+</script></body></html>

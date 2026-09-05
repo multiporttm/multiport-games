@@ -1,0 +1,285 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Kintsugi Repair</title><meta name="description" content="Play Kintsugi Repair free online — Drag the scattered pottery shards back into place to rebuild the broken vessel, then trace along each seam with gold lacquer to complete the repair. More pieces each round."><link rel="canonical" href="https://games.multiportllc.com/games/kintsugirepair"><meta property="og:title" content="Kintsugi Repair - Multiport Games"><meta property="og:description" content="Play Kintsugi Repair free online — Drag the scattered pottery shards back into place to rebuild the broken vessel, then trace along each seam with gold lacquer to complete the repair. More pieces each round."><meta property="og:url" content="https://games.multiportllc.com/games/kintsugirepair"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Kintsugi Repair","description":"Play Kintsugi Repair free online instantly. Drag the scattered pottery shards back into place to rebuild the broken vessel, then trace along each seam with gold lacquer to complete the repair. More pieces each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/kintsugirepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#2b1f1a;border-radius:14px;padding:14px;text-align:center}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:#fff;font-weight:700;max-width:600px;margin:0 auto 8px;font-size:.9rem}
+#hud span{background:rgba(0,0,0,.3);padding:4px 10px;border-radius:8px}
+#c{background:#3d2e26;display:block;border-radius:8px;margin:0 auto;touch-action:none;max-width:100%}
+#msg{color:#ffd54f;font-weight:800;margin:8px 0;min-height:1.4em}
+#btnRow button{padding:8px 20px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;margin:0 5px}
+#btnRow button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Kintsugi Repair</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span id="roundDisp">Vessel 1</span><span id="scoreDisp">Score: 0</span><span id="bestDisp">Best: 0</span></div>
+      <div id="msg">Drag each shard onto its matching outline to rebuild the vessel!</div>
+      <canvas id="c" width="600" height="420"></canvas>
+      <div id="btnRow"><button id="nextBtn" onclick="startNextRound()" disabled>Next Vessel</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag each scattered shard (mouse or finger) onto its matching pale outline to rebuild the broken pottery — a piece snaps into place when dropped close enough. Once every piece is placed, click along each glowing seam to apply gold kintsugi lacquer and finish the repair. Score comes from correct placements and completed seams; each round adds more pieces to the vessel.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+let round=1,score=0,best=parseInt(localStorage.getItem('kintsugirepair_best')||'0',10);
+document.getElementById('bestDisp').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+
+let pieces=[]; // {home:{x,y,angle}, cur:{x,y}, w,h, shape(points relative), placed}
+let seams=[]; // {a,b,done} between adjacent piece centers (home positions)
+let phase='assemble'; // 'assemble' -> 'seams' -> 'done'
+let dragIdx=-1, dragOffset={x:0,y:0};
+const SNAP_DIST=26;
+
+function piecesForRound(r){ return Math.min(4+r,10); }
+
+function genVessel(r){
+  const n=piecesForRound(r);
+  const cx=W/2, cy=H/2+10;
+  const vesselR=140+Math.min(r*3,30);
+  // generate n wedge pieces around a circle (like a broken plate/vase cross-section)
+  const angles=[];
+  for(let i=0;i<n;i++)angles.push((Math.PI*2*i)/n + (Math.random()-0.5)*0.15);
+  angles.sort((a,b)=>a-b);
+  const pcs=[];
+  for(let i=0;i<n;i++){
+    const a0=angles[i], a1=angles[(i+1)%n]+(i===n-1?Math.PI*2:0);
+    // irregular radius jitter per piece for organic shard look
+    const rJit=vesselR*(0.85+Math.random()*0.3);
+    pcs.push({a0,a1,r:rJit,cx,cy});
+  }
+  return pcs;
+}
+
+function pieceOutlinePoints(p){
+  // build polygon: center point + arc points along outer radius (jagged)
+  const pts=[{x:0,y:0}];
+  const steps=6;
+  for(let s=0;s<=steps;s++){
+    const a=p.a0+(p.a1-p.a0)*(s/steps);
+    const jag=1+ (Math.sin(a*7)+Math.cos(a*3))*0.06;
+    pts.push({x:Math.cos(a)*p.r*jag,y:Math.sin(a)*p.r*jag});
+  }
+  return pts;
+}
+
+function resetRound(){
+  const vp=genVessel(round);
+  const cx=W/2, cy=H/2+10;
+  pieces=vp.map((p,i)=>{
+    const pts=pieceOutlinePoints(p);
+    // home position: center of piece relative to vessel center, offset by cx,cy
+    const midA=(p.a0+p.a1)/2;
+    const homeX=cx, homeY=cy; // pieces are drawn relative to this anchor, using pts directly
+    // scatter start position around the canvas edges
+    const margin=50;
+    const sx=margin+Math.random()*(W-2*margin);
+    const sy=margin+Math.random()*(H-2*margin);
+    const rot=(Math.random()-0.5)*0.6;
+    return {pts, homeX, homeY, cur:{x:sx,y:sy}, rot, placed:false, color:shardColor(i), midA, r:p.r};
+  });
+  // seams between adjacent pieces (by angle order)
+  seams=[];
+  for(let i=0;i<pieces.length;i++){
+    seams.push({i, j:(i+1)%pieces.length, done:false});
+  }
+  phase='assemble';
+  document.getElementById('nextBtn').disabled=true;
+  document.getElementById('msg').textContent=I18N.t('assemble_hint','Drag each shard onto its matching outline to rebuild the vessel!');
+  document.getElementById('roundDisp').textContent=I18N.t('vessel_label','Vessel {r}').replace('{r}',round);
+  updateHud();
+}
+
+function shardColor(i){
+  const cols=['#c9a074','#b8895f','#d4b389','#a67c52','#e0c19a','#9c6f45'];
+  return cols[i%cols.length];
+}
+resetRound();
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*(W/rect.width), y:(cy-rect.top)*(H/rect.height)};
+}
+
+function pointInPieceLocal(px,py,piece){
+  // transform point into piece-local unrotated coords relative to piece.cur
+  const dx=px-piece.cur.x, dy=py-piece.cur.y;
+  const cos=Math.cos(-piece.rot), sin=Math.sin(-piece.rot);
+  const lx=dx*cos - dy*sin, ly=dx*sin + dy*cos;
+  return pointInPoly(lx,ly,piece.pts);
+}
+function pointInPoly(x,y,pts){
+  let inside=false;
+  for(let i=0,j=pts.length-1;i<pts.length;j=i++){
+    const xi=pts[i].x,yi=pts[i].y,xj=pts[j].x,yj=pts[j].y;
+    const intersect=((yi>y)!==(yj>y))&&(x<(xj-xi)*(y-yi)/(yj-yi)+xi);
+    if(intersect)inside=!inside;
+  }
+  return inside;
+}
+
+function pointDown(e){
+  e.preventDefault();
+  const p=pointerPos(e);
+  if(phase==='assemble'){
+    for(let i=pieces.length-1;i>=0;i--){
+      const pc=pieces[i];
+      if(pc.placed)continue;
+      if(pointInPieceLocal(p.x,p.y,pc)){
+        dragIdx=i;
+        dragOffset={x:p.x-pc.cur.x,y:p.y-pc.cur.y};
+        SFX.click();
+        break;
+      }
+    }
+  } else if(phase==='seams'){
+    handleSeamClick(p);
+  }
+}
+function pointMove(e){
+  if(dragIdx<0)return;
+  e.preventDefault();
+  const p=pointerPos(e);
+  pieces[dragIdx].cur.x=p.x-dragOffset.x;
+  pieces[dragIdx].cur.y=p.y-dragOffset.y;
+}
+function pointUp(){
+  if(dragIdx>=0){
+    const pc=pieces[dragIdx];
+    const d=Math.hypot(pc.cur.x-pc.homeX,pc.cur.y-pc.homeY);
+    if(d<SNAP_DIST){
+      pc.cur.x=pc.homeX;pc.cur.y=pc.homeY;pc.rot=0;pc.placed=true;
+      score+=20;
+      SFX.point();
+      if(pieces.every(x=>x.placed))finishAssembly();
+      updateHud();
+    }
+  }
+  dragIdx=-1;
+}
+c.addEventListener('mousedown',pointDown);
+c.addEventListener('mousemove',pointMove);
+window.addEventListener('mouseup',pointUp);
+c.addEventListener('touchstart',pointDown,{passive:false});
+c.addEventListener('touchmove',pointMove,{passive:false});
+c.addEventListener('touchend',pointUp);
+
+function finishAssembly(){
+  phase='seams';
+  SFX.success();
+  document.getElementById('msg').textContent=I18N.t('seams_hint','All pieces placed! Click along each glowing seam to apply gold lacquer.');
+}
+
+function handleSeamClick(p){
+  for(const seam of seams){
+    if(seam.done)continue;
+    const sp=seamPointReal(seam);
+    if(Math.hypot(p.x-sp.x,p.y-sp.y)<30){
+      seam.done=true;
+      score+=15;
+      SFX.coin();
+      if(seams.every(s=>s.done))finishRound();
+      updateHud();
+      return;
+    }
+  }
+}
+
+function seamPointReal(seam){
+  const a=pieces[seam.i], b=pieces[seam.j];
+  const angle=(a.midA+b.midA)/2;
+  return {x:a.homeX+Math.cos(angle)*a.r*0.85, y:a.homeY+Math.sin(angle)*a.r*0.85};
+}
+
+function finishRound(){
+  phase='done';
+  SFX.win();
+  document.getElementById('msg').textContent=I18N.t('vessel_repaired','Vessel repaired! On to the next one.');
+  document.getElementById('nextBtn').disabled=false;
+  if(score>best){best=score;localStorage.setItem('kintsugirepair_best',String(best));}
+  updateHud();
+}
+
+function startNextRound(){
+  round++;
+  resetRound();
+}
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('bestDisp').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+}
+
+function drawPiece(pc,ghost){
+  ctx.save();
+  ctx.translate(pc.cur.x,pc.cur.y);
+  ctx.rotate(pc.rot);
+  ctx.beginPath();
+  pc.pts.forEach((pt,i)=>{ if(i===0)ctx.moveTo(pt.x,pt.y); else ctx.lineTo(pt.x,pt.y); });
+  ctx.closePath();
+  if(ghost){
+    ctx.strokeStyle='rgba(255,255,255,0.35)';
+    ctx.lineWidth=2;
+    ctx.setLineDash([5,4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } else {
+    ctx.fillStyle=pc.color;
+    ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.4)';
+    ctx.lineWidth=1.5;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#3d2e26';
+  ctx.fillRect(0,0,W,H);
+
+  if(phase==='assemble'){
+    // draw ghost outlines at home positions for unplaced pieces
+    pieces.forEach(pc=>{
+      if(!pc.placed){
+        const ghostPiece={pts:pc.pts,cur:{x:pc.homeX,y:pc.homeY},rot:0};
+        drawPiece(ghostPiece,true);
+      }
+    });
+    // draw placed pieces first, then dragged/unplaced on top
+    pieces.forEach((pc,i)=>{ if(pc.placed)drawPiece(pc,false); });
+    pieces.forEach((pc,i)=>{ if(!pc.placed&&i!==dragIdx)drawPiece(pc,false); });
+    if(dragIdx>=0)drawPiece(pieces[dragIdx],false);
+  } else {
+    // assembled vessel with seams
+    pieces.forEach(pc=>drawPiece(pc,false));
+    seams.forEach(seam=>{
+      const sp=seamPointReal(seam);
+      if(seam.done){
+        ctx.strokeStyle='#ffd700';
+        ctx.lineWidth=4;
+        ctx.beginPath();ctx.arc(sp.x,sp.y,8,0,Math.PI*2);ctx.stroke();
+        ctx.fillStyle='rgba(255,215,0,0.5)';
+        ctx.beginPath();ctx.arc(sp.x,sp.y,8,0,Math.PI*2);ctx.fill();
+      } else {
+        ctx.strokeStyle='#fff8';
+        ctx.lineWidth=2;
+        ctx.beginPath();ctx.arc(sp.x,sp.y,10,0,Math.PI*2);ctx.stroke();
+      }
+    });
+  }
+  requestAnimationFrame(draw);
+}
+draw();
+</script></body></html>

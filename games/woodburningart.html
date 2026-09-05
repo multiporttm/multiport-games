@@ -1,0 +1,302 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Wood Burning Art</title><meta name="description" content="Play Wood Burning Art free online — Drag the hot tip along the glowing guide line on the wood plank. Keep your speed steady: too slow over-burns (dark red), too fast under-burns (pale). Stay in the sweet zone for a perfect scorch!"><link rel="canonical" href="https://games.multiportllc.com/games/woodburningart"><meta property="og:title" content="Wood Burning Art - Multiport Games"><meta property="og:description" content="Play Wood Burning Art free online — Drag the hot tip along the glowing guide line on the wood plank. Keep your speed steady: too slow over-burns (dark red), too fast under-burns (pale). Stay in the sweet zone for a perfect scorch!"><meta property="og:url" content="https://games.multiportllc.com/games/woodburningart"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Wood Burning Art","description":"Play Wood Burning Art free online instantly. Drag the hot pyrography tip along the glowing guide line on the wood plank, keeping an even pace to burn it cleanly. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/woodburningart","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:16px;text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#f2d6a8;font-weight:800;margin-bottom:10px;font-size:.95rem}
+#hud span b{color:#ffb347}
+#c{background:#5c3a21;border-radius:10px;touch-action:none;cursor:crosshair;max-width:100%}
+#heatbar{width:280px;max-width:80vw;height:16px;background:#2a1a0e;border-radius:8px;margin:8px auto;overflow:hidden;border:1px solid #7a5a3a;position:relative}
+#heatfill{height:100%;width:0%;background:linear-gradient(90deg,#4a3a2a,#ff6a00,#ffd400);transition:width .08s}
+#heatbar .zone{position:absolute;top:0;bottom:0;background:rgba(120,255,120,.3);border-left:1px solid #7ec850;border-right:1px solid #7ec850}
+#msg{color:#ffd54f;font-weight:800;min-height:1.6em;margin-top:6px}
+#again{display:none;margin-top:10px;padding:10px 24px;background:#ff6a00;border:none;border-radius:20px;color:#fff;font-weight:800;cursor:pointer;font-size:1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Wood Burning Art</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span>Round <b id="roundEl">1</b></span><span>Score <b id="scoreEl">0</b></span><span>Best <b id="bestEl">0</b></span></div>
+      <canvas id="c" width="640" height="380"></canvas>
+      <div id="heatbar"><div class="zone" id="zoneMark"></div><div id="heatfill"></div></div>
+      <div id="msg">Press and drag along the glowing line</div>
+      <button id="again">Next Design</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press/click and hold on the start of the glowing guide line, then drag the hot tip along the path. Keep your speed inside the green zone on the heat gauge — too slow scorches the wood too dark (over-burn), too fast leaves it too pale (under-burn). Trace the whole design accurately and evenly to score well. Each round adds a more intricate design.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const heatfill=document.getElementById('heatfill'),zoneMark=document.getElementById('zoneMark');
+const msg=document.getElementById('msg'),again=document.getElementById('again');
+const scoreEl=document.getElementById('scoreEl'),bestEl=document.getElementById('bestEl'),roundEl=document.getElementById('roundEl');
+
+let best=parseInt(localStorage.getItem('woodburningart_best')||'0',10);
+bestEl.textContent=best;
+
+let round=1, totalScore=0, path=[], segLen=[], totalLen=0, burn=[], drawing=false, curDist=0, lastPos=null, lastTime=0, heat=0.5, finished=false;
+const ZLO=0.35, ZHI=0.75; // target speed zone as fraction of gauge (0..1)
+
+function genPath(r){
+  // generate a smooth-ish design: more curves/points each round
+  const pts=[];
+  const cx=320, cy=190;
+  const n=3+Math.min(r,6); // number of shape features
+  const type=(r-1)%3;
+  if(type===0){ // spiral-ish flower petals
+    const petals=3+r;
+    const steps=petals*24;
+    for(let i=0;i<=steps;i++){
+      const t=i/steps*Math.PI*2*Math.min(1,petals/3);
+      const a=t;
+      const rad=70+40*Math.sin(a*petals/2);
+      pts.push([cx+Math.cos(a)*rad, cy+Math.sin(a)*rad*0.8]);
+    }
+  } else if(type===1){ // zigzag leaf vine
+    const segs=4+r;
+    for(let i=0;i<=segs*10;i++){
+      const t=i/(segs*10);
+      const x=60+t*520;
+      const y=cy+Math.sin(t*Math.PI*segs)*60;
+      pts.push([x,y]);
+    }
+  } else { // star / geometric
+    const spikes=4+Math.floor(r/2);
+    const steps=spikes*20;
+    for(let i=0;i<=steps;i++){
+      const a=i/steps*Math.PI*2;
+      const rad= (Math.floor(i/(steps/(spikes*2)))%2===0)?110:50;
+      pts.push([cx+Math.cos(a)*rad, cy+Math.sin(a)*rad]);
+    }
+  }
+  return pts;
+}
+
+function buildPath(r){
+  path=genPath(r);
+  segLen=[];
+  totalLen=0;
+  for(let i=1;i<path.length;i++){
+    const d=Math.hypot(path[i][0]-path[i-1][0],path[i][1]-path[i-1][1]);
+    segLen.push(d);
+    totalLen+=d;
+  }
+  burn=new Array(path.length).fill(null); // null=unburned, else quality 0..1 (1=perfect)
+  curDist=0;
+  finished=false;
+}
+
+function distAlongToPoint(dist){
+  let acc=0;
+  for(let i=0;i<segLen.length;i++){
+    if(acc+segLen[i]>=dist){
+      const t=(dist-acc)/segLen[i];
+      return [path[i][0]+(path[i+1][0]-path[i][0])*t, path[i][1]+(path[i+1][1]-path[i][1])*t, i];
+    }
+    acc+=segLen[i];
+  }
+  const last=path[path.length-1];
+  return [last[0],last[1],path.length-2];
+}
+
+function drawWoodGrain(){
+  ctx.fillStyle='#5c3a21';
+  ctx.fillRect(0,0,640,380);
+  ctx.strokeStyle='rgba(0,0,0,0.12)';
+  ctx.lineWidth=2;
+  for(let y=10;y<380;y+=22){
+    ctx.beginPath();
+    ctx.moveTo(0,y);
+    for(let x=0;x<=640;x+=40){
+      ctx.lineTo(x,y+Math.sin((x+y)*0.03)*6);
+    }
+    ctx.stroke();
+  }
+}
+
+function render(){
+  drawWoodGrain();
+  // guide line (unburned target) faint
+  ctx.strokeStyle='rgba(255,200,90,0.35)';
+  ctx.lineWidth=6;
+  ctx.beginPath();
+  path.forEach((p,i)=>{ if(i===0)ctx.moveTo(p[0],p[1]); else ctx.lineTo(p[0],p[1]); });
+  ctx.stroke();
+
+  // burned segments colored by quality
+  ctx.lineCap='round';
+  for(let i=0;i<path.length-1;i++){
+    if(burn[i]==null)continue;
+    const q=burn[i]; // 1 perfect, <1 under, >1 over (we store separately, see below)
+    let col;
+    if(q.type==='perfect') col='#2b1508';
+    else if(q.type==='under') col='#8a5a2c';
+    else col='#170a04';
+    ctx.strokeStyle=col;
+    ctx.lineWidth=q.type==='perfect'?9:7;
+    ctx.beginPath();
+    ctx.moveTo(path[i][0],path[i][1]);
+    ctx.lineTo(path[i+1][0],path[i+1][1]);
+    ctx.stroke();
+  }
+
+  // tool tip glow at current dist
+  const [tx,ty]=distAlongToPoint(curDist);
+  ctx.fillStyle='rgba(255,150,40,0.9)';
+  ctx.beginPath();ctx.arc(tx,ty,drawing?10:7,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff8e0';
+  ctx.beginPath();ctx.arc(tx,ty,3,0,Math.PI*2);ctx.fill();
+
+  // start marker
+  ctx.fillStyle='#7ec850';
+  ctx.beginPath();ctx.arc(path[0][0],path[0][1],9,0,Math.PI*2);ctx.fill();
+}
+
+function getPos(e){
+  const rect=c.getBoundingClientRect();
+  const sx=c.width/rect.width, sy=c.height/rect.height;
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return [cx*sx, cy*sy];
+}
+
+function tryStart(e){
+  const [x,y]=getPos(e);
+  const [sx,sy]=path[0];
+  if(Math.hypot(x-sx,y-sy)<40){
+    drawing=true; curDist=0; lastPos=[x,y]; lastTime=performance.now(); heat=0.5;
+    SFX.click();
+  }
+}
+
+function moveTip(e){
+  if(!drawing||finished)return;
+  const [x,y]=getPos(e);
+  const now=performance.now();
+  const dt=Math.max(1,now-lastTime); lastTime=now;
+  // project forward: advance curDist toward nearest point ahead within a window
+  let best=null,bestD=Infinity,bestDist=curDist;
+  const searchAhead=Math.min(totalLen, curDist+60);
+  for(let d=curDist; d<=searchAhead; d+=2){
+    const [px,py]=distAlongToPoint(d);
+    const dd=Math.hypot(px-x,py-y);
+    if(dd<bestD){bestD=dd;bestDist=d;}
+  }
+  const advance=bestDist-curDist;
+  const speed=advance/dt*1000; // px per second along path
+
+  // ideal speed range (px/s)
+  const idealLo=90, idealHi=260;
+  let quality;
+  if(speed<idealLo*0.4) quality=null; // barely moving, no burn yet
+  else if(speed<idealLo) quality={type:'over'}; // too slow -> over-burn (too dark)
+  else if(speed<=idealHi) quality={type:'perfect'};
+  else quality={type:'under'}; // too fast -> under-burn (too pale)
+
+  // mark segments between curDist and bestDist as burned
+  if(quality && bestD<45){
+    let acc=0;
+    for(let i=0;i<segLen.length;i++){
+      const segStart=acc, segEnd=acc+segLen[i];
+      if(segEnd>curDist && segStart<bestDist){
+        if(burn[i]==null) burn[i]=quality; else if(burn[i].type!==quality.type) burn[i]={type:'over'}; // mixed = messy, treat as over
+      }
+      acc=segEnd;
+    }
+    curDist=Math.max(curDist,bestDist);
+  } else if(bestD>=45){
+    // strayed too far off the line — small penalty feedback via heat glitch
+  }
+
+  // update heat gauge (visual feedback of current pace, normalized)
+  const norm=Math.max(0,Math.min(1,(speed-40)/(320-40)));
+  heat=heat*0.7+norm*0.3;
+  heatfill.style.width=(heat*100)+'%';
+
+  if(curDist>=totalLen-1 && !finished){
+    finishRound();
+  }
+  render();
+}
+
+function stopDraw(){ drawing=false; }
+
+function finishRound(){
+  finished=true;
+  drawing=false;
+  let perfect=0,under=0,over=0,total=0;
+  burn.forEach(b=>{ if(b==null)return; total++; if(b.type==='perfect')perfect++; else if(b.type==='under')under++; else over++; });
+  const traced=total/(path.length-1);
+  const accuracy=total>0?perfect/total:0;
+  const roundScore=Math.round(traced*400*accuracy + traced*100);
+  totalScore+=roundScore;
+  scoreEl.textContent=totalScore;
+  if(totalScore>best){ best=totalScore; localStorage.setItem('woodburningart_best',String(best)); bestEl.textContent=best; }
+  if(traced>0.85 && accuracy>0.55){
+    msg.textContent=I18N.t('wb_round_complete','Nice burn! +{s} points').replace('{s}',roundScore);
+    SFX.success();
+  } else {
+    msg.textContent=I18N.t('wb_round_partial','Design incomplete or uneven. +{s} points').replace('{s}',roundScore);
+    SFX.fail();
+  }
+  again.style.display='inline-block';
+}
+
+again.onclick=()=>{
+  round++;
+  roundEl.textContent=round;
+  again.style.display='none';
+  msg.textContent=I18N.t('wb_new_design','New design ready — start at the green dot!');
+  buildPath(round);
+  render();
+};
+
+c.addEventListener('mousedown',tryStart);
+c.addEventListener('mousemove',moveTip);
+window.addEventListener('mouseup',stopDraw);
+c.addEventListener('touchstart',e=>{e.preventDefault();tryStart(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();moveTip(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();stopDraw();},{passive:false});
+
+// keyboard support: arrow keys nudge along the path for accessibility
+document.addEventListener('keydown',e=>{
+  if(finished)return;
+  if(e.code==='Space'){ e.preventDefault(); if(!drawing){drawing=true;lastTime=performance.now();SFX.click();} return; }
+  if(!drawing)return;
+  if(e.code==='ArrowRight'||e.code==='ArrowUp'){
+    e.preventDefault();
+    const now=performance.now();
+    const dt=Math.max(1,now-lastTime); lastTime=now;
+    const step=6;
+    const newDist=Math.min(totalLen,curDist+step);
+    const speed=step/dt*1000;
+    let quality = speed<90*0.4?null : speed<90?{type:'over'} : speed<=260?{type:'perfect'} : {type:'under'};
+    if(quality){
+      let acc=0;
+      for(let i=0;i<segLen.length;i++){
+        const segStart=acc, segEnd=acc+segLen[i];
+        if(segEnd>curDist && segStart<newDist){ if(burn[i]==null)burn[i]=quality; }
+        acc=segEnd;
+      }
+    }
+    curDist=newDist;
+    const norm=Math.max(0,Math.min(1,(speed-40)/(320-40)));
+    heat=heat*0.7+norm*0.3;
+    heatfill.style.width=(heat*100)+'%';
+    if(curDist>=totalLen-1) finishRound();
+    render();
+  }
+});
+
+zoneMark.style.left='35%';
+zoneMark.style.width='40%';
+
+buildPath(round);
+render();
+</script></body></html>
