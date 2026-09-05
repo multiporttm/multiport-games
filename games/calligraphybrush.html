@@ -1,0 +1,233 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Calligraphy Brush</title><meta name="description" content="Play Calligraphy Brush free online — Trace the glowing stroke path with your mouse, finger, or arrow keys. Stay inside the tolerance band for the highest accuracy score. Strokes get thinner and more complex each round."><link rel="canonical" href="https://games.multiportllc.com/games/calligraphybrush"><meta property="og:title" content="Calligraphy Brush - Multiport Games"><meta property="og:description" content="Play Calligraphy Brush free online — Trace the glowing stroke path with your mouse, finger, or arrow keys. Stay inside the tolerance band for the highest accuracy score. Strokes get thinner and more complex each round."><meta property="og:url" content="https://games.multiportllc.com/games/calligraphybrush"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Calligraphy Brush","description":"Play Calligraphy Brush free online instantly. Trace the glowing stroke path with your mouse, finger, or arrow keys. Stay inside the tolerance band for the highest accuracy score. Strokes get thinner and more complex each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/calligraphybrush","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0c0810}
+#c{background:#1b1420;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#e9c9ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:22px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#msg{color:#c9a3ff;text-align:center;font-size:.9rem;min-height:1.3em;padding-bottom:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Calligraphy Brush</div>
+  <div class="game-frame">
+    <div id="hud"><span>Round: <b id="roundVal">1</b></span><span>Score: <b id="scoreVal">0</b></span><span>Best: <b id="bestVal">0</b></span></div>
+    <div id="msg">Trace the glowing path from the start dot to the end dot</div>
+    <canvas id="c" width="700" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag your mouse or finger along the glowing stroke path, starting at the pulsing dot. Keyboard players can use <b>Arrow Keys</b> to nudge the brush cursor. Stay inside the tolerance band the whole way to keep your accuracy high — straying too far breaks your streak. Reach the end dot to finish the stroke and move to the next, thinner and trickier round.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=700,H=420;
+const roundEl=document.getElementById('roundVal'),scoreEl=document.getElementById('scoreVal'),bestEl=document.getElementById('bestVal'),msgEl=document.getElementById('msg');
+let best=parseInt(localStorage.getItem('calligraphybrush_best')||'0',10);
+bestEl.textContent=best;
+
+let round=1,totalScore=0;
+let path=[];        // array of {x,y} sample points defining the stroke centerline
+let tolerance=34;   // px half-width of acceptable band, shrinks each round
+let progress=0;     // furthest index along path the player has validly reached
+let drawing=false;
+let cursor=null;    // current brush position {x,y}
+let coveredGood=0,coveredBad=0; // for scoring accuracy
+let finished=false;
+let strokeActive=false;
+
+function bezier(p0,p1,p2,p3,t){
+  const mt=1-t;
+  const x=mt*mt*mt*p0.x+3*mt*mt*t*p1.x+3*mt*t*t*p2.x+t*t*t*p3.x;
+  const y=mt*mt*mt*p0.y+3*mt*mt*t*p1.y+3*mt*t*t*p2.y+t*t*t*p3.y;
+  return {x,y};
+}
+
+function genPath(r){
+  // Build a randomized multi-curve stroke path that gets more complex with round.
+  const segs=Math.min(1+Math.floor((r-1)/2),4);
+  const pts=[];
+  let cx=90+Math.random()*60, cy=80+Math.random()*100;
+  pts.push({x:cx,y:cy});
+  for(let s=0;s<segs;s++){
+    const p0=pts[pts.length-1];
+    const dx=(W-180)/segs;
+    const p1={x:p0.x+dx*0.3+Math.random()*40-20,y:p0.y+(Math.random()*160-80)};
+    const p2={x:p0.x+dx*0.7+Math.random()*40-20,y:p0.y+(Math.random()*160-80)};
+    const p3={x:p0.x+dx,y:Math.max(60,Math.min(H-60,p0.y+(Math.random()*140-70)))};
+    for(let i=1;i<=40;i++)pts.push(bezier(p0,p1,p2,p3,i/40));
+  }
+  // clamp into canvas
+  return pts.map(p=>({x:Math.max(40,Math.min(W-40,p.x)),y:Math.max(40,Math.min(H-40,p.y))}));
+}
+
+function newRound(){
+  path=genPath(round);
+  tolerance=Math.max(12,34-round*2.2);
+  progress=0;coveredGood=0;coveredBad=0;
+  cursor=null;drawing=false;finished=false;strokeActive=false;
+  msgEl.textContent=I18N.t('trace_prompt','Trace the glowing path from the start dot to the end dot');
+  roundEl.textContent=round;
+}
+
+function distToSeg(p,a,b){
+  const abx=b.x-a.x,aby=b.y-a.y;
+  const l2=abx*abx+aby*aby;
+  let t=l2===0?0:((p.x-a.x)*abx+(p.y-a.y)*aby)/l2;
+  t=Math.max(0,Math.min(1,t));
+  const proj={x:a.x+t*abx,y:a.y+t*aby};
+  return Math.hypot(p.x-proj.x,p.y-proj.y);
+}
+
+// find nearest path index and distance to full path near current progress window
+function nearestPathInfo(p){
+  let best=Infinity,bestIdx=progress;
+  const lo=Math.max(0,progress-2), hi=Math.min(path.length-1,progress+30);
+  for(let i=lo;i<hi;i++){
+    const d=distToSeg(p,path[i],path[i+1]||path[i]);
+    if(d<best){best=d;bestIdx=i;}
+  }
+  return {dist:best,idx:bestIdx};
+}
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+function startAt(p){
+  if(finished)return;
+  const d=Math.hypot(p.x-path[0].x,p.y-path[0].y);
+  if(d<40){
+    drawing=true;strokeActive=true;cursor={x:path[0].x,y:path[0].y};progress=0;coveredGood=0;coveredBad=0;
+    msgEl.textContent=I18N.t('trace_go','Trace carefully to the end!');
+  }
+}
+
+function moveTo(p){
+  if(!drawing||finished)return;
+  cursor=p;
+  const info=nearestPathInfo(p);
+  if(info.idx>progress)progress=info.idx;
+  if(info.dist<=tolerance)coveredGood++; else coveredBad++;
+  if(progress>=path.length-3){
+    completeStroke();
+  }
+}
+
+function endDrag(){
+  if(drawing&&!finished){
+    // released early — penalize but allow retry of same round
+    drawing=false;
+    if(progress<path.length-6){
+      msgEl.textContent=I18N.t('trace_lost','Lifted too soon — touch the start dot to try again');
+    }
+  }
+}
+
+function completeStroke(){
+  drawing=false;finished=true;
+  const total=coveredGood+coveredBad;
+  const acc=total>0?Math.round((coveredGood/total)*100):0;
+  const pts=Math.round(acc*(5+round*2)/100)*10;
+  totalScore+=pts;
+  scoreEl.textContent=totalScore;
+  if(totalScore>best){best=totalScore;localStorage.setItem('calligraphybrush_best',String(best));bestEl.textContent=best;}
+  if(acc>=60){SFX.success();}else{SFX.fail();}
+  msgEl.textContent=I18N.t('stroke_done','Stroke complete! Accuracy {a}% — +{p} pts. Next round starting...').replace('{a}',acc).replace('{p}',pts);
+  setTimeout(()=>{round++;newRound();},1600);
+}
+
+c.addEventListener('mousedown',e=>startAt(pointerPos(e)));
+c.addEventListener('mousemove',e=>moveTo(pointerPos(e)));
+window.addEventListener('mouseup',endDrag);
+c.addEventListener('touchstart',e=>{e.preventDefault();startAt(pointerPos(e));},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();moveTo(pointerPos(e));},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();endDrag();},{passive:false});
+
+// Keyboard control: arrow keys nudge a virtual cursor; space/enter starts if near start dot
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)){
+    e.preventDefault();
+    if(!cursor)cursor={x:path[0].x,y:path[0].y};
+    const step=8;
+    if(e.code==='ArrowUp')cursor.y-=step;
+    if(e.code==='ArrowDown')cursor.y+=step;
+    if(e.code==='ArrowLeft')cursor.x-=step;
+    if(e.code==='ArrowRight')cursor.x+=step;
+    cursor.x=Math.max(0,Math.min(W,cursor.x));
+    cursor.y=Math.max(0,Math.min(H,cursor.y));
+    if(!drawing&&!finished){startAt(cursor);}
+    if(drawing)moveTo(cursor);
+  }
+});
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#1b1420');bg.addColorStop(1,'#241a2e');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // tolerance band
+  ctx.save();
+  ctx.strokeStyle='rgba(233,201,255,0.15)';
+  ctx.lineWidth=tolerance*2;
+  ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();
+  path.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+  ctx.stroke();
+  ctx.restore();
+
+  // centerline glow
+  ctx.save();
+  ctx.strokeStyle='#c9a3ff';
+  ctx.lineWidth=2;
+  ctx.shadowColor='#c9a3ff';ctx.shadowBlur=10;
+  ctx.beginPath();
+  path.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+  ctx.stroke();
+  ctx.restore();
+
+  // covered portion (ink trail)
+  if(progress>0){
+    ctx.save();
+    ctx.strokeStyle='#ffd54f';
+    ctx.lineWidth=6;
+    ctx.lineCap='round';
+    ctx.shadowColor='#ffd54f';ctx.shadowBlur=8;
+    ctx.beginPath();
+    for(let i=0;i<=progress && i<path.length;i++){
+      const p=path[i];
+      i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // start dot (pulse)
+  const pulse=4+Math.sin(Date.now()/200)*2;
+  ctx.fillStyle=drawing||finished?'#7ec850':'#ff6b9d';
+  ctx.beginPath();ctx.arc(path[0].x,path[0].y,10+ (drawing||finished?0:pulse),0,Math.PI*2);ctx.fill();
+
+  // end dot
+  const end=path[path.length-1];
+  ctx.fillStyle='#4fc3f7';
+  ctx.beginPath();ctx.arc(end.x,end.y,10,0,Math.PI*2);ctx.fill();
+
+  // brush cursor
+  if(cursor){
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(cursor.x,cursor.y,6,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#000a';ctx.lineWidth=1;ctx.stroke();
+  }
+
+  requestAnimationFrame(draw);
+}
+newRound();
+draw();
+</script></body></html>

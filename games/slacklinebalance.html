@@ -1,0 +1,233 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Slackline Balance</title><meta name="description" content="Play Slackline Balance free online — Use Left/Right Arrow keys (or tap/drag left and right) to counter-balance and keep the meter centered while you walk across the line. Fall off and it's over — how far can you go?"><link rel="canonical" href="https://games.multiportllc.com/games/slacklinebalance"><meta property="og:title" content="Slackline Balance - Multiport Games"><meta property="og:description" content="Play Slackline Balance free online — Use Left/Right Arrow keys (or tap/drag left and right) to counter-balance and keep the meter centered while you walk across the line. Fall off and it's over — how far can you go?"><meta property="og:url" content="https://games.multiportllc.com/games/slacklinebalance"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Slackline Balance","description":"Play Slackline Balance free online instantly. Use Left/Right Arrow keys (or tap/drag left and right) to counter-balance and keep the meter centered while you walk across the line. Fall off and it's over — how far can you go? No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/slacklinebalance","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a3a5c;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:center;gap:22px;color:#ffd54f;font-size:1.05rem;font-weight:700;padding:8px;flex-wrap:wrap}
+#hud span b{color:#fff}
+#balanceBar{width:320px;height:22px;background:rgba(255,255,255,0.15);border-radius:11px;margin:0 auto 6px;position:relative;overflow:hidden}
+#balanceMid{position:absolute;left:50%;top:0;bottom:0;width:2px;background:rgba(255,255,255,0.6)}
+#balanceMeter{position:absolute;top:2px;bottom:2px;width:14px;border-radius:7px;background:#4caf50;left:50%;transform:translateX(-50%)}
+#touchRow{display:flex;justify-content:center;gap:16px;margin-top:10px}
+#touchRow button{flex:1;max-width:160px;padding:16px;font-size:1.3rem;font-weight:800;border:none;border-radius:12px;background:#5e72eb;color:#fff;cursor:pointer;user-select:none}
+#touchRow button:active{background:#4155c9}
+@media(min-width:700px){#touchRow{display:none}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Slackline Balance</div>
+  <div class="game-frame">
+    <div id="hud"><span>Line: <b id="lineEl">1</b></span><span>Distance: <b id="distEl">0</b>m</span><span>Best: <b id="bestEl">0</b>m</span></div>
+    <div id="balanceBar"><div id="balanceMid"></div><div id="balanceMeter"></div></div>
+    <canvas id="c" width="700" height="360"></canvas>
+    <div id="touchRow"><button id="btnL">◀ LEAN</button><button id="btnR">LEAN ▶</button></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Left/Right Arrow</b> keys (or <b>tap/drag</b> left and right) to counter-balance and keep the meter centered while you walk across the line. Falling off ends your run — cross multiple increasingly wobbly, windy lines for a high score!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=700,H=360;
+const LINE_Y=200;
+const LINE_START=60,LINE_END=640;
+
+let balance=0, // -100..100, 0 = centered
+    lean=0, // player input -1..1
+    drift=0,
+    line=1,
+    distance=0,
+    best=parseFloat(localStorage.getItem('slacklinebalance_best')||'0'),
+    running=false,
+    fallen=false,
+    lastTime=null,
+    windTimer=0,
+    windForce=0,
+    walkCycle=0,
+    fallAnimT=0,
+    keys={left:false,right:false};
+
+document.getElementById('bestEl').textContent=best.toFixed(0);
+
+function lineDifficulty(){
+  return {
+    driftStrength: 18+line*7,
+    windChance: 0.3+line*0.15,
+    windStrength: 10+line*5,
+    speed: 60+line*6
+  };
+}
+
+function reset(fullReset){
+  balance=0;drift=0;windForce=0;windTimer=0;distance=0;fallen=false;running=false;lastTime=null;walkCycle=0;fallAnimT=0;
+  if(fullReset)line=1;
+  document.getElementById('lineEl').textContent=line;
+  document.getElementById('distEl').textContent='0';
+}
+
+function startIfNeeded(){ if(!running&&!fallen)running=true; }
+
+function setLean(v){
+  lean=v;
+  startIfNeeded();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'){keys.left=true;setLean(-1);}
+  else if(e.code==='ArrowRight'){keys.right=true;setLean(1);}
+  else if(e.code==='Space'&&fallen){reset(false);}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft')keys.left=false;
+  if(e.code==='ArrowRight')keys.right=false;
+  if(!keys.left&&!keys.right)lean=0;
+  else lean=keys.left?-1:1;
+});
+
+const btnL=document.getElementById('btnL'),btnR=document.getElementById('btnR');
+function bindHold(btn,val){
+  const down=e=>{e.preventDefault();setLean(val);};
+  const up=e=>{e.preventDefault();if(lean===val)lean=0;};
+  btn.addEventListener('touchstart',down,{passive:false});
+  btn.addEventListener('touchend',up,{passive:false});
+  btn.addEventListener('mousedown',down);
+  btn.addEventListener('mouseup',up);
+  btn.addEventListener('mouseleave',up);
+}
+bindHold(btnL,-1);
+bindHold(btnR,1);
+
+c.addEventListener('click',()=>{ if(fallen)reset(false); });
+c.addEventListener('touchstart',e=>{ if(fallen){e.preventDefault();reset(false);} },{passive:false});
+
+function fall(){
+  if(fallen)return;
+  fallen=true;running=false;fallAnimT=0;
+  SFX.lose();
+  if(distance>best){best=distance;localStorage.setItem('slacklinebalance_best',best.toFixed(1));document.getElementById('bestEl').textContent=best.toFixed(0);}
+}
+
+function drawScene(){
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#4fa3d1');sky.addColorStop(1,'#1a3a5c');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // ground far below
+  ctx.fillStyle='rgba(255,255,255,0.05)';
+  for(let i=0;i<6;i++){
+    ctx.beginPath();
+    ctx.arc(80+i*130,H-30,50,Math.PI,0);
+    ctx.fill();
+  }
+  // posts
+  ctx.fillStyle='#5d4037';
+  ctx.fillRect(LINE_START-10,LINE_Y-4,10,140);
+  ctx.fillRect(LINE_END,LINE_Y-4,10,140);
+  // slack line, sags with balance tilt visually
+  const sag=Math.sin(distance*0.05)*4 + Math.abs(balance)*0.15;
+  ctx.strokeStyle='#e0c097';
+  ctx.lineWidth=5;
+  ctx.beginPath();
+  ctx.moveTo(LINE_START,LINE_Y);
+  const midX=(LINE_START+LINE_END)/2;
+  ctx.quadraticCurveTo(midX,LINE_Y+sag,LINE_END,LINE_Y);
+  ctx.stroke();
+}
+
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/1000,0.05);
+  lastTime=now;
+  const diff=lineDifficulty();
+  const crossDist=90; // meters to cross a line
+
+  if(running&&!fallen){
+    // random drift + wind
+    windTimer-=dt;
+    if(windTimer<=0){
+      windTimer=1.2+Math.random()*1.6;
+      if(Math.random()<diff.windChance){
+        windForce=(Math.random()<0.5?-1:1)*diff.windStrength*(0.6+Math.random()*0.7);
+      } else windForce*=0.3;
+    }
+    drift += (Math.random()-0.5)*diff.driftStrength*dt*2;
+    drift = Math.max(-1,Math.min(1,drift));
+    balance += drift*diff.driftStrength*dt*0.6;
+    balance += windForce*dt*0.5;
+    balance += -lean*70*dt;
+    // natural centering damp
+    balance *= (1-0.15*dt);
+    balance = Math.max(-100,Math.min(100,balance));
+
+    if(Math.abs(balance)>92){
+      fall();
+    } else {
+      distance += diff.speed*dt*(1-Math.abs(balance)/140);
+      walkCycle += dt*6;
+      document.getElementById('distEl').textContent=Math.floor(distance);
+      if(distance>=crossDist){
+        // completed this line
+        SFX.success();
+        line++;
+        distance=0;balance=0;drift=0;windForce=0;
+        document.getElementById('lineEl').textContent=line;
+      }
+    }
+  }
+
+  document.getElementById('balanceMeter').style.left=(50+balance/100*38)+'%';
+  document.getElementById('balanceMeter').style.background = Math.abs(balance)>70?'#f44336':Math.abs(balance)>40?'#ff9800':'#4caf50';
+
+  ctx.clearRect(0,0,W,H);
+  drawScene();
+
+  // player position along line
+  const px=LINE_START + (LINE_END-LINE_START)*Math.min(0.95,distance/90);
+  const tilt=balance/100*0.6 + (fallen?fallAnimT*2:0);
+  const py=LINE_Y - 2 + (fallen? fallAnimT*fallAnimT*300*(balance<0?-1:1)*0 : 0);
+
+  ctx.save();
+  ctx.translate(px,py);
+  ctx.rotate(fallen? (balance<0?-1:1)*Math.min(1.4,fallAnimT*3) : tilt*0.5);
+  // arms out for balance
+  ctx.strokeStyle='#ffe0b2';ctx.lineWidth=5;ctx.lineCap='round';
+  const armSwing=Math.sin(walkCycle)*8;
+  ctx.beginPath();ctx.moveTo(0,-20);ctx.lineTo(-30,-16-armSwing*0.3);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-20);ctx.lineTo(30,-16+armSwing*0.3);ctx.stroke();
+  // legs
+  ctx.strokeStyle='#3949ab';ctx.lineWidth=6;
+  const legSwing=Math.sin(walkCycle)*10;
+  ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(-6+legSwing*0.4,18);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(6-legSwing*0.4,18);ctx.stroke();
+  // torso
+  ctx.strokeStyle='#e94560';ctx.lineWidth=7;
+  ctx.beginPath();ctx.moveTo(0,-20);ctx.lineTo(0,0);ctx.stroke();
+  // head
+  ctx.fillStyle='#ffe0b2';
+  ctx.beginPath();ctx.arc(0,-28,9,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+
+  if(fallen)fallAnimT+=dt;
+
+  ctx.textAlign='center';
+  if(!running&&!fallen){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';
+    ctx.fillText(I18N.t('slack_start','Press ←/→ or tap LEAN to step onto the line'),W/2,H/2);
+  }
+  if(fallen){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('you_fell','You fell!'),W/2,H/2-30);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('reached_line','Reached line {l}, {d}m total.').replace('{l}',line).replace('{d}',Math.floor(distance+(line-1)*90)),W/2,H/2);
+    ctx.fillText(I18N.t('restart_hint_slack','Tap or press Space to try again'),W/2,H/2+34);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+reset(true);
+requestAnimationFrame(loop);
+</script></body></html>

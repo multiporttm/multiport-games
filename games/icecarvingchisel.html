@@ -1,0 +1,228 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ice Carving Chisel</title><meta name="description" content="Play Ice Carving Chisel free online — Click or tap the ice block to chip away chunks and reveal the faint silhouette guide before time runs out. Score by matching the shape closely and leaving little ice behind."><link rel="canonical" href="https://games.multiportllc.com/games/icecarvingchisel"><meta property="og:title" content="Ice Carving Chisel - Multiport Games"><meta property="og:description" content="Play Ice Carving Chisel free online — Click or tap the ice block to chip away chunks and reveal the faint silhouette guide before time runs out. Score by matching the shape closely and leaving little ice behind."><meta property="og:url" content="https://games.multiportllc.com/games/icecarvingchisel"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ice Carving Chisel","description":"Play Ice Carving Chisel free online instantly. Click or tap the ice block to chip away chunks and reveal the faint silhouette guide before time runs out. Score by matching the shape closely and leaving little ice behind. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/icecarvingchisel","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#061018}
+#c{background:#bfe8f5;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#cdeeff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:20px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#msg{color:#8fd6f0;text-align:center;font-size:.9rem;min-height:1.3em;padding-bottom:4px}
+#timerBar{height:8px;background:#0a2a38;border-radius:4px;max-width:640px;margin:0 auto 8px;overflow:hidden}
+#timerFill{height:100%;background:linear-gradient(90deg,#4fc3f7,#81d4fa);width:100%;transition:width .2s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ice Carving Chisel</div>
+  <div class="game-frame">
+    <div id="hud"><span>Level: <b id="levelVal">1</b></span><span>Score: <b id="scoreVal">0</b></span><span>Best: <b id="bestVal">0</b></span></div>
+    <div id="timerBar"><div id="timerFill"></div></div>
+    <div id="msg">Chip the ice to reveal the faint shape beneath!</div>
+    <canvas id="c" width="640" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click or tap the ice block to chip away chunks with your chisel. A faint silhouette guide is hidden underneath — carve away exactly the ice covering it before time runs out. You're scored on how much of the target shape you reveal and how little extra ice you needlessly remove elsewhere. Finish with a high score to unlock a trickier silhouette next round.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=640,H=420,CELL=10;
+const COLS=W/CELL, ROWS=H/CELL;
+const levelEl=document.getElementById('levelVal'),scoreEl=document.getElementById('scoreVal'),bestEl=document.getElementById('bestVal'),msgEl=document.getElementById('msg'),timerFill=document.getElementById('timerFill');
+let best=parseInt(localStorage.getItem('icecarvingchisel_best')||'0',10);
+bestEl.textContent=best;
+
+let level=1,totalScore=0;
+let ice=[];       // ROWS x COLS boolean grid: true = ice present
+let target=[];    // ROWS x COLS boolean grid: true = part of target silhouette
+let timeLeft=30,timerId=null,running=false;
+let chipping=false;
+
+const SHAPES=[
+  // simple normalized point lists (0..1 range) forming closed polygons, drawn to grid
+  [[0.5,0.08],[0.75,0.3],[0.68,0.65],[0.8,0.9],[0.2,0.9],[0.32,0.65],[0.25,0.3]], // classic ice sculpture / swan-ish
+  [[0.5,0.05],[0.9,0.5],[0.5,0.95],[0.1,0.5]], // diamond
+  [[0.5,0.05],[0.61,0.35],[0.95,0.35],[0.68,0.57],[0.79,0.91],[0.5,0.7],[0.21,0.91],[0.32,0.57],[0.05,0.35],[0.39,0.35]], // star
+  [[0.2,0.85],[0.2,0.35],[0.5,0.05],[0.8,0.35],[0.8,0.85]], // house/heart-ish
+];
+
+function pointInPoly(x,y,poly){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i][0],yi=poly[i][1],xj=poly[j][0],yj=poly[j][1];
+    const intersect=((yi>y)!==(yj>y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi);
+    if(intersect)inside=!inside;
+  }
+  return inside;
+}
+
+function buildTarget(lvl){
+  const poly=SHAPES[(lvl-1)%SHAPES.length];
+  const grid=[];
+  for(let r=0;r<ROWS;r++){
+    const row=[];
+    for(let cIdx=0;cIdx<COLS;cIdx++){
+      const nx=cIdx/COLS, ny=r/ROWS;
+      row.push(pointInPoly(nx,ny,poly));
+    }
+    grid.push(row);
+  }
+  return grid;
+}
+
+function newLevel(){
+  target=buildTarget(level);
+  ice=[];
+  for(let r=0;r<ROWS;r++){ice.push(new Array(COLS).fill(true));}
+  timeLeft=Math.max(14,30-level*1.5);
+  levelEl.textContent=level;
+  msgEl.textContent=I18N.t('carve_prompt','Chip the ice to reveal the faint shape beneath!');
+  running=true;
+  clearInterval(timerId);
+  timerId=setInterval(()=>{
+    if(!running)return;
+    timeLeft-=0.2;
+    timerFill.style.width=Math.max(0,(timeLeft/Math.max(14,30-level*1.5))*100)+'%';
+    if(timeLeft<=0){timeLeft=0;finishLevel();}
+  },200);
+}
+
+function chipAt(px,py,radius){
+  const col=Math.floor(px/CELL),row=Math.floor(py/CELL);
+  const rCells=radius;
+  let chippedAny=false;
+  for(let dr=-rCells;dr<=rCells;dr++){
+    for(let dc=-rCells;dc<=rCells;dc++){
+      if(dr*dr+dc*dc>rCells*rCells)continue;
+      const r=row+dr,cIdx=col+dc;
+      if(r<0||r>=ROWS||cIdx<0||cIdx>=COLS)continue;
+      if(ice[r][cIdx]){ice[r][cIdx]=false;chippedAny=true;}
+    }
+  }
+  if(chippedAny)SFX.click();
+}
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+function handleDown(e){
+  if(!running)return;
+  chipping=true;
+  const p=pointerPos(e);
+  chipAt(p.x,p.y,2);
+}
+function handleMove(e){
+  if(!running||!chipping)return;
+  const p=pointerPos(e);
+  chipAt(p.x,p.y,2);
+}
+function handleUp(){chipping=false;}
+
+c.addEventListener('mousedown',handleDown);
+c.addEventListener('mousemove',handleMove);
+window.addEventListener('mouseup',handleUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();handleDown(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();handleMove(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();handleUp();},{passive:false});
+
+// keyboard support: arrow keys move a virtual chisel cursor, space chips
+let kx=W/2,ky=H/2;
+document.addEventListener('keydown',e=>{
+  if(!running)return;
+  const step=16;
+  if(e.code==='ArrowUp'){e.preventDefault();ky=Math.max(0,ky-step);}
+  if(e.code==='ArrowDown'){e.preventDefault();ky=Math.min(H,ky+step);}
+  if(e.code==='ArrowLeft'){e.preventDefault();kx=Math.max(0,kx-step);}
+  if(e.code==='ArrowRight'){e.preventDefault();kx=Math.min(W,kx+step);}
+  if(e.code==='Space'){e.preventDefault();chipAt(kx,ky,2);}
+});
+
+function finishLevel(){
+  running=false;
+  clearInterval(timerId);
+  // scoring: reward removing ice over target cells, penalize leftover ice over target,
+  // and penalize removing ice outside target (wasted chips) & leftover ice outside doesn't matter as much
+  let targetTotal=0,targetRevealed=0,outsideRemoved=0,outsideTotal=0;
+  for(let r=0;r<ROWS;r++){
+    for(let cIdx=0;cIdx<COLS;cIdx++){
+      if(target[r][cIdx]){
+        targetTotal++;
+        if(!ice[r][cIdx])targetRevealed++;
+      } else {
+        outsideTotal++;
+        if(!ice[r][cIdx])outsideRemoved++;
+      }
+    }
+  }
+  const revealPct=targetTotal?targetRevealed/targetTotal:0;
+  const wastePct=outsideTotal?outsideRemoved/outsideTotal:0;
+  const accuracy=Math.max(0,revealPct-wastePct*0.5);
+  const pts=Math.round(accuracy*100*(1+level*0.2));
+  totalScore+=pts;
+  scoreEl.textContent=totalScore;
+  if(totalScore>best){best=totalScore;localStorage.setItem('icecarvingchisel_best',String(best));bestEl.textContent=best;}
+  if(revealPct>0.55)SFX.win();else SFX.lose();
+  msgEl.textContent=I18N.t('level_done','Time! Revealed {r}% of the shape — +{p} pts. Next block incoming...').replace('{r}',Math.round(revealPct*100)).replace('{p}',pts);
+  setTimeout(()=>{level++;newLevel();},2000);
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // faint target silhouette
+  ctx.fillStyle='rgba(30,60,90,0.28)';
+  for(let r=0;r<ROWS;r++){
+    for(let cIdx=0;cIdx<COLS;cIdx++){
+      if(target[r][cIdx] && ice[r][cIdx]){
+        ctx.fillRect(cIdx*CELL,r*CELL,CELL,CELL);
+      }
+    }
+  }
+  // remaining ice
+  ctx.fillStyle='#dff3fb';
+  for(let r=0;r<ROWS;r++){
+    for(let cIdx=0;cIdx<COLS;cIdx++){
+      if(ice[r][cIdx] && !target[r][cIdx]){
+        ctx.fillRect(cIdx*CELL,r*CELL,CELL,CELL);
+      }
+    }
+  }
+  // subtle grid sparkle lines
+  ctx.strokeStyle='rgba(255,255,255,0.15)';
+  ctx.lineWidth=1;
+  for(let r=0;r<ROWS;r+=4){
+    ctx.beginPath();ctx.moveTo(0,r*CELL);ctx.lineTo(W,r*CELL);ctx.stroke();
+  }
+  // revealed carved area (base color showing through)
+  ctx.fillStyle='#08303f';
+  for(let r=0;r<ROWS;r++){
+    for(let cIdx=0;cIdx<COLS;cIdx++){
+      if(!ice[r][cIdx] && !target[r][cIdx]){
+        // carved outside area — show dark stone base
+        ctx.fillRect(cIdx*CELL,r*CELL,CELL,CELL);
+      }
+    }
+  }
+  ctx.fillStyle='#ffd54f';
+  for(let r=0;r<ROWS;r++){
+    for(let cIdx=0;cIdx<COLS;cIdx++){
+      if(!ice[r][cIdx] && target[r][cIdx]){
+        ctx.fillRect(cIdx*CELL,r*CELL,CELL,CELL);
+      }
+    }
+  }
+  // keyboard cursor indicator
+  if(!('ontouchstart' in window)){
+    ctx.strokeStyle='#e94560';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(kx,ky,10,0,Math.PI*2);ctx.stroke();
+  }
+  requestAnimationFrame(draw);
+}
+
+newLevel();
+draw();
+</script></body></html>

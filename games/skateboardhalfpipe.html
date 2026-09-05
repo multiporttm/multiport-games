@@ -1,0 +1,243 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Skateboard Halfpipe</title><meta name="description" content="Play Skateboard Halfpipe free online — Ride the halfpipe and press the trick button right at the peak of each wall to land tricks and chain combos. Speed builds with every run — fall and your combo resets!"><link rel="canonical" href="https://games.multiportllc.com/games/skateboardhalfpipe"><meta property="og:title" content="Skateboard Halfpipe - Multiport Games"><meta property="og:description" content="Play Skateboard Halfpipe free online — Ride the halfpipe and press the trick button right at the peak of each wall to land tricks and chain combos. Speed builds with every run — fall and your combo resets!"><meta property="og:url" content="https://games.multiportllc.com/games/skateboardhalfpipe"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Skateboard Halfpipe","description":"Play Skateboard Halfpipe free online instantly. Ride the halfpipe and press the trick button right at the peak of each wall to land tricks and chain combos. Speed builds with every run — fall and your combo resets! No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/skateboardhalfpipe","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0a0a14}
+#c{background:#1a1a2e;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#ffe9b3;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:20px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#msg{color:#9fb8ff;text-align:center;font-size:.9rem;min-height:1.3em;padding-bottom:4px}
+#trickBtn{display:block;margin:10px auto 0;padding:12px 30px;font-size:1.1rem;font-weight:800;border:none;border-radius:24px;background:#e94560;color:#fff;cursor:pointer}
+#trickBtn:active{transform:scale(.95)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Skateboard Halfpipe</div>
+  <div class="game-frame">
+    <div id="hud"><span>Score: <b id="scoreVal">0</b></span><span>Combo: <b id="comboVal">0</b>x</span><span>Best: <b id="bestVal">0</b></span></div>
+    <div id="msg">Ride up a wall and press TRICK right at the peak!</div>
+    <canvas id="c" width="700" height="380"></canvas>
+    <button id="trickBtn">TRICK (Space)</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">The skater rides back and forth across the halfpipe, building speed with every pass. Press <b>Space</b>, click, or tap the <b>TRICK</b> button right as the skater reaches the peak of a wall — the closer to the very top, the bigger the trick score and the longer your combo chain grows. Mistime it or bail and your combo resets, but speed keeps climbing the longer you last.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=700,H=380;
+const scoreEl=document.getElementById('scoreVal'),comboEl=document.getElementById('comboVal'),bestEl=document.getElementById('bestVal'),msgEl=document.getElementById('msg');
+let best=parseInt(localStorage.getItem('skateboardhalfpipe_best')||'0',10);
+bestEl.textContent=best;
+
+// Halfpipe geometry: a U-shape, position t in [-1,1] where -1 = left peak, 0 = bottom, 1 = right peak
+const floorY=300, peakY=90;
+function yFor(t){
+  // y decreases (goes up) as |t| approaches 1
+  return floorY - (floorY-peakY)*(t*t);
+}
+function xFor(t){
+  return W/2 + t*(W/2-40);
+}
+
+let score=0,combo=0;
+let pos=0;       // t position, -1..1
+let speedMul=1;
+let trickTaken=false;
+let bailed=false;
+let popAnim=0;
+let particles=[];
+let trickPopups=[];
+let runTime=0;
+
+function reset(){
+  score=0;combo=0;pos=0;speedMul=1;bailed=false;runTime=0;dirSign=1;
+  scoreEl.textContent=0;comboEl.textContent=0;
+  msgEl.textContent=I18N.t('ride_prompt','Ride up a wall and press TRICK right at the peak!');
+}
+
+function doTrick(){
+  if(bailed)return;
+  const absPos=Math.abs(pos);
+  if(absPos>0.7){
+    // scoring based on closeness to the very peak (1.0)
+    const closeness=(absPos-0.7)/0.3; // 0..1
+    const base=Math.round(50+closeness*150);
+    combo++;
+    const pts=base*combo;
+    score+=pts;
+    scoreEl.textContent=score;
+    comboEl.textContent=combo;
+    if(score>best){best=score;localStorage.setItem('skateboardhalfpipe_best',String(best));bestEl.textContent=best;}
+    if(closeness>0.75){SFX.powerup();msgEl.textContent=I18N.t('trick_perfect','PERFECT TRICK! +{p} (combo x{c})').replace('{p}',pts).replace('{c}',combo);}
+    else{SFX.coin();msgEl.textContent=I18N.t('trick_good','Nice trick! +{p} (combo x{c})').replace('{p}',pts).replace('{c}',combo);}
+    trickPopups.push({x:xFor(pos),y:yFor(pos)-20,text:'+'+pts,life:60});
+    speedMul=Math.min(2.6,speedMul+0.05);
+    trickTaken=true;
+    popAnim=10;
+  } else {
+    // pressed too early / mid-ride: minor penalty, breaks combo
+    combo=0;
+    comboEl.textContent=0;
+    SFX.error();
+    msgEl.textContent=I18N.t('trick_early','Too early! Wait for the peak. Combo reset.');
+  }
+}
+
+function bail(){
+  bailed=true;
+  combo=0;
+  comboEl.textContent=0;
+  SFX.lose();
+  msgEl.textContent=I18N.t('bail_msg','Bailed! Tap/Space to get back up.');
+  for(let i=0;i<20;i++){
+    particles.push({x:xFor(pos),y:yFor(pos),vx:(Math.random()-0.5)*6,vy:-Math.random()*5,life:40});
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){
+    e.preventDefault();
+    if(bailed){reset();}else{doTrick();}
+  }
+});
+document.getElementById('trickBtn').addEventListener('click',()=>{ if(bailed){reset();}else{doTrick();} });
+c.addEventListener('click',()=>{ if(bailed){reset();}else{doTrick();} });
+c.addEventListener('touchstart',e=>{e.preventDefault(); if(bailed){reset();}else{doTrick();} },{passive:false});
+
+let dirSign=1;
+function updateFixed(dt){
+  if(bailed){
+    particles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=0.3*dt;p.life-=dt;});
+    particles=particles.filter(p=>p.life>0);
+    return;
+  }
+  runTime+=dt;
+  const speedFactor=(0.6+0.7*(1-Math.abs(pos)))*speedMul;
+  pos+=dirSign*0.010*dt*speedFactor;
+  if(pos>=1){
+    pos=1;
+    if(!trickTaken){ bail(); }
+    dirSign=-1;
+    trickTaken=false;
+  }
+  if(pos<=-1){
+    pos=-1;
+    if(!trickTaken){ bail(); }
+    dirSign=1;
+    trickTaken=false;
+  }
+  if(Math.abs(pos)<0.3)trickTaken=false;
+  trickPopups.forEach(p=>{p.y-=0.5*dt;p.life-=dt;});
+  trickPopups=trickPopups.filter(p=>p.life>0);
+}
+
+function drawHalfpipe(){
+  ctx.save();
+  ctx.strokeStyle='#3a3a5a';
+  ctx.lineWidth=6;
+  ctx.beginPath();
+  for(let i=0;i<=100;i++){
+    const t=-1+2*i/100;
+    const x=xFor(t),y=yFor(t);
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  ctx.fillStyle='#22223a';
+  ctx.lineTo(xFor(1),H);
+  ctx.lineTo(xFor(-1),H);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // peak zone highlights
+  [-1,1].forEach(side=>{
+    const zoneStart=side*0.7;
+    ctx.save();
+    ctx.strokeStyle='rgba(255,213,79,0.5)';
+    ctx.lineWidth=8;
+    ctx.beginPath();
+    for(let i=0;i<=20;i++){
+      const t=zoneStart+ (side*0.3)*i/20;
+      ctx.lineTo(xFor(t),yFor(t)-10);
+      if(i===0)ctx.moveTo(xFor(t),yFor(t)-10);
+    }
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawSkater(){
+  const x=xFor(pos),y=yFor(pos);
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(pos*0.5);
+  if(bailed){
+    ctx.rotate(runTime*0.02);
+  }
+  // board
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(-18,8,36,6);
+  // wheels
+  ctx.fillStyle='#222';
+  ctx.beginPath();ctx.arc(-12,16,4,0,7);ctx.arc(12,16,4,0,7);ctx.fill();
+  // body
+  ctx.fillStyle='#4fc3f7';
+  ctx.fillRect(-6,-18,12,26);
+  // head
+  ctx.fillStyle='#ffe0b2';
+  ctx.beginPath();ctx.arc(0,-24,7,0,Math.PI*2);ctx.fill();
+  if(popAnim>0){
+    ctx.fillStyle='#ffd54f';
+    ctx.font='bold 12px Arial';
+    ctx.textAlign='center';
+    ctx.fillText('★',0,-36);
+    popAnim--;
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0a0a2a');sky.addColorStop(1,'#1a1a3e');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  drawHalfpipe();
+  if(!bailed)drawSkater();
+
+  particles.forEach(p=>{
+    ctx.fillStyle='rgba(255,180,80,'+Math.max(0,p.life/40)+')';
+    ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();
+  });
+
+  trickPopups.forEach(p=>{
+    ctx.fillStyle='rgba(255,213,79,'+Math.max(0,p.life/60)+')';
+    ctx.font='bold 18px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(p.text,p.x,p.y);
+  });
+
+  if(bailed){
+    ctx.fillStyle='#fff';
+    ctx.font='bold 30px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(I18N.t('bailed_title','BAILED!'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('bailed_hint','Tap / Space to ride again'),W/2,H/2+22);
+  }
+}
+
+let lastTime=null;
+function loop(now){
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  updateFixed(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

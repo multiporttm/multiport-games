@@ -1,0 +1,238 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Canoe Slalom</title><meta name="description" content="Play Canoe Slalom free online — Paddle left and right with Arrow Keys/A,D or the on-screen buttons to steer your canoe through green forward gates and red reverse gates, dodging rocks in the rapids."><link rel="canonical" href="https://games.multiportllc.com/games/canoeslalom"><meta property="og:title" content="Canoe Slalom - Multiport Games"><meta property="og:description" content="Play Canoe Slalom free online — Paddle left and right with Arrow Keys/A,D or the on-screen buttons to steer your canoe through green forward gates and red reverse gates, dodging rocks in the rapids."><meta property="og:url" content="https://games.multiportllc.com/games/canoeslalom"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Canoe Slalom","description":"Play Canoe Slalom free online instantly. Paddle left and right with Arrow Keys/A,D or the on-screen buttons to steer your canoe through green forward gates and red reverse gates, dodging rocks in the rapids. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/canoeslalom","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1565c0;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#b3e5fc;font-size:1.15rem;font-weight:700;text-align:center;padding:8px}
+#slalom-controls{display:flex;justify-content:center;gap:14px;margin-top:8px}
+#slalom-controls button{padding:12px 26px;border:none;border-radius:20px;background:#0d47a1;color:#fff;font-weight:800;font-size:1.1rem;cursor:pointer;user-select:none}
+#slalom-controls button:active{transform:scale(.94)}
+#reverseBtn{background:#c62828}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Canoe Slalom</div>
+  <div class="game-frame">
+    <div id="score-display">Gates: 0 | Lives: 3 | Time: 60</div>
+    <canvas id="c" width="360" height="560"></canvas>
+    <div id="slalom-controls">
+      <button id="leftBtn">◀</button>
+      <button id="reverseBtn" title="Reverse paddle">R</button>
+      <button id="rightBtn">▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Steer with <b>Left/Right Arrow</b> or <b>A/D</b> (or the ◀ ▶ buttons) to guide your canoe between the gate poles. <b>Green gates</b> just need a clean pass through the gap. For <b>red reverse gates</b>, hold the <b>R</b> key (or the on-screen R button) as you pass through. Avoid the rocks! Missing a gate or hitting a rock costs a life — clear as many gates as you can before time or lives run out.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=360,H=560;
+let best=parseInt(localStorage.getItem('canoeslalom_best')||'0',10);
+let canoe={x:W/2,vx:0};
+let gatesCleared=0,lives=3,timeLeft=60,gameOver=false,started=false;
+let scrollSpeed=2.6;
+let items=[]; // gates and rocks
+let spawnTimer=0;
+let keys={left:false,right:false,reverse:false};
+let lastTime=null,message='',messageTimer=0;
+
+function reset(){
+  canoe.x=W/2;canoe.vx=0;
+  gatesCleared=0;lives=3;timeLeft=60;gameOver=false;started=false;
+  scrollSpeed=2.6;items=[];spawnTimer=0;lastTime=null;message='';messageTimer=0;
+}
+
+function startIfNeeded(){ if(!started){started=true;} }
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){keys.left=true;startIfNeeded();e.preventDefault();}
+  if(e.code==='ArrowRight'||e.code==='KeyD'){keys.right=true;startIfNeeded();e.preventDefault();}
+  if(e.code==='KeyR'){keys.reverse=true;e.preventDefault();}
+  if((e.code==='Space'||e.code==='Enter')&&gameOver){reset();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keys.left=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keys.right=false;
+  if(e.code==='KeyR')keys.reverse=false;
+});
+function bindBtn(id,onDown,onUp){
+  const el=document.getElementById(id);
+  el.addEventListener('pointerdown',e=>{e.preventDefault();startIfNeeded();if(gameOver){reset();return;}onDown();});
+  el.addEventListener('pointerup',e=>{e.preventDefault();onUp&&onUp();});
+  el.addEventListener('pointerleave',e=>{onUp&&onUp();});
+}
+bindBtn('leftBtn',()=>keys.left=true,()=>keys.left=false);
+bindBtn('rightBtn',()=>keys.right=true,()=>keys.right=false);
+bindBtn('reverseBtn',()=>keys.reverse=true,()=>keys.reverse=false);
+c.addEventListener('pointerdown',()=>{startIfNeeded();if(gameOver)reset();});
+
+function spawnItem(){
+  const roll=Math.random();
+  if(roll<0.62){
+    // gate: pick type
+    const isReverse=Math.random()<0.4;
+    const gapW=90;
+    const gapCenter=60+Math.random()*(W-120);
+    items.push({type:'gate',reverse:isReverse,y:-40,x:gapCenter,gapW,scored:false,missed:false});
+  } else {
+    const x=30+Math.random()*(W-60);
+    items.push({type:'rock',y:-40,x,r:16,hit:false});
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  // river background with current lines
+  const water=ctx.createLinearGradient(0,0,0,H);
+  water.addColorStop(0,'#1976d2');water.addColorStop(1,'#0d47a1');
+  ctx.fillStyle=water;ctx.fillRect(0,0,W,H);
+  const t=performance.now()/300;
+  ctx.strokeStyle='rgba(255,255,255,.15)';
+  ctx.lineWidth=2;
+  for(let i=0;i<6;i++){
+    const yy=((i*100)+((t*40)%100))%H;
+    ctx.beginPath();ctx.moveTo(0,yy);ctx.lineTo(W,yy+10);ctx.stroke();
+  }
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Arrows to start'),W/2,H/2);
+    drawCanoe();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawCanoe();
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+16);
+    updateHUD();
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  timeLeft-=dt/60;
+  if(timeLeft<=0){timeLeft=0;endGame();}
+
+  const accel=0.7;
+  if(keys.left)canoe.vx-=accel*dt;
+  if(keys.right)canoe.vx+=accel*dt;
+  if(!keys.left&&!keys.right)canoe.vx*=0.86;
+  canoe.vx=Math.max(-7,Math.min(7,canoe.vx));
+  canoe.x+=canoe.vx*dt;
+  canoe.x=Math.max(20,Math.min(W-20,canoe.x));
+
+  scrollSpeed=Math.min(6,2.6+gatesCleared*0.12);
+  spawnTimer+=dt;
+  const interval=Math.max(38,70-gatesCleared*1.5);
+  if(spawnTimer>=interval){spawnTimer=0;spawnItem();}
+
+  const canoeY=H-90;
+  items=items.filter(it=>it.y<H+60);
+  items.forEach(it=>{
+    it.y+=scrollSpeed*dt;
+    if(it.type==='gate'){
+      drawGate(it);
+      if(!it.scored&&!it.missed&&it.y>=canoeY-6&&it.y<=canoeY+18){
+        const inGap=canoe.x>it.x-it.gapW/2+10&&canoe.x<it.x+it.gapW/2-10;
+        if(inGap){
+          const properForm = it.reverse ? keys.reverse : true;
+          if(properForm){
+            it.scored=true;
+            gatesCleared++;
+            SFX.point();
+            showMessage(it.reverse?'+REVERSE GATE!':'+GATE!');
+          } else {
+            it.missed=true;
+            loseLife('Wrong paddle form!');
+          }
+        }
+      } else if(!it.scored&&!it.missed&&it.y>canoeY+18){
+        it.missed=true;
+        loseLife('Gate missed!');
+      }
+    } else {
+      drawRock(it);
+      if(!it.hit){
+        const dx=canoe.x-it.x, dy=(canoeY+6)-it.y;
+        if(Math.sqrt(dx*dx+dy*dy)<it.r+14){
+          it.hit=true;
+          loseLife('Hit a rock!');
+        }
+      }
+    }
+  });
+
+  drawCanoe();
+
+  if(messageTimer>0){
+    messageTimer-=dt;
+    ctx.fillStyle='#ffeb3b';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(message,W/2,60);
+  }
+
+  updateHUD();
+  requestAnimationFrame(loop);
+}
+
+function loseLife(msg){
+  lives--;
+  SFX.hit();
+  showMessage(msg);
+  if(lives<=0)endGame();
+}
+function showMessage(m){message=m;messageTimer=50;}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  if(gatesCleared>best){best=gatesCleared;localStorage.setItem('canoeslalom_best',String(best));}
+}
+
+function drawGate(g){
+  const leftX=g.x-g.gapW/2, rightX=g.x+g.gapW/2;
+  ctx.fillStyle=g.reverse?'#e53935':'#43a047';
+  ctx.fillRect(leftX-4,g.y-30,8,40);
+  ctx.fillRect(rightX-4,g.y-30,8,40);
+  ctx.fillStyle=g.reverse?'#ff8a80':'#a5d6a7';
+  ctx.fillRect(leftX-4,g.y-34,8,6);
+  ctx.fillRect(rightX-4,g.y-34,8,6);
+}
+function drawRock(r){
+  ctx.fillStyle='#6d4c41';
+  ctx.beginPath();ctx.arc(r.x,r.y,r.r,0,7);ctx.fill();
+  ctx.fillStyle='#8d6e63';
+  ctx.beginPath();ctx.arc(r.x-4,r.y-4,r.r*0.5,0,7);ctx.fill();
+}
+function drawCanoe(){
+  const y=H-90;
+  ctx.save();
+  ctx.translate(canoe.x,y);
+  ctx.rotate(canoe.vx*0.05);
+  ctx.fillStyle='#d84315';
+  ctx.beginPath();
+  ctx.moveTo(0,-26);ctx.lineTo(12,20);ctx.lineTo(-12,20);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#3e2723';
+  ctx.fillRect(-3,-20,6,36);
+  ctx.fillStyle='#ffccbc';
+  ctx.beginPath();ctx.arc(0,-6,7,0,7);ctx.fill();
+  ctx.restore();
+}
+
+function updateHUD(){
+  document.getElementById('score-display').textContent=
+    I18N.t('cs_score_label','Gates: {g} | Lives: {l} | Time: {t}')
+      .replace('{g}',gatesCleared).replace('{l}',Math.max(0,lives)).replace('{t}',Math.ceil(timeLeft));
+}
+
+reset();
+loop();
+</script></body></html>

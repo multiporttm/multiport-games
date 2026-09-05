@@ -1,0 +1,265 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ice Climbing Ascent</title><meta name="description" content="Play Ice Climbing Ascent free online — Alternate Left Axe and Right Axe (or tap the left/right halves of the screen) to swing your ice axes and climb. Watch your stamina and dodge falling ice chunks and cracks as you race for a new height record."><link rel="canonical" href="https://games.multiportllc.com/games/iceclimbingascent"><meta property="og:title" content="Ice Climbing Ascent - Multiport Games"><meta property="og:description" content="Play Ice Climbing Ascent free online — Alternate Left Axe and Right Axe (or tap the left/right halves of the screen) to swing your ice axes and climb. Watch your stamina and dodge falling ice chunks and cracks as you race for a new height record."><meta property="og:url" content="https://games.multiportllc.com/games/iceclimbingascent"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ice Climbing Ascent","description":"Play Ice Climbing Ascent free online instantly. Alternate Left Axe and Right Axe (or tap the left/right halves of the screen) to swing your ice axes and climb. Watch your stamina and dodge falling ice chunks and cracks as you race for a new height record. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/iceclimbingascent","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(#bfe9ff,#e8f8ff);display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#dff3ff;font-size:1rem;font-weight:700;padding:6px 10px;max-width:800px;margin:0 auto}
+#stambar{width:120px;height:12px;background:#123;border-radius:6px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+#stamfill{height:100%;background:#4fd1c5;width:100%;transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ice Climbing Ascent</div>
+  <div class="game-frame">
+    <div id="hud"><span id="height-display">Height: 0m | Best: 0m</span><span>Stamina<span id="stambar"><span id="stamfill"></span></span></span></div>
+    <canvas id="c" width="800" height="450"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Alternate <b>Left Axe (A / ←)</b> and <b>Right Axe (D / →)</b> — or tap the left/right halves of the screen — to swing your ice axes and climb. Time each swing to a solid patch of ice: hitting a crack or getting clipped by falling ice costs stamina. Run out of stamina and you fall. Climb as high as you can!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=450;
+let height=0,best=parseFloat(localStorage.getItem('iceclimbingascent_best')||'0');
+let stamina=100,gameOver=false,started=false;
+let nextArm='left'; // which axe should swing next
+let climber={x:W/2,y:H-120,swingFlash:0,shake:0};
+let wallOffset=0;
+let holds=[]; // {y (world), left:{good,crack}, right:{...}}
+let chunks=[]; // falling ice {x,y,w,h,vy}
+let particles=[];
+let lastTime=null,chunkTimer=0;
+let speedMul=1;
+
+function reset(){
+  height=0;stamina=100;gameOver=false;started=false;nextArm='left';
+  wallOffset=0;holds=[];chunks=[];particles=[];lastTime=null;chunkTimer=0;speedMul=1;
+  climber.shake=0;climber.swingFlash=0;
+  for(let i=0;i<8;i++)genHold(H-120-i*70);
+}
+
+function genHold(y){
+  const mkSide=()=>{
+    const r=Math.random();
+    if(r<0.22)return {crack:true};
+    return {crack:false};
+  };
+  holds.push({y,left:mkSide(),right:mkSide()});
+}
+
+function updateHud(){
+  document.getElementById('height-display').textContent=I18N.t('height_best_label','Height: {h}m | Best: {b}m').replace('{h}',Math.floor(height)).replace('{b}',Math.floor(best));
+  document.getElementById('stamfill').style.width=Math.max(0,stamina)+'%';
+}
+
+function swing(side){
+  if(!started){started=true;lastTime=null;}
+  if(gameOver){reset();return;}
+  climber.swingFlash=8;
+  // find nearest hold row within reach band
+  const reachY = H-120 - wallOffset*0 ; // climber stays at fixed screen y; holds move
+  const targetScreenY = 130; // band near top where you "grab"
+  // find closest hold to the grab band
+  let best_=null,bestDist=99999;
+  holds.forEach(h=>{
+    const sy=h.y+wallOffset;
+    const d=Math.abs(sy-targetScreenY);
+    if(d<bestDist){bestDist=d;best_=h;}
+  });
+  const correctArm = side===nextArm;
+  const goodTiming = bestDist<55;
+  const sideData = best_?best_[side]:null;
+  const sideCrack = sideData&&sideData.crack;
+
+  if(correctArm && goodTiming && sideData && !sideCrack){
+    height+=3+Math.random()*1.5;
+    stamina=Math.min(100,stamina+2);
+    speedMul=Math.min(2.2,speedMul+0.02);
+    SFX.hit();
+    nextArm=side==='left'?'right':'left';
+    spawnParticles(side);
+  } else if(correctArm && sideCrack){
+    stamina-=14;
+    climber.shake=10;
+    SFX.hurt();
+    nextArm=side==='left'?'right':'left';
+  } else {
+    // wrong arm or bad timing = weak swing, small progress, stamina cost
+    stamina-=8;
+    height+=0.4;
+    climber.shake=6;
+    SFX.tick();
+  }
+  if(stamina<=0){
+    stamina=0;
+    endGame();
+  }
+  updateHud();
+}
+
+function spawnParticles(side){
+  for(let i=0;i<6;i++){
+    particles.push({x:climber.x+(side==='left'?-18:18)+Math.random()*10-5,y:120+Math.random()*10,vx:(Math.random()-0.5)*2,vy:-Math.random()*2,life:20});
+  }
+}
+
+function endGame(){
+  if(gameOver)return;
+  gameOver=true;
+  if(height>best){best=height;localStorage.setItem('iceclimbingascent_best',String(best));}
+  SFX.lose();
+  updateHud();
+}
+
+function spawnChunk(){
+  chunks.push({x:60+Math.random()*(W-120),y:-30,w:26+Math.random()*20,vy:2.5+Math.random()*2+speedMul});
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){e.preventDefault();swing('left');}
+  else if(e.code==='ArrowRight'||e.code==='KeyD'){e.preventDefault();swing('right');}
+});
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  const x=(e.clientX-r.left)/r.width*W;
+  swing(x<W/2?'left':'right');
+});
+
+function drawClimber(){
+  ctx.save();
+  const sx=climber.x+(climber.shake>0?(Math.random()-0.5)*climber.shake:0);
+  const sy=130+(climber.shake>0?(Math.random()-0.5)*climber.shake:0);
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(sx-14,sy,28,36); // body
+  ctx.fillStyle='#ffd6a5';
+  ctx.beginPath();ctx.arc(sx,sy-10,12,0,Math.PI*2);ctx.fill(); // head
+  // arms
+  ctx.strokeStyle='#333';ctx.lineWidth=5;
+  const flash=climber.swingFlash>0;
+  ctx.beginPath();ctx.moveTo(sx-12,sy+6);ctx.lineTo(sx-30,sy-6-(nextArm==='right'&&flash?10:0));ctx.stroke();
+  ctx.beginPath();ctx.moveTo(sx+12,sy+6);ctx.lineTo(sx+30,sy-6-(nextArm==='left'&&flash?10:0));ctx.stroke();
+  // legs
+  ctx.beginPath();ctx.moveTo(sx-6,sy+36);ctx.lineTo(sx-10,sy+52);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(sx+6,sy+36);ctx.lineTo(sx+10,sy+52);ctx.stroke();
+  // next-arm indicator glow
+  ctx.fillStyle=nextArm==='left'?'rgba(79,209,197,.9)':'rgba(255,255,255,0)';
+  ctx.beginPath();ctx.arc(sx-30,sy-6,6,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle=nextArm==='right'?'rgba(79,209,197,.9)':'rgba(255,255,255,0)';
+  ctx.beginPath();ctx.arc(sx+30,sy-6,6,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+  if(climber.shake>0)climber.shake-=1;
+  if(climber.swingFlash>0)climber.swingFlash-=1;
+}
+
+function drawWall(){
+  // ice wall texture stripes
+  ctx.fillStyle='#dff6ff';
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(160,220,255,0.35)';
+  for(let i=0;i<12;i++){
+    const y=((i*60+wallOffset*0.6)%(H+60))-60;
+    ctx.fillRect(0,y,W,8);
+  }
+  // side rock borders
+  ctx.fillStyle='#7f8fa6';
+  ctx.fillRect(0,0,30,H);
+  ctx.fillRect(W-30,0,30,H);
+}
+
+function drawHolds(){
+  holds.forEach(h=>{
+    const sy=h.y+wallOffset;
+    if(sy<-20||sy>H+20)return;
+    drawSide(climber.x-90,sy,h.left,'left');
+    drawSide(climber.x+90,sy,h.right,'right');
+  });
+}
+function drawSide(x,y,data,side){
+  if(data.crack){
+    ctx.strokeStyle='#3a6ea5';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(x-10,y-8);ctx.lineTo(x+8,y+8);ctx.moveTo(x+8,y-8);ctx.lineTo(x-10,y+8);ctx.stroke();
+  } else {
+    ctx.fillStyle=(side===nextArm)?'#4fd1c5':'#a3d9ff';
+    ctx.beginPath();ctx.arc(x,y,10,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#2a6f97';ctx.lineWidth=2;ctx.stroke();
+  }
+}
+
+function rectCircle(cx,cy,cr,rx,ry,rw,rh){
+  const nx=Math.max(rx,Math.min(cx,rx+rw));
+  const ny=Math.max(ry,Math.min(cy,ry+rh));
+  const dx=cx-nx,dy=cy-ny;
+  return dx*dx+dy*dy<cr*cr;
+}
+
+function loop(){
+  drawWall();
+
+  if(!started){
+    drawHolds();
+    drawClimber();
+    ctx.fillStyle='#123';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('ice_start_hint','Tap a side / press A or D to start climbing'),W/2,60);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawHolds();
+    drawClimber();
+    ctx.fillStyle='rgba(10,20,40,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,190);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('ice_final_height','You climbed {h}m').replace('{h}',Math.floor(height)),W/2,225);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,258);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  // world scroll based on progress toward next hold band, gentle constant drift too
+  wallOffset+=0.6*dt*speedMul;
+  if(wallOffset>70){wallOffset-=70;genHold(holds.length?holds[holds.length-1].y-70:-70);holds=holds.filter(h=>h.y+wallOffset<H+40);}
+
+  // stamina drains slowly over time, forcing forward progress
+  stamina-=0.03*dt;
+  if(stamina<=0)endGame();
+
+  // spawn falling chunks, more frequent as you climb higher
+  chunkTimer+=dt;
+  const interval=Math.max(35,90-height/8);
+  if(chunkTimer>=interval){chunkTimer-=interval;spawnChunk();}
+
+  chunks=chunks.filter(ch=>ch.y<H+40);
+  chunks.forEach(ch=>{
+    ch.y+=ch.vy*dt;
+    ctx.fillStyle='#cfe9ff';
+    ctx.beginPath();ctx.moveTo(ch.x,ch.y-ch.w/2);ctx.lineTo(ch.x+ch.w/2,ch.y+ch.w/2);ctx.lineTo(ch.x-ch.w/2,ch.y+ch.w/2);ctx.closePath();ctx.fill();
+    ctx.strokeStyle='#8fc7ea';ctx.stroke();
+    if(!gameOver && rectCircle(climber.x, 130, 20, ch.x-ch.w/2, ch.y-ch.w/2, ch.w, ch.w)){
+      stamina-=25;climber.shake=14;SFX.hurt();
+      chunks=chunks.filter(c2=>c2!==ch);
+      if(stamina<=0)endGame();
+    }
+  });
+
+  drawHolds();
+
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;ctx.fillStyle='rgba(255,255,255,'+(p.life/20)+')';ctx.fillRect(p.x,p.y,3,3);});
+
+  drawClimber();
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+updateHud();
+loop();
+</script></body></html>

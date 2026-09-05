@@ -1,0 +1,257 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Three-Legged Race</title><meta name="description" content="Play Three-Legged Race free online — Press A and L (or tap Left / Right) alternately in a steady rhythm to move your tied-together legs forward. Too fast or out of sync and you'll trip! Beat the other pairs to the finish line."><link rel="canonical" href="https://games.multiportllc.com/games/threeleggedrace"><meta property="og:title" content="Three-Legged Race - Multiport Games"><meta property="og:description" content="Play Three-Legged Race free online — Press A and L (or tap Left / Right) alternately in a steady rhythm to move your tied-together legs forward. Too fast or out of sync and you'll trip! Beat the other pairs to the finish line."><meta property="og:url" content="https://games.multiportllc.com/games/threeleggedrace"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Three-Legged Race","description":"Play Three-Legged Race free online instantly. Press A and L (or tap Left / Right) alternately in a steady rhythm to move your tied-together legs forward. Too fast or out of sync and you'll trip! Beat the other pairs to the finish line. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/threeleggedrace","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3f8a3f;display:block;border-radius:8px;touch-action:manipulation}
+#hud{display:flex;justify-content:center;gap:22px;color:#ffd54f;font-size:1.05rem;font-weight:700;padding:8px;flex-wrap:wrap}
+#hud span b{color:#fff}
+#rhythmBar{width:260px;height:14px;background:rgba(255,255,255,0.15);border-radius:7px;margin:0 auto 4px;overflow:hidden;position:relative}
+#rhythmFill{position:absolute;left:0;top:0;bottom:0;width:50%;background:linear-gradient(90deg,#4caf50,#ffd54f);border-radius:7px;transition:width .08s linear}
+#touchRow{display:flex;justify-content:center;gap:16px;margin-top:10px}
+#touchRow button{flex:1;max-width:160px;padding:16px;font-size:1.1rem;font-weight:800;border:none;border-radius:12px;background:#e94560;color:#fff;cursor:pointer;user-select:none}
+#touchRow button:active{background:#c23350}
+@media(min-width:700px){#touchRow{display:none}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Three-Legged Race</div>
+  <div class="game-frame">
+    <div id="hud"><span>Best Time: <b id="bestEl">--</b></span></div>
+    <div id="rhythmBar"><div id="rhythmFill"></div></div>
+    <canvas id="c" width="700" height="320"></canvas>
+    <div id="touchRow"><button id="btnL">LEFT (A)</button><button id="btnR">RIGHT (L)</button></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press <b>A</b> and <b>L</b> (or tap <b>Left</b> / <b>Right</b>) alternately in a steady rhythm to move your tied-together legs forward. Too fast or out of sync and you'll trip! Beat the other pairs to the finish line.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=700,H=320;
+const TRACK_LEN=2600;
+const FINISH_X=TRACK_LEN;
+const LANE_Y=[70,150,230];
+
+let best=localStorage.getItem('threeleggedrace_best');
+document.getElementById('bestEl').textContent=best?parseFloat(best).toFixed(2)+'s':'--';
+
+let player,ais,started,finished,raceTime,lastTime,tripFlashPlayer,camX,expectNext,msg,msgTimer;
+
+function mkRunner(isAI,speedMul){
+  return {
+    x:0, speed:0, isAI, tripped:0, lastStepT:-1, lastStepSide:null,
+    stepTimer:0, wantStep:isAI? (0.42/speedMul):0, place:0, finishedAt:null, legPhase:0
+  };
+}
+
+function reset(){
+  player=mkRunner(false,1);
+  ais=[mkRunner(true,0.92+Math.random()*0.05),mkRunner(true,0.88+Math.random()*0.08)];
+  started=false;finished=false;raceTime=0;lastTime=null;tripFlashPlayer=0;camX=0;
+  expectNext='L'; // next expected key side
+  msg=I18N.t('get_ready','Get ready! Alternate A / L (or tap) to start moving.');
+  msgTimer=999;
+}
+
+function step(side){
+  if(finished)return;
+  if(!started)started=true;
+  if(player.tripped>0)return;
+  if(side===expectNext){
+    // good alternation
+    const now=performance.now()/1000;
+    const interval = player.lastStepT<0?0.3:now-player.lastStepT;
+    player.lastStepT=now;
+    // ideal rhythm interval ~0.28-0.55s; too fast = trip risk
+    if(interval<0.14){
+      trip();
+    } else {
+      const power = interval<0.22?0.55: interval>0.9?0.7 : 1;
+      player.speed = Math.min(player.speed+2.6*power, 6.2);
+      SFX.tick();
+    }
+    expectNext = side==='L'?'R':'L';
+  } else {
+    // wrong side / out of order -> stumble
+    trip();
+  }
+}
+
+function trip(){
+  if(player.tripped>0)return;
+  player.tripped=1.1;
+  player.speed=Math.max(0,player.speed-4);
+  tripFlashPlayer=14;
+  SFX.hurt();
+  msg=I18N.t('tripped','Tripped! Get back in rhythm.');
+  msgTimer=50;
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.repeat)return;
+  if(e.key==='a'||e.key==='A'){step('L');}
+  else if(e.key==='l'||e.key==='L'){step('R');}
+});
+document.getElementById('btnL').addEventListener('click',()=>step('L'));
+document.getElementById('btnR').addEventListener('click',()=>step('R'));
+document.getElementById('btnL').addEventListener('touchstart',e=>{e.preventDefault();step('L');},{passive:false});
+document.getElementById('btnR').addEventListener('touchstart',e=>{e.preventDefault();step('R');},{passive:false});
+c.addEventListener('click',e=>{
+  const r=c.getBoundingClientRect();
+  const rel=(e.clientX-r.left)/r.width;
+  step(rel<0.5?'L':'R');
+});
+
+function updateAI(a,dt,t){
+  if(a.tripped>0){a.tripped-=dt;a.speed=Math.max(0,a.speed-3*dt);return;}
+  a.stepTimer+=dt;
+  if(a.stepTimer>=a.wantStep){
+    a.stepTimer=0;
+    // small chance AI stumbles for drama
+    if(Math.random()<0.05){
+      a.tripped=0.8;a.speed=Math.max(0,a.speed-3);
+    } else {
+      a.speed=Math.min(a.speed+2.3,5.4);
+    }
+  }
+}
+
+function drawRunner(x,y,color,legPhase,tripped){
+  ctx.save();
+  ctx.translate(x,y);
+  // rope tying legs
+  ctx.strokeStyle='#8a5a2b';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(-6,18);ctx.lineTo(10,18);ctx.stroke();
+  // body pair (two stick figures)
+  for(let i=-1;i<=1;i+=2){
+    ctx.save();
+    ctx.translate(i*10,0);
+    ctx.fillStyle=color;
+    ctx.beginPath();ctx.arc(0,-22,8,0,Math.PI*2);ctx.fill(); // head
+    ctx.strokeStyle=color;ctx.lineWidth=5;
+    ctx.beginPath();ctx.moveTo(0,-14);ctx.lineTo(0,4);ctx.stroke(); // torso
+    const swing=tripped? -10 : Math.sin(legPhase+ (i>0?Math.PI:0))*14;
+    ctx.beginPath();ctx.moveTo(0,4);ctx.lineTo(swing*0.5,20);ctx.stroke(); // outer leg
+    // inner tied leg shared visually near center
+    ctx.beginPath();ctx.moveTo(0,4);ctx.lineTo(-i*4,20);ctx.stroke();
+    ctx.restore();
+  }
+  if(tripped){
+    ctx.fillStyle='#ffeb3b';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText('💫',0,-40);
+  }
+  ctx.restore();
+}
+
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/1000,0.05);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#7ec0ee');sky.addColorStop(1,'#3f8a3f');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  if(started&&!finished){
+    raceTime+=dt;
+    // player physics: friction
+    player.speed=Math.max(0,player.speed-1.1*dt);
+    if(player.tripped>0){player.tripped-=dt;}
+    player.x+=player.speed*40*dt;
+    player.legPhase+=player.speed*dt*1.5;
+
+    ais.forEach(a=>{
+      updateAI(a,dt,raceTime);
+      a.speed=Math.max(0,a.speed-1.0*dt);
+      a.x+=a.speed*40*dt;
+      a.legPhase=(a.legPhase||0)+a.speed*dt*1.5;
+    });
+
+    if(player.x>=FINISH_X&&!player.finishedAt)player.finishedAt=raceTime;
+    ais.forEach(a=>{ if(a.x>=FINISH_X&&!a.finishedAt)a.finishedAt=raceTime; });
+
+    if(player.finishedAt!=null){
+      finished=true;
+      const rank=1+ais.filter(a=>a.finishedAt!=null&&a.finishedAt<player.finishedAt).length;
+      if(rank===1){
+        SFX.win();
+        msg=I18N.t('you_won','You won the race in {t}s!').replace('{t}',player.finishedAt.toFixed(2));
+        if(!best||player.finishedAt<parseFloat(best)){
+          best=player.finishedAt;localStorage.setItem('threeleggedrace_best',best);
+          document.getElementById('bestEl').textContent=parseFloat(best).toFixed(2)+'s';
+        }
+      } else {
+        SFX.lose();
+        msg=I18N.t('you_placed','You finished in place #{r}. Try again!').replace('{r}',rank);
+      }
+      msgTimer=999;
+    } else if(ais.some(a=>a.finishedAt!=null)&&player.x<FINISH_X && ais.filter(a=>a.finishedAt!=null).length>=2){
+      // both AIs finished before player - end race
+      finished=true;
+      SFX.lose();
+      msg=I18N.t('you_lost','The others reached the finish first!');
+      msgTimer=999;
+    }
+
+    // rhythm bar reflects time since last valid step relative to ideal window
+    const since=player.lastStepT<0?0.3:(now/1000-player.lastStepT);
+    const pct=Math.max(0,Math.min(1,1-(since/0.9)));
+    document.getElementById('rhythmFill').style.width=(30+pct*70)+'%';
+    document.getElementById('rhythmFill').style.background = since<0.14? '#f44336' : (pct>0.5?'linear-gradient(90deg,#4caf50,#ffd54f)':'linear-gradient(90deg,#ff9800,#f44336)');
+  }
+
+  // camera follows player, clamp
+  const targetCam=Math.max(0,Math.min(player.x-140,TRACK_LEN-W+180));
+  camX+=(targetCam-camX)*0.08;
+
+  // track markings
+  ctx.save();
+  ctx.translate(-camX,0);
+  ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=2;ctx.setLineDash([14,14]);
+  LANE_Y.forEach(y=>{ ctx.beginPath();ctx.moveTo(0,y+30);ctx.lineTo(TRACK_LEN+200,y+30);ctx.stroke(); });
+  ctx.setLineDash([]);
+  // finish line
+  for(let i=0;i<8;i++){
+    ctx.fillStyle=i%2===0?'#fff':'#222';
+    ctx.fillRect(FINISH_X,20+i*35,14,35);
+  }
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('finish_label','FINISH'),FINISH_X+7,10);
+
+  drawRunner(player.x+40,LANE_Y[0],'#e94560',player.legPhase,player.tripped>0);
+  ais.forEach((a,i)=>drawRunner(a.x+40,LANE_Y[i+1],i===0?'#5e72eb':'#ffb74d',a.legPhase||0,a.tripped>0));
+  ctx.restore();
+
+  if(tripFlashPlayer>0){
+    ctx.fillStyle=`rgba(255,0,0,${tripFlashPlayer/14*0.25})`;
+    ctx.fillRect(0,0,W,H);
+    tripFlashPlayer--;
+  }
+
+  ctx.textAlign='center';
+  if(msg){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(W/2-260,H-46,520,34);
+    ctx.fillStyle='#fff';ctx.font='bold 17px Arial';
+    ctx.fillText(msg,W/2,H-23);
+  }
+  if(finished){
+    ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';
+    ctx.fillText(I18N.t('restart_hint_race','Tap or press any key to race again'),W/2,H/2);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+document.addEventListener('keydown',e=>{ if(finished){ e.preventDefault?.(); reset(); } });
+c.addEventListener('touchstart',()=>{ if(finished)reset(); });
+window._restartClick=()=>{ if(finished)reset(); };
+c.addEventListener('click',()=>{ if(finished)reset(); });
+
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

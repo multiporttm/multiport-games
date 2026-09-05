@@ -1,0 +1,312 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Snowmobile Racer</title><meta name="description" content="Play Snowmobile Racer free online — Use Arrow Keys/WASD or touch to steer lanes and accelerate your snowmobile past 3 AI riders, dodge moguls, hit jumps for boosts, and win the race across multiple laps."><link rel="canonical" href="https://games.multiportllc.com/games/snowmobileracer"><meta property="og:title" content="Snowmobile Racer - Multiport Games"><meta property="og:description" content="Play Snowmobile Racer free online — Use Arrow Keys/WASD or touch to steer lanes and accelerate your snowmobile past 3 AI riders, dodge moguls, hit jumps for boosts, and win the race across multiple laps."><meta property="og:url" content="https://games.multiportllc.com/games/snowmobileracer"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Snowmobile Racer","description":"Play Snowmobile Racer free online instantly. Use Arrow Keys/WASD or touch to steer lanes and accelerate your snowmobile past 3 AI riders, dodge moguls, hit jumps for boosts, and win the race across multiple laps. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/snowmobileracer","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#e3f2fd;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#e1f5fe;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#sm-controls{display:flex;justify-content:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+#sm-controls button{padding:12px 22px;border:none;border-radius:20px;background:#0277bd;color:#fff;font-weight:800;font-size:1.1rem;cursor:pointer;user-select:none}
+#sm-controls button:active{transform:scale(.94)}
+#gasBtn{background:#2e7d32}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Snowmobile Racer</div>
+  <div class="game-frame">
+    <div id="score-display">Lap: 1/3 | Place: 1st | Best: --</div>
+    <canvas id="c" width="380" height="560"></canvas>
+    <div id="sm-controls">
+      <button id="leftBtn">◀</button>
+      <button id="gasBtn">GAS</button>
+      <button id="rightBtn">▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Up Arrow/W</b> (or the <b>GAS</b> button) to accelerate, and use <b>Left/Right Arrow</b> or <b>A/D</b> (or ◀ ▶) to switch lanes. Dodge the snow moguls and rocks, hit the yellow jump ramps for a speed boost, and race 2 AI opponents across 3 laps to the finish line first!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=380,H=560;
+const LANES=4;
+const laneW=W/LANES;
+function laneX(i){return laneW*i+laneW/2;}
+
+let bestTime=parseFloat(localStorage.getItem('snowmobileracer_best')||'0');
+const LAP_LEN=1200, TOTAL_LAPS=3, RACE_LEN=LAP_LEN*TOTAL_LAPS;
+
+let player,ai,obstacles,started,gameOver,raceTime,spawnTimer,keys,message,placeText;
+
+function makeRacer(lane,color,isPlayer){
+  return {lane,x:laneX(lane),color,isPlayer,progress:0,speed:isPlayer?0:5.4,spinTimer:0,boostTimer:0};
+}
+
+function reset(){
+  player=makeRacer(1,'#e53935',true);
+  ai=[makeRacer(0,'#fdd835',false),makeRacer(2,'#43a047',false),makeRacer(3,'#8e24aa',false)];
+  obstacles=[];
+  started=false;gameOver=false;raceTime=0;spawnTimer=0;
+  keys={left:false,right:false,gas:false};
+  message='';placeText='1st';
+}
+
+function startIfNeeded(){ if(!started)started=true; }
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){keys.left=true;startIfNeeded();e.preventDefault();}
+  if(e.code==='ArrowRight'||e.code==='KeyD'){keys.right=true;startIfNeeded();e.preventDefault();}
+  if(e.code==='ArrowUp'||e.code==='KeyW'){keys.gas=true;startIfNeeded();e.preventDefault();}
+  if((e.code==='Space'||e.code==='Enter')&&gameOver){reset();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keys.left=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keys.right=false;
+  if(e.code==='ArrowUp'||e.code==='KeyW')keys.gas=false;
+});
+function bindBtn(id,onDown,onUp){
+  const el=document.getElementById(id);
+  const down=e=>{e.preventDefault();startIfNeeded();if(gameOver){reset();return;}onDown();};
+  const up=e=>{e&&e.preventDefault();onUp&&onUp();};
+  el.addEventListener('pointerdown',down);
+  el.addEventListener('pointerup',up);
+  el.addEventListener('pointerleave',up);
+}
+bindBtn('leftBtn',()=>keys.left=true,()=>keys.left=false);
+bindBtn('rightBtn',()=>keys.right=true,()=>keys.right=false);
+bindBtn('gasBtn',()=>keys.gas=true,()=>keys.gas=false);
+c.addEventListener('pointerdown',()=>{startIfNeeded();if(gameOver)reset();});
+
+let laneTargetX=[laneX(0),laneX(1),laneX(2),laneX(3)];
+let curLaneIdx=1;
+
+function trySwitchLane(dir){
+  const next=Math.max(0,Math.min(LANES-1,curLaneIdx+dir));
+  if(next!==curLaneIdx){curLaneIdx=next;SFX.click();}
+}
+let leftPrev=false,rightPrev=false;
+
+function spawnObstacle(){
+  const roll=Math.random();
+  const lane=Math.floor(Math.random()*LANES);
+  const spawnAt=player.progress+H+80+Math.random()*40; // world-progress position ahead of player's view
+  if(roll<0.55){
+    obstacles.push({type:'rock',lane,worldY:spawnAt,hitPlayers:new Set()});
+  } else if(roll<0.8){
+    obstacles.push({type:'mogul',lane,worldY:spawnAt,hitPlayers:new Set()});
+  } else {
+    obstacles.push({type:'jump',lane,worldY:spawnAt,hitPlayers:new Set()});
+  }
+}
+
+function updateAI(bot,dt){
+  // simple speed AI with random variance, slight rubberbanding, and obstacle avoidance
+  const targetSpeed=5.2+Math.sin(raceTime*0.4+bot.lane)*0.6+Math.random()*0.3;
+  bot.speed+=(targetSpeed-bot.speed)*0.05;
+  // rubberband: if far behind player, small boost; if far ahead, small penalty
+  const diff=player.progress-bot.progress;
+  bot.speed+=Math.max(-0.4,Math.min(0.4,diff*0.0008));
+  if(bot.boostTimer>0){bot.speed+=3;bot.boostTimer-=dt;}
+  if(bot.spinTimer>0){bot.spinTimer-=dt;bot.speed*=0.3;}
+  bot.progress+=Math.max(1,bot.speed)*dt;
+  // occasionally change lane
+  if(Math.random()<0.01)bot.lane=Math.max(0,Math.min(LANES-1,bot.lane+(Math.random()<0.5?-1:1)));
+  bot.x+=(laneX(bot.lane)-bot.x)*0.1;
+}
+
+function checkObstacleHit(racer){
+  for(const o of obstacles){
+    if(o.hitPlayers.has(racer))continue;
+    const dist=Math.abs(o.worldY-racer.progress);
+    if(dist<18 && o.lane===racer.lane){
+      o.hitPlayers.add(racer);
+      if(o.type==='jump'){
+        racer.boostTimer=1.2;
+        if(racer.isPlayer){SFX.powerup();showMessage('BOOST!');}
+      } else {
+        racer.spinTimer=0.6;
+        racer.speed*=0.4;
+        if(racer.isPlayer){SFX.hit();showMessage(o.type==='rock'?'HIT ROCK!':'MOGUL!');}
+      }
+    }
+  }
+}
+
+function showMessage(m){message=m;messageTimer=45;}
+let messageTimer=0;
+
+function computePlace(){
+  const all=[player,...ai];
+  all.sort((a,b)=>b.progress-a.progress);
+  const idx=all.indexOf(player);
+  const ord=['1st','2nd','3rd','4th'];
+  return ord[idx]||(idx+1)+'th';
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#bbdefb');sky.addColorStop(1,'#e8f5fd');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    drawTrack();
+    drawRacers();
+    ctx.fillStyle='#01579b';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Arrows/GAS to start'),W/2,40);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawTrack();
+    drawRacers();
+    ctx.fillStyle='#01579b';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    const won=computePlace()==='1st';
+    ctx.fillText(won?I18N.t('sm_you_win','YOU WIN!'):I18N.t('sm_race_over','RACE OVER'),W/2,H/2-30);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('sm_finish_place','You finished {p}').replace('{p}',placeText),W/2,H/2);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+30);
+    updateHUD();
+    requestAnimationFrame(loop);return;
+  }
+
+  const dt=1;
+  raceTime+=1/60;
+
+  if(keys.left&&!leftPrev)trySwitchLane(-1);
+  if(keys.right&&!rightPrev)trySwitchLane(1);
+  leftPrev=keys.left;rightPrev=keys.right;
+  player.lane=curLaneIdx;
+  player.x+=(laneX(curLaneIdx)-player.x)*0.15;
+
+  const targetSpeed=keys.gas?9.5:4;
+  player.speed+=(targetSpeed-player.speed)*0.08;
+  if(player.boostTimer>0){player.speed+=3;player.boostTimer-=dt/60;}
+  if(player.spinTimer>0){player.spinTimer-=dt/60;player.speed*=0.3;}
+  player.progress+=Math.max(0.5,player.speed)*dt;
+
+  ai.forEach(bot=>updateAI(bot,dt));
+
+  spawnTimer+=dt;
+  if(spawnTimer>=32){spawnTimer=0;spawnObstacle();}
+  obstacles=obstacles.filter(o=>o.worldY>player.progress-100);
+
+  checkObstacleHit(player);
+  ai.forEach(bot=>checkObstacleHit(bot));
+
+  if(player.progress>=RACE_LEN||ai.some(b=>b.progress>=RACE_LEN)){
+    gameOver=true;
+    placeText=computePlace();
+    if(placeText==='1st'){
+      SFX.win();
+      if(bestTime===0||raceTime<bestTime){bestTime=raceTime;localStorage.setItem('snowmobileracer_best',String(bestTime));}
+    } else {
+      SFX.lose();
+    }
+  }
+
+  drawTrack();
+  drawRacers();
+
+  if(messageTimer>0){
+    messageTimer--;
+    ctx.fillStyle='#d32f2f';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(message,W/2,50);
+  }
+
+  placeText=computePlace();
+  updateHUD();
+  requestAnimationFrame(loop);
+}
+
+function drawTrack(){
+  // lane dividers
+  ctx.strokeStyle='#90caf9';
+  ctx.lineWidth=2;
+  ctx.setLineDash([16,14]);
+  for(let i=1;i<LANES;i++){
+    ctx.beginPath();ctx.moveTo(laneW*i,0);ctx.lineTo(laneW*i,H);ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // snow texture dots
+  const off=(player?player.progress:0)*1.4%40;
+  ctx.fillStyle='#e1f5fe';
+  for(let y=-40;y<H+40;y+=40){
+    for(let i=0;i<LANES;i++){
+      ctx.beginPath();ctx.arc(laneX(i)-laneW/4,((y+off)%(H+80))-40,2,0,7);ctx.fill();
+    }
+  }
+  // obstacles drawn relative to player's world progress (camera follows player)
+  const camY=H-90;
+  obstacles.forEach(o=>{
+    const screenY=camY-(o.worldY-player.progress);
+    if(screenY<-40||screenY>H+40)return;
+    const x=laneX(o.lane);
+    if(o.type==='rock'){
+      ctx.fillStyle='#616161';
+      ctx.beginPath();ctx.arc(x,screenY,14,0,7);ctx.fill();
+      ctx.fillStyle='#9e9e9e';
+      ctx.beginPath();ctx.arc(x-4,screenY-4,6,0,7);ctx.fill();
+    } else if(o.type==='mogul'){
+      ctx.fillStyle='#f5f5f5';
+      ctx.beginPath();ctx.ellipse(x,screenY,20,10,0,0,7);ctx.fill();
+      ctx.strokeStyle='#bbdefb';ctx.lineWidth=2;ctx.stroke();
+    } else {
+      ctx.fillStyle='#fdd835';
+      ctx.beginPath();
+      ctx.moveTo(x-20,screenY+10);ctx.lineTo(x+20,screenY+10);ctx.lineTo(x,screenY-16);
+      ctx.closePath();ctx.fill();
+    }
+  });
+  // finish line marker when close to race end
+  const distToFinish=RACE_LEN-player.progress;
+  if(distToFinish<H){
+    const screenY=camY-(RACE_LEN-player.progress);
+    ctx.fillStyle='#212121';
+    for(let i=0;i<LANES;i++){
+      ctx.fillStyle=i%2===0?'#212121':'#fafafa';
+      ctx.fillRect(laneW*i,screenY-8,laneW,16);
+    }
+  }
+}
+
+function drawRacer(racer,camY){
+  const screenY=racer.isPlayer?camY:camY-(racer.progress-player.progress);
+  if(screenY<-30||screenY>H+30)return;
+  ctx.save();
+  ctx.translate(racer.x,screenY);
+  const wobble=racer.spinTimer>0?Math.sin(raceTime*40)*0.5:0;
+  ctx.rotate(wobble);
+  ctx.fillStyle=racer.color;
+  ctx.fillRect(-14,-8,28,20); // body
+  ctx.fillStyle='#212121';
+  ctx.fillRect(-16,10,10,6);ctx.fillRect(6,10,10,6); // skis
+  ctx.fillStyle='#37474f';
+  ctx.beginPath();ctx.arc(0,-14,7,0,7);ctx.fill(); // helmet
+  if(racer.boostTimer>0){
+    ctx.fillStyle='rgba(255,152,0,.7)';
+    ctx.beginPath();ctx.moveTo(-10,18);ctx.lineTo(10,18);ctx.lineTo(0,34);ctx.closePath();ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawRacers(){
+  const camY=H-90;
+  // draw AI first then player on top
+  ai.forEach(bot=>drawRacer(bot,camY));
+  drawRacer(player,camY);
+}
+
+function updateHUD(){
+  const lap=Math.min(TOTAL_LAPS,Math.floor(player.progress/LAP_LEN)+1);
+  document.getElementById('score-display').textContent=
+    I18N.t('sm_hud_label','Lap: {lap}/{laps} | Place: {p} | Best: {b}')
+      .replace('{lap}',lap).replace('{laps}',TOTAL_LAPS).replace('{p}',placeText)
+      .replace('{b}',bestTime>0?bestTime.toFixed(1)+'s':'--');
+}
+
+reset();
+loop();
+</script></body></html>

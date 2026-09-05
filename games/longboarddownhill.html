@@ -1,0 +1,239 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Longboard Downhill</title><meta name="description" content="Play Longboard Downhill free online — Use Arrow Keys/A,D or drag to lean left and right, carve around rocks, cars and pedestrians on the winding hill road, and rack up distance before you crash."><link rel="canonical" href="https://games.multiportllc.com/games/longboarddownhill"><meta property="og:title" content="Longboard Downhill - Multiport Games"><meta property="og:description" content="Play Longboard Downhill free online — Use Arrow Keys/A,D or drag to lean left and right, carve around rocks, cars and pedestrians on the winding hill road, and rack up distance before you crash."><meta property="og:url" content="https://games.multiportllc.com/games/longboarddownhill"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Longboard Downhill","description":"Play Longboard Downhill free online instantly. Use Arrow Keys/A,D or drag to lean left and right, carve around rocks, cars and pedestrians on the winding hill road, and rack up distance before you crash. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/longboarddownhill","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#5c6b73;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffd54f;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Longboard Downhill</div>
+  <div class="game-frame">
+    <div id="score-display">Distance: 0m | Best: 0m</div>
+    <canvas id="c" width="400" height="600"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press <b>Left/Right Arrow</b> (or <b>A/D</b>) to lean and steer, or <b>drag</b> left/right on the road. Weave around rocks, cars and pedestrians on the winding hill road — your speed keeps building, so stay sharp! Crash and your run ends. Score is the distance you travel.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=400,H=600;
+let best=parseFloat(localStorage.getItem('longboarddownhill_best')||'0');
+let dist=0,gameOver=false,started=false;
+let speed=3.2,maxSpeedTime=0;
+let scroll=0; // used to compute road curvature phase
+let rider={x:200,vx:0,lean:0};
+let obstacles=[];
+let spawnTimer=0;
+let keys={left:false,right:false};
+let dragging=false,dragStartX=0,dragStartRiderX=0;
+
+function roadCenter(y){
+  // y is world-scroll-distance based sample point; curve via sine
+  return W/2 + Math.sin((scroll-y)*0.0018)*120;
+}
+function roadHalfWidth(){ return 95; }
+
+function reset(){
+  dist=0;gameOver=false;started=false;speed=3.2;scroll=0;
+  rider.x=W/2;rider.vx=0;rider.lean=0;
+  obstacles=[];spawnTimer=0;
+}
+
+function startIfNeeded(){ if(!started){started=true;} }
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){keys.left=true;startIfNeeded();e.preventDefault();}
+  if(e.code==='ArrowRight'||e.code==='KeyD'){keys.right=true;startIfNeeded();e.preventDefault();}
+  if((e.code==='Space'||e.code==='Enter')&&gameOver){reset();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keys.left=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keys.right=false;
+});
+c.addEventListener('pointerdown',e=>{
+  startIfNeeded();
+  if(gameOver){reset();return;}
+  dragging=true;
+  const r=c.getBoundingClientRect();
+  dragStartX=(e.clientX-r.left)*(W/r.width);
+  dragStartRiderX=rider.x;
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const r=c.getBoundingClientRect();
+  const px=(e.clientX-r.left)*(W/r.width);
+  rider.x=dragStartRiderX+(px-dragStartX);
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+function spawnObstacle(){
+  const types=[
+    {type:'rock',w:26,h:22,color:'#6d5843'},
+    {type:'car',w:44,h:66,color:'#c62828'},
+    {type:'ped',w:20,h:34,color:'#3949ab'}
+  ];
+  const t=types[Math.floor(Math.random()*types.length)];
+  const half=roadHalfWidth();
+  const cx=roadCenter(0);
+  const x=cx-half+30+Math.random()*(half*2-60);
+  obstacles.push({x,y:-60,w:t.w,h:t.h,color:t.color,type:t.type,passed:false});
+}
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function drawRoad(){
+  // background hillside
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#8fb8d8');sky.addColorStop(1,'#3d6b4a');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // road as series of horizontal strips following center curve
+  ctx.fillStyle='#4a4a52';
+  const step=8;
+  for(let y=0;y<=H;y+=step){
+    const cx=roadCenter(y);
+    ctx.fillRect(cx-roadHalfWidth(),y,roadHalfWidth()*2,step+1);
+  }
+  // edge lines
+  ctx.strokeStyle='#f5f5f5';
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  for(let y=0;y<=H;y+=step){
+    const cx=roadCenter(y);
+    if(y===0)ctx.moveTo(cx-roadHalfWidth(),y);else ctx.lineTo(cx-roadHalfWidth(),y);
+  }
+  ctx.stroke();
+  ctx.beginPath();
+  for(let y=0;y<=H;y+=step){
+    const cx=roadCenter(y);
+    if(y===0)ctx.moveTo(cx+roadHalfWidth(),y);else ctx.lineTo(cx+roadHalfWidth(),y);
+  }
+  ctx.stroke();
+  // dashed centerline
+  ctx.strokeStyle='#ffd54f';
+  ctx.setLineDash([14,14]);
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  for(let y=0;y<=H;y+=step){
+    const cx=roadCenter(y);
+    if(y===0)ctx.moveTo(cx,y);else ctx.lineTo(cx,y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawRider(){
+  ctx.save();
+  ctx.translate(rider.x,500);
+  ctx.rotate(rider.lean*0.35);
+  ctx.fillStyle='#222';
+  ctx.fillRect(-18,4,36,7); // board
+  ctx.fillStyle='#333';
+  ctx.beginPath();ctx.arc(-12,13,4,0,7);ctx.fill();
+  ctx.beginPath();ctx.arc(12,13,4,0,7);ctx.fill();
+  ctx.fillStyle='#ff7043';
+  ctx.fillRect(-9,-26,18,26); // body
+  ctx.fillStyle='#ffccbc';
+  ctx.beginPath();ctx.arc(0,-32,8,0,7);ctx.fill(); // head
+  ctx.restore();
+}
+
+function drawObstacle(o){
+  ctx.fillStyle=o.color;
+  if(o.type==='rock'){
+    ctx.beginPath();ctx.arc(o.x+o.w/2,o.y+o.h/2,o.w/2,0,7);ctx.fill();
+  } else if(o.type==='car'){
+    ctx.fillRect(o.x,o.y,o.w,o.h);
+    ctx.fillStyle='#90caf9';
+    ctx.fillRect(o.x+6,o.y+8,o.w-12,14);
+  } else {
+    ctx.fillRect(o.x+4,o.y+8,o.w-8,o.h-8);
+    ctx.fillStyle='#ffccbc';
+    ctx.beginPath();ctx.arc(o.x+o.w/2,o.y+6,6,0,7);ctx.fill();
+  }
+}
+
+function loop(){
+  drawRoad();
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Arrows/Drag to start'),W/2,H/2);
+    drawRider();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawRider();
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+16);
+    updateHUD();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // physics: leaning via keys
+  const accel=0.9;
+  if(keys.left)rider.vx-=accel;
+  if(keys.right)rider.vx+=accel;
+  if(!keys.left&&!keys.right&&!dragging)rider.vx*=0.85;
+  rider.vx=Math.max(-9,Math.min(9,rider.vx));
+  rider.x+=rider.vx*0.5;
+  rider.lean=rider.vx/9;
+
+  // speed ramps up with distance
+  speed=Math.min(14,3.2+dist/220);
+  dist+=speed*0.12;
+  scroll+=speed;
+  if(dist>best){best=dist;}
+
+  // keep rider within road bounds (crash if pushed off edge)
+  const cx=roadCenter(500);
+  const half=roadHalfWidth();
+  if(rider.x<cx-half+10||rider.x>cx+half-10){
+    rider.x=Math.max(cx-half+10,Math.min(cx+half-10,rider.x));
+    rider.vx*=0.3;
+  }
+
+  // spawn obstacles
+  spawnTimer+=speed;
+  const interval=Math.max(28,70-dist/30);
+  if(spawnTimer>=interval){spawnTimer=0;spawnObstacle();}
+
+  const riderHit={x:rider.x-10,y:500-30,w:20,h:34};
+  obstacles=obstacles.filter(o=>o.y<H+80);
+  obstacles.forEach(o=>{
+    o.y+=speed*1.6;
+    drawObstacle(o);
+    if(!gameOver&&rectsOverlap(riderHit,o)){
+      gameOver=true;
+      SFX.lose();
+      if(dist>best){best=dist;localStorage.setItem('longboarddownhill_best',String(best));}
+    }
+  });
+  if(gameOver&&dist<=best){
+    // ensure best saved even if not new record (still persist current best)
+    localStorage.setItem('longboarddownhill_best',String(best));
+  }
+
+  drawRider();
+  updateHUD();
+  requestAnimationFrame(loop);
+}
+
+function updateHUD(){
+  document.getElementById('score-display').textContent=
+    I18N.t('lb_score_label','Distance: {d}m | Best: {b}m')
+      .replace('{d}',Math.floor(dist)).replace('{b}',Math.floor(best));
+}
+
+reset();
+loop();
+</script></body></html>

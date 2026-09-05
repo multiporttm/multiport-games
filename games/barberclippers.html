@@ -1,0 +1,266 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Barber Clippers</title><meta name="description" content="Play Barber Clippers free online — Drag the clippers over the hair to trim it down to match the target haircut silhouette. Avoid bald spots and leftover fuzz before time runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/barberclippers"><meta property="og:title" content="Barber Clippers - Multiport Games"><meta property="og:description" content="Play Barber Clippers free online — Drag the clippers over the hair to trim it down to match the target haircut silhouette. Avoid bald spots and leftover fuzz before time runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/barberclippers"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Barber Clippers","description":"Play Barber Clippers free online instantly. Drag the clippers over the hair to trim it down to match the target haircut silhouette. Avoid bald spots and leftover fuzz before time runs out! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/barberclippers","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:14px;text-align:center}
+#hud{display:flex;justify-content:space-between;align-items:center;max-width:600px;margin:0 auto 10px;color:#fff;font-weight:700;flex-wrap:wrap;gap:6px}
+#hud span{background:rgba(255,255,255,.08);padding:6px 12px;border-radius:10px;font-size:.9rem}
+#timeSpan{color:#ffd54f}
+#canvases{display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+.canvasBox{background:#1b1b2b;border-radius:14px;padding:10px}
+.canvasBox h4{color:#bbb;margin:0 0 6px;font-size:.8rem;text-transform:uppercase;letter-spacing:1px}
+canvas{background:#f0c8a0;border-radius:10px;touch-action:none;display:block;cursor:crosshair}
+#msg{min-height:1.6em;color:#ffd54f;font-weight:800;margin-top:8px}
+#btnRow{margin-top:10px}
+#btnRow button{padding:9px 22px;background:#455a64;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:0 5px;font-weight:700}
+#toolsRow{margin:8px 0;color:#fff;display:flex;gap:10px;justify-content:center;align-items:center;flex-wrap:wrap}
+#toolsRow label{font-size:.85rem}
+@media(max-width:480px){canvas{width:150px;height:190px}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Barber Clippers</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span>Style: <span id="styleNum">1</span>/<span id="styleTotal">6</span></span>
+        <span id="timeSpan">Time: 20</span>
+        <span>Score: <span id="scoreSpan">0</span></span>
+        <span>Best: <span id="bestSpan">0</span></span>
+      </div>
+      <div id="canvases">
+        <div class="canvasBox"><h4>Target Cut</h4><canvas id="ref" width="180" height="220"></canvas></div>
+        <div class="canvasBox"><h4>Your Client</h4><canvas id="draw" width="180" height="220"></canvas></div>
+      </div>
+      <div id="toolsRow">
+        <label>Clipper Size <input type="range" id="brush" min="8" max="26" value="16"></label>
+      </div>
+      <div id="msg"></div>
+      <div id="btnRow"><button id="doneBtn">Finish Cut ✔</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the clippers over the client's hair to trim it down. Match the target silhouette on the left as closely as possible — cut too much and you'll leave bald spots, too little and there's leftover fuzz. Click <b>Finish Cut</b> when ready — 6 styles, each trickier than the last!</div>
+</div>
+<script>
+const refCanvas=document.getElementById('ref'),refCtx=refCanvas.getContext('2d');
+const drawCanvas=document.getElementById('draw'),drawCtx=drawCanvas.getContext('2d');
+const W=180,H=220;
+let brushSize=16;
+let styleIdx=0;
+let score=0;
+let best=parseInt(localStorage.getItem('barberclippers_best')||'0',10);
+document.getElementById('bestSpan').textContent=best;
+let timeLeft=20,timerId=null,gameActive=false;
+const HAIR='#4a3222';
+const SKIN='#f0c8a0';
+
+function headBase(ctx){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle=SKIN;ctx.fillRect(0,0,W,H);
+  // head/face shape
+  ctx.fillStyle=SKIN;
+  ctx.beginPath();ctx.ellipse(W/2,H/2+20,42,58,0,0,Math.PI*2);ctx.fill();
+  // ears
+  ctx.beginPath();ctx.ellipse(W/2-42,H/2+22,8,12,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(W/2+42,H/2+22,8,12,0,0,Math.PI*2);ctx.fill();
+}
+
+// Silhouette functions: given hair region mask function isHair(x,y)->bool, used both to draw ref and to compute target for scoring
+function styleBuzz(level){
+  return (x,y)=>{
+    const cx=W/2,cy=H/2-24;
+    const d=Math.hypot(x-cx,(y-cy)*1.0);
+    return d<38-level*1.5 && y<H/2+18;
+  };
+}
+function styleMohawk(level){
+  return (x,y)=>{
+    const cx=W/2;
+    const inStrip=Math.abs(x-cx)<14+level;
+    const cy=H/2-40;
+    const d=Math.hypot((x-cx)*1.3,y-cy);
+    return inStrip && d<70 && y<H/2+10;
+  };
+}
+function styleSideFade(level){
+  return (x,y)=>{
+    const cx=W/2,cy=H/2-24;
+    const dTop=Math.hypot(x-cx,y-cy);
+    if(dTop<40-level && y<H/2+15)return true;
+    // fade sides shorter — thin band near ears remains only lightly
+    return false;
+  };
+}
+const STYLE_FNS=[styleBuzz,styleMohawk,styleSideFade];
+
+let targetMask=null;
+function buildStyle(idx){
+  const level=Math.floor(idx/1);
+  const fn=STYLE_FNS[idx%STYLE_FNS.length];
+  targetMask=fn(level);
+  headBase(refCtx);
+  const img=refCtx.getImageData(0,0,W,H);
+  for(let y=0;y<H;y++){
+    for(let x=0;x<W;x++){
+      if(targetMask(x,y)){
+        const idx4=(y*W+x)*4;
+        const rgb=hexToRgb(HAIR);
+        img.data[idx4]=rgb.r;img.data[idx4+1]=rgb.g;img.data[idx4+2]=rgb.b;img.data[idx4+3]=255;
+      }
+    }
+  }
+  refCtx.putImageData(img,0,0);
+}
+
+function hexToRgb(hex){ const v=parseInt(hex.slice(1),16); return {r:(v>>16)&255,g:(v>>8)&255,b:v&255}; }
+
+let fullHairMask=null;
+function resetHair(){
+  headBase(drawCtx);
+  fullHairMask=(x,y)=>{
+    const cx=W/2,cy=H/2-24;
+    const d=Math.hypot(x-cx,y-cy);
+    return d<48 && y<H/2+22;
+  };
+  const img=drawCtx.getImageData(0,0,W,H);
+  for(let y=0;y<H;y++){
+    for(let x=0;x<W;x++){
+      if(fullHairMask(x,y)){
+        const idx4=(y*W+x)*4;
+        const rgb=hexToRgb(HAIR);
+        img.data[idx4]=rgb.r;img.data[idx4+1]=rgb.g;img.data[idx4+2]=rgb.b;img.data[idx4+3]=255;
+      }
+    }
+  }
+  drawCtx.putImageData(img,0,0);
+  currentHairPixels=new Set();
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(fullHairMask(x,y))currentHairPixels.add(y*W+x);
+}
+
+let currentHairPixels=new Set();
+let clipping=false;
+function getPos(e){
+  const rect=drawCanvas.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*(W/rect.width),y:(cy-rect.top)*(H/rect.height)};
+}
+function clipAt(pos){
+  const r=brushSize/2;
+  const skinRgb=hexToRgb(SKIN);
+  const img=drawCtx.getImageData(0,0,W,H);
+  const x0=Math.max(0,Math.floor(pos.x-r)),x1=Math.min(W-1,Math.ceil(pos.x+r));
+  const y0=Math.max(0,Math.floor(pos.y-r)),y1=Math.min(H-1,Math.ceil(pos.y+r));
+  for(let y=y0;y<=y1;y++){
+    for(let x=x0;x<=x1;x++){
+      if(Math.hypot(x-pos.x,y-pos.y)<=r){
+        const key=y*W+x;
+        if(currentHairPixels.has(key)){
+          currentHairPixels.delete(key);
+          const idx4=(y*W+x)*4;
+          img.data[idx4]=skinRgb.r;img.data[idx4+1]=skinRgb.g;img.data[idx4+2]=skinRgb.b;img.data[idx4+3]=255;
+        }
+      }
+    }
+  }
+  drawCtx.putImageData(img,0,0);
+}
+function startClip(e){ if(!gameActive)return; e.preventDefault();clipping=true;clipAt(getPos(e)); if(SFX.tick)SFX.tick(); }
+function moveClip(e){ if(!clipping||!gameActive)return; e.preventDefault();clipAt(getPos(e)); }
+function endClip(){clipping=false;}
+drawCanvas.addEventListener('mousedown',startClip);
+drawCanvas.addEventListener('mousemove',moveClip);
+window.addEventListener('mouseup',endClip);
+drawCanvas.addEventListener('touchstart',startClip,{passive:false});
+drawCanvas.addEventListener('touchmove',moveClip,{passive:false});
+drawCanvas.addEventListener('touchend',endClip);
+
+document.getElementById('brush').addEventListener('input',e=>{brushSize=parseInt(e.target.value,10);});
+document.getElementById('doneBtn').addEventListener('click',finishCut);
+
+function scoreCut(){
+  let correctKept=0,correctRemoved=0,wrongRemoved=0,wrongKept=0,totalTarget=0,totalNonTarget=0;
+  for(let y=0;y<H;y+=2){
+    for(let x=0;x<W;x+=2){
+      const shouldHaveHair=targetMask(x,y);
+      const hasHair=currentHairPixels.has(y*W+x);
+      if(shouldHaveHair){
+        totalTarget++;
+        if(hasHair)correctKept++; else wrongRemoved++;
+      } else if(fullHairMask(x,y)){
+        totalNonTarget++;
+        if(!hasHair)correctRemoved++; else wrongKept++;
+      }
+    }
+  }
+  const keepAcc=totalTarget>0?correctKept/totalTarget:1;
+  const removeAcc=totalNonTarget>0?correctRemoved/totalNonTarget:1;
+  return (keepAcc*0.5+removeAcc*0.5);
+}
+
+function finishCut(){
+  if(!gameActive)return;
+  gameActive=false;
+  clearInterval(timerId);
+  const acc=scoreCut();
+  const timeBonus=Math.max(0,timeLeft)*4;
+  const pts=Math.round(acc*500+timeBonus);
+  score+=pts;
+  document.getElementById('scoreSpan').textContent=score;
+  const msg=document.getElementById('msg');
+  if(acc>0.6){SFX.success();msg.textContent=`Sharp cut! ${(acc*100).toFixed(0)}% match — +${pts} pts`;}
+  else{SFX.fail();msg.textContent=`Rough cut — ${(acc*100).toFixed(0)}% match — +${pts} pts`;}
+  setTimeout(nextStyle,1400);
+}
+
+function timeUp(){ if(!gameActive)return; SFX.error(); finishCut(); }
+
+function nextStyle(){
+  styleIdx++;
+  const total=6;
+  document.getElementById('styleTotal').textContent=total;
+  if(styleIdx>=total){ endGame(); return; }
+  document.getElementById('styleNum').textContent=styleIdx+1;
+  startStyle();
+}
+
+function startStyle(){
+  buildStyle(styleIdx);
+  resetHair();
+  timeLeft=Math.max(12,20-styleIdx);
+  document.getElementById('timeSpan').textContent='Time: '+timeLeft;
+  document.getElementById('msg').textContent='';
+  gameActive=true;
+  clearInterval(timerId);
+  timerId=setInterval(()=>{
+    timeLeft--;
+    document.getElementById('timeSpan').textContent='Time: '+timeLeft;
+    if(timeLeft<=0){clearInterval(timerId);timeUp();}
+  },1000);
+}
+
+function endGame(){
+  gameActive=false;
+  clearInterval(timerId);
+  if(score>best){ best=score; localStorage.setItem('barberclippers_best',String(best)); SFX.win(); }
+  else{ SFX.levelup(); }
+  document.getElementById('bestSpan').textContent=best;
+  document.getElementById('msg').textContent=I18N.t('barber_complete','All styles complete! Final score: {s}').replace('{s}',score);
+  document.getElementById('doneBtn').textContent='Play Again ↻';
+  document.getElementById('doneBtn').onclick=()=>{ document.getElementById('doneBtn').textContent='Finish Cut ✔'; document.getElementById('doneBtn').onclick=finishCut; restart(); };
+}
+
+function restart(){
+  styleIdx=0;score=0;
+  document.getElementById('scoreSpan').textContent=0;
+  document.getElementById('styleNum').textContent=1;
+  startStyle();
+}
+
+restart();
+</script></body></html>
