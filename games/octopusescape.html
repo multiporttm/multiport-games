@@ -1,0 +1,250 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Octopus Escape</title><meta name="description" content="Play Octopus Escape free online — Use Arrow Keys/WASD or drag to steer the octopus through coral gaps to the exit. Squeeze through tight gaps slowly and avoid predator fish!"><link rel="canonical" href="https://games.multiportllc.com/games/octopusescape"><meta property="og:title" content="Octopus Escape - Multiport Games"><meta property="og:description" content="Play Octopus Escape free online — Use Arrow Keys/WASD or drag to steer the octopus through coral gaps to the exit. Squeeze through tight gaps slowly and avoid predator fish!"><meta property="og:url" content="https://games.multiportllc.com/games/octopusescape"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Octopus Escape","description":"Play Octopus Escape free online instantly. Use Arrow Keys/WASD or drag to steer the octopus through coral gaps to the exit. Squeeze through tight gaps slowly and avoid predator fish. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/octopusescape","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#04121c}
+#c{background:#0a2a3d;display:block;border-radius:8px;touch-action:none;cursor:grab}
+#c:active{cursor:grabbing}
+#hud{color:#7fdfff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:space-between;max-width:800px;margin:0 auto}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Octopus Escape</div>
+  <div class="game-frame">
+    <div id="hud"><span id="level-display">Level: 1</span><span id="score-display">Score: 0</span><span id="hi-display">Hi: 0</span></div>
+    <canvas id="c" width="800" height="450"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b>/<b>WASD</b> or <b>drag</b> to steer the octopus through the coral maze to the glowing exit. Tight gaps force a slow "squeeze" — watch out for predator fish! Reach the exit fast for bonus points. Each level's maze gets tighter.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=450;
+let level=1,score=0,hi=parseInt(localStorage.getItem('octopusescape_best')||'0'),gameOver=false,won=false,levelTime=0,squeezing=false;
+const oct={x:40,y:H/2,r:16,vx:0,vy:0};
+let walls=[],exit={},fish=[];
+const keys={};
+let dragging=false,dragTarget=null;
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(gameOver)restart();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+c.addEventListener('mousedown',e=>{dragging=true;dragTarget=pointerPos(e);if(gameOver)restart();});
+c.addEventListener('mousemove',e=>{if(dragging)dragTarget=pointerPos(e);});
+window.addEventListener('mouseup',()=>{dragging=false;dragTarget=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();dragging=true;dragTarget=pointerPos(e);if(gameOver)restart();},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(dragging)dragTarget=pointerPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragging=false;dragTarget=null;},{passive:false});
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+function circleRect(cx,cy,cr,rx,ry,rw,rh){
+  const nx=Math.max(rx,Math.min(cx,rx+rw));
+  const ny=Math.max(ry,Math.min(cy,ry+rh));
+  const dx=cx-nx,dy=cy-ny;
+  return dx*dx+dy*dy<cr*cr;
+}
+
+function genLevel(lv){
+  walls=[];
+  const cols=4+Math.min(3,Math.floor(lv/2));
+  const colW=(W-160)/cols;
+  const baseGap=Math.max(70-lv*4,42);
+  for(let i=0;i<cols;i++){
+    const x=120+i*colW;
+    const gapY=40+Math.random()*(H-80-baseGap);
+    walls.push({x,y:0,w:24,h:gapY,gap:baseGap,gapY,colTop:true});
+    walls.push({x,y:gapY+baseGap,w:24,h:H-(gapY+baseGap),gap:baseGap});
+  }
+  exit={x:W-60,y:H/2-35,w:36,h:70};
+  fish=[];
+  const nFish=Math.min(1+Math.floor(lv/2),5);
+  for(let i=0;i<nFish;i++){
+    fish.push({x:200+Math.random()*(W-400),y:40+Math.random()*(H-80),r:13,vx:(Math.random()<0.5?-1:1)*(1.2+lv*0.15),dir:1});
+  }
+  oct.x=40;oct.y=H/2;oct.vx=0;oct.vy=0;
+  levelTime=0;
+}
+
+function restart(){
+  level=1;score=0;gameOver=false;won=false;
+  genLevel(level);
+}
+
+function nextLevel(){
+  SFX.levelup();
+  score+=Math.max(50,300-Math.floor(levelTime*10));
+  level++;
+  genLevel(level);
+}
+
+function currentGapAt(x){
+  // find narrowest gap the octopus body currently overlaps horizontally
+  let minGap=999;
+  for(const w of walls){
+    if(w.gap!=null && oct.x+oct.r>w.x-4 && oct.x-oct.r<w.x+w.w+4){
+      minGap=Math.min(minGap,w.gap);
+    }
+  }
+  return minGap;
+}
+
+function update(dt){
+  if(gameOver)return;
+  levelTime+=dt/60;
+  let ax=0,ay=0;
+  const speed=0.55;
+  if(keys['arrowleft']||keys['a'])ax-=speed;
+  if(keys['arrowright']||keys['d'])ax+=speed;
+  if(keys['arrowup']||keys['w'])ay-=speed;
+  if(keys['arrowdown']||keys['s'])ay+=speed;
+  if(dragTarget){
+    const dx=dragTarget.x-oct.x,dy=dragTarget.y-oct.y;
+    const d=Math.hypot(dx,dy);
+    if(d>4){ax+=(dx/d)*speed*1.4;ay+=(dy/d)*speed*1.4;}
+  }
+  const gap=currentGapAt(oct.x);
+  squeezing=gap<50;
+  const slowFactor=squeezing?0.4:1;
+  oct.vx=(oct.vx+ax)*0.85*slowFactor;
+  oct.vy=(oct.vy+ay)*0.85*slowFactor;
+  oct.vx=Math.max(-6,Math.min(6,oct.vx));
+  oct.vy=Math.max(-6,Math.min(6,oct.vy));
+  oct.x+=oct.vx*dt;
+  oct.y+=oct.vy*dt;
+  oct.x=Math.max(oct.r,Math.min(W-oct.r,oct.x));
+  oct.y=Math.max(oct.r,Math.min(H-oct.r,oct.y));
+
+  // wall collision — push out
+  for(const w of walls){
+    if(circleRect(oct.x,oct.y,oct.r*0.72,w.x,w.y,w.w,w.h)){
+      // push away from nearest edge
+      const cx=Math.max(w.x,Math.min(oct.x,w.x+w.w));
+      const cy=Math.max(w.y,Math.min(oct.y,w.y+w.h));
+      const dx=oct.x-cx,dy=oct.y-cy;
+      const d=Math.hypot(dx,dy)||0.01;
+      oct.x+=(dx/d)*2;
+      oct.y+=(dy/d)*2;
+      oct.vx*=0.5;oct.vy*=0.5;
+    }
+  }
+
+  // fish
+  for(const f of fish){
+    f.x+=f.vx*dt;
+    if(f.x<40||f.x>W-40)f.vx*=-1;
+    const d=Math.hypot(f.x-oct.x,f.y-oct.y);
+    if(d<f.r+oct.r*0.7){
+      gameOver=true;won=false;
+      SFX.lose();
+      if(score>hi){hi=score;localStorage.setItem('octopusescape_best',String(hi));}
+    }
+  }
+
+  // exit check
+  if(circleRect(oct.x,oct.y,oct.r*0.6,exit.x,exit.y,exit.w,exit.h)){
+    nextLevel();
+  }
+}
+
+function drawOctopus(){
+  ctx.save();
+  ctx.translate(oct.x,oct.y);
+  const t=performance.now()/200;
+  ctx.fillStyle=squeezing?'#ff9f6b':'#e0658f';
+  ctx.beginPath();
+  ctx.ellipse(0,0,squeezing?oct.r*0.7:oct.r,oct.r,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath();ctx.arc(-5,-4,2.5,0,Math.PI*2);ctx.arc(5,-4,2.5,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle=squeezing?'#ff9f6b':'#e0658f';
+  ctx.lineWidth=4;
+  for(let i=0;i<6;i++){
+    const ang=Math.PI*0.3+i*(Math.PI*0.4/5);
+    const wig=Math.sin(t+i)*4;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(ang)*oct.r*0.6,Math.sin(ang)*oct.r*0.8+2);
+    ctx.quadraticCurveTo(Math.cos(ang)*oct.r*1.3+wig,oct.r*1.6,Math.cos(ang)*oct.r*0.9,oct.r*2.2+wig);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0a3a52');bg.addColorStop(1,'#04121c');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // coral walls
+  for(const w of walls){
+    ctx.fillStyle='#2f7d5a';
+    ctx.fillRect(w.x,w.y,w.w,w.h);
+    ctx.fillStyle='#3fa374';
+    for(let yy=w.y+6;yy<w.y+w.h;yy+=18){
+      ctx.beginPath();ctx.arc(w.x+w.w/2,yy,10,0,Math.PI*2);ctx.fill();
+    }
+  }
+  // exit glow
+  const g=ctx.createRadialGradient(exit.x+exit.w/2,exit.y+exit.h/2,4,exit.x+exit.w/2,exit.y+exit.h/2,50);
+  g.addColorStop(0,'rgba(120,255,220,0.7)');g.addColorStop(1,'rgba(120,255,220,0)');
+  ctx.fillStyle=g;ctx.fillRect(exit.x-30,exit.y-30,exit.w+60,exit.h+60);
+  ctx.fillStyle='#78ffdc';ctx.fillRect(exit.x,exit.y,exit.w,exit.h);
+
+  // fish
+  for(const f of fish){
+    ctx.save();
+    ctx.translate(f.x,f.y);
+    if(f.vx<0)ctx.scale(-1,1);
+    ctx.fillStyle='#ffcc4d';
+    ctx.beginPath();ctx.ellipse(0,0,f.r,f.r*0.6,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.moveTo(-f.r,0);ctx.lineTo(-f.r-10,-8);ctx.lineTo(-f.r-10,8);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#c0392b';
+    ctx.beginPath();ctx.arc(f.r*0.5,0,2.5,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  }
+
+  drawOctopus();
+
+  if(squeezing&&!gameOver){
+    ctx.fillStyle='rgba(255,159,107,0.9)';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('squeezing_label','SQUEEZING...'),oct.x,oct.y-30);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 40px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('caught_title','CAUGHT!'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap, click or press any key to try again'),W/2,H/2+20);
+  }
+
+  document.getElementById('level-display').textContent=I18N.t('level_label','Level: {n}').replace('{n}',level);
+  document.getElementById('score-display').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('hi-display').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+}
+
+let last=null;
+function loop(ts){
+  if(last===null)last=ts;
+  const dt=Math.min((ts-last)/16.6667,3);
+  last=ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+genLevel(level);
+requestAnimationFrame(loop);
+</script></body></html>

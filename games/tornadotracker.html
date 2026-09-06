@@ -1,0 +1,254 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Tornado Tracker</title><meta name="description" content="Play Tornado Tracker free online — Drive your chase vehicle with Arrow Keys/WASD or drag, stay at a safe measuring distance from the tornado, collect data points, and avoid flying debris before your fuel runs out."><link rel="canonical" href="https://games.multiportllc.com/games/tornadotracker"><meta property="og:title" content="Tornado Tracker - Multiport Games"><meta property="og:description" content="Play Tornado Tracker free online — Drive your chase vehicle with Arrow Keys/WASD or drag, stay at a safe measuring distance from the tornado, collect data points, and avoid flying debris before your fuel runs out."><meta property="og:url" content="https://games.multiportllc.com/games/tornadotracker"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Tornado Tracker","description":"Play Tornado Tracker free online instantly. Drive your chase vehicle with Arrow Keys/WASD or drag, stay at a safe measuring distance from the tornado, collect data points, and avoid flying debris before your fuel runs out. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/tornadotracker","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{color:#e8e8f0;font-size:1rem;font-weight:700;text-align:center;padding:6px;display:flex;justify-content:center;gap:14px;flex-wrap:wrap}
+#hud span{background:rgba(20,20,30,.5);padding:4px 10px;border-radius:8px}
+#fuelWrap{width:110px;height:14px;background:#2a2a1a;border-radius:7px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:4px}
+#fuelBar{height:100%;background:#ffd54f;width:100%}
+#sigWrap{width:90px;height:10px;background:#222;border-radius:5px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:4px}
+#sigBar{height:100%;background:#4fc3f7;width:100%;margin-left:0}
+#c{background:#3a4a3a;display:block;border-radius:8px;touch-action:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Tornado Tracker</div>
+  <div class="game-frame">
+    <div id="hud"><span id="score-display">Data: 0</span><span>Fuel: <span id="fuelWrap"><span id="fuelBar"></span></span></span><span>Signal: <span id="sigWrap"><span id="sigBar"></span></span></span><span id="best-display">Best: 0</span></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drive your chase vehicle with <b>Arrow Keys / WASD</b> or <b>drag / touch</b> across the open road. Stay in the glowing safe ring around the tornado — too close is dangerous, too far and you lose signal. Collect the data-point icons for score while dodging flying debris. Run out of fuel or take a hit and the chase ends — score is based on data collected!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+let score=0,best=parseInt(localStorage.getItem('tornadotracker_best')||'0',10);
+document.getElementById('best-display').textContent=I18N.t('best_label','Best: {n}').replace('{n}',best);
+
+const car={x:400,y:340,w:44,h:26,vx:0,vy:0,angle:0};
+const tornado={x:400,y:150,r:0,driftX:0.4,driftPhase:0};
+let fuel=100,signal=100;
+let gameOver=false,started=false;
+let debris=[],dataPts=[],roadLines=[];
+let keys={};
+let pointerTarget=null;
+let lastTime=null;
+let debrisTimer=0,dataTimer=0;
+let elapsed=0;
+
+const SAFE_MIN=90,SAFE_MAX=190;
+
+function reset(){
+  score=0;fuel=100;signal=100;gameOver=false;started=false;elapsed=0;
+  car.x=400;car.y=340;car.vx=0;car.vy=0;
+  tornado.x=400;tornado.y=150;tornado.r=60;tornado.driftPhase=0;
+  debris=[];dataPts=[];debrisTimer=0;dataTimer=0;lastTime=null;
+  roadLines=[];
+  for(let i=0;i<8;i++)roadLines.push(i*60);
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','KeyW','KeyA','KeyS','KeyD'].includes(e.code))e.preventDefault();
+  if(!started&&!gameOver)started=true;
+  if(gameOver&&e.code==='Space')reset();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  return {x:(e.clientX-rect.left)*scaleX,y:(e.clientY-rect.top)*scaleY};
+}
+c.addEventListener('mousedown',e=>{if(gameOver){reset();return;}started=true;pointerTarget=pointerPos(e);});
+c.addEventListener('mousemove',e=>{if(pointerTarget)pointerTarget=pointerPos(e);});
+window.addEventListener('mouseup',()=>pointerTarget=null);
+c.addEventListener('touchstart',e=>{e.preventDefault();if(gameOver){reset();return;}started=true;pointerTarget=pointerPos(e.touches[0]);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(pointerTarget)pointerTarget=pointerPos(e.touches[0]);},{passive:false});
+c.addEventListener('touchend',()=>pointerTarget=null,{passive:false});
+
+function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+
+function spawnDebris(){
+  const angle=Math.random()*Math.PI*2;
+  const dist=tornado.r+30+Math.random()*40;
+  debris.push({
+    x:tornado.x+Math.cos(angle)*dist,
+    y:tornado.y+Math.sin(angle)*dist,
+    vx:(Math.random()-0.5)*2,
+    vy:1.5+Math.random()*1.5,
+    r:6+Math.random()*8,
+    rot:Math.random()*Math.PI*2
+  });
+}
+function spawnData(){
+  const angle=Math.random()*Math.PI*2;
+  const dist=SAFE_MIN+Math.random()*(SAFE_MAX-SAFE_MIN);
+  dataPts.push({x:tornado.x+Math.cos(angle)*dist,y:tornado.y+Math.sin(angle)*dist,phase:Math.random()*10});
+}
+
+function drawRoad(){
+  ctx.fillStyle='#3a4a3a';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#555';ctx.fillRect(60,0,W-120,H);
+  ctx.strokeStyle='#e8d84f';ctx.lineWidth=4;ctx.setLineDash([28,20]);
+  ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle='#ddd';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(60,0);ctx.lineTo(60,H);ctx.moveTo(W-60,0);ctx.lineTo(W-60,H);ctx.stroke();
+}
+
+function drawTornado(){
+  const funnelH=280;
+  for(let i=0;i<14;i++){
+    const t=i/14;
+    const rr=tornado.r*(0.25+t*0.9);
+    const yy=tornado.y-funnelH/2+t*funnelH;
+    const wob=Math.sin(elapsed*0.01+i)*6;
+    ctx.strokeStyle=`rgba(120,120,130,${0.5-t*0.25})`;
+    ctx.lineWidth=3;
+    ctx.beginPath();ctx.ellipse(tornado.x+wob,yy,rr,rr*0.35,0,0,Math.PI*2);ctx.stroke();
+  }
+  // safe ring visualization
+  ctx.strokeStyle='rgba(80,220,120,0.35)';
+  ctx.lineWidth=SAFE_MAX-SAFE_MIN;
+  ctx.beginPath();ctx.arc(tornado.x,tornado.y,(SAFE_MIN+SAFE_MAX)/2,0,Math.PI*2);ctx.stroke();
+}
+
+function drawCar(){
+  ctx.save();
+  ctx.translate(car.x,car.y);
+  ctx.rotate(car.angle);
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(-car.w/2,-car.h/2,car.w,car.h);
+  ctx.fillStyle='#222';
+  ctx.fillRect(-car.w/2+6,-car.h/2-4,car.w-12,6);
+  ctx.fillRect(-car.w/2+6,car.h/2-2,car.w-12,6);
+  ctx.fillStyle='#bfe9ff';
+  ctx.fillRect(car.w/2-12,-car.h/2+3,8,car.h-6);
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  elapsed+=dt;
+
+  drawRoad();
+
+  if(!started){
+    tornado.x=400;tornado.y=150;tornado.r=60;
+    drawTornado();drawCar();
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Arrow Keys/WASD or drag to chase — go!'),W/2,H-30);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawTornado();drawCar();
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Data collected: {n}').replace('{n}',Math.floor(score)),W/2,H/2+12);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to chase again'),W/2,H/2+40);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // Tornado drifts across the field
+  tornado.driftPhase+=0.01*dt;
+  tornado.x=400+Math.sin(tornado.driftPhase)*220;
+  tornado.r=60+Math.min(60,elapsed*0.02);
+  tornado.x=clamp(tornado.x,150,W-150);
+
+  // Car movement
+  let ax=0,ay=0;
+  if(keys['ArrowLeft']||keys['KeyA'])ax-=0.6;
+  if(keys['ArrowRight']||keys['KeyD'])ax+=0.6;
+  if(keys['ArrowUp']||keys['KeyW'])ay-=0.6;
+  if(keys['ArrowDown']||keys['KeyS'])ay+=0.6;
+  if(pointerTarget){
+    ax+=clamp((pointerTarget.x-car.x)*0.02,-0.7,0.7);
+    ay+=clamp((pointerTarget.y-car.y)*0.02,-0.7,0.7);
+  }
+  car.vx=(car.vx+ax*dt)*0.88;
+  car.vy=(car.vy+ay*dt)*0.88;
+  car.x=clamp(car.x+car.vx*dt*4,75,W-75);
+  car.y=clamp(car.y+car.vy*dt*4,25,H-25);
+  if(Math.abs(car.vx)>0.05||Math.abs(car.vy)>0.05)car.angle=Math.atan2(car.vy,car.vx)*0.3;
+
+  const dx=car.x-tornado.x,dy=car.y-tornado.y;
+  const dist=Math.sqrt(dx*dx+dy*dy);
+
+  fuel-=0.05*dt;
+  if(dist<SAFE_MIN||dist>SAFE_MAX){
+    signal-=0.25*dt;
+  } else {
+    signal=Math.min(100,signal+0.3*dt);
+  }
+  if(fuel<=0){fuel=0;gameOver=true;SFX.lose();}
+  if(signal<=0){signal=0;gameOver=true;SFX.lose();}
+  if(dist<tornado.r*0.5){gameOver=true;SFX.hit();SFX.lose();}
+
+  document.getElementById('fuelBar').style.width=Math.max(0,fuel)+'%';
+  document.getElementById('fuelBar').style.background=fuel<25?'#ff6b35':'#ffd54f';
+  document.getElementById('sigBar').style.width=Math.max(0,signal)+'%';
+  document.getElementById('sigBar').style.background=signal<25?'#ff6b35':'#4fc3f7';
+
+  const diffFactor=1+elapsed/1800;
+  debrisTimer+=dt;
+  if(debrisTimer>=Math.max(28,60/diffFactor)){debrisTimer=0;spawnDebris();}
+  dataTimer+=dt;
+  if(dataTimer>=45){dataTimer=0;if(dataPts.length<5)spawnData();}
+
+  drawTornado();
+
+  debris=debris.filter(d=>d.y<H+40&&d.y>-40&&d.x>-40&&d.x<W+40);
+  debris.forEach(d=>{
+    d.x+=d.vx*dt;d.y+=d.vy*dt;d.rot+=0.08*dt;
+    ctx.save();
+    ctx.translate(d.x,d.y);ctx.rotate(d.rot);
+    ctx.fillStyle='#8a7a5a';
+    ctx.fillRect(-d.r,-d.r*0.4,d.r*2,d.r*0.8);
+    ctx.restore();
+    const ddx=car.x-d.x,ddy=car.y-d.y;
+    if(!gameOver&&Math.sqrt(ddx*ddx+ddy*ddy)<d.r+18){
+      gameOver=true;SFX.hit();SFX.lose();
+    }
+  });
+
+  dataPts.forEach(dp=>{
+    dp.phase+=0.08*dt;
+    const bob=Math.sin(dp.phase)*3;
+    ctx.save();
+    ctx.shadowColor='#4fc3f7';ctx.shadowBlur=10;
+    ctx.fillStyle='#4fc3f7';
+    ctx.beginPath();ctx.arc(dp.x,dp.y+bob,9,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='bold 10px Arial';ctx.textAlign='center';
+    ctx.fillText('D',dp.x,dp.y+bob+3);
+    ctx.restore();
+    const ddx=car.x-dp.x,ddy=car.y-(dp.y+bob);
+    if(!gameOver&&Math.sqrt(ddx*ddx+ddy*ddy)<24){
+      score+=15;SFX.coin();dp.collected=true;fuel=Math.min(100,fuel+4);
+    }
+  });
+  dataPts=dataPts.filter(dp=>!dp.collected);
+
+  drawCar();
+
+  if(score>best){best=score;localStorage.setItem('tornadotracker_best',String(best));document.getElementById('best-display').textContent=I18N.t('best_label','Best: {n}').replace('{n}',best);}
+  document.getElementById('score-display').textContent=I18N.t('data_label','Data: {n}').replace('{n}',Math.floor(score));
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>

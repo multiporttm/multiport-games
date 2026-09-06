@@ -1,0 +1,213 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Action Figure Collector</title><meta name="description" content="Play Action Figure Collector free online — Figures scroll past on the shelf. Click only the ones matching the wanted criteria before they scroll off. Wrong picks cost points!"><link rel="canonical" href="https://games.multiportllc.com/games/actionfigurecollector"><meta property="og:title" content="Action Figure Collector - Multiport Games"><meta property="og:description" content="Play Action Figure Collector free online — Figures scroll past on the shelf. Click only the ones matching the wanted criteria before they scroll off. Wrong picks cost points!"><meta property="og:url" content="https://games.multiportllc.com/games/actionfigurecollector"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Action Figure Collector","description":"Play Action Figure Collector free online instantly. Action figures scroll past on a shelf — click only the ones matching the shown wanted criteria (series, color, accessory) before they scroll off. Wrong picks cost points. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/actionfigurecollector","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:14px;display:flex;flex-direction:column;align-items:center;gap:10px}
+#hud{display:flex;justify-content:space-between;width:100%;max-width:640px;color:#e8e0c8;font-weight:700;font-size:.9rem;flex-wrap:wrap;gap:4px}
+#hud span{color:#ffd54f}
+#wanted{background:rgba(255,213,79,.12);border:2px solid rgba(255,213,79,.5);border-radius:12px;padding:10px 16px;color:#ffd54f;font-weight:800;text-align:center;max-width:640px}
+#stage{position:relative;width:100%;max-width:640px;height:280px;background:linear-gradient(#1a1030,#0d0818);border-radius:10px;overflow:hidden;touch-action:none}
+.shelf-line{position:absolute;left:0;right:0;height:6px;background:#4a3620}
+.figure{position:absolute;width:64px;height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;user-select:none;font-size:2rem;transition:transform .1s}
+.figure .acc{position:absolute;top:-6px;right:2px;font-size:1rem}
+.figure.gone{opacity:0;transform:scale(0.4)}
+#timerBar{width:100%;max-width:640px;height:8px;background:rgba(255,255,255,.1);border-radius:4px;overflow:hidden}
+#timerFill{height:100%;background:#ffd54f;width:100%;transition:width .2s linear}
+#msg{color:#7ec850;font-weight:800;min-height:1.4em;text-align:center}
+#msg.bad{color:#e94560}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Action Figure Collector</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span id="roundLabel">Round 1</span><span id="scoreLabel">Score: 0 | Best: 0</span></div>
+      <div id="wanted">Wanted: —</div>
+      <div id="timerBar"><div id="timerFill"></div></div>
+      <div id="stage"></div>
+      <div id="msg">Click the figures matching the wanted card. Wrong picks cost points!</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">A "Wanted" card at the top shows the series, color, and accessory you need. Action figures scroll past on the shelf below — click only the ones matching <b>every</b> part of the wanted criteria before they scroll off screen. Correct picks score points; wrong picks (or missed matches) cost you. Each round's criteria gets trickier and the shelf gets busier. <b>Keyboard:</b> Tab to a figure and press Enter or Space to collect it.</div>
+</div>
+<script>
+const stage=document.getElementById('stage');
+const wantedEl=document.getElementById('wanted');
+const msgEl=document.getElementById('msg');
+const timerFill=document.getElementById('timerFill');
+const scoreLabel=document.getElementById('scoreLabel');
+const roundLabel=document.getElementById('roundLabel');
+
+const SERIES=['Cosmo Force','Iron Legion','Star Guard','Mecha Squad'];
+const COLORS=[{name:'red',hex:'#e94560'},{name:'blue',hex:'#3f7ee8'},{name:'green',hex:'#4caf50'},{name:'yellow',hex:'#ffd54f'},{name:'purple',hex:'#9c5fe0'}];
+const ACCESSORIES=[{name:'sword',emoji:'🗡️'},{name:'shield',emoji:'🛡️'},{name:'cape',emoji:'🧣'},{name:'blaster',emoji:'🔫'},{name:'none',emoji:''}];
+
+let round=1, score=0, best=parseInt(localStorage.getItem('actionfigurecollector_best')||'0',10);
+let wanted, roundActive=false, timeLeft, roundTime, timerId, spawnTimer, figures=[], stageW, moveTimer, totalToSpawn, spawnedCount, correctCaught=0, missedOrWrong=0;
+
+function pickWanted(){
+  const criteriaCount = round<2?2: (round<4?2+Math.floor(Math.random()*2): 3);
+  const c={};
+  const keys=['series','color','accessory'];
+  const chosen = criteriaCount>=3? keys : keys.sort(()=>Math.random()-0.5).slice(0,criteriaCount);
+  if(chosen.includes('series')) c.series=SERIES[Math.floor(Math.random()*SERIES.length)];
+  if(chosen.includes('color')) c.color=COLORS[Math.floor(Math.random()*COLORS.length)];
+  if(chosen.includes('accessory')) c.accessory=ACCESSORIES[Math.floor(Math.random()*(ACCESSORIES.length-1))]; // exclude 'none' as a wanted target
+  return c;
+}
+
+function describeWanted(w){
+  const parts=[];
+  if(w.series) parts.push(w.series);
+  if(w.color) parts.push(w.color.name+' color');
+  if(w.accessory) parts.push('with '+w.accessory.name);
+  return parts.join(', ');
+}
+
+function matches(fig, w){
+  if(w.series && fig.series!==w.series) return false;
+  if(w.color && fig.color.name!==w.color.name) return false;
+  if(w.accessory && fig.accessory.name!==w.accessory.name) return false;
+  return true;
+}
+
+function randomFigure(){
+  return {
+    series: SERIES[Math.floor(Math.random()*SERIES.length)],
+    color: COLORS[Math.floor(Math.random()*COLORS.length)],
+    accessory: ACCESSORIES[Math.floor(Math.random()*ACCESSORIES.length)],
+  };
+}
+
+function ensureSomeMatches(){
+  // occasionally force-spawn a matching figure so round is winnable
+  const fig=randomFigure();
+  if(wanted.series) fig.series=wanted.series;
+  if(wanted.color) fig.color=wanted.color;
+  if(wanted.accessory) fig.accessory=wanted.accessory;
+  return fig;
+}
+
+function setupRound(){
+  wanted=pickWanted();
+  wantedEl.innerHTML='🎯 '+I18N.t('wanted_label','Wanted: {c}').replace('{c}', describeWanted(wanted));
+  roundTime=Math.max(20, 26-round);
+  timeLeft=roundTime;
+  totalToSpawn = 10+round*2;
+  spawnedCount=0;
+  correctCaught=0; missedOrWrong=0;
+  roundActive=true;
+  figures=[];
+  stage.innerHTML='';
+  stageW=stage.clientWidth||640;
+  msgEl.textContent='Click the figures matching the wanted card. Wrong picks cost points!';
+  msgEl.className='';
+  roundLabel.textContent=I18N.t('round_label','Round {r}').replace('{r}',round);
+  updateHud();
+  clearInterval(timerId); clearInterval(spawnTimer); clearInterval(moveTimer);
+  timerId=setInterval(tick,200);
+  spawnTimer=setInterval(spawnFigure,Math.max(500,1000-round*40));
+  moveTimer=setInterval(moveFigures,30);
+}
+
+function tick(){
+  if(!roundActive)return;
+  timeLeft-=0.2;
+  timerFill.style.width=Math.max(0,(timeLeft/roundTime)*100)+'%';
+  timerFill.style.background = timeLeft/roundTime<0.25? '#e94560':'#ffd54f';
+  if(timeLeft<=0 || (spawnedCount>=totalToSpawn && figures.length===0)){
+    endRound();
+  }
+}
+
+function spawnFigure(){
+  if(!roundActive || spawnedCount>=totalToSpawn)return;
+  spawnedCount++;
+  const forceMatch = Math.random()<0.4;
+  const fig = forceMatch? ensureSomeMatches() : randomFigure();
+  const el=document.createElement('div');
+  el.className='figure';
+  const lane=Math.floor(Math.random()*3);
+  const y=30+lane*80;
+  el.style.top=y+'px';
+  el.style.left='-70px';
+  el.innerHTML=`<span style="color:${fig.color.hex}">🤖</span>`+(fig.accessory.emoji?`<span class="acc">${fig.accessory.emoji}</span>`:'');
+  el.dataset.series=fig.series;
+  el.tabIndex=0;
+  el.setAttribute('role','button');
+  el.setAttribute('aria-label','Action figure');
+  const rec={el, fig, x:-70, speed:1+Math.random()*0.6+round*0.15, y, resolved:false};
+  el.addEventListener('click',()=>onFigureClick(rec));
+  el.addEventListener('keydown',e=>{
+    if(e.key==='Enter'||e.key===' '){e.preventDefault();onFigureClick(rec);}
+  });
+  stage.appendChild(el);
+  figures.push(rec);
+}
+
+function moveFigures(){
+  if(!roundActive)return;
+  figures.forEach(f=>{
+    if(f.resolved)return;
+    f.x+=f.speed;
+    f.el.style.left=f.x+'px';
+    if(f.x>stageW+10){
+      f.resolved=true;
+      if(matches(f.fig,wanted)){ missedOrWrong++; }
+      f.el.remove();
+    }
+  });
+  figures=figures.filter(f=>!f.resolved);
+}
+
+function onFigureClick(rec){
+  if(!roundActive || rec.resolved)return;
+  rec.resolved=true;
+  if(matches(rec.fig,wanted)){
+    score+=10;
+    correctCaught++;
+    SFX.coin();
+    rec.el.classList.add('gone');
+    msgEl.textContent='Nice catch!';
+    msgEl.className='';
+  } else {
+    score=Math.max(0,score-5);
+    missedOrWrong++;
+    SFX.error();
+    rec.el.classList.add('gone');
+    msgEl.textContent='Wrong figure — check the wanted card!';
+    msgEl.className='bad';
+  }
+  updateHud();
+  setTimeout(()=>{ rec.el.remove(); figures=figures.filter(f=>f!==rec); },200);
+}
+
+function endRound(){
+  roundActive=false;
+  clearInterval(timerId); clearInterval(spawnTimer); clearInterval(moveTimer);
+  figures.forEach(f=>f.el.remove());
+  figures=[];
+  if(score>best){best=score;localStorage.setItem('actionfigurecollector_best',best);}
+  if(correctCaught>0){
+    SFX.win();
+    msgEl.textContent=I18N.t('round_done','Round done! Collected {n} figures.').replace('{n}',correctCaught);
+  } else {
+    SFX.fail();
+    msgEl.textContent=I18N.t('round_none','Round over — no matches collected this time.');
+  }
+  updateHud();
+  round++;
+  setTimeout(setupRound,1800);
+}
+
+function updateHud(){
+  scoreLabel.textContent=I18N.t('score_best_label','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+}
+
+setupRound();
+</script></body></html>

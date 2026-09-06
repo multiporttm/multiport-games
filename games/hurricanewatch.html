@@ -1,0 +1,257 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Hurricane Watch</title><meta name="description" content="Play Hurricane Watch free online — Click on the ocean to place buoys and track the hurricane's path. Watch the buoy readings to predict where it will make landfall, then click the coastal zones you think are in danger to issue evacuation warnings before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/hurricanewatch"><meta property="og:title" content="Hurricane Watch - Multiport Games"><meta property="og:description" content="Play Hurricane Watch free online — Click on the ocean to place buoys and track the hurricane's path. Watch the buoy readings to predict where it will make landfall, then click the coastal zones you think are in danger to issue evacuation warnings before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/hurricanewatch"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Hurricane Watch","description":"Play Hurricane Watch free online instantly. Click on the ocean to place buoys and track the hurricane's path. Watch the buoy readings to predict where it will make landfall, then click the coastal zones you think are in danger to issue evacuation warnings before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/hurricanewatch","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0b3d5c;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:#cfe8ff;font-size:1rem;font-weight:700;padding:8px 12px}
+#hud span{background:rgba(255,255,255,.08);border-radius:8px;padding:4px 10px}
+#msg{text-align:center;color:#ffd54f;font-weight:800;min-height:1.6em;padding:2px 0 6px}
+#warnBar{display:flex;justify-content:center;gap:6px;flex-wrap:wrap;padding:0 0 10px}
+#warnBar button{background:#e94560;border:none;color:#fff;font-weight:700;border-radius:16px;padding:7px 14px;cursor:pointer;font-size:.85rem}
+#warnBar button.armed{background:#ffd54f;color:#222}
+#warnBar button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Hurricane Watch</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="hud"><span id="round-display">Round: 1</span><span id="buoy-display">Buoys: 3</span><span id="time-display">Time: 30</span><span id="score-display">Score: 0 | Hi: 0</span></div>
+    <div id="msg">Click the ocean to drop a buoy and track the storm</div>
+    <canvas id="c" width="800" height="380"></canvas>
+    <div id="warnBar"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click on the ocean to place buoys (limited each round) and watch their readings as the hurricane passes — the wind arrows point toward the storm's eye, helping you predict its path. Once you've made your prediction, click the coastal zone buttons below the map to issue evacuation warnings for the zones you think will be hit before time runs out. Score points for correct warnings and lose points for false alarms or missed zones — later rounds bring faster, curvier storms.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=380;
+const ZONES=6; // coastal zones along bottom
+const zoneW=W/ZONES;
+let round=1,score=0,hi=parseInt(localStorage.getItem('hurricanewatch_best')||'0'),buoysLeft=3,timeLeft=30;
+let storm,buoys,warned,resolved,timerId,running=false;
+
+function zoneOf(x){return Math.min(ZONES-1,Math.max(0,Math.floor(x/zoneW)));}
+
+function newStorm(){
+  // generate a curved path using a few control points, moving generally toward the coast (bottom)
+  const pts=[];
+  let x=100+Math.random()*600, y=-40;
+  let vx=(Math.random()-0.5)*2.2*(1+round*0.08);
+  const vy=1.1+round*0.06;
+  for(let t=0;t<400;t++){
+    pts.push({x,y});
+    vx+=(Math.random()-0.5)*0.35*(1+round*0.05);
+    vx=Math.max(-4,Math.min(4,vx));
+    x+=vx; y+=vy;
+    x=Math.max(20,Math.min(W-20,x));
+    if(y>H+60)break;
+  }
+  return {pts,idx:0,speed:0.55+round*0.05,acc:0};
+}
+
+function landfallZone(){
+  // find where path crosses y ~ H-30 (coastline)
+  for(const p of storm.pts){
+    if(p.y>=H-35)return zoneOf(p.x);
+  }
+  const last=storm.pts[storm.pts.length-1];
+  return zoneOf(last.x);
+}
+
+function startRound(){
+  storm=newStorm();
+  buoys=[];
+  warned=new Set();
+  resolved=false;
+  buoysLeft=3+Math.min(2,Math.floor(round/3));
+  timeLeft=Math.max(16,30-round);
+  running=true;
+  document.getElementById('round-display').textContent=I18N.t('round_label','Round: {r}').replace('{r}',round);
+  document.getElementById('buoy-display').textContent=I18N.t('buoys_label','Buoys: {n}').replace('{n}',buoysLeft);
+  document.getElementById('time-display').textContent=I18N.t('time_label','Time: {t}').replace('{t}',timeLeft);
+  setMsg(I18N.t('drop_buoy_hint','Click the ocean to drop a buoy and track the storm'));
+  buildWarnBar();
+  clearInterval(timerId);
+  timerId=setInterval(tick,1000);
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function buildWarnBar(){
+  const bar=document.getElementById('warnBar');
+  bar.innerHTML='';
+  for(let i=0;i<ZONES;i++){
+    const b=document.createElement('button');
+    b.textContent=(I18N.t('zone_label','Zone')+' '+(i+1));
+    b.onclick=()=>toggleWarn(i,b);
+    bar.appendChild(b);
+  }
+}
+
+function toggleWarn(i,btn){
+  if(resolved)return;
+  if(warned.has(i)){warned.delete(i);btn.classList.remove('armed');}
+  else{warned.add(i);btn.classList.add('armed');SFX.select();}
+}
+
+function tick(){
+  if(!running)return;
+  timeLeft--;
+  document.getElementById('time-display').textContent=I18N.t('time_label','Time: {t}').replace('{t}',timeLeft);
+  if(timeLeft<=0){clearInterval(timerId);endRound();}
+}
+
+c.addEventListener('click',e=>{
+  if(!running||resolved)return;
+  if(buoysLeft<=0){setMsg(I18N.t('no_buoys_left','No buoys left! Issue your warnings before time runs out.'));return;}
+  const r=c.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width),y=(e.clientY-r.top)*(H/r.height);
+  buoys.push({x,y});
+  buoysLeft--;
+  document.getElementById('buoy-display').textContent=I18N.t('buoys_label','Buoys: {n}').replace('{n}',buoysLeft);
+  SFX.click();
+});
+c.addEventListener('touchstart',e=>{
+  if(!running||resolved)return;
+  e.preventDefault();
+  if(buoysLeft<=0)return;
+  const t=e.touches[0];
+  const r=c.getBoundingClientRect();
+  const x=(t.clientX-r.left)*(W/r.width),y=(t.clientY-r.top)*(H/r.height);
+  buoys.push({x,y});
+  buoysLeft--;
+  document.getElementById('buoy-display').textContent=I18N.t('buoys_label','Buoys: {n}').replace('{n}',buoysLeft);
+  SFX.click();
+},{passive:false});
+
+function nearestStormPointAtY(y){
+  let best=null,bd=1e9;
+  for(const p of storm.pts){const d=Math.abs(p.y-y);if(d<bd){bd=d;best=p;}}
+  return best;
+}
+
+function endRound(){
+  running=false;
+  resolved=true;
+  const truth=landfallZone();
+  let gained=0;
+  for(let i=0;i<ZONES;i++){
+    const hit=(i===truth);
+    const w=warned.has(i);
+    if(hit&&w){gained+=100;}
+    else if(hit&&!w){gained-=60;}
+    else if(!hit&&w){gained-=15;}
+  }
+  gained=Math.max(0,gained);
+  score+=gained;
+  if(score>hi){hi=score;localStorage.setItem('hurricanewatch_best',String(hi));}
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  const correct=warned.has(truth);
+  if(correct){SFX.success();setMsg(I18N.t('round_result_good','Landfall was Zone {z}! You warned it correctly. +{g}').replace('{z}',truth+1).replace('{g}',gained));}
+  else{SFX.fail();setMsg(I18N.t('round_result_bad','Landfall was Zone {z} — you missed it! +{g}').replace('{z}',truth+1).replace('{g}',gained));}
+  drawFullPath();
+  setTimeout(()=>{round++;startRound();},2600);
+}
+
+function drawFullPath(){
+  drawScene(true);
+}
+
+function drawScene(showFull){
+  ctx.clearRect(0,0,W,H);
+  // ocean gradient
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0a2a44');sky.addColorStop(1,'#0b3d5c');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // coastline
+  ctx.fillStyle='#3d8020';
+  ctx.fillRect(0,H-30,W,30);
+  ctx.fillStyle='#5aaa30';
+  ctx.fillRect(0,H-32,W,4);
+  // zone dividers
+  ctx.strokeStyle='rgba(255,255,255,.25)';
+  for(let i=1;i<ZONES;i++){
+    ctx.beginPath();ctx.moveTo(i*zoneW,H-30);ctx.lineTo(i*zoneW,H);ctx.stroke();
+  }
+  ctx.fillStyle='rgba(255,255,255,.7)';ctx.font='11px Arial';ctx.textAlign='center';
+  for(let i=0;i<ZONES;i++){
+    ctx.fillText((i+1),i*zoneW+zoneW/2,H-10);
+    if(warned.has(i)){
+      ctx.fillStyle='#ffd54f';
+      ctx.fillRect(i*zoneW+3,H-30,zoneW-6,6);
+      ctx.fillStyle='rgba(255,255,255,.7)';
+    }
+  }
+
+  // buoys + readings (arrows toward storm's current position)
+  const cur=storm.pts[Math.floor(storm.idx)]||storm.pts[storm.pts.length-1];
+  buoys.forEach(b=>{
+    ctx.fillStyle='#ffcc00';
+    ctx.beginPath();ctx.arc(b.x,b.y,6,0,7);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    const dx=cur.x-b.x,dy=cur.y-b.y;
+    const len=Math.hypot(dx,dy)||1;
+    const ux=dx/len,uy=dy/len;
+    ctx.strokeStyle='rgba(255,255,255,.85)';
+    ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x+ux*22,b.y+uy*22);ctx.stroke();
+    ctx.beginPath();ctx.arc(b.x+ux*22,b.y+uy*22,2.5,0,7);ctx.fillStyle='#fff';ctx.fill();
+  });
+
+  // storm path trail (only up to current point unless resolved)
+  const upto=showFull?storm.pts.length:Math.floor(storm.idx)+1;
+  ctx.strokeStyle='rgba(255,255,255,.25)';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  for(let i=0;i<upto;i++){
+    const p=storm.pts[i];
+    if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);
+  }
+  ctx.stroke();
+
+  // storm eye
+  const eye=showFull?storm.pts[storm.pts.length-1]:cur;
+  drawHurricane(eye.x,eye.y);
+}
+
+function drawHurricane(x,y){
+  ctx.save();
+  ctx.translate(x,y);
+  const t=performance.now()/300;
+  for(let arm=0;arm<3;arm++){
+    ctx.beginPath();
+    ctx.strokeStyle='rgba(255,255,255,.55)';
+    ctx.lineWidth=6;
+    for(let a=0;a<Math.PI*1.4;a+=0.15){
+      const r=6+a*7;
+      const ang=a+arm*2.1+t;
+      const px=Math.cos(ang)*r,py=Math.sin(ang)*r;
+      if(a===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+    }
+    ctx.stroke();
+  }
+  ctx.fillStyle='#fff';
+  ctx.beginPath();ctx.arc(0,0,5,0,7);ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  if(running&&!resolved){
+    storm.idx=Math.min(storm.pts.length-1,storm.idx+storm.speed);
+    if(storm.idx>=storm.pts.length-1&&!resolved){
+      clearInterval(timerId);
+      endRound();
+    }
+  }
+  drawScene(false);
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+startRound();
+loop();
+</script></body></html>

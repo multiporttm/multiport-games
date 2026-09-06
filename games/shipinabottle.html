@@ -1,0 +1,346 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ship in a Bottle</title><meta name="description" content="Play Ship in a Bottle free online — Drag each part from the tray, thread it carefully through the bottle's narrow neck, then drop it in its outlined spot inside without touching the glass."><link rel="canonical" href="https://games.multiportllc.com/games/shipinabottle"><meta property="og:title" content="Ship in a Bottle - Multiport Games"><meta property="og:description" content="Play Ship in a Bottle free online — Drag each part from the tray, thread it carefully through the bottle's narrow neck, then drop it in its outlined spot inside without touching the glass."><meta property="og:url" content="https://games.multiportllc.com/games/shipinabottle"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ship in a Bottle","description":"Play Ship in a Bottle free online instantly. Drag each part from the tray, thread it carefully through the bottle's narrow neck, then drop it in its outlined spot inside without touching the glass. Complete every part to finish the ship. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/shipinabottle","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:14px;display:flex;flex-direction:column;align-items:center;gap:10px}
+#hud{display:flex;justify-content:space-between;width:100%;max-width:620px;color:#e8e0c8;font-weight:700;font-size:.95rem}
+#hud span{color:#ffd54f}
+#stage{position:relative;width:100%;max-width:620px;touch-action:none}
+#c{background:#0d1b2a;display:block;border-radius:10px;width:100%;height:auto;touch-action:none}
+#tray{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;max-width:620px;width:100%;background:rgba(255,255,255,.05);border-radius:12px;padding:10px}
+.part{width:56px;height:56px;background:rgba(255,255,255,.08);border:2px solid rgba(255,255,255,.15);border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:grab;user-select:none;touch-action:none;font-size:1.6rem;position:relative}
+.part.used{opacity:.25;pointer-events:none}
+.part.active{border-color:#ffd54f;box-shadow:0 0 0 2px rgba(255,213,79,.4)}
+#msg{color:#7ec850;font-weight:800;min-height:1.4em;text-align:center}
+#msg.bad{color:#e94560}
+#restartBtn{padding:9px 20px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ship in a Bottle</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span id="roundLabel">Round 1</span><span id="scoreLabel">Ships: 0 | Best: 0</span></div>
+      <div id="stage"><canvas id="c" width="600" height="380"></canvas></div>
+      <div id="msg">Drag a part into the bottle neck, then to its target spot.</div>
+      <div id="tray"></div>
+      <button id="restartBtn" style="display:none">Next Ship</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag each part from the tray below, thread it carefully through the bottle's narrow neck, and drop it onto its glowing outline inside the bottle. Move slowly — if the part touches the bottle's glass walls it breaks and that piece is lost! Finish every part to complete the ship. Each round adds more parts and a narrower neck. <b>Keyboard:</b> Tab to a part and press Enter to pick it up, use the Arrow keys to guide it, Enter to drop it in place, and Escape to cancel.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const trayEl=document.getElementById('tray');
+const msgEl=document.getElementById('msg');
+const restartBtn=document.getElementById('restartBtn');
+const scoreLabel=document.getElementById('scoreLabel');
+const roundLabel=document.getElementById('roundLabel');
+
+const W=600,H=380;
+let round=1, shipsDone=0, best=parseInt(localStorage.getItem('shipinabottle_best')||'0',10);
+let bottle, parts, dragging=null, dragPos=null, placedCount=0, failedThisDrag=false;
+
+function makeBottle(){
+  // neck gets narrower with round
+  const neckW=Math.max(26, 54-round*4);
+  return {
+    cx:W/2, neckW, neckY0:40, neckY1:120,
+    bodyTop:120, bodyBottom:330, bodyW:220,
+    // bottle outline as set of wall segments used for collision (approx via polygon)
+  };
+}
+
+function bottlePolygon(){
+  const b=bottle;
+  const halfNeck=b.neckW/2, halfBody=b.bodyW/2;
+  return [
+    [b.cx-halfNeck,b.neckY0],[b.cx-halfNeck,b.neckY1],[b.cx-halfBody,b.bodyTop],
+    [b.cx-halfBody,b.bodyBottom],[b.cx+halfBody,b.bodyBottom],[b.cx+halfBody,b.bodyTop],
+    [b.cx+halfNeck,b.neckY1],[b.cx+halfNeck,b.neckY0]
+  ];
+}
+
+// point-in-polygon
+function pip(x,y,poly){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i][0],yi=poly[i][1],xj=poly[j][0],yj=poly[j][1];
+    const intersect=((yi>y)!==(yj>y)) && (x < (xj-xi)*(y-yi)/(yj-yi)+xi);
+    if(intersect) inside=!inside;
+  }
+  return inside;
+}
+
+function insideBottleSafe(x,y,r){
+  const poly=bottlePolygon();
+  // check center and a ring of points around radius r are inside poly (opening at top is fine since y small handled by poly)
+  if(!pip(x,y,poly))return false;
+  for(let a=0;a<8;a++){
+    const px=x+Math.cos(a/8*Math.PI*2)*r, py=y+Math.sin(a/8*Math.PI*2)*r;
+    if(!pip(px,py,poly))return false;
+  }
+  return true;
+}
+
+const PART_DEFS=[
+  {key:'hull',emoji:'🛶',label:'Hull',r:20},
+  {key:'mast',emoji:'📏',label:'Mast',r:12},
+  {key:'sail',emoji:'⛵',label:'Sail',r:16},
+  {key:'flag',emoji:'🚩',label:'Flag',r:10},
+  {key:'rope',emoji:'🪢',label:'Rigging',r:10},
+  {key:'anchor',emoji:'⚓',label:'Anchor',r:12},
+];
+
+function setupRound(){
+  bottle=makeBottle();
+  const count=Math.min(PART_DEFS.length, 3+round-1);
+  const defs=PART_DEFS.slice(0,count);
+  const b=bottle;
+  const spread=b.bodyW*0.68;
+  parts=defs.map((d,i)=>{
+    const tx=b.cx-spread/2+(spread/(Math.max(1,defs.length-1)))*i;
+    const ty=b.bodyTop+(b.bodyBottom-b.bodyTop)*(0.35+0.4*Math.sin(i*1.7));
+    return {...d, id:i, placed:false, broken:false,
+      targetX:tx, targetY: b.bodyBottom-30-(i%3)*40,
+      x:null,y:null};
+  });
+  placedCount=0;
+  renderTray();
+  msgEl.textContent='Drag a part into the bottle neck, then to its target spot.';
+  msgEl.className='';
+  restartBtn.style.display='none';
+  roundLabel.textContent=`Round ${round}`;
+  draw();
+}
+
+function renderTray(){
+  trayEl.innerHTML='';
+  parts.forEach(p=>{
+    const el=document.createElement('div');
+    el.className='part'+(p.placed||p.broken?' used':'')+(dragging&&dragging.id===p.id?' active':'');
+    el.textContent=p.emoji;
+    el.title=p.label+' (Enter to pick up with keyboard)';
+    el.dataset.id=p.id;
+    el.tabIndex=(p.placed||p.broken)?-1:0;
+    el.setAttribute('role','button');
+    el.addEventListener('pointerdown',onPartDown);
+    el.addEventListener('keydown',onPartKey);
+    trayEl.appendChild(el);
+  });
+}
+
+// Keyboard support: Enter/Space on a tray part picks it up at the bottle-neck opening;
+// Arrow keys nudge it; Enter drops it; Escape cancels the keyboard drag.
+function onPartKey(e){
+  if(e.key!=='Enter'&&e.key!==' ')return;
+  e.preventDefault();
+  const id=parseInt(e.currentTarget.dataset.id,10);
+  const p=parts.find(x=>x.id===id);
+  if(!p||p.placed||p.broken)return;
+  dragging=p;
+  failedThisDrag=false;
+  dragPos={x:bottle.cx,y:bottle.neckY0+10};
+  SFX.click();
+  renderTray();
+  draw();
+  document.addEventListener('keydown',onKeyboardDragKey);
+}
+
+function onKeyboardDragKey(e){
+  if(!dragging)return;
+  const step=14;
+  if(e.key==='ArrowUp'){e.preventDefault();dragPos.y-=step;}
+  else if(e.key==='ArrowDown'){e.preventDefault();dragPos.y+=step;}
+  else if(e.key==='ArrowLeft'){e.preventDefault();dragPos.x-=step;}
+  else if(e.key==='ArrowRight'){e.preventDefault();dragPos.x+=step;}
+  else if(e.key==='Escape'){
+    document.removeEventListener('keydown',onKeyboardDragKey);
+    dragging=null;dragPos=null;renderTray();draw();
+    return;
+  }
+  else if(e.key==='Enter'||e.key===' '){
+    e.preventDefault();
+    document.removeEventListener('keydown',onKeyboardDragKey);
+    finishDrop(dragging,dragPos.x,dragPos.y);
+    return;
+  } else return;
+  if(dragPos.y > bottle.neckY0-10 && !insideBottleSafe(dragPos.x,dragPos.y,dragging.r) && !failedThisDrag){
+    failedThisDrag=true;
+    dragging.broken=true;
+    SFX.hit();
+    msgEl.textContent=`${dragging.label} touched the glass and broke!`;
+    msgEl.className='bad';
+    document.removeEventListener('keydown',onKeyboardDragKey);
+    dragging=null;dragPos=null;
+    renderTray();
+    checkRoundEnd();
+  }
+  draw();
+}
+
+function onPartDown(e){
+  const id=parseInt(e.currentTarget.dataset.id,10);
+  const p=parts.find(x=>x.id===id);
+  if(!p||p.placed||p.broken)return;
+  e.preventDefault();
+  dragging=p;
+  failedThisDrag=false;
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  dragPos={x:(e.clientX-rect.left)*scaleX, y:(e.clientY-rect.top)*scaleY};
+  SFX.click();
+  window.addEventListener('pointermove',onDragMove);
+  window.addEventListener('pointerup',onDragUp);
+  draw();
+}
+
+function onDragMove(e){
+  if(!dragging)return;
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  dragPos={x:(e.clientX-rect.left)*scaleX, y:(e.clientY-rect.top)*scaleY};
+  // check wall collision only once part has crossed into the bottle's y-range at all
+  if(dragPos.y > bottle.neckY0-10){
+    if(!insideBottleSafe(dragPos.x,dragPos.y,dragging.r) && !failedThisDrag){
+      failedThisDrag=true;
+      dragging.broken=true;
+      SFX.hit();
+      msgEl.textContent=`${dragging.label} touched the glass and broke!`;
+      msgEl.className='bad';
+      const brokenPart=dragging;
+      dragging=null; dragPos=null;
+      window.removeEventListener('pointermove',onDragMove);
+      window.removeEventListener('pointerup',onDragUp);
+      renderTray();
+      checkRoundEnd();
+      draw();
+      return;
+    }
+  }
+  draw();
+}
+
+function onDragUp(e){
+  if(!dragging)return;
+  window.removeEventListener('pointermove',onDragMove);
+  window.removeEventListener('pointerup',onDragUp);
+  const p=dragging;
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  const x=(e.clientX-rect.left)*scaleX, y=(e.clientY-rect.top)*scaleY;
+  finishDrop(p,x,y);
+}
+
+function finishDrop(p,x,y){
+  const dist=Math.hypot(x-p.targetX,y-p.targetY);
+  if(dist<26 && insideBottleSafe(x,y,p.r)){
+    p.placed=true; p.x=p.targetX; p.y=p.targetY;
+    SFX.success();
+    placedCount++;
+    msgEl.textContent=`${p.label} placed perfectly!`;
+    msgEl.className='';
+  } else {
+    msgEl.textContent=`${p.label} needs to sit right on its glowing outline. Try again!`;
+    msgEl.className='';
+  }
+  dragging=null; dragPos=null;
+  renderTray();
+  checkRoundEnd();
+  draw();
+}
+
+function checkRoundEnd(){
+  const remaining=parts.filter(p=>!p.placed&&!p.broken);
+  if(remaining.length===0){
+    const allGood=parts.every(p=>p.placed);
+    if(allGood){
+      shipsDone++;
+      if(shipsDone>best){best=shipsDone;localStorage.setItem('shipinabottle_best',best);}
+      SFX.win();
+      msgEl.textContent=I18N.t('ship_complete','Ship complete! Well done, sailor!');
+      msgEl.className='';
+    } else {
+      SFX.fail();
+      msgEl.textContent=I18N.t('ship_broken','Some parts broke — this ship is unfinished.');
+      msgEl.className='bad';
+    }
+    scoreLabel.textContent=I18N.t('score_label','Ships: {s} | Best: {b}').replace('{s}',shipsDone).replace('{b}',best);
+    restartBtn.style.display='inline-block';
+    round++;
+  }
+}
+
+restartBtn.addEventListener('click',()=>{setupRound();});
+
+function drawBottleGlass(){
+  ctx.save();
+  const poly=bottlePolygon();
+  ctx.beginPath();
+  ctx.moveTo(poly[0][0],poly[0][1]);
+  for(let i=1;i<poly.length;i++)ctx.lineTo(poly[i][0],poly[i][1]);
+  ctx.closePath();
+  const grad=ctx.createLinearGradient(0,0,W,0);
+  grad.addColorStop(0,'rgba(140,200,220,0.12)');
+  grad.addColorStop(0.5,'rgba(200,240,250,0.22)');
+  grad.addColorStop(1,'rgba(140,200,220,0.12)');
+  ctx.fillStyle=grad;
+  ctx.fill();
+  ctx.lineWidth=4;
+  ctx.strokeStyle='rgba(180,220,235,0.85)';
+  ctx.stroke();
+  // cork
+  ctx.fillStyle='#a5682f';
+  ctx.fillRect(bottle.cx-bottle.neckW/2-2, bottle.neckY0-22, bottle.neckW+4, 24);
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // background
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#132a3a');bg.addColorStop(1,'#0a1622');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  drawBottleGlass();
+
+  // target outlines for unplaced, unbroken parts
+  parts.forEach(p=>{
+    if(!p.placed && !p.broken){
+      ctx.save();
+      ctx.strokeStyle='rgba(255,213,79,0.55)';
+      ctx.lineWidth=2;
+      ctx.setLineDash([4,4]);
+      ctx.beginPath();
+      ctx.arc(p.targetX,p.targetY,p.r,0,Math.PI*2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  });
+
+  // placed parts
+  ctx.font='24px serif';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  parts.forEach(p=>{
+    if(p.placed){
+      ctx.fillText(p.emoji,p.x,p.y);
+    }
+  });
+
+  // dragging part
+  if(dragging && dragPos){
+    ctx.save();
+    ctx.globalAlpha=0.9;
+    ctx.font='26px serif';
+    ctx.fillText(dragging.emoji,dragPos.x,dragPos.y);
+    ctx.restore();
+  }
+}
+
+setupRound();
+</script></body></html>

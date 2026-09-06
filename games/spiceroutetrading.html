@@ -1,0 +1,273 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Spice Route Trading</title><meta name="description" content="Play Spice Route Trading free online — Guide your caravan across a map of trading posts. Click a connected post to travel there, buy spices cheap, then travel on and sell high elsewhere. Your camels have limited cargo space and you only get a limited number of stops per route — plan carefully to maximize profit. Each new map has trickier prices and layouts."><link rel="canonical" href="https://games.multiportllc.com/games/spiceroutetrading"><meta property="og:title" content="Spice Route Trading - Multiport Games"><meta property="og:description" content="Play Spice Route Trading free online — Guide your caravan across a map of trading posts. Click a connected post to travel there, buy spices cheap, then travel on and sell high elsewhere. Your camels have limited cargo space and you only get a limited number of stops per route — plan carefully to maximize profit. Each new map has trickier prices and layouts."><meta property="og:url" content="https://games.multiportllc.com/games/spiceroutetrading"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Spice Route Trading","description":"Play Spice Route Trading free online instantly. Guide your caravan across a map of trading posts. Click a connected post to travel there, buy spices cheap, then travel on and sell high elsewhere. Your camels have limited cargo space and you only get a limited number of stops per route - plan carefully to maximize profit. Each new map has trickier prices and layouts. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/spiceroutetrading","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{max-width:820px;margin:0 auto;text-align:center}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:800;padding:6px 4px;flex-wrap:wrap;gap:6px}
+#hud span{background:rgba(255,255,255,.08);padding:5px 12px;border-radius:16px;font-size:.85rem}
+#cargoRow{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:6px 0 10px}
+.cargoChip{background:rgba(255,255,255,.1);color:#ffd54f;border-radius:14px;padding:4px 10px;font-size:.8rem;font-weight:700}
+#mapWrap{position:relative;background:linear-gradient(160deg,#3b2412,#6b4423);border-radius:14px;padding:10px;margin-bottom:10px;overflow:hidden}
+#mapSvg{width:100%;height:340px;display:block}
+.post{cursor:pointer}
+.post circle{transition:r .12s,fill .15s}
+.post.current circle{stroke:#ffd54f;stroke-width:4}
+.post.reachable circle{stroke:#7ec850;stroke-width:3}
+.post.visited circle{opacity:.55}
+.post text{fill:#fff;font-weight:800;font-size:11px;pointer-events:none}
+.post .price{fill:#ffd54f;font-size:10px;font-weight:700}
+#msg{color:#fff;font-size:1.15rem;font-weight:900;min-height:1.8em;margin:4px 0}
+#endPanel{display:none;background:rgba(255,255,255,.08);border-radius:12px;padding:14px;color:#fff}
+#endPanel h3{margin:0 0 8px;color:#ffd54f}
+#restartBtn{padding:10px 26px;background:#c76b1a;border:none;border-radius:20px;color:#fff;font-weight:800;font-size:1rem;cursor:pointer;margin-top:10px}
+#legend{color:#ddd;font-size:.75rem;margin-top:2px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Spice Route Trading</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span id="goldDisp">Gold: 100</span><span id="stopsDisp">Stops left: 8</span><span id="mapDisp">Map: 1</span><span id="bestDisp">Best profit: 0</span></div>
+      <div id="cargoRow"></div>
+      <div id="msg">Click a connected post (green outline) to travel there.</div>
+      <div id="mapWrap"><svg id="mapSvg" viewBox="0 0 600 340"></svg></div>
+      <div id="legend">Yellow ring = your caravan. Green ring = posts you can reach next. Buy low, sell high, watch your stops!</div>
+      <div id="endPanel"></div>
+      <button id="restartBtn" style="display:none">New Route</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Guide your caravan across a map of trading posts. Click a connected post (highlighted green) to travel there — arriving opens that post's spice market. Buy spices cheap at some posts, carry them in your limited camel cargo, then travel to another post and sell high. You only get a limited number of stops per route, so plan your path carefully to maximize total profit. Each new map has trickier prices and layouts.</div>
+</div>
+<script>
+const SPICES=[
+  {key:'Cinnamon',icon:'🟤'},{key:'Saffron',icon:'🟡'},{key:'Pepper',icon:'⚫'},{key:'Cardamom',icon:'🟢'},{key:'Turmeric',icon:'🟠'}
+];
+const CARGO_CAP=6;
+let gold=100,stopsLeft=8,mapNum=1,best=parseInt(localStorage.getItem('spiceroutetrading_best')||'0',10);
+let posts=[],edges=[],currentPost=null,cargo=[],gameOver=false,startGold=100;
+
+document.getElementById('bestDisp').textContent=I18N.t('best_profit_label','Best profit: {b}').replace('{b}',best);
+
+const svg=document.getElementById('mapSvg'),msgEl=document.getElementById('msg'),cargoRow=document.getElementById('cargoRow'),endPanel=document.getElementById('endPanel'),restartBtn=document.getElementById('restartBtn');
+
+function rand(a,b){return a+Math.floor(Math.random()*(b-a+1));}
+
+function genMap(){
+  const numPosts=Math.min(9,5+Math.floor((mapNum-1)/1));
+  posts=[];
+  const names=shuffle(['Aleppo','Zanzibar','Muscat','Samarkand','Cairo','Basra','Malacca','Goa','Timbuktu','Isfahan']);
+  for(let i=0;i<numPosts;i++){
+    const angle=(i/numPosts)*Math.PI*2 - Math.PI/2;
+    const rx=230,ry=120,cx=300,cy=170;
+    const jitter=rand(-18,18);
+    posts.push({
+      id:i,
+      name:names[i%names.length],
+      x:cx+Math.cos(angle)*(rx+jitter),
+      y:cy+Math.sin(angle)*(ry+jitter),
+      prices:SPICES.map(s=>({key:s.key,icon:s.icon,price:rand(4,10+mapNum*2)}))
+    });
+  }
+  // give a couple of posts extreme spice prices to reward planning
+  posts.forEach(p=>{
+    if(Math.random()<0.5){
+      const s=p.prices[rand(0,p.prices.length-1)];
+      s.price=rand(2,4);
+      s.cheap=true;
+    }
+    if(Math.random()<0.5){
+      const s=p.prices[rand(0,p.prices.length-1)];
+      s.price=rand(14+mapNum*2,20+mapNum*3);
+      s.expensive=true;
+    }
+  });
+  // build edges: ring connections + a few chords for choice
+  edges=[];
+  for(let i=0;i<numPosts;i++){
+    edges.push([i,(i+1)%numPosts]);
+  }
+  const extraChords=Math.min(numPosts-2,2+Math.floor(mapNum/2));
+  for(let i=0;i<extraChords;i++){
+    const a=rand(0,numPosts-1);let b=rand(0,numPosts-1);
+    if(a!==b && !edges.some(e=>(e[0]===a&&e[1]===b)||(e[0]===b&&e[1]===a))) edges.push([a,b]);
+  }
+}
+
+function shuffle(a){const b=a.slice();for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]];}return b;}
+
+function neighbors(id){
+  const out=new Set();
+  edges.forEach(([a,b])=>{ if(a===id)out.add(b); if(b===id)out.add(a); });
+  return out;
+}
+
+function startGame(){
+  gameOver=false;
+  gold=100;startGold=100;
+  stopsLeft=8+Math.floor(mapNum/2);
+  cargo=[];
+  genMap();
+  currentPost=0;
+  endPanel.style.display='none';
+  restartBtn.style.display='none';
+  msgEl.textContent=I18N.t('travel_hint','Click a connected post (green outline) to travel there.');
+  update();
+  render();
+}
+
+function render(){
+  svg.innerHTML='';
+  const ns=neighbors(currentPost);
+  edges.forEach(([a,b])=>{
+    const pa=posts[a],pb=posts[b];
+    const line=document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1',pa.x);line.setAttribute('y1',pa.y);
+    line.setAttribute('x2',pb.x);line.setAttribute('y2',pb.y);
+    line.setAttribute('stroke','rgba(255,255,255,.25)');line.setAttribute('stroke-width','2');
+    svg.appendChild(line);
+  });
+  posts.forEach(p=>{
+    const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('class','post'+(p.id===currentPost?' current':'')+(ns.has(p.id)&&!gameOver?' reachable':''));
+    const circle=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    circle.setAttribute('cx',p.x);circle.setAttribute('cy',p.y);circle.setAttribute('r',p.id===currentPost?20:16);
+    circle.setAttribute('fill', p.id===currentPost?'#e94560':'#8a5a2b');
+    g.appendChild(circle);
+    const text=document.createElementNS('http://www.w3.org/2000/svg','text');
+    text.setAttribute('x',p.x);text.setAttribute('y',p.y-24);text.setAttribute('text-anchor','middle');
+    text.textContent=p.name;
+    g.appendChild(text);
+    if(ns.has(p.id)&&!gameOver&&p.id!==currentPost){
+      g.style.cursor='pointer';
+      g.addEventListener('click',()=>travelTo(p.id));
+    }
+    svg.appendChild(g);
+  });
+  renderMarket();
+  renderCargo();
+}
+
+function renderMarket(){
+  // Show current post's market as clickable buy/sell rows appended below svg via foreignObject-free approach: use a simple list under map
+  let marketDiv=document.getElementById('marketDiv');
+  if(!marketDiv){
+    marketDiv=document.createElement('div');
+    marketDiv.id='marketDiv';
+    marketDiv.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:10px';
+    document.getElementById('mapWrap').insertAdjacentElement('afterend',marketDiv);
+  }
+  marketDiv.innerHTML='';
+  if(gameOver)return;
+  const post=posts[currentPost];
+  post.prices.forEach(s=>{
+    const row=document.createElement('div');
+    row.style.cssText='background:rgba(255,255,255,.08);border-radius:10px;padding:8px;color:#fff;font-size:.82rem';
+    const owned=cargo.filter(c=>c===s.key).length;
+    const tag = s.cheap?' 🔻':(s.expensive?' 🔺':'');
+    row.innerHTML=`<div style="font-weight:800">${s.icon} ${I18N.t('spice_'+s.key,s.key)}${tag}</div><div>${I18N.t('price_label','Price: {p}g').replace('{p}',s.price)}</div>`;
+    const btnRow=document.createElement('div');
+    btnRow.style.cssText='display:flex;gap:6px;justify-content:center;margin-top:6px';
+    const buyBtn=document.createElement('button');
+    buyBtn.textContent=I18N.t('buy_word','Buy');
+    buyBtn.style.cssText='flex:1;padding:5px;border:none;border-radius:8px;background:#4caf50;color:#fff;font-weight:700;cursor:pointer';
+    buyBtn.disabled = gold<s.price || cargo.length>=CARGO_CAP;
+    buyBtn.addEventListener('click',()=>buy(s));
+    const sellBtn=document.createElement('button');
+    sellBtn.textContent=I18N.t('sell_word','Sell');
+    sellBtn.style.cssText='flex:1;padding:5px;border:none;border-radius:8px;background:#e94560;color:#fff;font-weight:700;cursor:pointer';
+    sellBtn.disabled = owned<=0;
+    sellBtn.addEventListener('click',()=>sell(s));
+    btnRow.appendChild(buyBtn);btnRow.appendChild(sellBtn);
+    row.appendChild(btnRow);
+    if(owned>0){
+      const o=document.createElement('div');
+      o.style.cssText='margin-top:4px;color:#ffd54f;font-size:.75rem';
+      o.textContent=I18N.t('carrying_label','Carrying: {n}').replace('{n}',owned);
+      row.appendChild(o);
+    }
+    marketDiv.appendChild(row);
+  });
+}
+
+function renderCargo(){
+  cargoRow.innerHTML='';
+  const chip=document.createElement('div');
+  chip.className='cargoChip';
+  chip.textContent=I18N.t('cargo_label','Cargo: {n}/{c}').replace('{n}',cargo.length).replace('{c}',CARGO_CAP);
+  cargoRow.appendChild(chip);
+}
+
+function buy(s){
+  if(gameOver||gold<s.price||cargo.length>=CARGO_CAP)return;
+  gold-=s.price;
+  cargo.push(s.key);
+  SFX.coin();
+  update();render();
+}
+function sell(s){
+  if(gameOver)return;
+  const idx=cargo.indexOf(s.key);
+  if(idx<0)return;
+  cargo.splice(idx,1);
+  gold+=s.price;
+  SFX.point();
+  update();render();
+}
+
+function travelTo(id){
+  if(gameOver)return;
+  if(!neighbors(currentPost).has(id))return;
+  currentPost=id;
+  stopsLeft--;
+  SFX.swoosh();
+  msgEl.textContent=I18N.t('arrived_at','Arrived at {n}. Buy low, sell high!').replace('{n}',posts[id].name);
+  update();
+  if(stopsLeft<=0){ setTimeout(()=>endGame(),300); return; }
+  render();
+}
+
+function update(){
+  document.getElementById('goldDisp').textContent=I18N.t('gold_label','Gold: {g}').replace('{g}',gold);
+  document.getElementById('stopsDisp').textContent=I18N.t('stops_label','Stops left: {n}').replace('{n}',stopsLeft);
+  document.getElementById('mapDisp').textContent=I18N.t('map_label','Map: {m}').replace('{m}',mapNum);
+}
+
+function endGame(){
+  gameOver=true;
+  // liquidate remaining cargo at current post prices as a final sale opportunity (at 50% since route ended)
+  let leftover=0;
+  cargo.forEach(key=>{
+    const s=posts[currentPost].prices.find(p=>p.key===key);
+    if(s){ const v=Math.floor(s.price*0.5); gold+=v; leftover+=v; }
+  });
+  cargo=[];
+  const profit=gold-startGold;
+  if(profit>best){best=profit;localStorage.setItem('spiceroutetrading_best',best);document.getElementById('bestDisp').textContent=I18N.t('best_profit_label','Best profit: {b}').replace('{b}',best);}
+  if(profit>0)SFX.win();else SFX.lose();
+  update();render();
+  endPanel.style.display='block';
+  endPanel.innerHTML=`<h3>${I18N.t('route_complete','Route Complete!')}</h3>
+    <div>${I18N.t('final_gold_label','Final gold: {g}').replace('{g}',gold)}</div>
+    <div>${I18N.t('profit_label','Profit: {p}').replace('{p}',profit)}</div>`;
+  restartBtn.style.display='inline-block';
+  if(profit>0)mapNum++;
+}
+
+restartBtn.addEventListener('click',startGame);
+
+document.addEventListener('keydown',e=>{
+  if(gameOver)return;
+  if(e.key>='1'&&e.key<='9'){
+    const idx=parseInt(e.key,10)-1;
+    const ns=Array.from(neighbors(currentPost));
+    if(ns[idx]!==undefined)travelTo(ns[idx]);
+  }
+});
+
+startGame();
+</script></body></html>

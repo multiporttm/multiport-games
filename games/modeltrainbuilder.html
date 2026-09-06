@@ -1,0 +1,329 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Model Train Builder</title><meta name="description" content="Play Model Train Builder free online — Pick track pieces from the palette and click grid cells to build a complete loop from the station back to itself, then run your train around it."><link rel="canonical" href="https://games.multiportllc.com/games/modeltrainbuilder"><meta property="og:title" content="Model Train Builder - Multiport Games"><meta property="og:description" content="Play Model Train Builder free online — Pick track pieces from the palette and click grid cells to build a complete loop from the station back to itself, then run your train around it."><meta property="og:url" content="https://games.multiportllc.com/games/modeltrainbuilder"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Model Train Builder","description":"Play Model Train Builder free online instantly. Pick track pieces from the palette and click grid cells to build a complete loop from the station back to itself, then watch your train run the layout. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/modeltrainbuilder","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:14px;display:flex;flex-direction:column;align-items:center;gap:10px}
+#hud{display:flex;justify-content:space-between;width:100%;max-width:560px;color:#e8e0c8;font-weight:700;font-size:.9rem;flex-wrap:wrap;gap:4px}
+#hud span{color:#ffd54f}
+#grid{display:grid;background:#0d2b1a;border-radius:10px;padding:6px;touch-action:none}
+.cell{width:48px;height:48px;background:#123d24;border-radius:4px;position:relative;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.cell.station{background:#3d2b12}
+.cell svg{width:100%;height:100%}
+#palette{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.tool{width:52px;height:52px;background:rgba(255,255,255,.08);border:2px solid rgba(255,255,255,.15);border-radius:10px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:1.4rem;position:relative}
+.tool.active{border-color:#ffd54f;box-shadow:0 0 0 2px rgba(255,213,79,.4)}
+.tool .count{position:absolute;bottom:-6px;right:-6px;background:#e94560;color:#fff;font-size:.65rem;font-weight:800;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center}
+#msg{color:#7ec850;font-weight:800;min-height:1.4em;text-align:center}
+#msg.bad{color:#e94560}
+#btnRow{display:flex;gap:10px}
+button.act{padding:9px 20px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;font-weight:700}
+button.act:disabled{opacity:.4;cursor:not-allowed}
+button.act.secondary{background:rgba(255,255,255,.12)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Model Train Builder</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span id="roundLabel">Round 1</span><span id="budgetLabel">Pieces left: 0</span><span id="scoreLabel">Loops: 0 | Best: 0</span></div>
+      <div id="grid"></div>
+      <div id="palette"></div>
+      <div id="msg">Select a piece, then click a grid cell to place it.</div>
+      <div id="btnRow">
+        <button class="act secondary" id="clearBtn">Clear Cell</button>
+        <button class="act" id="runBtn">Run Train</button>
+        <button class="act secondary" id="nextBtn" style="display:none">Next Layout</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Pick a track piece (straight, curve, or switch) from the palette, then click a grid cell to place it. Build a single complete loop that starts and ends at the station with no dead ends or crossing conflicts. Click <b>Run Train</b> to test your layout — if it's a valid closed loop, the train runs all the way around! You have a limited piece budget, and each round asks for a bigger loop. <b>Keyboard:</b> Tab to a palette piece or grid cell and press Enter/Space to select or place it.</div>
+</div>
+<script>
+const gridEl=document.getElementById('grid');
+const paletteEl=document.getElementById('palette');
+const msgEl=document.getElementById('msg');
+const runBtn=document.getElementById('runBtn');
+const clearBtn=document.getElementById('clearBtn');
+const nextBtn=document.getElementById('nextBtn');
+const budgetLabel=document.getElementById('budgetLabel');
+const scoreLabel=document.getElementById('scoreLabel');
+const roundLabel=document.getElementById('roundLabel');
+
+let round=1, loopsDone=0, best=parseInt(localStorage.getItem('modeltrainbuilder_best')||'0',10);
+let gridSize, cells, budget, budgetTotal, stationR, stationC, selectedTool=null, running=false, trainPos=null, trainTimer=null;
+
+// piece types define which of N/E/S/W directions they connect. Switch connects 3 (acts as curve for loop simplicity but shown distinct)
+const TOOLS=[
+  {key:'straightH',label:'Straight',emoji:'━',dirs:['E','W']},
+  {key:'straightV',label:'Straight',emoji:'┃',dirs:['N','S']},
+  {key:'curveNE',label:'Curve',emoji:'└',dirs:['N','E']},
+  {key:'curveNW',label:'Curve',emoji:'┘',dirs:['N','W']},
+  {key:'curveSE',label:'Curve',emoji:'┌',dirs:['S','E']},
+  {key:'curveSW',label:'Curve',emoji:'┐',dirs:['S','W']},
+  {key:'switchH',label:'Switch',emoji:'⇄',dirs:['E','W']},
+  {key:'switchV',label:'Switch',emoji:'⇅',dirs:['N','S']},
+];
+const OPP={N:'S',S:'N',E:'W',W:'E'};
+const DELTA={N:[0,-1],S:[0,1],E:[1,0],W:[-1,0]};
+
+function setupRound(){
+  gridSize=Math.min(7,4+Math.floor((round-1)/2));
+  gridEl.style.gridTemplateColumns=`repeat(${gridSize},48px)`;
+  gridEl.style.gridTemplateRows=`repeat(${gridSize},48px)`;
+  cells=Array.from({length:gridSize},()=>Array(gridSize).fill(null));
+  stationR=Math.floor(gridSize/2); stationC=Math.floor(gridSize/2);
+  // station itself is a curve-like piece automatically connecting two sides so trains can pass through; treat as fixed piece with 2 dirs chosen by player via normal placement too actually simplest: station is just a marked cell that also needs a track piece placed on it.
+  budgetTotal = Math.max(6, gridSize*gridSize - Math.floor(gridSize*gridSize*0.35)) ;
+  // ensure enough pieces to close a loop but not overly generous
+  budgetTotal = Math.min(budgetTotal, 10+round*2);
+  budget=budgetTotal;
+  selectedTool=null;
+  clearMode=false;
+  clearBtn.textContent='Clear Cell';
+  running=false;
+  clearInterval(trainTimer);
+  trainPos=null;
+  nextBtn.style.display='none';
+  runBtn.disabled=false;
+  msgEl.textContent='Select a piece, then click a grid cell to place it.';
+  msgEl.className='';
+  roundLabel.textContent=`Round ${round}`;
+  renderPalette();
+  renderGrid();
+  updateHud();
+}
+
+function renderPalette(){
+  paletteEl.innerHTML='';
+  TOOLS.forEach(t=>{
+    const el=document.createElement('div');
+    el.className='tool'+(selectedTool===t.key?' active':'');
+    el.innerHTML=`${t.emoji}`;
+    el.title=t.label;
+    el.tabIndex=0;
+    el.setAttribute('role','button');
+    const activate=()=>{
+      if(running)return;
+      selectedTool = selectedTool===t.key?null:t.key;
+      SFX.click();
+      renderPalette();
+    };
+    el.addEventListener('click',activate);
+    el.addEventListener('keydown',e=>{
+      if(e.key==='Enter'||e.key===' '){e.preventDefault();activate();}
+    });
+    paletteEl.appendChild(el);
+  });
+}
+
+function pieceAt(r,c){ return cells[r][c]; }
+
+function renderGrid(){
+  gridEl.innerHTML='';
+  for(let r=0;r<gridSize;r++){
+    for(let c=0;c<gridSize;c++){
+      const cell=document.createElement('div');
+      cell.className='cell'+(r===stationR&&c===stationC?' station':'');
+      cell.tabIndex=0;
+      cell.setAttribute('role','button');
+      cell.setAttribute('aria-label',`Grid cell row ${r+1} column ${c+1}`);
+      cell.addEventListener('click',()=>onCellClick(r,c));
+      cell.addEventListener('keydown',e=>{
+        if(e.key==='Enter'||e.key===' '){e.preventDefault();onCellClick(r,c);}
+      });
+      const piece=cells[r][c];
+      if(piece) cell.appendChild(pieceSvg(piece, r===stationR&&c===stationC));
+      else if(r===stationR&&c===stationC) cell.innerHTML='<span style="font-size:1.3rem">🚉</span>';
+      gridEl.appendChild(cell);
+    }
+  }
+}
+
+function pieceSvg(key, isStation){
+  const t=TOOLS.find(x=>x.key===key);
+  const svgNS='http://www.w3.org/2000/svg';
+  const svg=document.createElementNS(svgNS,'svg');
+  svg.setAttribute('viewBox','0 0 48 48');
+  const col=isStation?'#ffd54f':'#cfd8dc';
+  const dirs=t.dirs;
+  const pathFor=d=>{
+    switch(d){
+      case 'N': return 'M24,24 L24,0';
+      case 'S': return 'M24,24 L24,48';
+      case 'E': return 'M24,24 L48,24';
+      case 'W': return 'M24,24 L0,24';
+    }
+  };
+  dirs.forEach(d=>{
+    const p=document.createElementNS(svgNS,'path');
+    p.setAttribute('d',pathFor(d));
+    p.setAttribute('stroke',col);
+    p.setAttribute('stroke-width','7');
+    p.setAttribute('fill','none');
+    p.setAttribute('stroke-linecap','round');
+    svg.appendChild(p);
+  });
+  if(t.key.startsWith('switch')){
+    const dot=document.createElementNS(svgNS,'circle');
+    dot.setAttribute('cx','24');dot.setAttribute('cy','24');dot.setAttribute('r','5');
+    dot.setAttribute('fill','#ffb300');
+    svg.appendChild(dot);
+  }
+  return svg;
+}
+
+let clearMode=false;
+
+function onCellClick(r,c){
+  if(running)return;
+  if(clearMode){
+    if(cells[r][c]){ cells[r][c]=null; budget++; SFX.click(); updateHud(); renderGrid(); }
+    return;
+  }
+  if(selectedTool===null) return;
+  if(cells[r][c]){
+    msgEl.textContent='That cell already has a piece. Clear it first.';
+    msgEl.className='bad';
+    return;
+  }
+  if(budget<=0){
+    msgEl.textContent="You're out of pieces! Clear some to try a different route.";
+    msgEl.className='bad';
+    return;
+  }
+  cells[r][c]=selectedTool;
+  budget--;
+  SFX.click();
+  updateHud();
+  renderGrid();
+}
+
+clearBtn.addEventListener('click',()=>{
+  if(running)return;
+  clearMode=!clearMode;
+  selectedTool=null;
+  renderPalette();
+  clearBtn.textContent=clearMode?'Done Clearing':'Clear Cell';
+  msgEl.textContent=clearMode?'Click (or Tab + Enter on) a placed piece to remove it.':'Select a piece, then click a grid cell to place it.';
+  msgEl.className='';
+});
+
+function updateHud(){
+  budgetLabel.textContent=I18N.t('budget_label','Pieces left: {n}').replace('{n}',budget);
+  scoreLabel.textContent=I18N.t('loops_label','Loops: {l} | Best: {b}').replace('{l}',loopsDone).replace('{b}',best);
+}
+
+function validateLoop(){
+  // must have piece at station
+  if(!cells[stationR][stationC]) return {ok:false,reason:'Place a track piece on the station.'};
+  // build connection map; check every non-empty cell's connections point to neighbor that reciprocates
+  for(let r=0;r<gridSize;r++){
+    for(let c=0;c<gridSize;c++){
+      const piece=cells[r][c];
+      if(!piece)continue;
+      const t=TOOLS.find(x=>x.key===piece);
+      for(const d of t.dirs){
+        const [dx,dy]=DELTA[d];
+        const nr=r+dy, nc=c+dx;
+        if(nr<0||nr>=gridSize||nc<0||nc>=gridSize) return {ok:false,reason:'A track runs off the edge of the grid.'};
+        const np=cells[nr][nc];
+        if(!np) return {ok:false,reason:'There is a dead end in the track.'};
+        const nt=TOOLS.find(x=>x.key===np);
+        if(!nt.dirs.includes(OPP[d])) return {ok:false,reason:"Two pieces don't connect properly (crossing/mismatch)."};
+      }
+    }
+  }
+  // trace loop starting at station, must return to station visiting each placed piece exactly once (a simple loop) and every placed piece used
+  const placedCells=[];
+  for(let r=0;r<gridSize;r++)for(let c=0;c<gridSize;c++)if(cells[r][c])placedCells.push([r,c]);
+  if(placedCells.length<4) return {ok:false,reason:'The loop is too short — add more track.'};
+
+  const t0=TOOLS.find(x=>x.key===cells[stationR][stationC]);
+  let prevDir=null, curR=stationR, curC=stationC, startDir=t0.dirs[0];
+  let dir=startDir;
+  const visited=new Set();
+  let steps=0;
+  let r=stationR,c=stationC, cameFrom=null;
+  const path=[[r,c]];
+  // walk: from station go in dirs[0]
+  let goDir=t0.dirs[0];
+  while(true){
+    const [dx,dy]=DELTA[goDir];
+    const nr=r+dy, nc=c+dx;
+    if(nr<0||nr>=gridSize||nc<0||nc>=gridSize) return {ok:false,reason:'Track runs off the grid.'};
+    const np=cells[nr][nc];
+    if(!np) return {ok:false,reason:'Dead end found while tracing the loop.'};
+    const nt=TOOLS.find(x=>x.key===np);
+    const enterDir=OPP[goDir];
+    if(!nt.dirs.includes(enterDir)) return {ok:false,reason:"Track pieces don't connect properly."};
+    r=nr;c=nc;
+    steps++;
+    if(steps>gridSize*gridSize+2) return {ok:false,reason:'Track loops incorrectly.'};
+    if(r===stationR&&c===stationC){
+      break;
+    }
+    path.push([r,c]);
+    // pick the other direction to continue
+    goDir = nt.dirs[0]===enterDir? nt.dirs[1] : nt.dirs[0];
+  }
+  path.push([stationR,stationC]);
+  if(path.length-1 !== placedCells.length) return {ok:false,reason:'Every placed piece must be part of one single loop (no stray pieces).'};
+  return {ok:true, path};
+}
+
+runBtn.addEventListener('click',()=>{
+  const res=validateLoop();
+  if(!res.ok){
+    msgEl.textContent=res.reason;
+    msgEl.className='bad';
+    SFX.fail();
+    return;
+  }
+  msgEl.textContent=I18N.t('loop_valid','Valid loop! Running the train...');
+  msgEl.className='';
+  SFX.success();
+  running=true;
+  runBtn.disabled=true;
+  runTrain(res.path);
+});
+
+function runTrain(path){
+  let i=0;
+  trainTimer=setInterval(()=>{
+    renderGrid();
+    const [r,c]=path[i%path.length];
+    const idx=r*gridSize+c;
+    const cellEl=gridEl.children[idx];
+    const dot=document.createElement('div');
+    dot.textContent='🚂';
+    dot.style.position='absolute';
+    dot.style.fontSize='1.1rem';
+    cellEl.style.position='relative';
+    cellEl.appendChild(dot);
+    i++;
+    if(i>=path.length*2){
+      clearInterval(trainTimer);
+      finishRound();
+    }
+  },260);
+}
+
+function finishRound(){
+  loopsDone++;
+  if(loopsDone>best){best=loopsDone;localStorage.setItem('modeltrainbuilder_best',best);}
+  SFX.win();
+  msgEl.textContent=I18N.t('layout_complete','Layout complete! The train made it all the way around.');
+  updateHud();
+  nextBtn.style.display='inline-block';
+  round++;
+}
+
+nextBtn.addEventListener('click',setupRound);
+
+setupRound();
+</script></body></html>

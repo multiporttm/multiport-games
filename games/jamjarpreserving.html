@@ -1,0 +1,263 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Jam Jar Preserving</title><meta name="description" content="Play Jam Jar Preserving free online — Drag the heat dial or use Arrow Keys to keep the pot's temperature inside the glowing green zone until the fruit is perfectly cooked, then click to fill and seal your jars on the line."><link rel="canonical" href="https://games.multiportllc.com/games/jamjarpreserving"><meta property="og:title" content="Jam Jar Preserving - Multiport Games"><meta property="og:description" content="Play Jam Jar Preserving free online — Drag the heat dial or use Arrow Keys to keep the pot's temperature inside the glowing green zone until the fruit is perfectly cooked, then click to fill and seal your jars on the line."><meta property="og:url" content="https://games.multiportllc.com/games/jamjarpreserving"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Jam Jar Preserving","description":"Play Jam Jar Preserving free online instantly. Drag the heat dial or use Arrow Keys to keep the pot's temperature inside the glowing green zone until the fruit is perfectly cooked, then click to fill and seal your jars on the line. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/jamjarpreserving","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#2b1810;border-radius:14px;padding:18px;text-align:center;color:#fff}
+#status{font-size:1.1rem;font-weight:800;margin:4px 0;min-height:1.6em;color:#ffd54f}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;margin-bottom:8px;font-weight:700}
+#hud span{background:rgba(0,0,0,.3);padding:5px 12px;border-radius:10px}
+canvas#stove{background:#1a0d08;border-radius:10px;display:block;margin:0 auto;touch-action:none}
+#dialWrap{margin-top:8px;color:#eee;font-size:.85rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Jam Jar Preserving</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="hud"><span id="round-display">Round: 1</span><span id="jars-display">Jars: 0</span><span id="best-display">Best: 0</span></div>
+      <div id="status">Get the pot into the green zone and hold it there!</div>
+      <canvas id="stove" width="420" height="300"></canvas>
+      <div id="dialWrap">Drag the dial, use ← / → Arrow Keys, or tap the pot to nudge the heat.</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the heat dial (or use <b>← / → Arrow Keys</b>) to keep the bubbling pot's temperature inside the glowing green zone. Hold it there long enough to finish the batch without burning or undercooking it, then click <b>Pour</b> when the gauge bar fills to the target line and <b>Seal</b> the jar. Each round narrows the safe zone — score by how many jars you preserve correctly!</div>
+</div>
+<script>
+const cvs=document.getElementById('stove'),ctx=cvs.getContext('2d');
+const W=420,H=300;
+let round=1,jars=0,best=parseInt(localStorage.getItem('jamjarpreserving_best')||'0',10);
+document.getElementById('best-display').textContent=I18N.t('best_label','Best: {n}').replace('{n}',best);
+
+let heat=50; // 0-100
+let temp=50; // actual pot temperature, lags behind heat
+let zoneCenter=55, zoneWidth=22; // safe window
+let holdTime=0, holdNeeded=180; // frames (~3s at 60fps)
+let phase='cook'; // cook, pour, sealed, burnt, done
+let pourFill=0, pourTarget=0.72, pourSpeed=0;
+let jarShake=0;
+let dragging=false;
+let burnt=false;
+
+function newRound(){
+  zoneWidth=Math.max(9,24-round*1.6);
+  zoneCenter=35+Math.random()*30;
+  heat=50;temp=50;holdTime=0;holdNeeded=170+round*8;
+  phase='cook';pourFill=0;burnt=false;
+  document.getElementById('round-display').textContent=I18N.t('round_label','Round: {n}').replace('{n}',round);
+  setStatus(I18N.t('status_cook','Get the pot into the green zone and hold it there!'));
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+
+// Input: dial drag
+function heatFromPointer(x,y){
+  const cx=W/2,cy=210,r=70;
+  let ang=Math.atan2(y-cy,x-cx)*180/Math.PI; // -180..180
+  // map angle range -150..-30 (top arc) doesn't matter much; use simple vertical drag instead
+  return null;
+}
+
+cvs.addEventListener('mousedown',e=>{dragging=true;handlePointer(e);});
+window.addEventListener('mousemove',e=>{if(dragging)handlePointer(e);});
+window.addEventListener('mouseup',()=>dragging=false);
+cvs.addEventListener('touchstart',e=>{e.preventDefault();dragging=true;handlePointer(e.touches[0]);},{passive:false});
+cvs.addEventListener('touchmove',e=>{e.preventDefault();if(dragging)handlePointer(e.touches[0]);},{passive:false});
+cvs.addEventListener('touchend',()=>dragging=false);
+
+function handlePointer(e){
+  const rect=cvs.getBoundingClientRect();
+  const y=(e.clientY-rect.top)/rect.height;
+  if(phase==='cook'){
+    heat=clamp((1-y)*100,0,100);
+  } else if(phase==='pour'){
+    // tap/drag anywhere pours
+  }
+}
+
+cvs.addEventListener('click',e=>{
+  if(phase==='pour'){
+    doPour();
+  } else if(phase==='burnt'||phase==='done'){
+    round=1;jars=0;newRound();
+  }
+});
+
+document.addEventListener('keydown',e=>{
+  if(phase==='cook'){
+    if(e.code==='ArrowLeft'){e.preventDefault();heat=clamp(heat-3,0,100);}
+    if(e.code==='ArrowRight'){e.preventDefault();heat=clamp(heat+3,0,100);}
+  } else if(e.code==='Space'){
+    e.preventDefault();
+    if(phase==='pour')doPour();
+    else if(phase==='burnt'||phase==='done'){round=1;jars=0;newRound();}
+  }
+});
+
+function doPour(){
+  if(pourSpeed!==0)return; // already pouring
+  pourSpeed=0.012;
+}
+
+function endRoundSuccess(){
+  jars++;
+  document.getElementById('jars-display').textContent=I18N.t('jars_label','Jars: {n}').replace('{n}',jars);
+  if(jars>best){best=jars;localStorage.setItem('jamjarpreserving_best',String(best));document.getElementById('best-display').textContent=I18N.t('best_label','Best: {n}').replace('{n}',best);}
+  SFX.success();
+  round++;
+  setTimeout(newRound,900);
+  phase='sealed';
+  setStatus(I18N.t('status_sealed','Jar sealed! Next batch coming up...'));
+}
+
+function drawGauge(){
+  // vertical gauge bar on left
+  const gx=40,gy=30,gw=36,gh=220;
+  ctx.fillStyle='#1a1a1a';ctx.fillRect(gx,gy,gw,gh);
+  // safe zone
+  const zoneY=gy+gh-((zoneCenter+zoneWidth/2)/100)*gh;
+  const zoneH=(zoneWidth/100)*gh;
+  ctx.fillStyle='rgba(80,220,100,0.5)';
+  ctx.fillRect(gx,zoneY,gw,zoneH);
+  ctx.strokeStyle='#7ec850';ctx.lineWidth=2;ctx.strokeRect(gx,zoneY,gw,zoneH);
+  // temp needle
+  const tempY=gy+gh-(temp/100)*gh;
+  const inZone=Math.abs(temp-zoneCenter)<=zoneWidth/2;
+  ctx.fillStyle=inZone?'#7ec850':(temp>zoneCenter+zoneWidth/2?'#ff6b35':'#4fc3f7');
+  ctx.fillRect(gx-4,tempY-3,gw+8,6);
+  ctx.strokeStyle='#555';ctx.strokeRect(gx,gy,gw,gh);
+  ctx.fillStyle='#ccc';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('gauge_label','TEMP'),gx+gw/2,gy-8);
+
+  // hold progress bar
+  const hbX=100,hbY=270,hbW=280,hbH=14;
+  ctx.fillStyle='#333';ctx.fillRect(hbX,hbY,hbW,hbH);
+  ctx.fillStyle=inZone?'#7ec850':'#555';
+  ctx.fillRect(hbX,hbY,hbW*(holdTime/holdNeeded),hbH);
+  ctx.strokeStyle='#888';ctx.strokeRect(hbX,hbY,hbW,hbH);
+}
+
+function drawPot(){
+  const cx=250,cy=150;
+  // pot
+  ctx.fillStyle='#3a3a3a';
+  ctx.beginPath();ctx.ellipse(cx,cy+40,90,20,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#4a4a4a';
+  ctx.fillRect(cx-90,cy-30,180,70);
+  ctx.beginPath();ctx.ellipse(cx,cy-30,90,20,0,0,Math.PI*2);ctx.fill();
+  // jam color based on temp
+  const heatFrac=temp/100;
+  const jamColor=`rgb(${180+heatFrac*60|0},${30+ (1-Math.abs(heatFrac-0.5)*2)*40|0},${40})`;
+  ctx.fillStyle=jamColor;
+  ctx.beginPath();ctx.ellipse(cx,cy-30,80,15,0,0,Math.PI*2);ctx.fill();
+  // bubbles, more/faster with heat
+  const t=performance.now()/200;
+  const bubbleCount=Math.floor(3+temp/12);
+  for(let i=0;i<bubbleCount;i++){
+    const bx=cx-70+((i*37+t*2)%140);
+    const by=cy-30-((t*3+i*13)%20);
+    ctx.fillStyle='rgba(255,220,180,0.6)';
+    ctx.beginPath();ctx.arc(bx,by,2+Math.sin(t+i)*1.5,0,Math.PI*2);ctx.fill();
+  }
+  // flame under pot
+  const flameH=10+heat*0.4;
+  ctx.fillStyle=heat>78?'#ff3b30':'#ff9933';
+  ctx.beginPath();
+  ctx.moveTo(cx-30,cy+60);
+  ctx.quadraticCurveTo(cx-15,cy+60-flameH,cx,cy+55);
+  ctx.quadraticCurveTo(cx+15,cy+60-flameH,cx+30,cy+60);
+  ctx.closePath();ctx.fill();
+}
+
+function drawJarPour(){
+  const cx=250,cy=150;
+  // jar
+  const jx=cx-35,jy=200,jw=70,jh=80;
+  ctx.strokeStyle='#cfe8ff';ctx.lineWidth=3;
+  ctx.strokeRect(jx,jy,jw,jh);
+  ctx.fillStyle='rgba(200,230,255,0.15)';ctx.fillRect(jx,jy,jw,jh);
+  // target line
+  const lineY=jy+jh-jh*pourTarget;
+  ctx.strokeStyle='#ffd54f';ctx.setLineDash([5,4]);
+  ctx.beginPath();ctx.moveTo(jx-6,lineY);ctx.lineTo(jx+jw+6,lineY);ctx.stroke();
+  ctx.setLineDash([]);
+  // fill level
+  const fillY=jy+jh-jh*pourFill;
+  ctx.fillStyle='#c9433a';
+  ctx.fillRect(jx+3,fillY,jw-6,jy+jh-fillY-3);
+  // pot pouring above
+  ctx.fillStyle='#4a4a4a';
+  ctx.fillRect(cx-40,cy-40,80,40);
+  if(pourSpeed>0){
+    ctx.fillStyle='#c9433a';
+    ctx.fillRect(cx-4,cy,8,jy-cy);
+  }
+  ctx.fillStyle='#fff';ctx.font='13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('pour_hint','Click / Space to pour — stop near the yellow line!'),cx,jy+jh+22);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#3a2016');grad.addColorStop(1,'#1a0d08');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+
+  if(phase==='cook'){
+    // temp eases toward a target derived from heat
+    const target=heat*0.9+5;
+    temp+=(target-temp)*0.04;
+    const inZone=Math.abs(temp-zoneCenter)<=zoneWidth/2;
+    if(inZone){holdTime++;}else{holdTime=Math.max(0,holdTime-1.5);}
+    if(temp>=96){
+      burnt=true;phase='burnt';SFX.fail();
+      setStatus(I18N.t('status_burnt','Burnt! The batch is ruined. Click / Space to try again.'));
+    } else if(holdTime>=holdNeeded){
+      phase='pour';pourFill=0;pourSpeed=0;
+      pourTarget=0.6+Math.random()*0.25;
+      setStatus(I18N.t('status_pour','Perfectly cooked! Now pour it into the jar.'));
+    }
+    drawPot();
+    drawGauge();
+  } else if(phase==='pour'){
+    if(pourSpeed>0){
+      pourFill+=pourSpeed;
+      if(pourFill>=1){
+        pourFill=1;pourSpeed=0;
+        evalPour();
+      }
+    }
+    drawJarPour();
+  } else if(phase==='sealed'){
+    ctx.fillStyle='#7ec850';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('sealed_msg','JAR SEALED! ✔'),W/2,H/2);
+  } else if(phase==='burnt'){
+    ctx.fillStyle='#ff6b35';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('burnt_msg','BURNT BATCH!'),W/2,H/2-10);
+    ctx.font='16px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('final_jars','Jars made: {n}').replace('{n}',jars),W/2,H/2+22);
+    ctx.font='14px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Click or press Space to try again'),W/2,H/2+48);
+  }
+  requestAnimationFrame(loop);
+}
+
+function evalPour(){
+  const diff=Math.abs(pourFill-pourTarget);
+  if(diff<0.12){
+    endRoundSuccess();
+  } else {
+    SFX.fail();
+    setStatus(I18N.t('status_spilled','Missed the line — batch spoiled! Click / Space to try again.'));
+    phase='burnt';
+  }
+}
+
+newRound();
+loop();
+</script></body></html>
