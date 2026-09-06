@@ -1,0 +1,251 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Phoenix Rise</title><meta name="description" content="Play Phoenix Rise free online — Use Arrow Keys/WASD or drag to fly the phoenix upward through the burning tower, dodge debris and flame bursts, and collect embers."><link rel="canonical" href="https://games.multiportllc.com/games/phoenixrise"><meta property="og:title" content="Phoenix Rise - Multiport Games"><meta property="og:description" content="Play Phoenix Rise free online — Use Arrow Keys/WASD or drag to fly the phoenix upward through the burning tower, dodge debris and flame bursts, and collect embers."><meta property="og:url" content="https://games.multiportllc.com/games/phoenixrise"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Phoenix Rise","description":"Play Phoenix Rise free online instantly. Use Arrow Keys/WASD or drag to fly the phoenix upward through the burning tower, dodge falling debris and flame bursts, and collect embers. Mash a button to rise from the ashes when hit. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/phoenixrise","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0a0505}
+#c{background:#1a0a0a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffcf7a;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span{color:#ff8a3d}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Phoenix Rise</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div data-i18n-key="height_label">Height: <span id="heightVal">0</span>m</div>
+      <div data-i18n-key="embers_label">Embers: <span id="emberVal">0</span></div>
+      <div data-i18n-key="lives_label">Lives: <span id="livesVal">3</span></div>
+      <div data-i18n-key="best_label">Best: <span id="bestVal">0</span>m</div>
+    </div>
+    <canvas id="c" width="420" height="600"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b>/<b>WASD</b> or <b>drag</b> to steer the phoenix upward through the burning tower. Dodge falling debris and flame bursts, collect ember icons for points. Getting hit costs a life unless you mash the button fast enough to <b>rise from the ashes</b>!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const heightVal=document.getElementById('heightVal'),emberVal=document.getElementById('emberVal'),livesVal=document.getElementById('livesVal'),bestVal=document.getElementById('bestVal');
+
+let best=parseInt(localStorage.getItem('phoenixrise_best')||'0',10);
+bestVal.textContent=best;
+
+let phoenix,debris,embers,flames,particles;
+let heightM,embersCollected,lives,gameOver,started,reviving,reviveTimer,reviveProgress,invuln;
+let keys={},dragX=null,dragging=false;
+let lastTime=null,riseSpeed,spawnTimer,emberTimer,flameTimer;
+
+function reset(){
+  phoenix={x:W/2,y:H-100,w:34,h:34,vx:0};
+  debris=[];embers=[];flames=[];particles=[];
+  heightM=0;embersCollected=0;lives=3;gameOver=false;started=false;reviving=false;reviveTimer=0;reviveProgress=0;invuln=0;
+  riseSpeed=1.6;spawnTimer=0;emberTimer=0;flameTimer=0;lastTime=null;
+  updateHud();
+}
+
+function updateHud(){
+  heightVal.textContent=Math.floor(heightM);
+  emberVal.textContent=embersCollected;
+  livesVal.textContent=lives;
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(!started){started=true;}
+  if(reviving)mashRevive();
+  if(gameOver&&(e.key===' '||e.key==='Enter'))reset();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+c.addEventListener('pointerdown',e=>{
+  if(!started){started=true;}
+  if(gameOver){reset();return;}
+  if(reviving){mashRevive();return;}
+  dragging=true;
+  const r=c.getBoundingClientRect();
+  dragX=(e.clientX-r.left)*(W/r.width);
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const r=c.getBoundingClientRect();
+  dragX=(e.clientX-r.left)*(W/r.width);
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+function mashRevive(){
+  reviveProgress+=1;
+  SFX.tick();
+  if(reviveProgress>=10){
+    reviving=false;invuln=90;
+    SFX.powerup();
+  }
+}
+
+function spawnDebris(){
+  const x=20+Math.random()*(W-40);
+  debris.push({x,y:-30,w:24+Math.random()*16,h:24+Math.random()*16,vy:2+Math.random()*2,rot:0,vr:(Math.random()-0.5)*0.2});
+}
+function spawnFlame(){
+  const x=20+Math.random()*(W-40);
+  flames.push({x,y:-40,w:40,h:60,vy:2.6+Math.random()*1.5});
+}
+function spawnEmber(){
+  const x=20+Math.random()*(W-40);
+  embers.push({x,y:-20,r:10,vy:1.8+Math.random()});
+}
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function hitPhoenix(){
+  if(invuln>0||reviving)return;
+  lives--;
+  updateHud();
+  SFX.hurt();
+  for(let i=0;i<14;i++)particles.push({x:phoenix.x,y:phoenix.y,vx:(Math.random()-0.5)*6,vy:(Math.random()-0.5)*6,life:30,c:'#ff8a3d'});
+  if(lives<=0){
+    gameOver=true;
+    if(Math.floor(heightM)>best){best=Math.floor(heightM);localStorage.setItem('phoenixrise_best',best);bestVal.textContent=best;}
+    SFX.lose();
+  }else{
+    reviving=true;reviveTimer=180;reviveProgress=0;
+  }
+}
+
+function drawPhoenix(){
+  ctx.save();
+  ctx.translate(phoenix.x,phoenix.y);
+  if(invuln>0&&Math.floor(invuln/5)%2===0)ctx.globalAlpha=0.4;
+  ctx.fillStyle='#ff6b35';
+  ctx.beginPath();ctx.moveTo(0,-18);ctx.lineTo(14,10);ctx.lineTo(0,4);ctx.lineTo(-14,10);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#ffd23f';
+  ctx.beginPath();ctx.moveTo(-6,-6);ctx.lineTo(-22,-16);ctx.lineTo(-8,4);ctx.closePath();ctx.fill();
+  ctx.beginPath();ctx.moveTo(6,-6);ctx.lineTo(22,-16);ctx.lineTo(8,4);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#ffcf7a';
+  ctx.beginPath();ctx.arc(0,-14,6,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function loop(ts){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#2a0e0e');sky.addColorStop(1,'#5c1a0f');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  for(let i=0;i<6;i++){
+    ctx.fillStyle='rgba(255,120,40,0.08)';
+    ctx.fillRect((i*70+((ts||0)*0.02)%70),0,30,H);
+  }
+
+  if(!started){
+    ctx.fillStyle='#ffcf7a';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press a key / drag / tap to start'),W/2,H/2);
+    drawPhoenix();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press a key to restart'),W/2,H/2+16);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const dt=lastTime===null?1:Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+
+  if(reviving){
+    reviveTimer-=dt;
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffcf7a';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('revive_title','RISE FROM THE ASHES!'),W/2,H/2-40);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('revive_hint','Tap / press any key rapidly!'),W/2,H/2-14);
+    ctx.fillStyle='rgba(255,255,255,0.2)';ctx.fillRect(W/2-90,H/2,180,22);
+    ctx.fillStyle='#ff8a3d';ctx.fillRect(W/2-90,H/2,180*Math.min(1,reviveProgress/10),22);
+    if(reviveTimer<=0){
+      gameOver=true;
+      if(Math.floor(heightM)>best){best=Math.floor(heightM);localStorage.setItem('phoenixrise_best',best);bestVal.textContent=best;}
+      SFX.lose();
+    }
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(invuln>0)invuln-=dt;
+
+  // movement
+  let vx=0;
+  if(keys['arrowleft']||keys['a'])vx=-4.2;
+  if(keys['arrowright']||keys['d'])vx=4.2;
+  if(dragging&&dragX!==null){
+    const diff=dragX-phoenix.x;
+    vx=Math.max(-5,Math.min(5,diff*0.18));
+  }
+  let vSpeed=riseSpeed;
+  if(keys['arrowup']||keys['w'])vSpeed=riseSpeed*1.7;
+  if(keys['arrowdown']||keys['s'])vSpeed=riseSpeed*0.5;
+  phoenix.x+=vx*dt;
+  phoenix.x=Math.max(20,Math.min(W-20,phoenix.x));
+
+  heightM+=vSpeed*0.12*dt;
+  riseSpeed=1.6+heightM/500;
+
+  spawnTimer+=dt;
+  const spawnInterval=Math.max(24,55-heightM/8);
+  if(spawnTimer>=spawnInterval){spawnTimer=0;spawnDebris();}
+  emberTimer+=dt;
+  if(emberTimer>=70){emberTimer=0;spawnEmber();}
+  flameTimer+=dt;
+  if(heightM>40&&flameTimer>=110){flameTimer=0;spawnFlame();}
+
+  const pHit={x:phoenix.x-14,y:phoenix.y-16,w:28,h:30};
+
+  debris=debris.filter(d=>d.y<H+50);
+  debris.forEach(d=>{
+    d.y+=(d.vy+vSpeed*0.5)*dt;d.rot+=d.vr*dt;
+    ctx.save();ctx.translate(d.x,d.y);ctx.rotate(d.rot);
+    ctx.fillStyle='#5a4632';ctx.fillRect(-d.w/2,-d.h/2,d.w,d.h);
+    ctx.fillStyle='#8a6a45';ctx.fillRect(-d.w/2+3,-d.h/2+3,d.w-6,d.h-6);
+    ctx.restore();
+    if(rectsOverlap(pHit,{x:d.x-d.w/2,y:d.y-d.h/2,w:d.w,h:d.h})){hitPhoenix();d.y=H+999;}
+  });
+
+  flames=flames.filter(f=>f.y<H+80);
+  flames.forEach(f=>{
+    f.y+=(f.vy+vSpeed*0.5)*dt;
+    const g=ctx.createRadialGradient(f.x,f.y,2,f.x,f.y,f.w/2);
+    g.addColorStop(0,'#fff3b0');g.addColorStop(0.5,'#ff8a3d');g.addColorStop(1,'rgba(255,60,20,0)');
+    ctx.fillStyle=g;ctx.beginPath();ctx.arc(f.x,f.y,f.w/2,0,Math.PI*2);ctx.fill();
+    if(rectsOverlap(pHit,{x:f.x-f.w/3,y:f.y-f.h/3,w:f.w*0.66,h:f.h*0.66})){hitPhoenix();f.y=H+999;}
+  });
+
+  embers=embers.filter(e=>e.y<H+30);
+  embers.forEach(e=>{
+    e.y+=(e.vy+vSpeed*0.5)*dt;
+    ctx.fillStyle='#ffd23f';ctx.beginPath();ctx.arc(e.x,e.y,e.r,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#ff8a3d';ctx.beginPath();ctx.arc(e.x,e.y,e.r*0.5,0,Math.PI*2);ctx.fill();
+    const dx=e.x-phoenix.x,dy=e.y-phoenix.y;
+    if(dx*dx+dy*dy<26*26){embersCollected++;e.y=H+999;SFX.coin();}
+  });
+
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;
+    ctx.globalAlpha=Math.max(0,p.life/30);
+    ctx.fillStyle=p.c;ctx.fillRect(p.x-2,p.y-2,4,4);
+    ctx.globalAlpha=1;
+  });
+
+  drawPhoenix();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

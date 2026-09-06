@@ -1,0 +1,276 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Paramedic Response</title><meta name="description" content="Play Paramedic Response free online — Emergency calls pop up around the city map. Click a call to dispatch your ambulance, wait for it to arrive, then click the correct treatment icon before the patient's timer runs out. Treat as many patients as you can as more calls come in at once!"><link rel="canonical" href="https://games.multiportllc.com/games/paramedicresponse"><meta property="og:title" content="Paramedic Response - Multiport Games"><meta property="og:description" content="Play Paramedic Response free online — Emergency calls pop up around the city map. Click a call to dispatch your ambulance, wait for it to arrive, then click the correct treatment icon before the patient's timer runs out. Treat as many patients as you can as more calls come in at once!"><meta property="og:url" content="https://games.multiportllc.com/games/paramedicresponse"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Paramedic Response","description":"Play Paramedic Response free online instantly. Emergency calls pop up around the city map. Click a call to dispatch your ambulance, wait for it to arrive, then click the correct treatment icon before the patient's timer runs out. Treat as many patients as you can as more calls come in at once! No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/paramedicresponse","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#05050f}
+#c{background:#1c2333;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{display:flex;justify-content:center;gap:20px;color:#e6ecff;font-size:1.05rem;font-weight:700;padding:8px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#lives{color:#ff6b6b}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Paramedic Response</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Treated: <b>0</b></span>
+      <span id="hi-display">Best: <b>0</b></span>
+      <span id="round-display">Round: <b>1</b></span>
+      <span id="lives">❤❤❤</span>
+    </div>
+    <canvas id="c" width="800" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Emergency calls pop up around the city map. Click a call to dispatch your ambulance, wait for it to arrive, then click the correct treatment icon before the patient's timer runs out. Treat as many patients as you can as more calls come in at once!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+const BEST_KEY='paramedicresponse_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+
+const TREATMENTS=[
+  {id:'bandage',icon:'🩹',label:'Bandage'},
+  {id:'splint',icon:'🦴',label:'Splint'},
+  {id:'oxygen',icon:'😮‍💨',label:'Oxygen'},
+  {id:'cpr',icon:'💓',label:'CPR'},
+  {id:'ice',icon:'🧊',label:'Ice Pack'},
+  {id:'sling',icon:'🧷',label:'Sling'}
+];
+
+const STATION={x:60,y:H-60};
+let ambulance={x:STATION.x,y:STATION.y,busy:false,target:null,call:null,phase:'idle'};
+let calls=[]; // pending calls at locations awaiting dispatch
+let treated=0,lives=3,round=1,gameOver=false,spawnTimer=0,roundTimer=0;
+let activeCall=null; // call currently at treatment stage
+let treatOptions=[];
+let feedback=null,feedbackTimer=0;
+
+function reset(){
+  ambulance={x:STATION.x,y:STATION.y,busy:false,target:null,call:null,phase:'idle'};
+  calls=[];treated=0;lives=3;round=1;gameOver=false;spawnTimer=0;roundTimer=0;
+  activeCall=null;treatOptions=[];feedback=null;
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('score-display').innerHTML=I18N.t('pr_treated','Treated: <b>{s}</b>').replace('{s}',treated);
+  document.getElementById('hi-display').innerHTML=I18N.t('best_label','Best: <b>{h}</b>').replace('{h}',best);
+  document.getElementById('round-display').innerHTML=I18N.t('pr_round','Round: <b>{r}</b>').replace('{r}',round);
+  document.getElementById('lives').textContent='❤'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+}
+
+let callId=0;
+function spawnCall(){
+  const margin=70;
+  const x=margin+Math.random()*(W-margin*2-160)+120;
+  const y=margin+Math.random()*(H-margin*2);
+  const urgency=8000-Math.min(3500,round*250)+Math.random()*1500;
+  calls.push({
+    id:callId++, x,y, timeLeft:urgency, maxTime:urgency,
+    treatment:TREATMENTS[Math.floor(Math.random()*TREATMENTS.length)]
+  });
+}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=e.touches?e.touches[0].clientX:e.clientX;
+  const cy=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(cx-rect.left)*(W/rect.width),y:(cy-rect.top)*(H/rect.height)};
+}
+
+function handleClick(e){
+  e.preventDefault();
+  if(gameOver){reset();return;}
+  const p=pointerPos(e);
+
+  if(activeCall){
+    // Check treatment button hits
+    for(const opt of treatOptions){
+      if(p.x>=opt.x&&p.x<=opt.x+opt.w&&p.y>=opt.y&&p.y<=opt.y+opt.h){
+        if(opt.t.id===activeCall.treatment.id){
+          treated++;SFX.success();
+          if(treated>best){best=treated;localStorage.setItem(BEST_KEY,String(best));}
+        }else{
+          lives--;SFX.error();
+          if(lives<=0){gameOver=true;SFX.lose();}
+        }
+        activeCall=null;treatOptions=[];
+        ambulance.phase='idle';ambulance.busy=false;
+        updateHud();
+        return;
+      }
+    }
+    return;
+  }
+
+  if(ambulance.busy)return;
+  // Check if a call was clicked to dispatch
+  for(let i=0;i<calls.length;i++){
+    const call=calls[i];
+    if(dist(p,call)<28){
+      ambulance.busy=true;
+      ambulance.call=call;
+      ambulance.phase='enroute';
+      calls.splice(i,1);
+      SFX.click();
+      return;
+    }
+  }
+}
+c.addEventListener('click',handleClick);
+c.addEventListener('touchstart',handleClick,{passive:false});
+
+function makeTreatOptions(correctTreatment){
+  const pool=[correctTreatment];
+  const others=TREATMENTS.filter(t=>t.id!==correctTreatment.id);
+  others.sort(()=>Math.random()-0.5);
+  pool.push(...others.slice(0,3));
+  pool.sort(()=>Math.random()-0.5);
+  const w=120,h=70,gap=16;
+  const totalW=pool.length*w+(pool.length-1)*gap;
+  const startX=(W-totalW)/2;
+  return pool.map((t,i)=>({t,x:startX+i*(w+gap),y:H-110,w,h}));
+}
+
+function drawMap(){
+  ctx.fillStyle='#1c2333';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#2c3550';ctx.lineWidth=1;
+  for(let gx=0;gx<W;gx+=50){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,H);ctx.stroke();}
+  for(let gy=0;gy<H;gy+=50){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();}
+  // station
+  ctx.fillStyle='#4facfe';
+  ctx.fillRect(STATION.x-24,STATION.y-24,48,48);
+  ctx.fillStyle='#fff';ctx.font='24px Arial';ctx.textAlign='center';
+  ctx.fillText('🏥',STATION.x,STATION.y+9);
+}
+
+function drawCalls(dt){
+  calls.forEach(call=>{
+    call.timeLeft-=dt;
+    const pulse=1+0.15*Math.sin(performance.now()/150);
+    ctx.beginPath();ctx.arc(call.x,call.y,22*pulse,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,107,107,0.35)';ctx.fill();
+    ctx.beginPath();ctx.arc(call.x,call.y,16,0,Math.PI*2);
+    ctx.fillStyle='#ff6b6b';ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText('!',call.x,call.y+6);
+    // timer ring
+    const pct=Math.max(0,call.timeLeft/call.maxTime);
+    ctx.beginPath();
+    ctx.arc(call.x,call.y,22,-Math.PI/2,-Math.PI/2+pct*Math.PI*2);
+    ctx.strokeStyle=pct<0.3?'#ffd54f':'#7ec850';ctx.lineWidth=3;ctx.stroke();
+  });
+  // remove expired calls -> lose life
+  for(let i=calls.length-1;i>=0;i--){
+    if(calls[i].timeLeft<=0){
+      calls.splice(i,1);
+      lives--;SFX.error();
+      updateHud();
+      if(lives<=0){gameOver=true;SFX.lose();}
+    }
+  }
+}
+
+function drawAmbulance(){
+  ctx.font='28px Arial';ctx.textAlign='center';
+  ctx.fillText('🚑',ambulance.x,ambulance.y+10);
+}
+
+function drawTreatUI(dt){
+  if(!activeCall)return;
+  activeCall.timeLeft-=dt;
+  ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,H-160,W,160);
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('pr_pick','Patient needs treatment! Pick the right one:'),W/2,H-138);
+  treatOptions.forEach(opt=>{
+    ctx.fillStyle='#2c3550';
+    ctx.fillRect(opt.x,opt.y,opt.w,opt.h);
+    ctx.strokeStyle='#4facfe';ctx.lineWidth=2;ctx.strokeRect(opt.x,opt.y,opt.w,opt.h);
+    ctx.font='28px Arial';ctx.textAlign='center';
+    ctx.fillText(opt.t.icon,opt.x+opt.w/2,opt.y+34);
+    ctx.font='12px Arial';ctx.fillStyle='#cfe0ff';
+    ctx.fillText(opt.t.label,opt.x+opt.w/2,opt.y+56);
+  });
+  const pct=Math.max(0,activeCall.timeLeft/activeCall.maxTime);
+  ctx.fillStyle='#1c2333';ctx.fillRect(W/2-100,H-158,200,8);
+  ctx.fillStyle=pct<0.3?'#ff6b6b':'#7ec850';
+  ctx.fillRect(W/2-100,H-158,200*pct,8);
+  if(activeCall.timeLeft<=0){
+    lives--;SFX.error();
+    activeCall=null;treatOptions=[];
+    ambulance.phase='idle';ambulance.busy=false;
+    updateHud();
+    if(lives<=0){gameOver=true;SFX.lose();}
+  }
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?16:Math.min(now-lastTime,50);
+  lastTime=now;
+
+  drawMap();
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 40px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('pr_final','Patients Treated: {s}').replace('{s}',treated),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+46);
+    requestAnimationFrame(loop);return;
+  }
+
+  spawnTimer+=dt;
+  roundTimer+=dt;
+  const maxSimultaneous=Math.min(1+Math.floor(round/2),5);
+  const spawnInterval=Math.max(1400,3400-round*180);
+  if(calls.length<maxSimultaneous+ (ambulance.busy?1:0) && spawnTimer>=spawnInterval){
+    spawnTimer=0;
+    spawnCall();
+  }
+  if(roundTimer>15000){roundTimer=0;round++;}
+
+  drawCalls(dt);
+
+  // Ambulance movement
+  if(ambulance.phase==='enroute'&&ambulance.call){
+    const tgt=ambulance.call;
+    const d=dist(ambulance,tgt);
+    if(d<6){
+      ambulance.phase='treating';
+      activeCall=tgt;
+      activeCall.timeLeft=Math.max(activeCall.timeLeft,3000);
+      activeCall.maxTime=activeCall.timeLeft;
+      treatOptions=makeTreatOptions(activeCall.treatment);
+    }else{
+      const speed=0.28*dt;
+      ambulance.x+=(tgt.x-ambulance.x)/d*speed;
+      ambulance.y+=(tgt.y-ambulance.y)/d*speed;
+    }
+  }else if(ambulance.phase==='idle'&&(ambulance.x!==STATION.x||ambulance.y!==STATION.y)){
+    const d=dist(ambulance,STATION);
+    if(d<6){ambulance.x=STATION.x;ambulance.y=STATION.y;}
+    else{
+      const speed=0.3*dt;
+      ambulance.x+=(STATION.x-ambulance.x)/d*speed;
+      ambulance.y+=(STATION.y-ambulance.y)/d*speed;
+    }
+  }
+
+  drawAmbulance();
+  drawTreatUI(dt);
+  updateHud();
+
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

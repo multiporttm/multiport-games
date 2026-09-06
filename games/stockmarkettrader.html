@@ -1,0 +1,226 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Stock Market Trader</title><meta name="description" content="Play Stock Market Trader free online — Watch the live price chart, buy low and sell high within a limited trading session to grow your starting cash into the biggest portfolio you can."><link rel="canonical" href="https://games.multiportllc.com/games/stockmarkettrader"><meta property="og:title" content="Stock Market Trader - Multiport Games"><meta property="og:description" content="Play Stock Market Trader free online — Watch the live price chart, buy low and sell high within a limited trading session to grow your starting cash into the biggest portfolio you can."><meta property="og:url" content="https://games.multiportllc.com/games/stockmarkettrader"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Stock Market Trader","description":"Play Stock Market Trader free online instantly. Watch the live price chart, buy low and sell high within a limited trading session to grow your starting cash into the biggest portfolio you can. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/stockmarkettrader","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{max-width:680px;margin:0 auto;padding:10px 14px 20px;color:#fff}
+#hud{display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:.95rem;margin-bottom:8px;flex-wrap:wrap;gap:6px}
+#hud span{color:#7ec8ff}
+#hud .up{color:#4caf50}
+#hud .down{color:#ff6b6b}
+#sessionBar{height:8px;background:rgba(255,255,255,.1);border-radius:5px;overflow:hidden;margin-bottom:10px}
+#sessionFill{height:100%;background:linear-gradient(90deg,#4caf50,#8bc34a);width:100%;transition:width .2s linear}
+#stage{background:#0f1b2e;border-radius:14px;padding:14px}
+#chartWrap{background:#0a1420;border-radius:10px;padding:8px}
+canvas{display:block;width:100%;height:220px;border-radius:6px}
+#priceRow{display:flex;justify-content:space-between;align-items:baseline;margin:10px 0 6px;flex-wrap:wrap;gap:6px}
+#priceNow{font-size:1.8rem;font-weight:900}
+#priceChange{font-size:1rem;font-weight:800}
+#tradeBtns{display:flex;gap:10px;justify-content:center;margin:12px 0}
+#tradeBtns button{flex:1;max-width:180px;padding:14px 10px;border:none;border-radius:12px;font-size:1.1rem;font-weight:900;cursor:pointer}
+#buyBtn{background:#2e7d32;color:#fff}
+#sellBtn{background:#c62828;color:#fff}
+#tradeBtns button:disabled{opacity:.35;cursor:not-allowed}
+#msg{text-align:center;font-weight:800;color:#ffd54f;min-height:1.5em;margin-bottom:6px}
+#startOverlay{text-align:center;padding:30px 10px}
+#startOverlay button{padding:12px 28px;font-size:1.1rem;background:#1e88e5;border:none;border-radius:24px;color:#fff;font-weight:800;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Stock Market Trader</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="wrap">
+      <div id="hud"><span id="cashLbl">Cash: $1000</span><span id="sharesLbl">Shares: 0</span><span id="portfolioLbl">Portfolio: $1000</span><span id="bestLbl">Best: $0</span></div>
+      <div id="sessionBar"><div id="sessionFill"></div></div>
+      <div id="stage">
+        <div id="chartWrap"><canvas id="chart" width="640" height="220"></canvas></div>
+        <div id="priceRow"><span id="priceNow">$100.00</span><span id="priceChange">+0.0%</span></div>
+        <div id="msg">Ready to trade?</div>
+        <div id="tradeBtns">
+          <button id="buyBtn" onclick="buy()" disabled>BUY</button>
+          <button id="sellBtn" onclick="sell()" disabled>SELL</button>
+        </div>
+        <div id="startOverlay"><button onclick="startGame()">Open Market</button></div>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch the live price chart for short-term trends. Click <b>BUY</b> when you think the price will rise, and <b>SELL</b> to cash out your shares when you've made a profit (or to cut losses). You can also use <b>B</b> / <b>S</b> keys. Grow your portfolio before the trading session ends — volatility increases each round!</div>
+</div>
+<script>
+const canvas=document.getElementById('chart'),ctx=canvas.getContext('2d');
+let cash=1000,shares=0,best=0,round=1,avgBuyPrice=0;
+let price=100,history=[],volatility=0.9,trendBias=0,trendTimer=0;
+let sessionTime=0,sessionLen=60,tickId=null,phase='idle';
+const startCash=1000;
+
+best=parseFloat(localStorage.getItem('stockmarkettrader_best')||'0');
+updateHud();
+resizeCanvas();
+window.addEventListener('resize',resizeCanvas);
+
+function resizeCanvas(){
+  const w=canvas.clientWidth||640;
+  canvas.width=w*window.devicePixelRatio;
+  canvas.height=220*window.devicePixelRatio;
+  draw();
+}
+
+function portfolioValue(){ return cash+shares*price; }
+
+function updateHud(){
+  document.getElementById('cashLbl').textContent=I18N.t('cash_label','Cash: ${c}').replace('{c}',cash.toFixed(0));
+  document.getElementById('sharesLbl').textContent=I18N.t('shares_label','Shares: {s}').replace('{s}',shares);
+  document.getElementById('portfolioLbl').textContent=I18N.t('portfolio_label','Portfolio: ${p}').replace('{p}',portfolioValue().toFixed(0));
+  document.getElementById('bestLbl').textContent=I18N.t('best_label','Best: ${b}').replace('{b}',best.toFixed(0));
+}
+
+function startGame(){
+  cash=startCash;shares=0;avgBuyPrice=0;round=1;
+  price=100;history=[price];volatility=0.9;trendBias=0;trendTimer=0;
+  sessionTime=0;sessionLen=60;
+  phase='running';
+  document.getElementById('startOverlay').style.display='none';
+  document.getElementById('buyBtn').disabled=false;
+  document.getElementById('sellBtn').disabled=true;
+  document.getElementById('msg').textContent=I18N.t('trading_open','Market is open — good luck!');
+  updateHud();
+  draw();
+  clearInterval(tickId);
+  tickId=setInterval(tick,150);
+}
+
+function tick(){
+  sessionTime+=0.15;
+  document.getElementById('sessionFill').style.width=Math.max(0,(1-sessionTime/sessionLen)*100)+'%';
+  if(sessionTime>=sessionLen){ endGame(); return; }
+
+  trendTimer-=0.15;
+  if(trendTimer<=0){
+    trendBias=(Math.random()-0.5)*2*(0.6+round*0.08);
+    trendTimer=2+Math.random()*3;
+  }
+  volatility=0.9+round*0.15+sessionTime*0.01;
+  const noise=(Math.random()-0.5)*2*volatility;
+  price=Math.max(2,price+trendBias+noise);
+  history.push(price);
+  if(history.length>120)history.shift();
+
+  const prevPrice=history.length>1?history[history.length-2]:price;
+  const pct=((price-prevPrice)/prevPrice*100);
+  document.getElementById('priceNow').textContent='$'+price.toFixed(2);
+  const chEl=document.getElementById('priceChange');
+  chEl.textContent=(pct>=0?'+':'')+pct.toFixed(2)+'%';
+  chEl.className=pct>=0?'up':'down';
+
+  document.getElementById('sellBtn').disabled=shares<=0;
+  document.getElementById('buyBtn').disabled=cash<price;
+  updateHud();
+  draw();
+}
+
+function draw(){
+  const w=canvas.width,h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+  ctx.fillStyle='#0a1420';
+  ctx.fillRect(0,0,w,h);
+  if(history.length<2)return;
+  const min=Math.min(...history),max=Math.max(...history);
+  const range=Math.max(1,max-min);
+  const pad=h*0.1;
+  const stepX=w/(Math.max(1,history.length-1));
+  // grid lines
+  ctx.strokeStyle='rgba(255,255,255,.06)';
+  ctx.lineWidth=1;
+  for(let i=1;i<4;i++){
+    const y=h/4*i;
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();
+  }
+  // price line
+  ctx.beginPath();
+  history.forEach((p,i)=>{
+    const x=i*stepX;
+    const y=h-pad-((p-min)/range)*(h-2*pad);
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  });
+  const rising=history[history.length-1]>=history[0];
+  ctx.strokeStyle=rising?'#4caf50':'#ff6b6b';
+  ctx.lineWidth=3*window.devicePixelRatio;
+  ctx.stroke();
+  // fill under line
+  const lastX=(history.length-1)*stepX;
+  ctx.lineTo(lastX,h);ctx.lineTo(0,h);ctx.closePath();
+  const grad=ctx.createLinearGradient(0,0,0,h);
+  grad.addColorStop(0,rising?'rgba(76,175,80,.25)':'rgba(255,107,107,.25)');
+  grad.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=grad;
+  ctx.fill();
+  // avg buy price line
+  if(shares>0){
+    const y=h-pad-((avgBuyPrice-min)/range)*(h-2*pad);
+    ctx.setLineDash([6,5]);
+    ctx.strokeStyle='rgba(255,213,79,.7)';
+    ctx.lineWidth=1.5*window.devicePixelRatio;
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function buy(){
+  if(phase!=='running'||cash<price)return;
+  const qty=Math.max(1,Math.floor((cash*0.4)/price));
+  const cost=qty*price;
+  if(cost>cash)return;
+  avgBuyPrice=shares>0?((avgBuyPrice*shares)+cost)/(shares+qty):price;
+  cash-=cost;
+  shares+=qty;
+  round=Math.min(6,round+ (shares===qty?0.2:0));
+  document.getElementById('msg').textContent=I18N.t('bought','Bought {q} shares @ ${p}').replace('{q}',qty).replace('{p}',price.toFixed(2));
+  SFX.coin&&SFX.coin();
+  document.getElementById('buyBtn').disabled=cash<price;
+  document.getElementById('sellBtn').disabled=false;
+  updateHud();
+  draw();
+}
+
+function sell(){
+  if(phase!=='running'||shares<=0)return;
+  const proceeds=shares*price;
+  const gain=proceeds-(avgBuyPrice*shares);
+  cash+=proceeds;
+  document.getElementById('msg').textContent=gain>=0
+    ? I18N.t('sold_profit','Sold {q} shares @ ${p} — profit +${g}').replace('{q}',shares).replace('{p}',price.toFixed(2)).replace('{g}',gain.toFixed(0))
+    : I18N.t('sold_loss','Sold {q} shares @ ${p} — loss ${g}').replace('{q}',shares).replace('{p}',price.toFixed(2)).replace('{g}',Math.abs(gain).toFixed(0));
+  SFX[gain>=0?'success':'error']&&SFX[gain>=0?'success':'error']();
+  shares=0;avgBuyPrice=0;
+  document.getElementById('sellBtn').disabled=true;
+  document.getElementById('buyBtn').disabled=cash<price;
+  updateHud();
+  draw();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='b'||e.key==='B'){ e.preventDefault(); buy(); }
+  if(e.key==='s'||e.key==='S'){ e.preventDefault(); sell(); }
+});
+
+function endGame(){
+  clearInterval(tickId);
+  phase='idle';
+  if(shares>0){ cash+=shares*price; shares=0; }
+  const finalVal=cash;
+  if(finalVal>best){ best=finalVal; localStorage.setItem('stockmarkettrader_best',best); }
+  updateHud();
+  document.getElementById('buyBtn').disabled=true;
+  document.getElementById('sellBtn').disabled=true;
+  document.getElementById('msg').textContent=I18N.t('session_over','Session closed! Final portfolio: ${v}').replace('{v}',finalVal.toFixed(0));
+  document.getElementById('sessionFill').style.width='0%';
+  const ov=document.getElementById('startOverlay');
+  ov.style.display='block';
+  ov.querySelector('button').textContent=I18N.t('trade_again','Trade Again');
+  SFX.win&&SFX.win();
+}
+</script></body></html>

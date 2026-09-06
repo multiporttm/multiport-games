@@ -1,0 +1,350 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Asteroid Mining</title><meta name="description" content="Play Asteroid Mining free online — Pilot your mining ship with Arrow Keys/WASD or touch-drag, fire your mining laser with Space or tap/click to harvest resource-rich asteroids, and dodge plain rocks and enemy drones before your shields run out."><link rel="canonical" href="https://games.multiportllc.com/games/asteroidmining"><meta property="og:title" content="Asteroid Mining - Multiport Games"><meta property="og:description" content="Play Asteroid Mining free online — Pilot your mining ship with Arrow Keys/WASD or touch-drag, fire your mining laser with Space or tap/click to harvest resource-rich asteroids, and dodge plain rocks and enemy drones before your shields run out."><meta property="og:url" content="https://games.multiportllc.com/games/asteroidmining"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Asteroid Mining","description":"Play Asteroid Mining free online instantly. Pilot your mining ship with Arrow Keys/WASD or touch-drag, fire your mining laser with Space or tap/click to harvest resource-rich asteroids, and dodge plain rocks and enemy drones before your shields run out. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/asteroidmining","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#050510}
+#c{background:radial-gradient(ellipse at 50% 30%,#0d1a33 0%,#04040c 75%);display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#9ad9ff;font-size:1.05rem;font-weight:700;padding:6px 10px;flex-wrap:wrap;gap:6px}
+#hud span b{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Asteroid Mining</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Ore: <b>0</b></span>
+      <span id="shieldDisp">Shields: <b>100</b></span>
+      <span id="timeDisp">Time: <b>60</b></span>
+      <span id="hiDisp">Best: <b>0</b></span>
+    </div>
+    <canvas id="c" width="800" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys/WASD</b> or <b>touch-drag</b> to fly your mining ship. Press <b>Space</b> or <b>tap/click</b> to fire your mining laser. Blue-glowing asteroids are rich in ore — mine them! Avoid plain gray rocks and red enemy drones, which drain your shields. Collect as much ore as you can before time runs out or your shields hit zero.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+let best=parseInt(localStorage.getItem('asteroidmining_best')||'0',10);
+let ship,rocks,drones,lasers,particles,keys,ore,shields,timeLeft,gameOver,started,lastTime,spawnTimer,droneTimer,dragging,dragPos,fireHeld,fireTimer;
+
+function reset(){
+  ship={x:W/2,y:H/2,vx:0,vy:0,ang:0};
+  rocks=[];drones=[];lasers=[];particles=[];
+  keys={};ore=0;shields=100;timeLeft=60;gameOver=false;started=false;
+  lastTime=null;spawnTimer=0;droneTimer=0;dragging=false;dragPos=null;fireHeld=false;fireTimer=0;
+  for(let i=0;i<8;i++)spawnRock();
+}
+
+function spawnRock(){
+  const edge=Math.floor(Math.random()*4);
+  let x,y;
+  if(edge===0){x=Math.random()*W;y=-30;}
+  else if(edge===1){x=W+30;y=Math.random()*H;}
+  else if(edge===2){x=Math.random()*W;y=H+30;}
+  else{x=-30;y=Math.random()*H;}
+  const rich=Math.random()<0.4;
+  const r=rich?16+Math.random()*10:20+Math.random()*18;
+  const ang=Math.atan2(H/2-y,W/2-x)+((Math.random()-0.5)*1.6);
+  rocks.push({x,y,r,rich,hp:rich?2:3,vx:Math.cos(ang)*(0.4+Math.random()*0.6),vy:Math.sin(ang)*(0.4+Math.random()*0.6),rot:Math.random()*7,rotSpd:(Math.random()-0.5)*0.03});
+}
+
+function spawnDrone(){
+  const edge=Math.floor(Math.random()*4);
+  let x,y;
+  if(edge===0){x=Math.random()*W;y=-30;}
+  else if(edge===1){x=W+30;y=Math.random()*H;}
+  else if(edge===2){x=Math.random()*W;y=H+30;}
+  else{x=-30;y=Math.random()*H;}
+  drones.push({x,y,r:14});
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(e.key===' '||e.code==='Space'){e.preventDefault();fireHeld=true;if(!started)started=true;if(gameOver){reset();started=true;}}
+  if(['arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())){e.preventDefault();if(!started)started=true;}
+});
+document.addEventListener('keyup',e=>{
+  keys[e.key.toLowerCase()]=false;
+  if(e.key===' '||e.code==='Space')fireHeld=false;
+});
+
+function pointerDown(px,py){
+  if(!started)started=true;
+  if(gameOver){reset();started=true;return;}
+  dragging=true;dragPos={x:px,y:py};
+  fireHeld=true;
+}
+function pointerMove(px,py){ if(dragging)dragPos={x:px,y:py}; }
+function pointerUp(){ dragging=false;dragPos=null;fireHeld=false; }
+
+function toCanvasCoords(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+c.addEventListener('mousedown',e=>{const p=toCanvasCoords(e.clientX,e.clientY);pointerDown(p.x,p.y);});
+c.addEventListener('mousemove',e=>{const p=toCanvasCoords(e.clientX,e.clientY);pointerMove(p.x,p.y);});
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[0];const p=toCanvasCoords(t.clientX,t.clientY);pointerDown(p.x,p.y);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();const t=e.touches[0];const p=toCanvasCoords(t.clientX,t.clientY);pointerMove(p.x,p.y);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerUp();},{passive:false});
+
+function fireLaser(){
+  lasers.push({x:ship.x+Math.cos(ship.ang)*18,y:ship.y+Math.sin(ship.ang)*18,ang:ship.ang,life:22});
+  SFX.click();
+}
+
+function rectDist(ax,ay,bx,by){const dx=ax-bx,dy=ay-by;return Math.sqrt(dx*dx+dy*dy);}
+
+function spawnParticles(x,y,color,n){
+  for(let i=0;i<n;i++){
+    const a=Math.random()*Math.PI*2,sp=1+Math.random()*3;
+    particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:20+Math.random()*15,color});
+  }
+}
+
+function drawShip(){
+  ctx.save();
+  ctx.translate(ship.x,ship.y);
+  ctx.rotate(ship.ang);
+  ctx.fillStyle='#5ec8ff';
+  ctx.beginPath();ctx.moveTo(18,0);ctx.lineTo(-12,-11);ctx.lineTo(-6,0);ctx.lineTo(-12,11);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#1a3a5c';
+  ctx.beginPath();ctx.arc(2,0,5,0,Math.PI*2);ctx.fill();
+  if(keys['arrowup']||keys['w']||dragging){
+    ctx.fillStyle='#ffb347';
+    ctx.beginPath();ctx.moveTo(-12,-5);ctx.lineTo(-22-Math.random()*8,0);ctx.lineTo(-12,5);ctx.closePath();ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawRock(r){
+  ctx.save();
+  ctx.translate(r.x,r.y);ctx.rotate(r.rot);
+  ctx.fillStyle=r.rich?'#3aa0ff':'#7a7a7a';
+  ctx.strokeStyle=r.rich?'#bfe6ff':'#3d3d3d';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  const pts=8;
+  for(let i=0;i<pts;i++){
+    const a=(i/pts)*Math.PI*2;
+    const rad=r.r*(0.8+((i%3)*0.1));
+    const px=Math.cos(a)*rad,py=Math.sin(a)*rad;
+    if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+  }
+  ctx.closePath();ctx.fill();ctx.stroke();
+  if(r.rich){
+    ctx.shadowColor='#5ec8ff';ctx.shadowBlur=12;ctx.fillStyle='#bfe6ff';
+    ctx.beginPath();ctx.arc(0,0,4,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;
+  }
+  ctx.restore();
+}
+
+function drawDrone(d){
+  ctx.save();
+  ctx.translate(d.x,d.y);
+  ctx.fillStyle='#ff4d4d';
+  ctx.beginPath();ctx.arc(0,0,d.r,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#ffb3b3';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(-d.r-6,0);ctx.lineTo(d.r+6,0);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-d.r-6);ctx.lineTo(0,d.r+6);ctx.stroke();
+  ctx.fillStyle='#3a0000';
+  ctx.beginPath();ctx.arc(0,0,4,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawStars(){
+  ctx.fillStyle='#ffffff22';
+  for(let i=0;i<40;i++){
+    const x=(i*197)%W,y=(i*331+((frameCount||0)*0.05))%H;
+    ctx.fillRect(x,y,1.5,1.5);
+  }
+}
+let frameCount=0;
+
+function updateHud(){
+  document.getElementById('scoreDisp').innerHTML=I18N.t('ore_label','Ore: <b>{o}</b>').replace('{o}',ore);
+  document.getElementById('shieldDisp').innerHTML=I18N.t('shields_label','Shields: <b>{s}</b>').replace('{s}',Math.max(0,Math.ceil(shields)));
+  document.getElementById('timeDisp').innerHTML=I18N.t('time_label','Time: <b>{t}</b>').replace('{t}',Math.max(0,Math.ceil(timeLeft)));
+  document.getElementById('hiDisp').innerHTML=I18N.t('best_label','Best: <b>{b}</b>').replace('{b}',best);
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frameCount++;
+
+  ctx.clearRect(0,0,W,H);
+  drawStars();
+
+  if(!started){
+    ctx.fillStyle='#9ad9ffcc';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_mine','Move/tap to start mining!'),W/2,H/2);
+    drawShip();
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_ore','Final Ore: {o}').replace('{o}',ore),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint2','Tap or Space to restart'),W/2,H/2+48);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  timeLeft-=dt/60;
+  if(timeLeft<=0){timeLeft=0;endGame();}
+
+  // Ship control
+  const thrust=0.22;
+  if(keys['arrowup']||keys['w'])ship.ang=ship.ang; // no-op placeholder
+  let dx=0,dy=0;
+  if(keys['arrowleft']||keys['a'])dx-=1;
+  if(keys['arrowright']||keys['d'])dx+=1;
+  if(keys['arrowup']||keys['w'])dy-=1;
+  if(keys['arrowdown']||keys['s'])dy+=1;
+  if(dx||dy){
+    const len=Math.hypot(dx,dy);
+    ship.vx+=(dx/len)*thrust*dt;
+    ship.vy+=(dy/len)*thrust*dt;
+    ship.ang=Math.atan2(dy,dx);
+  }
+  if(dragging&&dragPos){
+    const ddx=dragPos.x-ship.x,ddy=dragPos.y-ship.y;
+    const dist=Math.hypot(ddx,ddy);
+    if(dist>4){
+      ship.vx+=(ddx/dist)*thrust*1.4*dt;
+      ship.vy+=(ddy/dist)*thrust*1.4*dt;
+      ship.ang=Math.atan2(ddy,ddx);
+    }
+  }
+  ship.vx*=Math.pow(0.94,dt);ship.vy*=Math.pow(0.94,dt);
+  const spd=Math.hypot(ship.vx,ship.vy),maxSpd=6;
+  if(spd>maxSpd){ship.vx=ship.vx/spd*maxSpd;ship.vy=ship.vy/spd*maxSpd;}
+  ship.x+=ship.vx*dt;ship.y+=ship.vy*dt;
+  ship.x=Math.max(14,Math.min(W-14,ship.x));
+  ship.y=Math.max(14,Math.min(H-14,ship.y));
+
+  fireTimer-=dt;
+  if(fireHeld&&fireTimer<=0){fireLaser();fireTimer=8;}
+
+  spawnTimer+=dt;
+  if(spawnTimer>60&&rocks.length<14){spawnTimer=0;spawnRock();}
+  droneTimer+=dt;
+  const droneInterval=Math.max(180,420-timeLeft);
+  if(droneTimer>droneInterval){droneTimer=0;spawnDrone();}
+
+  // Update lasers
+  lasers=lasers.filter(l=>l.life>0);
+  lasers.forEach(l=>{
+    l.x+=Math.cos(l.ang)*12*dt;l.y+=Math.sin(l.ang)*12*dt;l.life-=dt;
+  });
+
+  // Update rocks
+  rocks.forEach(r=>{
+    r.x+=r.vx*dt;r.y+=r.vy*dt;r.rot+=r.rotSpd*dt;
+    if(r.x<-60)r.x=W+50;if(r.x>W+60)r.x=-50;
+    if(r.y<-60)r.y=H+50;if(r.y>H+60)r.y=-50;
+  });
+
+  // Update drones (chase ship slowly)
+  drones.forEach(d=>{
+    const ddx=ship.x-d.x,ddy=ship.y-d.y,dist=Math.hypot(ddx,ddy)||1;
+    d.x+=(ddx/dist)*1.3*dt;d.y+=(ddy/dist)*1.3*dt;
+  });
+
+  // Laser vs rock/drone collisions
+  for(let li=lasers.length-1;li>=0;li--){
+    const l=lasers[li];
+    let hit=false;
+    for(let ri=rocks.length-1;ri>=0;ri--){
+      const r=rocks[ri];
+      if(rectDist(l.x,l.y,r.x,r.y)<r.r){
+        r.hp--;
+        spawnParticles(l.x,l.y,r.rich?'#5ec8ff':'#999',4);
+        hit=true;
+        if(r.hp<=0){
+          if(r.rich){ore+=10+Math.floor(Math.random()*10);SFX.coin();spawnParticles(r.x,r.y,'#5ec8ff',18);}
+          else{SFX.hit();spawnParticles(r.x,r.y,'#888',10);}
+          rocks.splice(ri,1);
+          spawnRock();
+        }
+        break;
+      }
+    }
+    for(let di=drones.length-1;di>=0;di--){
+      const d=drones[di];
+      if(rectDist(l.x,l.y,d.x,d.y)<d.r){
+        drones.splice(di,1);
+        ore+=5;
+        SFX.hit();
+        spawnParticles(d.x,d.y,'#ff4d4d',14);
+        hit=true;
+        break;
+      }
+    }
+    if(hit)lasers.splice(li,1);
+  }
+
+  // Ship collisions
+  rocks.forEach(r=>{
+    if(rectDist(ship.x,ship.y,r.x,r.y)<r.r+11){
+      shields-=r.rich?0.4:0.9;
+      spawnParticles(ship.x,ship.y,'#ff8844',3);
+      const pushA=Math.atan2(ship.y-r.y,ship.x-r.x);
+      ship.vx+=Math.cos(pushA)*0.5;ship.vy+=Math.sin(pushA)*0.5;
+    }
+  });
+  drones.forEach((d,di)=>{
+    if(rectDist(ship.x,ship.y,d.x,d.y)<d.r+11){
+      shields-=1.4;
+      SFX.hurt();
+      spawnParticles(ship.x,ship.y,'#ff4d4d',10);
+      const pushA=Math.atan2(ship.y-d.y,ship.x-d.x);
+      d.x-=Math.cos(pushA)*20;d.y-=Math.sin(pushA)*20;
+    }
+  });
+  if(shields<=0){shields=0;endGame();}
+
+  // Particles
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;});
+
+  // Draw
+  rocks.forEach(drawRock);
+  drones.forEach(drawDrone);
+  particles.forEach(p=>{
+    ctx.globalAlpha=Math.max(0,p.life/30);
+    ctx.fillStyle=p.color;
+    ctx.fillRect(p.x-2,p.y-2,4,4);
+    ctx.globalAlpha=1;
+  });
+  lasers.forEach(l=>{
+    ctx.strokeStyle='#7effff';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(l.x,l.y);ctx.lineTo(l.x-Math.cos(l.ang)*14,l.y-Math.sin(l.ang)*14);ctx.stroke();
+  });
+  drawShip();
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function endGame(){
+  if(gameOver)return;
+  gameOver=true;
+  SFX.lose();
+  if(ore>best){best=ore;localStorage.setItem('asteroidmining_best',String(best));}
+}
+
+reset();
+loop();
+</script></body></html>

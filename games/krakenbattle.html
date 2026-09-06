@@ -1,0 +1,269 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Kraken Battle</title><meta name="description" content="Play Kraken Battle free online — Move your ship with Arrow Keys/WASD or drag, and click/tap to fire cannons at the giant kraken's tentacles and weak points."><link rel="canonical" href="https://games.multiportllc.com/games/krakenbattle"><meta property="og:title" content="Kraken Battle - Multiport Games"><meta property="og:description" content="Play Kraken Battle free online — Move your ship with Arrow Keys/WASD or drag, and click/tap to fire cannons at the giant kraken's tentacles and weak points."><meta property="og:url" content="https://games.multiportllc.com/games/krakenbattle"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Kraken Battle","description":"Play Kraken Battle free online instantly. Move your ship with Arrow Keys/WASD or drag, and click/tap to fire cannons at the giant kraken's tentacles and weak points. Deplete the kraken's health before your ship sinks. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/krakenbattle","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#031421}
+#c{background:#04263d;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#cdeeff;font-size:1rem;font-weight:700;padding:8px 10px}
+.healthrow{display:flex;align-items:center;gap:8px;margin:4px 0}
+.healthrow .lbl{width:70px;font-size:.85rem}
+.healthbar{flex:1;height:14px;background:rgba(0,0,0,.4);border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,.15)}
+.healthbar .fill{height:100%;transition:width .15s}
+.fill-ship{background:linear-gradient(90deg,#4cc9f0,#4895ef)}
+.fill-kraken{background:linear-gradient(90deg,#ff477e,#7209b7)}
+#score{text-align:center;color:#ffd23f;font-weight:800;font-size:1.05rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Kraken Battle</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div class="healthrow"><span class="lbl" data-i18n-key="ship_label">🚢 Ship</span><div class="healthbar"><div class="fill fill-ship" id="shipFill" style="width:100%"></div></div></div>
+      <div class="healthrow"><span class="lbl" data-i18n-key="kraken_label">🐙 Kraken</span><div class="healthbar"><div class="fill fill-kraken" id="krakenFill" style="width:100%"></div></div></div>
+    </div>
+    <div id="score">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move your ship with <b>Arrow Keys</b>/<b>WASD</b> or by <b>dragging</b>. <b>Click/Tap</b> to fire cannons. Dodge the kraken's tentacles as they sweep down, and watch for the glowing <b>weak point</b> on its head for bonus damage. Deplete the kraken's health before your ship sinks!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const scoreEl=document.getElementById('score'),shipFill=document.getElementById('shipFill'),krakenFill=document.getElementById('krakenFill');
+let hi=parseInt(localStorage.getItem('krakenbattle_best')||'0',10);
+
+let ship,tentacles,cannonballs,weakPoint,krakenHP,krakenMaxHP,shipHP,shipMaxHP,score,gameOver,won,started;
+let keys={},dragX=null,dragging=false;
+let lastTime=null,tentacleTimer,weakTimer,invuln,particles;
+
+function reset(){
+  ship={x:W/2,y:H-40,w:56,h:30};
+  tentacles=[];cannonballs=[];particles=[];
+  krakenMaxHP=200;krakenHP=krakenMaxHP;
+  shipMaxHP=100;shipHP=shipMaxHP;
+  score=0;gameOver=false;won=false;started=false;
+  tentacleTimer=0;weakTimer=140;invuln=0;
+  weakPoint={active:false,x:W/2,y:70,r:24,timer:0};
+  lastTime=null;
+  updateBars();
+}
+function updateBars(){
+  shipFill.style.width=Math.max(0,shipHP/shipMaxHP*100)+'%';
+  krakenFill.style.width=Math.max(0,krakenHP/krakenMaxHP*100)+'%';
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+}
+
+function fire(){
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  cannonballs.push({x:ship.x,y:ship.y-18,vy:-9});
+  SFX.click();
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(e.key===' '){e.preventDefault();fire();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+c.addEventListener('pointerdown',e=>{
+  dragging=true;
+  const r=c.getBoundingClientRect();
+  dragX=(e.clientX-r.left)*(W/r.width);
+  fire();
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const r=c.getBoundingClientRect();
+  dragX=(e.clientX-r.left)*(W/r.width);
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+function spawnTentacle(){
+  const x=60+Math.random()*(W-120);
+  tentacles.push({x,y:H+40,w:34,targetY:H-70-Math.random()*60,state:'rising',timer:0,hit:false});
+}
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function damageShip(n){
+  if(invuln>0)return;
+  shipHP-=n;invuln=45;
+  SFX.hurt();
+  for(let i=0;i<10;i++)particles.push({x:ship.x,y:ship.y,vx:(Math.random()-0.5)*5,vy:(Math.random()-0.5)*5,life:24,c:'#4cc9f0'});
+  if(shipHP<=0){shipHP=0;gameOver=true;won=false;finish();}
+  updateBars();
+}
+function damageKraken(n,bonus){
+  krakenHP-=n;score+=bonus?25:8;
+  SFX[bonus?'levelup':'hit']();
+  if(krakenHP<=0){krakenHP=0;gameOver=true;won=true;finish();}
+  updateBars();
+}
+function finish(){
+  if(score>hi){hi=Math.floor(score);localStorage.setItem('krakenbattle_best',hi);}
+  SFX[won?'win':'lose']();
+}
+
+function drawShip(){
+  ctx.save();
+  if(invuln>0&&Math.floor(invuln/5)%2===0)ctx.globalAlpha=0.4;
+  ctx.fillStyle='#8d5524';
+  ctx.beginPath();
+  ctx.moveTo(ship.x-ship.w/2,ship.y);
+  ctx.lineTo(ship.x+ship.w/2,ship.y);
+  ctx.lineTo(ship.x+ship.w/2-10,ship.y+16);
+  ctx.lineTo(ship.x-ship.w/2+10,ship.y+16);
+  ctx.closePath();ctx.fill();
+  ctx.fillStyle='#d9b382';ctx.fillRect(ship.x-3,ship.y-30,6,30);
+  ctx.fillStyle='#fdfdfd';ctx.beginPath();ctx.moveTo(ship.x,ship.y-30);ctx.lineTo(ship.x+22,ship.y-14);ctx.lineTo(ship.x,ship.y-10);ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+function drawTentacle(t){
+  ctx.strokeStyle='#5a2d82';ctx.lineWidth=t.w;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(t.x,H+20);
+  const sway=Math.sin((t.timer||0)/12)*14;
+  ctx.quadraticCurveTo(t.x+sway,(H+t.y)/2,t.x,t.y);
+  ctx.stroke();
+  ctx.fillStyle='#8a4fc9';
+  for(let i=0;i<3;i++){
+    const yy=t.y+(H-t.y)*0.15*i;
+    ctx.beginPath();ctx.arc(t.x+sway*0.4,yy,6,0,Math.PI*2);ctx.fill();
+  }
+}
+function drawKrakenHead(){
+  ctx.fillStyle='#3d1a5b';
+  ctx.beginPath();ctx.ellipse(W/2,70,70,44,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffdd57';
+  ctx.beginPath();ctx.arc(W/2-24,64,7,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(W/2+24,64,7,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#1a1a2e';
+  ctx.beginPath();ctx.arc(W/2-24,64,3,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(W/2+24,64,3,0,Math.PI*2);ctx.fill();
+  if(weakPoint.active){
+    const pulse=1+Math.sin(weakPoint.timer/6)*0.15;
+    const g=ctx.createRadialGradient(weakPoint.x,weakPoint.y,2,weakPoint.x,weakPoint.y,weakPoint.r*pulse);
+    g.addColorStop(0,'#fff3b0');g.addColorStop(1,'rgba(255,80,40,0.1)');
+    ctx.fillStyle=g;
+    ctx.beginPath();ctx.arc(weakPoint.x,weakPoint.y,weakPoint.r*pulse,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#ff477e';ctx.lineWidth=3;ctx.stroke();
+  }
+}
+
+function loop(ts){
+  ctx.clearRect(0,0,W,H);
+  const sea=ctx.createLinearGradient(0,0,0,H);
+  sea.addColorStop(0,'#04263d');sea.addColorStop(1,'#021320');
+  ctx.fillStyle=sea;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    drawKrakenHead();drawShip();
+    ctx.fillStyle='#cdeeff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Space to start firing'),W/2,H/2);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawKrakenHead();drawShip();
+    ctx.fillStyle='rgba(2,10,20,0.7)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('victory_title','KRAKEN DEFEATED!'):I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap / Click / Space to restart'),W/2,H/2+26);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const dt=lastTime===null?1:Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+  if(invuln>0)invuln-=dt;
+
+  let vx=0;
+  if(keys['arrowleft']||keys['a'])vx=-5;
+  if(keys['arrowright']||keys['d'])vx=5;
+  if(dragging&&dragX!==null){
+    const diff=dragX-ship.x;
+    vx=Math.max(-6,Math.min(6,diff*0.2));
+  }
+  ship.x=Math.max(30,Math.min(W-30,ship.x+vx*dt));
+
+  tentacleTimer+=dt;
+  const interval=Math.max(60,140-score/8);
+  if(tentacleTimer>=interval){tentacleTimer=0;spawnTentacle();}
+
+  weakTimer-=dt;
+  if(!weakPoint.active&&weakTimer<=0){
+    weakPoint.active=true;weakPoint.timer=0;weakPoint.x=W/2+(Math.random()-0.5)*60;
+  }
+  if(weakPoint.active){
+    weakPoint.timer+=dt;
+    if(weakPoint.timer>90){weakPoint.active=false;weakTimer=200+Math.random()*100;}
+  }
+
+  const shipHit={x:ship.x-ship.w/2,y:ship.y-16,w:ship.w,h:24};
+
+  tentacles=tentacles.filter(t=>t.state!=='done');
+  tentacles.forEach(t=>{
+    t.timer=(t.timer||0)+dt;
+    if(t.state==='rising'){
+      t.y+=(t.targetY-t.y)*0.08*dt;
+      if(Math.abs(t.y-t.targetY)<2){t.state='hold';t.holdTimer=0;}
+    }else if(t.state==='hold'){
+      t.holdTimer+=dt;
+      if(t.holdTimer>70){t.state='retreat';}
+    }else if(t.state==='retreat'){
+      t.y+=6*dt;
+      if(t.y>H+30)t.state='done';
+    }
+    drawTentacle(t);
+    const sway=Math.sin(t.timer/12)*14;
+    const tHit={x:t.x+sway*0.4-t.w/2,y:t.y-10,w:t.w,h:20};
+    if(!t.hit&&t.state!=='retreat'&&rectsOverlap(shipHit,tHit)){
+      t.hit=true;damageShip(18);
+    }
+  });
+
+  drawKrakenHead();
+
+  cannonballs=cannonballs.filter(b=>b.y>-20);
+  cannonballs.forEach(b=>{
+    b.y+=b.vy*dt;
+    ctx.fillStyle='#ffd23f';ctx.beginPath();ctx.arc(b.x,b.y,5,0,Math.PI*2);ctx.fill();
+    if(weakPoint.active){
+      const dx=b.x-weakPoint.x,dy=b.y-weakPoint.y;
+      if(dx*dx+dy*dy<weakPoint.r*weakPoint.r){
+        damageKraken(30,true);b.y=-999;weakPoint.active=false;weakTimer=200+Math.random()*100;
+        return;
+      }
+    }
+    const headDx=b.x-W/2,headDy=b.y-70;
+    if(headDx*headDx/(70*70)+headDy*headDy/(44*44)<1){damageKraken(6,false);b.y=-999;return;}
+    tentacles.forEach(t=>{
+      if(b.y<-500)return;
+      const sway=Math.sin(t.timer/12)*14;
+      const tHit={x:t.x+sway*0.4-t.w/2,y:t.y-10,w:t.w,h:20};
+      if(b.x>tHit.x&&b.x<tHit.x+tHit.w&&b.y>tHit.y&&b.y<tHit.y+tHit.h){
+        damageKraken(14,false);b.y=-999;t.state='retreat';SFX.point();
+      }
+    });
+  });
+
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;
+    ctx.globalAlpha=Math.max(0,p.life/24);
+    ctx.fillStyle=p.c;ctx.fillRect(p.x-2,p.y-2,4,4);
+    ctx.globalAlpha=1;
+  });
+
+  drawShip();
+  updateBars();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

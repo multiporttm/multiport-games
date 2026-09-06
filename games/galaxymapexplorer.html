@@ -1,0 +1,301 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Galaxy Map Explorer</title><meta name="description" content="Play Galaxy Map Explorer free online — Click connected star systems in sequence to plot a route from the green START system to the golden DESTINATION. Each jump burns fuel based on distance. Reach the destination with fuel left over for a better rating — but run out of fuel before arriving and the mission fails."><link rel="canonical" href="https://games.multiportllc.com/games/galaxymapexplorer"><meta property="og:title" content="Galaxy Map Explorer - Multiport Games"><meta property="og:description" content="Play Galaxy Map Explorer free online — Click connected star systems in sequence to plot a route from the green START system to the golden DESTINATION. Each jump burns fuel based on distance. Reach the destination with fuel left over for a better rating — but run out of fuel before arriving and the mission fails."><meta property="og:url" content="https://games.multiportllc.com/games/galaxymapexplorer"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Galaxy Map Explorer","description":"Play Galaxy Map Explorer free online instantly. Click connected star systems in sequence to plot a route from the green START system to the golden DESTINATION. Each jump burns fuel based on distance. Reach the destination with fuel left over for a better rating — but run out of fuel before arriving and the mission fails. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/galaxymapexplorer","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#05050f}
+#c{background:radial-gradient(ellipse at 50% 30%,#101036 0%,#05050f 70%);display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{display:flex;justify-content:center;gap:20px;color:#cfd6ff;font-size:1.05rem;font-weight:700;padding:8px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#fuelbar-wrap{max-width:400px;margin:0 auto 8px;background:#1a1a3a;border-radius:8px;overflow:hidden;height:16px;border:1px solid #33336a}
+#fuelbar{height:100%;background:linear-gradient(90deg,#4facfe,#00f2fe);width:100%;transition:width .25s}
+#controls{text-align:center;margin:6px 0}
+#controls button{padding:8px 20px;background:#7c4dff;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;margin:0 5px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Galaxy Map Explorer</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="level-display">Sector <b>1</b></span>
+      <span id="fuel-display">Fuel: <b>100</b>/<b>100</b></span>
+      <span id="score-display">Score: <b>0</b></span>
+      <span id="hi-display">Best: <b>0</b></span>
+    </div>
+    <div id="fuelbar-wrap"><div id="fuelbar"></div></div>
+    <canvas id="c" width="800" height="460"></canvas>
+    <div id="controls">
+      <button id="undoBtn">Undo Jump</button>
+      <button id="resetBtn">Reset Route</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click connected star systems in sequence to plot a route from the green <b>START</b> system to the golden <b>DESTINATION</b>. Each jump burns fuel based on distance. Reach the destination with fuel left over for a better rating — but run out of fuel before arriving and the mission fails.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=460;
+const BEST_KEY='galaxymapexplorer_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+
+let nodes=[],edges=[],startIdx=0,destIdx=0;
+let path=[],fuel=100,maxFuel=100,sector=1,score=0,gameOver=false,won=false;
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function genMap(){
+  nodes=[];edges=[];
+  const count=Math.min(8+sector,16);
+  const margin=60;
+  for(let i=0;i<count;i++){
+    let tries=0,pos;
+    do{
+      pos={x:margin+Math.random()*(W-margin*2),y:margin+Math.random()*(H-margin*2)};
+      tries++;
+    }while(tries<40 && nodes.some(n=>dist(n,pos)<70));
+    nodes.push({id:i,x:pos.x,y:pos.y});
+  }
+  // Build edges: connect each node to its 2-4 nearest neighbors, ensure connectivity
+  const adj=nodes.map(()=>new Set());
+  function addEdge(i,j){
+    if(i===j||adj[i].has(j))return;
+    adj[i].add(j);adj[j].add(i);
+    edges.push({a:i,b:j,d:dist(nodes[i],nodes[j])});
+  }
+  for(let i=0;i<nodes.length;i++){
+    const sorted=nodes.map((n,j)=>({j,d:dist(nodes[i],n)})).filter(x=>x.j!==i).sort((x,y)=>x.d-y.d);
+    const linkCount=2+Math.floor(Math.random()*2);
+    for(let k=0;k<Math.min(linkCount,sorted.length);k++)addEdge(i,sorted[k].j);
+  }
+  // Ensure full connectivity via BFS, connect isolated components to nearest node
+  function components(){
+    const seen=new Set();const comps=[];
+    for(let i=0;i<nodes.length;i++){
+      if(seen.has(i))continue;
+      const q=[i],comp=[];seen.add(i);
+      while(q.length){const cur=q.pop();comp.push(cur);
+        adj[cur].forEach(nb=>{if(!seen.has(nb)){seen.add(nb);q.push(nb);}});
+      }
+      comps.push(comp);
+    }
+    return comps;
+  }
+  let comps=components();
+  while(comps.length>1){
+    const a=comps[0][0],rest=comps.slice(1).flat();
+    let bestJ=rest[0],bestD=Infinity;
+    rest.forEach(j=>{const d=dist(nodes[a],nodes[j]);if(d<bestD){bestD=d;bestJ=j;}});
+    addEdge(a,bestJ);
+    comps=components();
+  }
+  startIdx=0;
+  // pick destination as the graph-distance-far node (approx: farthest by BFS hops)
+  const hops=bfsHops(startIdx);
+  let far=0,farHops=-1;
+  hops.forEach((h,i)=>{if(h>farHops){farHops=h;far=i;}});
+  destIdx=far;
+  // fuel budget: shortest path cost * factor, so players must be efficient but can succeed
+  const sp=shortestPathCost(startIdx,destIdx);
+  maxFuel=Math.round(sp*1.55)+10;
+  fuel=maxFuel;
+}
+
+function bfsHops(start){
+  const hops=new Array(nodes.length).fill(-1);
+  hops[start]=0;
+  const q=[start];
+  const adjMap=buildAdjMap();
+  while(q.length){
+    const cur=q.shift();
+    adjMap[cur].forEach(nb=>{if(hops[nb]===-1){hops[nb]=hops[cur]+1;q.push(nb);}});
+  }
+  return hops;
+}
+
+function buildAdjMap(){
+  const m=nodes.map(()=>[]);
+  edges.forEach(e=>{m[e.a].push(e.b);m[e.b].push(e.a);});
+  return m;
+}
+
+function shortestPathCost(s,d){
+  const distArr=new Array(nodes.length).fill(Infinity);
+  distArr[s]=0;
+  const visited=new Set();
+  while(visited.size<nodes.length){
+    let u=-1,best=Infinity;
+    for(let i=0;i<nodes.length;i++)if(!visited.has(i)&&distArr[i]<best){best=distArr[i];u=i;}
+    if(u===-1)break;
+    visited.add(u);
+    edges.forEach(e=>{
+      let v=null;
+      if(e.a===u)v=e.b;else if(e.b===u)v=e.a;
+      if(v!==null&&distArr[u]+e.d<distArr[v])distArr[v]=distArr[u]+e.d;
+    });
+  }
+  return distArr[d];
+}
+
+function edgeBetween(i,j){
+  return edges.find(e=>(e.a===i&&e.b===j)||(e.a===j&&e.b===i));
+}
+
+function newRun(resetScore){
+  genMap();
+  path=[startIdx];
+  gameOver=false;won=false;
+  if(resetScore){score=0;sector=1;}
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('level-display').innerHTML=I18N.t('gm_sector','Sector <b>{n}</b>').replace('{n}',sector);
+  document.getElementById('fuel-display').innerHTML=I18N.t('gm_fuel','Fuel: <b>{f}</b>/<b>{m}</b>').replace('{f}',Math.max(0,Math.round(fuel))).replace('{m}',maxFuel);
+  document.getElementById('score-display').innerHTML=I18N.t('score_label','Score: <b>{s}</b>').replace('{s}',score);
+  document.getElementById('hi-display').innerHTML=I18N.t('best_label','Best: <b>{h}</b>').replace('{h}',best);
+  document.getElementById('fuelbar').style.width=Math.max(0,(fuel/maxFuel*100))+'%';
+  document.getElementById('undoBtn').disabled=path.length<=1||gameOver;
+}
+
+function tryJump(idx){
+  if(gameOver)return;
+  const cur=path[path.length-1];
+  if(idx===cur)return;
+  const e=edgeBetween(cur,idx);
+  if(!e){SFX.error();return;}
+  if(path.includes(idx)&&idx!==destIdx){SFX.error();return;}
+  const cost=e.d*0.28;
+  if(cost>fuel+0.001){SFX.error();return;}
+  fuel-=cost;
+  path.push(idx);
+  SFX.click();
+  if(idx===destIdx){
+    won=true;gameOver=true;
+    const leftoverPct=fuel/maxFuel;
+    const gained=Math.round(100*sector*(0.4+leftoverPct));
+    score+=gained;
+    if(score>best){best=score;localStorage.setItem(BEST_KEY,String(best));}
+    SFX.win();
+  }else if(fuel<=0.001){
+    fuel=0;
+    // Check if stranded (no affordable move)
+    const adjMap=buildAdjMap();
+    const canMove=adjMap[idx].some(nb=>{
+      const ed=edgeBetween(idx,nb);
+      return ed && ed.d*0.28<=fuel+0.001;
+    });
+    if(!canMove){gameOver=true;won=false;SFX.lose();}
+  }
+  updateHud();
+}
+
+function undoJump(){
+  if(path.length<=1||gameOver)return;
+  const removed=path.pop();
+  const cur=path[path.length-1];
+  const e=edgeBetween(cur,removed);
+  if(e)fuel=Math.min(maxFuel,fuel+e.d*0.28);
+  SFX.click();
+  updateHud();
+}
+
+document.getElementById('undoBtn').addEventListener('click',undoJump);
+document.getElementById('resetBtn').addEventListener('click',()=>{
+  fuel=maxFuel;path=[startIdx];gameOver=false;won=false;SFX.click();updateHud();
+});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=e.touches?e.touches[0].clientX:e.clientX;
+  const cy=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(cx-rect.left)*(W/rect.width),y:(cy-rect.top)*(H/rect.height)};
+}
+
+function handleClick(e){
+  e.preventDefault();
+  if(gameOver){
+    if(won){sector++;newRun(false);}else{newRun(false);}
+    return;
+  }
+  const p=pointerPos(e);
+  let hit=-1,bestD=22;
+  nodes.forEach((n,i)=>{
+    const d=dist(n,p);
+    if(d<bestD){bestD=d;hit=i;}
+  });
+  if(hit>=0)tryJump(hit);
+}
+c.addEventListener('click',handleClick);
+c.addEventListener('touchstart',handleClick,{passive:false});
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // stars
+  for(let i=0;i<50;i++){
+    ctx.fillStyle=i%4===0?'#ffffff44':'#ffffff1a';
+    ctx.fillRect((i*173)%W,(i*617)%H,2,2);
+  }
+  // edges
+  edges.forEach(e=>{
+    const a=nodes[e.a],b=nodes[e.b];
+    ctx.strokeStyle='#3a3a6a';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+  });
+  // traveled path
+  for(let i=0;i<path.length-1;i++){
+    const a=nodes[path[i]],b=nodes[path[i+1]];
+    ctx.strokeStyle='#4facfe';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+  }
+  // reachable highlight from current node
+  if(!gameOver){
+    const cur=path[path.length-1];
+    edges.forEach(e=>{
+      let other=null;
+      if(e.a===cur)other=e.b;else if(e.b===cur)other=e.a;
+      if(other!==null){
+        const affordable=e.d*0.28<=fuel+0.001;
+        const n=nodes[other];
+        ctx.strokeStyle=affordable?'#7ec850aa':'#8b2e2e88';
+        ctx.lineWidth=3;
+        ctx.setLineDash([5,4]);
+        ctx.beginPath();ctx.moveTo(nodes[cur].x,nodes[cur].y);ctx.lineTo(n.x,n.y);ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    });
+  }
+  // nodes
+  nodes.forEach((n,i)=>{
+    let color='#8fa3ff',r=10;
+    if(i===startIdx){color='#7ec850';r=13;}
+    if(i===destIdx){color='#ffd54f';r=13;}
+    if(path.includes(i)&&i!==startIdx&&i!==destIdx)color='#4facfe';
+    if(i===path[path.length-1]){r+=3;}
+    ctx.beginPath();ctx.arc(n.x,n.y,r,0,Math.PI*2);
+    ctx.fillStyle=color;ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=i===path[path.length-1]?3:1.5;ctx.stroke();
+  });
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  const s=nodes[startIdx],d=nodes[destIdx];
+  ctx.fillText(I18N.t('gm_start','START'),s.x,s.y-18);
+  ctx.fillText(I18N.t('gm_dest','DEST'),d.x,d.y-18);
+
+  if(gameOver){
+    ctx.fillStyle='rgba(5,5,20,0.72)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle=won?'#7ec850':'#ff6b6b';
+    ctx.font='bold 36px Arial';
+    ctx.fillText(won?I18N.t('gm_success','ROUTE COMPLETE!'):I18N.t('gm_stranded','SHIP STRANDED'),W/2,H/2-16);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(won?I18N.t('gm_tap_next','Tap to warp to next sector'):I18N.t('gm_tap_retry','Tap to try again'),W/2,H/2+20);
+  }
+
+  requestAnimationFrame(draw);
+}
+
+newRun(true);
+requestAnimationFrame(draw);
+</script></body></html>

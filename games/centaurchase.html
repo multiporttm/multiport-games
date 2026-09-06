@@ -1,0 +1,253 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Centaur Chase</title><meta name="description" content="Play Centaur Chase free online — Jump and duck with Arrow Keys/WASD or tap to leap over obstacles, then click/tap to fire arrows at targets during archery stops."><link rel="canonical" href="https://games.multiportllc.com/games/centaurchase"><meta property="og:title" content="Centaur Chase - Multiport Games"><meta property="og:description" content="Play Centaur Chase free online — Jump and duck with Arrow Keys/WASD or tap to leap over obstacles, then click/tap to fire arrows at targets during archery stops."><meta property="og:url" content="https://games.multiportllc.com/games/centaurchase"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Centaur Chase","description":"Play Centaur Chase free online instantly. Jump and duck with Arrow Keys/WASD or tap to leap over obstacles while galloping through the forest, then click/tap to fire arrows at targets during archery stops. Score points from distance run and targets hit. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/centaurchase","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0c1409}
+#c{background:#1c3a17;display:block;border-radius:8px;touch-action:none}
+#hud{color:#c9e8a0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span{color:#ffd23f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Centaur Chase</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div data-i18n-key="dist_label">Distance: <span id="distVal">0</span>m</div>
+      <div data-i18n-key="targets_label">Targets: <span id="targetVal">0</span></div>
+      <div data-i18n-key="lives_label">Lives: <span id="livesVal">3</span></div>
+      <div data-i18n-key="best_label">Best: <span id="bestVal">0</span>m</div>
+    </div>
+    <canvas id="c" width="800" height="300"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press <b>Up/W</b> or <b>Tap</b> upper half to jump, <b>Down/S</b> or <b>Tap</b> lower half to duck, over obstacles while your centaur gallops through the forest. Occasionally the run pauses for an <b>archery stop</b> — click/tap the targets before time runs out for bonus points!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const ground=230;
+const distVal=document.getElementById('distVal'),targetVal=document.getElementById('targetVal'),livesVal=document.getElementById('livesVal'),bestVal=document.getElementById('bestVal');
+let best=parseInt(localStorage.getItem('centaurchase_best')||'0',10);
+bestVal.textContent=best;
+
+let centaur,obstacles,arrows,targets;
+let distance,targetsHit,lives,gameOver,started,ducking,archeryMode,archeryTimer,nextArcheryAt;
+let lastTime=null,spawnTimer,frame,spd;
+
+function reset(){
+  centaur={x:100,y:ground,w:70,h:50,vy:0,jumping:false};
+  obstacles=[];arrows=[];targets=[];
+  distance=0;targetsHit=0;lives=3;gameOver=false;started=false;ducking=false;archeryMode=false;archeryTimer=0;
+  nextArcheryAt=400;
+  lastTime=null;spawnTimer=0;frame=0;spd=5;
+  updateHud();
+}
+function updateHud(){
+  distVal.textContent=Math.floor(distance);
+  targetVal.textContent=targetsHit;
+  livesVal.textContent=lives;
+}
+
+function jump(){
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  if(archeryMode)return;
+  if(!centaur.jumping){centaur.vy=-13;centaur.jumping=true;SFX.jump();}
+}
+function duckStart(){ if(!archeryMode)ducking=true; }
+function duckEnd(){ ducking=false; }
+
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(['arrowup','arrowdown','arrowleft','arrowright','w','s',' '].includes(k))e.preventDefault();
+  if(k==='arrowup'||k==='w'||k===' ')jump();
+  if(k==='arrowdown'||k==='s')duckStart();
+});
+document.addEventListener('keyup',e=>{
+  const k=e.key.toLowerCase();
+  if(k==='arrowdown'||k==='s')duckEnd();
+});
+
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  const py=(e.clientY-r.top)*(H/r.height);
+  const px=(e.clientX-r.left)*(W/r.width);
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  if(archeryMode){
+    fireArrow(px,py);
+    return;
+  }
+  if(py<H/2){jump();}
+  else{duckStart();}
+});
+c.addEventListener('pointerup',()=>{duckEnd();});
+c.addEventListener('pointercancel',()=>{duckEnd();});
+
+function fireArrow(tx,ty){
+  arrows.push({x:centaur.x+40,y:centaur.y-30,tx,ty,t:0});
+  SFX.click();
+}
+
+function spawnObstacle(){
+  const type=Math.random()<0.5?'rock':'branch';
+  if(type==='rock'){
+    obstacles.push({type,x:W+20,y:ground+20,w:30,h:30});
+  }else{
+    obstacles.push({type,x:W+20,y:ground-30,w:50,h:22});
+  }
+}
+
+function startArchery(){
+  archeryMode=true;archeryTimer=300;targets=[];
+  const n=3+Math.floor(Math.random()*2);
+  for(let i=0;i<n;i++){
+    targets.push({x:300+Math.random()*450,y:60+Math.random()*140,r:22,hit:false});
+  }
+}
+function endArchery(){
+  archeryMode=false;targets=[];
+  nextArcheryAt=distance+350+Math.random()*150;
+}
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function hit(){
+  lives--;updateHud();SFX.hurt();
+  if(lives<=0){
+    gameOver=true;
+    if(Math.floor(distance)>best){best=Math.floor(distance);localStorage.setItem('centaurchase_best',best);bestVal.textContent=best;}
+    SFX.lose();
+  }
+}
+
+function drawCentaur(){
+  ctx.save();
+  const y=centaur.y-(ducking?18:0);
+  ctx.fillStyle='#8d5524';
+  ctx.fillRect(centaur.x,y,centaur.w,ducking?26:34);
+  ctx.fillStyle='#5a3a1a';
+  ctx.fillRect(centaur.x+centaur.w-14,y-22,26,26);
+  ctx.fillStyle='#ffd8a8';
+  ctx.fillRect(centaur.x+centaur.w+2,y-16,8,7);
+  const legOff=Math.floor(frame/6)%2===0?0:10;
+  ctx.fillStyle='#6b4420';
+  ctx.fillRect(centaur.x+8,y+(ducking?26:34),9,14+legOff);
+  ctx.fillRect(centaur.x+centaur.w-22,y+(ducking?26:34),9,14+(10-legOff));
+  if(!archeryMode){
+    ctx.fillStyle='#c9a25a';
+    ctx.fillRect(centaur.x+centaur.w-4,y-30,4,26);
+  }
+  ctx.restore();
+}
+
+function drawObstacle(o){
+  if(o.type==='rock'){
+    ctx.fillStyle='#6b6b6b';ctx.beginPath();ctx.arc(o.x+o.w/2,o.y+o.h/2,o.w/2,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#8a8a8a';ctx.beginPath();ctx.arc(o.x+o.w/2-4,o.y+o.h/2-4,o.w/3,0,Math.PI*2);ctx.fill();
+  }else{
+    ctx.fillStyle='#5a3a1a';ctx.fillRect(o.x,o.y,o.w,o.h);
+    ctx.fillStyle='#3d6b1f';ctx.fillRect(o.x-4,o.y-8,o.w+8,10);
+  }
+}
+
+function loop(ts){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,ground);
+  sky.addColorStop(0,'#123a12');sky.addColorStop(1,'#2d5a27');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,ground+60);
+  ctx.fillStyle='#3d8020';ctx.fillRect(0,ground+56,W,H-ground-56);
+
+  if(!started){
+    drawCentaur();
+    ctx.fillStyle='#c9e8a0';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press a key / tap to start'),W/2,H/2);
+    requestAnimationFrame(loop);
+    return;
+  }
+  if(gameOver){
+    drawCentaur();
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press a key to restart'),W/2,H/2+24);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const dt=lastTime===null?1:Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+  frame+=dt;
+
+  if(archeryMode){
+    archeryTimer-=dt;
+    ctx.fillStyle='rgba(0,0,0,0.35)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('archery_title','ARCHERY STOP! Hit the targets!'),W/2,30);
+    targets.forEach(t=>{
+      if(t.hit)return;
+      ctx.fillStyle='#e94560';ctx.beginPath();ctx.arc(t.x,t.y,t.r,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(t.x,t.y,t.r*0.6,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#e94560';ctx.beginPath();ctx.arc(t.x,t.y,t.r*0.25,0,Math.PI*2);ctx.fill();
+    });
+    arrows=arrows.filter(a=>a.t<1.05);
+    arrows.forEach(a=>{
+      a.t+=0.06*dt;
+      const ax=a.x+(a.tx-a.x)*a.t,ay=a.y+(a.ty-a.y)*a.t;
+      ctx.strokeStyle='#c9a25a';ctx.lineWidth=3;
+      ctx.beginPath();ctx.moveTo(ax-14,ay+6);ctx.lineTo(ax,ay);ctx.stroke();
+      if(a.t>=0.98&&!a.scored){
+        a.scored=true;
+        targets.forEach(t=>{
+          if(t.hit)return;
+          const dx=a.tx-t.x,dy=a.ty-t.y;
+          if(dx*dx+dy*dy<t.r*t.r){t.hit=true;targetsHit++;distance+=20;SFX.success();}
+        });
+      }
+    });
+    drawCentaur();
+    if(archeryTimer<=0||targets.every(t=>t.hit)){
+      if(targets.length&&targets.every(t=>t.hit))SFX.win();
+      endArchery();
+    }
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  distance+=spd*0.08*dt;
+  spd=5+distance/200;
+
+  spawnTimer+=dt;
+  const interval=Math.max(45,95-distance/20);
+  if(spawnTimer>=interval){spawnTimer=0;spawnObstacle();}
+
+  centaur.vy+=0.75*dt;
+  centaur.y+=centaur.vy*dt;
+  if(centaur.y>=ground){centaur.y=ground;centaur.vy=0;centaur.jumping=false;}
+
+  const hbY=centaur.y-(ducking?18:0)-(centaur.jumping?0:0);
+  const hb={x:centaur.x+6,y:ducking?hbY:hbY-22,w:centaur.w-4,h:ducking?26:56};
+
+  obstacles=obstacles.filter(o=>o.x>-60);
+  obstacles.forEach(o=>{
+    o.x-=spd*dt;
+    drawObstacle(o);
+    if(rectsOverlap(hb,o)&&!o.passed){
+      o.passed=true;hit();
+    }
+  });
+
+  if(distance>=nextArcheryAt&&!gameOver){startArchery();}
+
+  drawCentaur();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,369 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Valkyrie Flight</title><meta name="description" content="Play Valkyrie Flight free online — Fly your winged horse through the storm skies. Use Arrow Keys/WASD or drag to steer, dodge storm clouds and ravens, and click/tap to strike fallen-hero spirits for points. How far can you fly before your health runs out?"><link rel="canonical" href="https://games.multiportllc.com/games/valkyrieflight"><meta property="og:title" content="Valkyrie Flight - Multiport Games"><meta property="og:description" content="Play Valkyrie Flight free online — Fly your winged horse through the storm skies. Use Arrow Keys/WASD or drag to steer, dodge storm clouds and ravens, and click/tap to strike fallen-hero spirits for points. How far can you fly before your health runs out?"><meta property="og:url" content="https://games.multiportllc.com/games/valkyrieflight"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Valkyrie Flight","description":"Play Valkyrie Flight free online instantly. Fly your winged horse through the storm skies. Use Arrow Keys/WASD or drag to steer, dodge storm clouds and ravens, and click/tap to strike fallen-hero spirits for points. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/valkyrieflight","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#05070f}
+#c{background:#1a2a4a;display:block;border-radius:8px;touch-action:none;cursor:crosshair;max-width:100%}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#dce6ff;font-weight:800;padding:8px 4px;font-size:1rem;max-width:800px;margin:0 auto}
+#healthWrap{flex:1;height:14px;background:rgba(255,255,255,.12);border-radius:8px;margin:0 14px;overflow:hidden;max-width:220px}
+#healthBar{height:100%;background:linear-gradient(90deg,#7ec850,#ffd166,#ff6b6b);width:100%;transition:width .15s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Valkyrie Flight</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisplay">Score: 0</span>
+      <div id="healthWrap"><div id="healthBar"></div></div>
+      <span id="distDisplay">0m</span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Steer your valkyrie with <b>Arrow Keys / WASD</b>, or press-and-drag on the sky. Dodge the dark storm clouds and enemy ravens — hitting them costs health. <b>Click or tap</b> (a quick tap without dragging) to swing your blade and strike any glowing spirit or raven within reach for points. Fly as far as you can before your health runs out!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const GROUND_MARGIN=30;
+let health,score,dist,spd,gameOver,started,invuln,frame;
+let clouds,ravens,spirits,strikeFx;
+let lastTime=null,cloudTimer=0,ravenTimer=0,spiritTimer=0;
+const player={x:150,y:H/2,vy:0,vx:0,w:64,h:40,angle:0};
+let best=+(localStorage.getItem('valkyrieflight_best')||0);
+
+function reset(){
+  health=100;score=0;dist=0;spd=4.2;gameOver=false;started=false;invuln=0;frame=0;
+  clouds=[];ravens=[];spirits=[];strikeFx=[];
+  player.x=150;player.y=H/2;player.vy=0;player.vx=0;player.angle=0;
+  lastTime=null;cloudTimer=0;ravenTimer=0;spiritTimer=0;
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('scoreDisplay').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('distDisplay').textContent=Math.floor(dist)+'m';
+  document.getElementById('healthBar').style.width=Math.max(0,health)+'%';
+}
+
+// ---------- Input ----------
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(!started&&!gameOver)started=true;
+  if(gameOver&&(e.code==='Space'))reset();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let pointerDown=false,pointerStart=null,pointerMoved=false,dragTarget=null;
+function toCanvasPos(clientX,clientY){
+  const r=c.getBoundingClientRect();
+  return {x:(clientX-r.left)*(W/r.width),y:(clientY-r.top)*(H/r.height)};
+}
+function onPointerDown(e){
+  e.preventDefault();
+  const p=toCanvasPos(e.clientX,e.clientY);
+  pointerDown=true;pointerStart=p;pointerMoved=false;dragTarget=p;
+  if(!started&&!gameOver)started=true;
+  if(gameOver){reset();return;}
+}
+function onPointerMove(e){
+  if(!pointerDown)return;
+  const p=toCanvasPos(e.clientX,e.clientY);
+  if(Math.hypot(p.x-pointerStart.x,p.y-pointerStart.y)>8)pointerMoved=true;
+  dragTarget=p;
+}
+function onPointerUp(e){
+  if(!pointerDown)return;
+  pointerDown=false;
+  if(!pointerMoved&&!gameOver&&started){
+    strike();
+  }
+  dragTarget=null;
+}
+c.addEventListener('pointerdown',onPointerDown);
+window.addEventListener('pointermove',onPointerMove);
+window.addEventListener('pointerup',onPointerUp);
+c.addEventListener('click',e=>{
+  // fallback strike for environments without full pointer drag semantics
+});
+
+function strike(){
+  SFX.swoosh();
+  strikeFx.push({x:player.x,y:player.y,t:0});
+  const range=70;
+  let hitSomething=false;
+  spirits=spirits.filter(s=>{
+    if(Math.hypot(s.x-player.x,s.y-player.y)<range){
+      score+=25;hitSomething=true;
+      SFX.coin();
+      return false;
+    }
+    return true;
+  });
+  ravens=ravens.filter(r=>{
+    if(Math.hypot(r.x-player.x,r.y-player.y)<range){
+      score+=10;hitSomething=true;
+      SFX.hit();
+      return false;
+    }
+    return true;
+  });
+  if(!hitSomething)SFX.click();
+  updateHud();
+}
+
+// ---------- Spawning ----------
+function spawnCloud(){
+  const h=50+Math.random()*70,w=90+Math.random()*70;
+  const y=GROUND_MARGIN+Math.random()*(H-2*GROUND_MARGIN-h);
+  clouds.push({x:W+60,y,w,h,vy:(Math.random()-0.5)*0.6});
+}
+function spawnRaven(){
+  const y=GROUND_MARGIN+Math.random()*(H-2*GROUND_MARGIN-20);
+  ravens.push({x:W+40,y,baseY:y,w:34,h:22,t:Math.random()*Math.PI*2,amp:20+Math.random()*30});
+}
+function spawnSpirit(){
+  const y=GROUND_MARGIN+Math.random()*(H-2*GROUND_MARGIN-18);
+  spirits.push({x:W+30,y,r:14,t:Math.random()*Math.PI*2});
+}
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+// ---------- Drawing ----------
+function drawBackground(){
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0e1830');sky.addColorStop(0.5,'#1a2a4a');sky.addColorStop(1,'#2b3f66');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // distant stars/sparkle
+  ctx.fillStyle='rgba(255,255,255,0.5)';
+  for(let i=0;i<40;i++){
+    const sx=(i*137+Math.floor(frame*0.4))%W;
+    const sy=(i*79)%H;
+    ctx.globalAlpha=0.15+0.15*Math.sin(frame*0.05+i);
+    ctx.fillRect(sx,sy,2,2);
+  }
+  ctx.globalAlpha=1;
+}
+
+function drawPlayer(){
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  ctx.rotate(player.angle);
+  // wings (winged horse)
+  const wingFlap=Math.sin(frame*0.35)*10;
+  ctx.fillStyle='#e8e8f0';
+  ctx.beginPath();
+  ctx.moveTo(-10,-4);
+  ctx.quadraticCurveTo(-44,-24-wingFlap,-58,-6-wingFlap);
+  ctx.quadraticCurveTo(-30,4,-10,6);
+  ctx.closePath();ctx.fill();
+  // horse body
+  ctx.fillStyle='#8a6d4f';
+  ctx.beginPath();
+  ctx.ellipse(0,4,26,13,0,0,Math.PI*2);
+  ctx.fill();
+  // horse head/neck
+  ctx.fillStyle='#8a6d4f';
+  ctx.beginPath();
+  ctx.moveTo(22,-2);ctx.lineTo(38,-10);ctx.lineTo(34,2);ctx.lineTo(22,8);
+  ctx.closePath();ctx.fill();
+  // legs
+  ctx.strokeStyle='#5c4630';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(-14,14);ctx.lineTo(-18,26);ctx.moveTo(8,14);ctx.lineTo(12,26);ctx.stroke();
+  // rider (valkyrie)
+  ctx.fillStyle='#c94f6d';
+  ctx.fillRect(-8,-16,14,16);
+  ctx.fillStyle='#ffe0b0';
+  ctx.beginPath();ctx.arc(-2,-20,6,0,Math.PI*2);ctx.fill();
+  // helmet wings
+  ctx.fillStyle='#e8c667';
+  ctx.beginPath();ctx.moveTo(-8,-22);ctx.lineTo(-18,-28);ctx.lineTo(-6,-18);ctx.closePath();ctx.fill();
+  ctx.beginPath();ctx.moveTo(4,-22);ctx.lineTo(14,-28);ctx.lineTo(2,-18);ctx.closePath();ctx.fill();
+  // spear
+  ctx.strokeStyle='#d9d9e0';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(-6,-14);ctx.lineTo(-30,-34);ctx.stroke();
+  ctx.fillStyle='#d9d9e0';
+  ctx.beginPath();ctx.moveTo(-30,-34);ctx.lineTo(-24,-30);ctx.lineTo(-36,-40);ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+
+function drawCloud(cl){
+  ctx.save();
+  ctx.globalAlpha=0.92;
+  ctx.fillStyle='#3a4358';
+  const cx=cl.x+cl.w/2,cy=cl.y+cl.h/2;
+  ctx.beginPath();
+  ctx.ellipse(cx,cy,cl.w/2,cl.h/2,0,0,Math.PI*2);
+  ctx.ellipse(cx-cl.w*0.28,cy+cl.h*0.12,cl.w*0.32,cl.h*0.4,0,0,Math.PI*2);
+  ctx.ellipse(cx+cl.w*0.28,cy+cl.h*0.1,cl.w*0.34,cl.h*0.42,0,0,Math.PI*2);
+  ctx.fill();
+  // lightning flicker
+  if(Math.sin(frame*0.2+cl.x*0.05)>0.92){
+    ctx.strokeStyle='#ffe066';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(cx,cy+cl.h*0.3);ctx.lineTo(cx-6,cy+cl.h*0.55);ctx.lineTo(cx+4,cy+cl.h*0.55);ctx.lineTo(cx-2,cy+cl.h*0.85);ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawRaven(r){
+  ctx.save();
+  ctx.translate(r.x,r.y);
+  const flap=Math.sin(frame*0.4+r.t)*8;
+  ctx.fillStyle='#15151f';
+  ctx.beginPath();ctx.ellipse(0,0,12,7,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-4,0);ctx.lineTo(-24,-10-flap);ctx.lineTo(-10,2);ctx.closePath();ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(4,0);ctx.lineTo(24,-10+flap);ctx.lineTo(10,2);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#ffcc00';
+  ctx.beginPath();ctx.moveTo(11,-1);ctx.lineTo(18,1);ctx.lineTo(11,3);ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+
+function drawSpirit(s){
+  ctx.save();
+  const glow=0.6+0.4*Math.sin(frame*0.15+s.t);
+  ctx.globalAlpha=glow;
+  const g=ctx.createRadialGradient(s.x,s.y,0,s.x,s.y,s.r*1.8);
+  g.addColorStop(0,'#bfe8ff');g.addColorStop(0.5,'#7ec8ff88');g.addColorStop(1,'transparent');
+  ctx.fillStyle=g;
+  ctx.beginPath();ctx.arc(s.x,s.y,s.r*1.8,0,Math.PI*2);ctx.fill();
+  ctx.globalAlpha=1;
+  ctx.fillStyle='#eaf6ff';
+  ctx.beginPath();ctx.arc(s.x,s.y,s.r*0.55,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawStrikeFx(fx){
+  ctx.save();
+  ctx.globalAlpha=Math.max(0,1-fx.t/14);
+  ctx.strokeStyle='#fff6c8';
+  ctx.lineWidth=4;
+  ctx.beginPath();
+  ctx.arc(fx.x,fx.y,20+fx.t*4,-0.9,0.9);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ---------- Main loop ----------
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawBackground();
+
+  if(gameOver){
+    clouds.forEach(drawCloud);ravens.forEach(drawRaven);spirits.forEach(drawSpirit);
+    drawPlayer();
+    ctx.fillStyle='rgba(0,0,0,0.45)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 40px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-40);
+    ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('final_score_dist','Score: {s} | Distance: {d}m').replace('{s}',Math.floor(score)).replace('{d}',Math.floor(dist)),W/2,H/2+2);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('best_score_label','Best: {b}').replace('{b}',Math.floor(best)),W/2,H/2+32);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap / Click or press Space to fly again'),W/2,H/2+64);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(!started){
+    clouds.forEach(drawCloud);
+    drawPlayer();
+    ctx.fillStyle='#dce6ff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint2','Arrows/WASD or drag to fly — click/tap to strike'),W/2,H/2-70);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frame+=dt;
+  dist+=spd*0.12*dt;
+  spd=4.2+dist/260;
+  if(invuln>0)invuln-=dt;
+
+  // --- movement ---
+  const accel=0.9,maxV=6.5,damp=0.9;
+  if(keys.ArrowUp||keys.KeyW)player.vy-=accel*dt;
+  if(keys.ArrowDown||keys.KeyS)player.vy+=accel*dt;
+  if(keys.ArrowLeft||keys.KeyA)player.vx-=accel*dt;
+  if(keys.ArrowRight||keys.KeyD)player.vx+=accel*dt;
+  if(dragTarget){
+    player.vy+=(dragTarget.y-player.y)*0.012*dt;
+    player.vx+=(dragTarget.x-player.x)*0.012*dt;
+  }
+  player.vy*=Math.pow(damp,dt);player.vx*=Math.pow(damp,dt);
+  player.vy=Math.max(-maxV,Math.min(maxV,player.vy));
+  player.vx=Math.max(-maxV,Math.min(maxV,player.vx));
+  player.y+=player.vy*dt;player.x+=player.vx*dt;
+  player.y=Math.max(GROUND_MARGIN+10,Math.min(H-GROUND_MARGIN-10,player.y));
+  player.x=Math.max(60,Math.min(340,player.x));
+  player.angle=player.vy*0.04;
+
+  // --- spawning ---
+  cloudTimer+=dt;
+  const cloudInterval=Math.max(50,110-dist/8);
+  if(cloudTimer>=cloudInterval){cloudTimer-=cloudInterval;spawnCloud();}
+  ravenTimer+=dt;
+  const ravenInterval=Math.max(70,150-dist/6);
+  if(dist>40&&ravenTimer>=ravenInterval){ravenTimer-=ravenInterval;spawnRaven();}
+  spiritTimer+=dt;
+  if(spiritTimer>=95){spiritTimer-=95;spawnSpirit();}
+
+  // --- update & collide ---
+  const playerHit={x:player.x-24,y:player.y-16,w:48,h:32};
+
+  clouds=clouds.filter(cl=>cl.x>-cl.w-20);
+  clouds.forEach(cl=>{
+    cl.x-=spd*dt;cl.y+=cl.vy*dt;
+    if(cl.y<GROUND_MARGIN)cl.vy=Math.abs(cl.vy);
+    if(cl.y+cl.h>H-GROUND_MARGIN)cl.vy=-Math.abs(cl.vy);
+    drawCloud(cl);
+    if(invuln<=0&&rectsOverlap(playerHit,{x:cl.x,y:cl.y,w:cl.w,h:cl.h})){
+      health-=18;invuln=45;SFX.hurt();
+      updateHud();
+      if(health<=0)endGame();
+    }
+  });
+
+  ravens=ravens.filter(r=>r.x>-40);
+  ravens.forEach(r=>{
+    r.x-=(spd+1.2)*dt;r.t+=0.03*dt;r.y=r.baseY+Math.sin(r.t)*r.amp;
+    drawRaven(r);
+    if(invuln<=0&&rectsOverlap(playerHit,{x:r.x-12,y:r.y-8,w:24,h:16})){
+      health-=14;invuln=40;SFX.hurt();
+      updateHud();
+      if(health<=0)endGame();
+    }
+  });
+
+  spirits=spirits.filter(s=>s.x>-30);
+  spirits.forEach(s=>{ s.x-=spd*dt; s.t+=0.02*dt; drawSpirit(s); });
+
+  strikeFx=strikeFx.filter(fx=>fx.t<14);
+  strikeFx.forEach(fx=>{ fx.t+=dt; drawStrikeFx(fx); });
+
+  drawPlayer();
+  if(invuln>0&&Math.floor(frame/3)%2===0){
+    ctx.save();ctx.globalAlpha=0.3;ctx.fillStyle='#ff6b6b';ctx.beginPath();ctx.arc(player.x,player.y,34,0,Math.PI*2);ctx.fill();ctx.restore();
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function endGame(){
+  gameOver=true;
+  if(score>best){best=score;localStorage.setItem('valkyrieflight_best',Math.floor(best));}
+  SFX.lose();
+}
+
+reset();
+loop();
+</script></body></html>
