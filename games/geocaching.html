@@ -1,0 +1,253 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Geocaching</title><meta name="description" content="Play Geocaching free online — Follow the compass bearing and distance clue to guide your marker to the hidden cache. Drag the marker or use the arrow keys / WASD to move it, then click Search when you think you're close enough. Find as many caches as you can before time runs out — clues get trickier and multi-step each round!"><link rel="canonical" href="https://games.multiportllc.com/games/geocaching"><meta property="og:title" content="Geocaching - Multiport Games"><meta property="og:description" content="Play Geocaching free online — Follow the compass bearing and distance clue to guide your marker to the hidden cache. Drag the marker or use the arrow keys / WASD to move it, then click Search when you think you're close enough. Find as many caches as you can before time runs out — clues get trickier and multi-step each round!"><meta property="og:url" content="https://games.multiportllc.com/games/geocaching"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Geocaching","description":"Play Geocaching free online instantly. Follow the compass bearing and distance clue to guide your marker to the hidden cache. Drag the marker or use the arrow keys to move it, then search when close enough. Find as many caches as you can before time runs out, with trickier multi-step clues each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/geocaching","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#c9b98a;display:block;border-radius:8px;touch-action:none;cursor:grab}
+#c:active{cursor:grabbing}
+#hud{display:flex;justify-content:center;gap:16px;color:#fff;font-weight:800;padding:8px;flex-wrap:wrap}
+#hud span{background:rgba(255,255,255,0.08);padding:6px 14px;border-radius:10px}
+#clueBox{max-width:800px;margin:6px auto 0;background:rgba(0,0,0,0.4);color:#ffd54f;font-weight:700;padding:10px 16px;border-radius:12px;text-align:center;min-height:1.6em}
+#searchRow{text-align:center;margin:10px 0}
+#searchRow button{padding:10px 26px;background:#4caf50;border:none;border-radius:20px;color:#fff;font-weight:700;font-size:1rem;cursor:pointer}
+#msg{color:#fff;text-align:center;font-weight:700;min-height:1.4em}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Geocaching</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Caches: 0 | Hi: 0</span>
+      <span id="time-display">Time: 90</span>
+      <span id="step-display">Step: 1/1</span>
+    </div>
+    <div id="clueBox">Clue loading…</div>
+    <canvas id="c" width="800" height="440"></canvas>
+    <div id="searchRow"><button id="searchBtn">🔍 Search Here</button></div>
+    <div id="msg"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Follow the compass bearing and distance clue to guide your marker to the hidden cache. Drag the marker (or use arrow keys / WASD) to move it, then click <b>Search Here</b> when you think you're close enough. Find as many caches as you can before time runs out — clues get trickier and multi-step each round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+let score=0,hi=parseInt(localStorage.getItem('geocaching_best')||'0',10),timeLeft=90;
+let marker={x:W/2,y:H/2};
+let dragging=false;
+let steps=[],stepIndex=0,cache={x:0,y:0};
+let round=1,started=false,gameOver=false,lastTime=null;
+let trail=[];
+
+function reset(){
+  score=0;timeLeft=90;round=1;started=false;gameOver=false;lastTime=null;
+  marker={x:W/2,y:H/2};
+  trail=[{x:marker.x,y:marker.y}];
+  updateHud();
+  newCache();
+}
+
+function bearingName(deg){
+  const dirs=[['N',0],['NE',45],['E',90],['SE',135],['S',180],['SW',225],['W',270],['NW',315]];
+  let best=dirs[0],bd=999;
+  dirs.forEach(d=>{ let diff=Math.abs(((deg-d[1]+540)%360)-180); if(diff<bd){bd=diff;best=d;} });
+  return best[0];
+}
+
+function newCache(){
+  const numSteps=Math.min(1+Math.floor((round-1)/2),3);
+  steps=[];
+  let px=marker.x,py=marker.y;
+  for(let i=0;i<numSteps;i++){
+    const dist=60+Math.random()*(150+round*8);
+    const angle=Math.random()*Math.PI*2;
+    let nx=px+Math.cos(angle)*dist;
+    let ny=py+Math.sin(angle)*dist;
+    nx=Math.max(30,Math.min(W-30,nx));
+    ny=Math.max(30,Math.min(H-30,ny));
+    const realDist=Math.hypot(nx-px,ny-py);
+    let deg=(Math.atan2(ny-py,nx-px)*180/Math.PI+90+360)%360; // 0=N, clockwise
+    steps.push({fromX:px,fromY:py,toX:nx,toY:ny,deg,dist:realDist});
+    px=nx;py=ny;
+  }
+  cache={x:px,y:py};
+  stepIndex=0;
+  showClue();
+}
+
+function showClue(){
+  const s=steps[stepIndex];
+  const dirName=bearingName(s.deg);
+  document.getElementById('clueBox').textContent=I18N.t('clue_text','Head {dir} ({deg}°) for about {dist}m')
+    .replace('{dir}',dirName).replace('{deg}',Math.round(s.deg)).replace('{dist}',Math.round(s.dist));
+  document.getElementById('step-display').textContent=I18N.t('step_label','Step: {i}/{n}').replace('{i}',stepIndex+1).replace('{n}',steps.length);
+}
+
+function updateHud(){
+  document.getElementById('score-display').textContent=I18N.t('caches_hi_label','Caches: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('time-display').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+}
+
+function getPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  let clientX,clientY;
+  if(e.touches&&e.touches.length){clientX=e.touches[0].clientX;clientY=e.touches[0].clientY;}
+  else{clientX=e.clientX;clientY=e.clientY;}
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(gameOver){reset();started=true;return;}
+  if(!started){started=true;return;}
+  const p=getPos(e);
+  if(Math.hypot(p.x-marker.x,p.y-marker.y)<40){dragging=true;}
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const p=getPos(e);
+  marker.x=Math.max(15,Math.min(W-15,p.x));
+  marker.y=Math.max(15,Math.min(H-15,p.y));
+  trail.push({x:marker.x,y:marker.y});
+  if(trail.length>200)trail.shift();
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();
+  if(gameOver){reset();started=true;return;}
+  if(!started){started=true;return;}
+  const p=getPos(e);
+  if(Math.hypot(p.x-marker.x,p.y-marker.y)<50){dragging=true;}
+},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();
+  if(!dragging)return;
+  const p=getPos(e);
+  marker.x=Math.max(15,Math.min(W-15,p.x));
+  marker.y=Math.max(15,Math.min(H-15,p.y));
+  trail.push({x:marker.x,y:marker.y});
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragging=false;},{passive:false});
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(e.code==='Space'){
+    if(gameOver){reset();started=true;}
+    else if(!started){started=true;}
+  }
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function applyKeys(dt){
+  const spd=3.5*dt;
+  let mx=0,my=0;
+  if(keys['arrowup']||keys['w'])my-=spd;
+  if(keys['arrowdown']||keys['s'])my+=spd;
+  if(keys['arrowleft']||keys['a'])mx-=spd;
+  if(keys['arrowright']||keys['d'])mx+=spd;
+  if(mx||my){
+    marker.x=Math.max(15,Math.min(W-15,marker.x+mx));
+    marker.y=Math.max(15,Math.min(H-15,marker.y+my));
+    trail.push({x:marker.x,y:marker.y});
+    if(trail.length>200)trail.shift();
+  }
+}
+
+document.getElementById('searchBtn').addEventListener('click',()=>{
+  if(!started||gameOver)return;
+  const s=steps[stepIndex];
+  const target={x:s.toX,y:s.toY};
+  const d=Math.hypot(marker.x-target.x,marker.y-target.y);
+  const tolerance=32;
+  if(d<=tolerance){
+    SFX.success();
+    stepIndex++;
+    if(stepIndex>=steps.length){
+      score++;
+      if(score>hi){hi=score;localStorage.setItem('geocaching_best',String(hi));}
+      document.getElementById('msg').textContent=I18N.t('cache_found_msg','🎉 Cache found! On to the next one.');
+      round++;
+      trail=[{x:marker.x,y:marker.y}];
+      newCache();
+    } else {
+      document.getElementById('msg').textContent=I18N.t('waypoint_msg','✔ Waypoint reached! Next clue…');
+      showClue();
+    }
+    updateHud();
+  } else {
+    SFX.error();
+    document.getElementById('msg').textContent=I18N.t('search_miss_msg','Nothing here. Keep following the bearing!');
+  }
+});
+
+function drawCompassRose(){
+  ctx.save();
+  ctx.translate(60,60);
+  ctx.strokeStyle='rgba(0,0,0,0.35)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(0,0,34,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='rgba(0,0,0,0.6)';ctx.font='bold 13px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('N',0,-22);ctx.fillText('S',0,22);ctx.fillText('E',22,0);ctx.fillText('W',-22,0);
+  ctx.restore();
+}
+
+function drawMarker(){
+  ctx.save();
+  ctx.translate(marker.x,marker.y);
+  ctx.fillStyle='#e94560';
+  ctx.beginPath();
+  ctx.moveTo(0,-18);ctx.bezierCurveTo(12,-18,14,-2,0,14);ctx.bezierCurveTo(-14,-2,-12,-18,0,-18);
+  ctx.fill();
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(0,-8,5,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  // terrain texture
+  ctx.fillStyle='#c9b98a';ctx.fillRect(0,0,W,H);
+  for(let i=0;i<6;i++){
+    ctx.fillStyle=`rgba(120,150,90,${0.08+0.03*i})`;
+    ctx.beginPath();
+    ctx.ellipse(80+i*140,H-60-(i%3)*40,90,50,0,0,Math.PI*2);
+    ctx.fill();
+  }
+  // trail
+  ctx.strokeStyle='rgba(233,69,96,0.4)';ctx.lineWidth=3;
+  ctx.beginPath();
+  trail.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+  ctx.stroke();
+
+  drawCompassRose();
+
+  if(!started){
+    ctx.fillStyle='#222';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_geo','Tap / Drag / Space to start'),W/2,H/2);
+    drawMarker();
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver||timeLeft<=0){
+    if(!gameOver){gameOver=true;SFX.lose();}
+    ctx.fillStyle='#222';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('time_up_title','TIME\'S UP'),W/2,H/2-16);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_caches_label','Caches Found: {s}').replace('{s}',score),W/2,H/2+18);
+    ctx.fillText(I18N.t('restart_hint2','Tap or Space to restart'),W/2,H/2+48);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  timeLeft-=dt/60;
+  applyKeys(dt);
+
+  drawMarker();
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

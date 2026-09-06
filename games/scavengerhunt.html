@@ -1,0 +1,207 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Scavenger Hunt</title><meta name="description" content="Play Scavenger Hunt free online — Find every item on the checklist hidden in the cluttered scene before time runs out! Click or tap each item as you spot it. Scenes get busier and lists get longer each round."><link rel="canonical" href="https://games.multiportllc.com/games/scavengerhunt"><meta property="og:title" content="Scavenger Hunt - Multiport Games"><meta property="og:description" content="Play Scavenger Hunt free online — Find every item on the checklist hidden in the cluttered scene before time runs out! Click or tap each item as you spot it. Scenes get busier and lists get longer each round."><meta property="og:url" content="https://games.multiportllc.com/games/scavengerhunt"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Scavenger Hunt","description":"Play Scavenger Hunt free online instantly. Find every item on the checklist hidden in the cluttered scene before time runs out. Click or tap each item as you spot it. Scenes get busier and checklists get longer each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/scavengerhunt","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{display:flex;justify-content:center;gap:16px;color:#fff;font-weight:800;padding:8px;flex-wrap:wrap}
+#hud span{background:rgba(255,255,255,0.08);padding:6px 14px;border-radius:10px}
+#checklist{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;max-width:800px;margin:8px auto;padding:0 8px}
+.check-item{background:rgba(255,255,255,0.08);border-radius:12px;padding:8px 12px;color:#fff;font-weight:700;font-size:.9rem;display:flex;align-items:center;gap:6px}
+.check-item .em{font-size:1.3rem}
+.check-item.found{background:rgba(76,175,80,0.3);text-decoration:line-through;opacity:.7}
+#msg{color:#fff;text-align:center;font-weight:700;min-height:1.4em}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Scavenger Hunt</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Found: 0 | Hi: 0</span>
+      <span id="time-display">Time: 45</span>
+      <span id="round-display">Scene: 1</span>
+    </div>
+    <div id="checklist"></div>
+    <canvas id="c" width="800" height="440"></canvas>
+    <div id="msg"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Find every item on the checklist hidden in the cluttered scene before time runs out! Click or tap each item as you spot it. Scenes get busier and checklists get longer each round.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+const SCENES=[
+  {name:'attic',bg:'#4a3b2a',floor:'#3a2d1f'},
+  {name:'park',bg:'#4a7c3a',floor:'#3a6b2a'},
+  {name:'beach',bg:'#f2d38a',floor:'#e0c070'}
+];
+const ITEM_POOL=['📦','🕸️','🧸','📚','🖼️','🪔','🎻','🧵','⏰','🗝️','🪞','🧦','🍂','⚽','🎈','🐦','🌳','🚲','🌸','🦋','🪁','🐚','🦀','⛱️','🌊','⭐','🩴','🍉','🪣','🧴'];
+
+let score=0,hi=parseInt(localStorage.getItem('scavengerhunt_best')||'0',10),timeLeft=45;
+let round=1,started=false,gameOver=false,lastTime=null;
+let scene,items,checklist;
+
+function pick(arr,n){
+  const a=arr.slice();
+  const out=[];
+  while(out.length<n&&a.length){
+    out.push(a.splice(Math.floor(Math.random()*a.length),1)[0]);
+  }
+  return out;
+}
+
+function newScene(){
+  scene=SCENES[(round-1)%SCENES.length];
+  const numTargets=Math.min(4+Math.floor((round-1)/1),8);
+  const numClutter=8+round*3;
+  const targetEmojis=pick(ITEM_POOL,numTargets);
+  items=[];
+  const placed=[];
+  function place(emoji,isTarget){
+    let x,y,tries=0;
+    do{
+      x=40+Math.random()*(W-80);
+      y=60+Math.random()*(H-110);
+      tries++;
+    } while(placed.some(p=>Math.hypot(p.x-x,p.y-y)<38) && tries<60);
+    placed.push({x,y});
+    items.push({emoji,x,y,isTarget,found:false,size:26+Math.random()*10,rot:(Math.random()-0.5)*0.6});
+  }
+  targetEmojis.forEach(e=>place(e,true));
+  const clutterEmojis=pick(ITEM_POOL.filter(e=>!targetEmojis.includes(e)),numClutter);
+  // allow repeats for clutter by sampling with replacement too
+  for(let i=0;i<numClutter;i++){
+    const e=clutterEmojis[i%clutterEmojis.length]||ITEM_POOL[Math.floor(Math.random()*ITEM_POOL.length)];
+    place(e,false);
+  }
+  checklist=targetEmojis.map(e=>({emoji:e,found:false}));
+  renderChecklist();
+}
+
+function renderChecklist(){
+  const el=document.getElementById('checklist');
+  el.innerHTML='';
+  checklist.forEach(ci=>{
+    const d=document.createElement('div');
+    d.className='check-item'+(ci.found?' found':'');
+    d.innerHTML=`<span class="em">${ci.emoji}</span>`;
+    el.appendChild(d);
+  });
+}
+
+function updateHud(){
+  document.getElementById('score-display').textContent=I18N.t('found_hi_label','Found: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('time-display').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+  document.getElementById('round-display').textContent=I18N.t('scene_label','Scene: {r}').replace('{r}',round);
+}
+
+function reset(){
+  score=0;timeLeft=45;round=1;started=false;gameOver=false;lastTime=null;
+  updateHud();
+  newScene();
+}
+
+function getPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  let clientX,clientY;
+  if(e.changedTouches&&e.changedTouches.length){clientX=e.changedTouches[0].clientX;clientY=e.changedTouches[0].clientY;}
+  else{clientX=e.clientX;clientY=e.clientY;}
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+
+function handleTap(px,py){
+  if(gameOver){reset();started=true;return;}
+  if(!started){started=true;return;}
+  for(let i=items.length-1;i>=0;i--){
+    const it=items[i];
+    if(it.found)continue;
+    const half=it.size*0.7;
+    if(Math.abs(px-it.x)<half&&Math.abs(py-it.y)<half){
+      if(it.isTarget){
+        it.found=true;
+        score++;
+        if(score>hi){hi=score;localStorage.setItem('scavengerhunt_best',String(hi));}
+        const ci=checklist.find(c=>c.emoji===it.emoji&&!c.found);
+        if(ci)ci.found=true;
+        SFX.coin();
+        renderChecklist();
+        document.getElementById('msg').textContent=I18N.t('found_msg','Found it! {e}').replace('{e}',it.emoji);
+        if(checklist.every(c=>c.found)){
+          SFX.win();
+          document.getElementById('msg').textContent=I18N.t('scene_clear_msg','🎉 Scene cleared! Next scene…');
+          timeLeft=Math.min(timeLeft+15,60);
+          round++;
+          newScene();
+        }
+      } else {
+        SFX.click();
+        document.getElementById('msg').textContent=I18N.t('not_it_msg','Not on the list.');
+      }
+      updateHud();
+      return;
+    }
+  }
+}
+
+c.addEventListener('pointerdown',e=>{const p=getPos(e);handleTap(p.x,p.y);});
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=getPos(e);handleTap(p.x,p.y);},{passive:false});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){
+    e.preventDefault();
+    if(gameOver){reset();started=true;}
+    else if(!started){started=true;}
+  }
+});
+
+function drawScene(){
+  ctx.fillStyle=scene.bg;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=scene.floor;ctx.fillRect(0,H-70,W,70);
+  items.forEach(it=>{
+    if(it.found)return;
+    ctx.save();
+    ctx.translate(it.x,it.y);
+    ctx.rotate(it.rot);
+    ctx.font=it.size+'px serif';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(it.emoji,0,0);
+    ctx.restore();
+  });
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  if(!started){
+    ctx.fillStyle='#111';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_sc','Tap / Click / Space to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver||timeLeft<=0){
+    if(!gameOver){gameOver=true;SFX.lose();}
+    drawScene();
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('time_up_title','TIME\'S UP'),W/2,H/2-16);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_found_label','Items Found: {s}').replace('{s}',score),W/2,H/2+18);
+    ctx.fillText(I18N.t('restart_hint3','Tap or Space to restart'),W/2,H/2+48);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  timeLeft-=dt/60;
+
+  drawScene();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>
