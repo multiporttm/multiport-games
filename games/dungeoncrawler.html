@@ -1,0 +1,313 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Dungeon Crawler</title><meta name="description" content="Play Dungeon Crawler free online — Move your hero through a randomly generated grid dungeon with Arrow Keys/WASD or the D-pad, bump-attack enemies, grab treasure and potions, and descend through as many floors as you can."><link rel="canonical" href="https://games.multiportllc.com/games/dungeoncrawler"><meta property="og:title" content="Dungeon Crawler - Multiport Games"><meta property="og:description" content="Play Dungeon Crawler free online — Move your hero through a randomly generated grid dungeon with Arrow Keys/WASD or the D-pad, bump-attack enemies, grab treasure and potions, and descend through as many floors as you can."><meta property="og:url" content="https://games.multiportllc.com/games/dungeoncrawler"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Dungeon Crawler","description":"Play Dungeon Crawler free online instantly. Move your hero through a randomly generated grid dungeon with Arrow Keys/WASD or the D-pad, bump-attack enemies, grab treasure and potions, and descend through as many floors as you can. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/dungeoncrawler","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{display:block;border-radius:8px;margin:0 auto;background:#0d0d14;touch-action:none}
+#ui{color:#ffd54f;text-align:center;padding:8px;font-size:1.02rem;font-weight:700}
+#hpbar{max-width:340px;margin:0 auto 8px;height:14px;background:#333;border-radius:8px;overflow:hidden}
+#hpfill{height:100%;background:#4caf50;width:100%;transition:width .15s}
+#dpad{display:grid;grid-template-columns:repeat(3,56px);grid-template-rows:repeat(3,56px);gap:4px;justify-content:center;margin:10px auto 4px;user-select:none;-webkit-user-select:none}
+#dpad button{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);border-radius:12px;color:#fff;font-size:1.2rem;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#dpad button:active{background:rgba(255,255,255,.25)}
+#dpad .empty{visibility:hidden}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Dungeon Crawler</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="ui">Floor: 1 | Treasure: 0 | Best Floor: 0</div>
+    <div id="hpbar"><div id="hpfill"></div></div>
+    <canvas id="c" width="360" height="360"></canvas>
+    <div id="dpad">
+      <div class="empty"></div><button data-dir="up">⬆️</button><div class="empty"></div>
+      <button data-dir="left">⬅️</button><div class="empty"></div><button data-dir="right">➡️</button>
+      <div class="empty"></div><button data-dir="down">⬇️</button><div class="empty"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move your hero with Arrow Keys/WASD or the D-pad. Bump into an enemy to attack it — watch the HP bars as you trade blows. Grab 💰 treasure and 🧪 potions, then step on the stairs ⬇ to descend. Reach as many floors as you can before your health runs out.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const COLS=12,ROWS=12,CELL=30;
+const W=COLS*CELL,H=ROWS*CELL;
+c.width=W;c.height=H;
+
+let best=parseInt(localStorage.getItem('dungeoncrawler_best')||'0',10);
+let floor,grid,player,enemies,treasureTotal,gameOver,attackFlash,started;
+let messageTimer=0,message='';
+
+function makeGrid(){
+  // 1 = wall, 0 = floor
+  const g=Array.from({length:ROWS},()=>Array(COLS).fill(1));
+  // carve random walk
+  let cx=1,cy=1;
+  g[cy][cx]=0;
+  const steps=COLS*ROWS*6;
+  for(let i=0;i<steps;i++){
+    const dirs=[[0,-1],[0,1],[-1,0],[1,0]];
+    const [dx,dy]=dirs[Math.floor(Math.random()*4)];
+    const nx=Math.min(COLS-2,Math.max(1,cx+dx));
+    const ny=Math.min(ROWS-2,Math.max(1,cy+dy));
+    cx=nx;cy=ny;
+    g[cy][cx]=0;
+  }
+  // ensure border walls
+  for(let x=0;x<COLS;x++){g[0][x]=1;g[ROWS-1][x]=1;}
+  for(let y=0;y<ROWS;y++){g[y][0]=1;g[y][COLS-1]=1;}
+  return g;
+}
+
+function floorTiles(g){
+  const tiles=[];
+  for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++)if(g[y][x]===0)tiles.push({x,y});
+  return tiles;
+}
+
+function dist(a,b){return Math.abs(a.x-b.x)+Math.abs(a.y-b.y);}
+
+function buildFloor(n){
+  grid=makeGrid();
+  const tiles=floorTiles(grid);
+  const startTile=tiles[0];
+  player.gx=startTile.x;player.gy=startTile.y;
+
+  // pick stairs far from start
+  let stairsTile=tiles.reduce((best,t)=>dist(t,startTile)>dist(best,startTile)?t:best,tiles[0]);
+  grid.stairs={x:stairsTile.x,y:stairsTile.y};
+
+  const usable=tiles.filter(t=>dist(t,startTile)>2 && !(t.x===stairsTile.x&&t.y===stairsTile.y));
+
+  enemies=[];
+  const enemyCount=Math.min(3+n,10);
+  for(let i=0;i<enemyCount;i++){
+    if(usable.length===0)break;
+    const idx=Math.floor(Math.random()*usable.length);
+    const t=usable.splice(idx,1)[0];
+    const hp=6+Math.floor(n*1.5)+Math.floor(Math.random()*3);
+    enemies.push({x:t.x,y:t.y,hp,maxHp:hp,atk:1+Math.floor(n/2),alive:true});
+  }
+
+  grid.items=[];
+  const itemCount=4+Math.floor(n/2);
+  for(let i=0;i<itemCount;i++){
+    if(usable.length===0)break;
+    const idx=Math.floor(Math.random()*usable.length);
+    const t=usable.splice(idx,1)[0];
+    const isPotion=Math.random()<0.35;
+    grid.items.push({x:t.x,y:t.y,type:isPotion?'potion':'treasure',value:isPotion?0:(5+Math.floor(Math.random()*10)+n)});
+  }
+}
+
+function resetGame(){
+  floor=1;treasureTotal=0;gameOver=false;started=false;attackFlash=0;
+  player={gx:1,gy:1,hp:20,maxHp:20,atk:3};
+  buildFloor(floor);
+}
+resetGame();
+
+function showMsg(t){message=t;messageTimer=90;}
+
+function isWall(x,y){
+  if(x<0||y<0||x>=COLS||y>=ROWS)return true;
+  return grid[y][x]===1;
+}
+
+function enemyAt(x,y){return enemies.find(e=>e.alive&&e.x===x&&e.y===y);}
+
+function tryMove(dx,dy){
+  if(gameOver||!started)return;
+  const nx=player.gx+dx,ny=player.gy+dy;
+  const en=enemyAt(nx,ny);
+  if(en){
+    // attack
+    en.hp-=player.atk;
+    attackFlash=8;
+    SFX.hit();
+    if(en.hp<=0){
+      en.alive=false;
+      showMsg(I18N.t('dc_defeated','Enemy defeated!'));
+      SFX.success();
+    }else{
+      // enemy retaliates
+      player.hp-=en.atk;
+      SFX.hurt();
+      checkDeath();
+    }
+    enemies=enemies.filter(e=>e.alive);
+    return;
+  }
+  if(isWall(nx,ny))return;
+  player.gx=nx;player.gy=ny;
+  SFX.click();
+
+  const itemIdx=grid.items.findIndex(it=>it.x===nx&&it.y===ny);
+  if(itemIdx>=0){
+    const it=grid.items[itemIdx];
+    if(it.type==='treasure'){
+      treasureTotal+=it.value;
+      showMsg(I18N.t('dc_treasure','+{v} treasure!').replace('{v}',it.value));
+      SFX.coin();
+    }else{
+      player.hp=Math.min(player.maxHp,player.hp+8);
+      showMsg(I18N.t('dc_potion','Potion! +8 HP'));
+      SFX.powerup();
+    }
+    grid.items.splice(itemIdx,1);
+  }
+
+  if(nx===grid.stairs.x&&ny===grid.stairs.y){
+    floor++;
+    if(floor-1>best){best=floor-1;localStorage.setItem('dungeoncrawler_best',String(best));}
+    player.atk+=1;
+    player.maxHp+=2;player.hp=Math.min(player.maxHp,player.hp+5);
+    SFX.levelup();
+    showMsg(I18N.t('dc_descend','Descending to floor {f}...').replace('{f}',floor));
+    buildFloor(floor);
+  }
+
+  // simple enemy chase: enemies adjacent to player might move toward them slowly
+  enemies.forEach(e=>{
+    if(Math.random()<0.4){
+      const ddx=Math.sign(player.gx-e.x),ddy=Math.sign(player.gy-e.y);
+      const opts=[];
+      if(ddx!==0)opts.push([ddx,0]);
+      if(ddy!==0)opts.push([0,ddy]);
+      opts.sort(()=>Math.random()-0.5);
+      for(const [mx,my] of opts){
+        const tx=e.x+mx,ty=e.y+my;
+        if(!isWall(tx,ty)&&!(tx===player.gx&&ty===player.gy)&&!enemyAt(tx,ty)){
+          e.x=tx;e.y=ty;break;
+        }
+      }
+    }
+  });
+}
+
+function checkDeath(){
+  if(player.hp<=0){
+    player.hp=0;
+    gameOver=true;
+    if(floor>best){best=floor;localStorage.setItem('dungeoncrawler_best',String(best));}
+    SFX.lose();
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(['arrowleft','arrowright','arrowup','arrowdown','a','d','w','s',' '].includes(k))e.preventDefault();
+  if(!started){ if(!gameOver){started=true;} else {resetGame();started=true;} return; }
+  if(gameOver){resetGame();started=true;return;}
+  if(k==='arrowleft'||k==='a')tryMove(-1,0);
+  if(k==='arrowright'||k==='d')tryMove(1,0);
+  if(k==='arrowup'||k==='w')tryMove(0,-1);
+  if(k==='arrowdown'||k==='s')tryMove(0,1);
+});
+
+document.querySelectorAll('#dpad button').forEach(btn=>{
+  const dir=btn.dataset.dir;
+  const map={up:[0,-1],down:[0,1],left:[-1,0],right:[1,0]};
+  const act=()=>{
+    if(!started){ if(gameOver)resetGame(); started=true; return; }
+    if(gameOver){resetGame();started=true;return;}
+    tryMove(map[dir][0],map[dir][1]);
+  };
+  btn.addEventListener('click',act);
+  btn.addEventListener('touchstart',e=>{e.preventDefault();act();},{passive:false});
+});
+c.addEventListener('click',()=>{ if(!started){started=true;} else if(gameOver){resetGame();started=true;} });
+c.addEventListener('touchstart',e=>{ if(!started){e.preventDefault();started=true;} else if(gameOver){e.preventDefault();resetGame();started=true;} },{passive:false});
+
+function drawGrid(){
+  ctx.fillStyle='#0d0d14';ctx.fillRect(0,0,W,H);
+  for(let y=0;y<ROWS;y++){
+    for(let x=0;x<COLS;x++){
+      if(grid[y][x]===1){
+        ctx.fillStyle='#2a2a3a';
+        ctx.fillRect(x*CELL,y*CELL,CELL,CELL);
+      }else{
+        ctx.fillStyle='#191926';
+        ctx.fillRect(x*CELL,y*CELL,CELL,CELL);
+        ctx.strokeStyle='#20202e';
+        ctx.strokeRect(x*CELL,y*CELL,CELL,CELL);
+      }
+    }
+  }
+  // stairs
+  ctx.fillStyle='#7ef9ff';
+  ctx.font=CELL*0.7+'px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('⬇',grid.stairs.x*CELL+CELL/2,grid.stairs.y*CELL+CELL/2);
+}
+
+function drawItems(){
+  grid.items.forEach(it=>{
+    ctx.font=CELL*0.6+'px serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(it.type==='treasure'?'💰':'🧪',it.x*CELL+CELL/2,it.y*CELL+CELL/2);
+  });
+}
+
+function drawEnemies(){
+  enemies.forEach(e=>{
+    ctx.font=CELL*0.65+'px serif';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText('👹',e.x*CELL+CELL/2,e.y*CELL+CELL/2);
+    // hp bar
+    const bw=CELL-6;
+    ctx.fillStyle='#333';ctx.fillRect(e.x*CELL+3,e.y*CELL+2,bw,4);
+    ctx.fillStyle='#e94560';ctx.fillRect(e.x*CELL+3,e.y*CELL+2,bw*(e.hp/e.maxHp),4);
+  });
+}
+
+function drawPlayer(){
+  ctx.font=CELL*0.7+'px serif';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillStyle=attackFlash>0?'#ff6b6b':'#fff';
+  ctx.fillText('🧙',player.gx*CELL+CELL/2,player.gy*CELL+CELL/2);
+}
+
+function updateUI(){
+  document.getElementById('ui').textContent=
+    I18N.t('dc_ui','Floor: {f} | Treasure: {t} | Best Floor: {b}')
+      .replace('{f}',floor).replace('{t}',treasureTotal).replace('{b}',best);
+  document.getElementById('hpfill').style.width=Math.max(0,(player.hp/player.maxHp*100))+'%';
+  document.getElementById('hpfill').style.background=player.hp/player.maxHp<0.3?'#e94560':(player.hp/player.maxHp<0.6?'#ffb300':'#4caf50');
+}
+
+function loop(){
+  if(attackFlash>0)attackFlash--;
+  if(messageTimer>0)messageTimer--;
+
+  drawGrid();
+  drawItems();
+  drawEnemies();
+  drawPlayer();
+
+  if(messageTimer>0){
+    ctx.fillStyle='rgba(0,0,0,.6)';
+    ctx.fillRect(W/2-100,4,200,22);
+    ctx.fillStyle='#ffd54f';ctx.font='13px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(message,W/2,15);
+  }
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 20px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(I18N.t('dc_title','DUNGEON CRAWLER'),W/2,H/2-16);
+    ctx.font='14px monospace';
+    ctx.fillText(I18N.t('dc_start','Move / Tap to start'),W/2,H/2+10);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 24px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-16);
+    ctx.font='14px monospace';
+    ctx.fillText(I18N.t('restart_hint2','Tap / Move to restart'),W/2,H/2+10);
+  }
+
+  updateUI();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

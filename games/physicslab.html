@@ -1,0 +1,332 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Physics Lab</title><meta name="description" content="Play Physics Lab free online — Set your launch angle and power, then fire! Account for gravity and obstacles to hit the target. Score points for each target hit within your limited attempts as placements get trickier each round."><link rel="canonical" href="https://games.multiportllc.com/games/physicslab"><meta property="og:title" content="Physics Lab - Multiport Games"><meta property="og:description" content="Play Physics Lab free online — Set your launch angle and power, then fire! Account for gravity and obstacles to hit the target. Score points for each target hit within your limited attempts as placements get trickier each round."><meta property="og:url" content="https://games.multiportllc.com/games/physicslab"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Physics Lab","description":"Play Physics Lab free online instantly. Set your launch angle and power, then fire! Account for gravity and obstacles to hit the target. Score points for each target hit within your limited attempts as placements get trickier each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/physicslab","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{max-width:720px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:800;font-size:.95rem;margin-bottom:8px;flex-wrap:wrap;gap:6px;padding:0 4px}
+#hud span{color:#ffd54f}
+#c{background:linear-gradient(#bcecff,#eaf9ff);display:block;border-radius:8px;max-width:100%;touch-action:none}
+#controls{background:#16213e;border-radius:12px;padding:14px 18px;margin-top:10px;display:flex;flex-direction:column;gap:10px}
+.ctrlRow{display:flex;align-items:center;gap:10px;color:#fff;font-weight:700;font-size:.9rem}
+.ctrlRow input[type=range]{flex:1}
+.ctrlRow .val{min-width:52px;text-align:right;color:#ffd54f}
+#fireBtn{padding:12px;background:#e94560;border:none;border-radius:22px;color:#fff;font-size:1.05rem;font-weight:800;cursor:pointer;margin-top:4px}
+#fireBtn:disabled{opacity:.5;cursor:not-allowed}
+#fireBtn:active:not(:disabled){transform:scale(.97)}
+#msg{color:#ffd54f;font-weight:800;text-align:center;min-height:1.6em;margin-top:6px}
+#overScreen,#startScreen{color:#fff;text-align:center;background:#16213e;border-radius:14px;padding:24px}
+#overScreen button,#startScreen button{margin-top:14px;padding:12px 30px;background:#e94560;border:none;border-radius:22px;color:#fff;font-size:1.05rem;font-weight:800;cursor:pointer}
+@media(max-width:480px){
+  .ctrlRow{font-size:.8rem}
+}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Physics Lab</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="wrap">
+      <div id="startScreen">
+        <h2>⚛️ Physics Lab</h2>
+        <p>Dial in your angle and power to hit the target. Gravity is real — aim wisely!</p>
+        <button id="startBtn">Start Game</button>
+      </div>
+      <div id="playArea" style="display:none">
+        <div id="hud">
+          <div>Round: <span id="roundEl">1</span></div>
+          <div>Score: <span id="scoreEl">0</span></div>
+          <div>Shots left: <span id="shotsEl">5</span></div>
+          <div>Best: <span id="bestEl">0</span></div>
+        </div>
+        <canvas id="c" width="700" height="380"></canvas>
+        <div id="controls">
+          <div class="ctrlRow">Angle <input type="range" id="angle" min="5" max="85" value="45"><span class="val" id="angleVal">45°</span></div>
+          <div class="ctrlRow">Power <input type="range" id="power" min="20" max="100" value="60"><span class="val" id="powerVal">60</span></div>
+          <button id="fireBtn">🚀 Fire!</button>
+        </div>
+        <div id="msg"></div>
+      </div>
+      <div id="overScreen" style="display:none">
+        <h2>Out of Shots</h2>
+        <p id="finalScoreLine"></p>
+        <button id="retryBtn">Play Again</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Adjust the launch angle and power sliders (or drag directly on the cannon), then hit Fire to launch the projectile. Account for gravity and any obstacles to hit the target. You score for each target hit — but you only get a limited number of shots per round, and targets get trickier to reach as rounds progress.</div>
+</div>
+<script>
+const canvas=document.getElementById('c'),ctx=canvas.getContext('2d');
+const W=700,H=380;
+const GROUND=H-30;
+const CANNON_X=60,CANNON_Y=GROUND;
+const G=0.35; // gravity per frame^2 (scaled)
+
+let round=1,score=0,best=0,shots=5,shotsMax=5,target=null,obstacles=[],projectile=null,animId=null,angle=45,power=60,gameOver=false;
+const KEY='physicslab_best';
+best=parseInt(localStorage.getItem(KEY)||'0',10);
+
+const startScreen=document.getElementById('startScreen');
+const playArea=document.getElementById('playArea');
+const overScreen=document.getElementById('overScreen');
+const roundEl=document.getElementById('roundEl');
+const scoreEl=document.getElementById('scoreEl');
+const shotsEl=document.getElementById('shotsEl');
+const bestEl=document.getElementById('bestEl');
+const msgEl=document.getElementById('msg');
+const angleInput=document.getElementById('angle');
+const powerInput=document.getElementById('power');
+const angleVal=document.getElementById('angleVal');
+const powerVal=document.getElementById('powerVal');
+const fireBtn=document.getElementById('fireBtn');
+
+function rand(min,max){return min+Math.random()*(max-min);}
+
+function genRound(){
+  const difficulty=round;
+  // Target placement gets farther / smaller / higher and obstacles appear with difficulty
+  const tx=rand(Math.min(400+difficulty*15,600),Math.min(650,420+difficulty*22));
+  const ty=rand(GROUND-40,Math.max(GROUND-40-difficulty*12,80));
+  const r=Math.max(26-difficulty*1.4,10);
+  target={x:tx,y:ty,r};
+  obstacles=[];
+  const obstacleCount=Math.min(Math.floor(difficulty/2),4);
+  for(let i=0;i<obstacleCount;i++){
+    const ox=rand(180,tx-60);
+    const oh=rand(60,160);
+    const ow=16;
+    obstacles.push({x:ox,y:GROUND-oh,w:ow,h:oh});
+  }
+  shotsMax=Math.max(3,5-Math.floor(difficulty/4));
+  shots=shotsMax;
+  shotsEl.textContent=shots;
+  roundEl.textContent=round;
+  projectile=null;
+  gameOver=false;
+}
+
+function startGame(){
+  round=1;score=0;
+  startScreen.style.display='none';
+  overScreen.style.display='none';
+  playArea.style.display='block';
+  bestEl.textContent=best;
+  scoreEl.textContent=score;
+  genRound();
+  angle=45;power=60;
+  angleInput.value=45;powerInput.value=60;
+  angleVal.textContent='45°';powerVal.textContent='60';
+  draw();
+}
+
+function drawScene(){
+  ctx.clearRect(0,0,W,H);
+  // sky already via css bg; draw sun
+  ctx.fillStyle='#ffe066';
+  ctx.beginPath();ctx.arc(W-60,50,28,0,Math.PI*2);ctx.fill();
+  // ground
+  ctx.fillStyle='#6b8f3a';
+  ctx.fillRect(0,GROUND,W,H-GROUND);
+  ctx.fillStyle='#4f6e2a';
+  ctx.fillRect(0,GROUND,W,4);
+
+  // obstacles
+  ctx.fillStyle='#8d6e63';
+  obstacles.forEach(o=>{
+    ctx.fillRect(o.x,o.y,o.w,o.h);
+    ctx.fillStyle='#6d4c41';
+    ctx.fillRect(o.x,o.y,o.w,6);
+    ctx.fillStyle='#8d6e63';
+  });
+
+  // target
+  if(target){
+    ctx.beginPath();ctx.arc(target.x,target.y,target.r,0,Math.PI*2);
+    ctx.fillStyle='#e53935';ctx.fill();
+    ctx.beginPath();ctx.arc(target.x,target.y,target.r*0.6,0,Math.PI*2);
+    ctx.fillStyle='#fff';ctx.fill();
+    ctx.beginPath();ctx.arc(target.x,target.y,target.r*0.28,0,Math.PI*2);
+    ctx.fillStyle='#e53935';ctx.fill();
+  }
+
+  // cannon
+  const rad=angle*Math.PI/180;
+  const len=30;
+  ctx.save();
+  ctx.translate(CANNON_X,CANNON_Y);
+  ctx.fillStyle='#333';
+  ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();
+  ctx.rotate(-rad);
+  ctx.fillStyle='#555';
+  ctx.fillRect(0,-6,len,12);
+  ctx.restore();
+
+  // trajectory preview (faint dotted arc) when not firing
+  if(!projectile){
+    ctx.save();
+    ctx.setLineDash([4,6]);
+    ctx.strokeStyle='rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    const vx=power*0.14*Math.cos(rad);
+    const vy=-power*0.14*Math.sin(rad);
+    let px=CANNON_X,py=CANNON_Y,pvx=vx,pvy=vy;
+    ctx.moveTo(px,py);
+    for(let t=0;t<200;t++){
+      pvy+=G;
+      px+=pvx;py+=pvy;
+      if(py>GROUND||px>W)break;
+      ctx.lineTo(px,py);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // projectile
+  if(projectile){
+    ctx.fillStyle='#ff5722';
+    ctx.beginPath();ctx.arc(projectile.x,projectile.y,7,0,Math.PI*2);ctx.fill();
+  }
+}
+
+function draw(){drawScene();}
+
+function fire(){
+  if(projectile||gameOver||shots<=0)return;
+  shots--;
+  shotsEl.textContent=shots;
+  const rad=angle*Math.PI/180;
+  const vx=power*0.14*Math.cos(rad);
+  const vy=-power*0.14*Math.sin(rad);
+  projectile={x:CANNON_X,y:CANNON_Y,vx,vy,trail:[]};
+  SFX.swoosh();
+  animate();
+}
+
+function circleHit(px,py,r,cx,cy,cr){
+  const dx=px-cx,dy=py-cy;
+  return Math.sqrt(dx*dx+dy*dy)<=r+cr;
+}
+
+function rectHit(px,py,r,rx,ry,rw,rh){
+  const cx=Math.max(rx,Math.min(px,rx+rw));
+  const cy=Math.max(ry,Math.min(py,ry+rh));
+  const dx=px-cx,dy=py-cy;
+  return Math.sqrt(dx*dx+dy*dy)<r;
+}
+
+function animate(){
+  if(!projectile)return;
+  projectile.vy+=G;
+  projectile.x+=projectile.vx;
+  projectile.y+=projectile.vy;
+
+  let hit=false,blocked=false;
+  if(circleHit(projectile.x,projectile.y,7,target.x,target.y,target.r))hit=true;
+  for(const o of obstacles){
+    if(rectHit(projectile.x,projectile.y,7,o.x,o.y,o.w,o.h)){blocked=true;break;}
+  }
+
+  drawScene();
+
+  if(hit){
+    score+=Math.round(50+target.r*2);
+    if(score>best){best=score;localStorage.setItem(KEY,String(best));bestEl.textContent=best;}
+    scoreEl.textContent=score;
+    SFX.win();
+    msgEl.textContent=I18N.t('pl_hit','Direct hit! +')+Math.round(50+target.r*2)+I18N.t('pl_pts',' pts');
+    projectile=null;
+    round++;
+    setTimeout(()=>{genRound();draw();msgEl.textContent='';},1000);
+    return;
+  }
+  if(blocked){
+    SFX.hit();
+    msgEl.textContent=I18N.t('pl_blocked','Blocked by an obstacle!');
+    projectile=null;
+    checkShotsOut();
+    return;
+  }
+  if(projectile.y>GROUND+20||projectile.x>W+20||projectile.x<-20){
+    SFX.fail();
+    msgEl.textContent=I18N.t('pl_miss','Missed! Try adjusting angle/power.');
+    projectile=null;
+    checkShotsOut();
+    return;
+  }
+  animId=requestAnimationFrame(animate);
+}
+
+function checkShotsOut(){
+  if(shots<=0){
+    gameOver=true;
+    setTimeout(endGame,900);
+  }
+}
+
+function endGame(){
+  playArea.style.display='none';
+  overScreen.style.display='block';
+  document.getElementById('finalScoreLine').textContent=I18N.t('pl_final','Final score: ')+score+I18N.t('pl_reached',' — reached round ')+round;
+}
+
+angleInput.addEventListener('input',()=>{angle=parseInt(angleInput.value,10);angleVal.textContent=angle+'°';draw();});
+powerInput.addEventListener('input',()=>{power=parseInt(powerInput.value,10);powerVal.textContent=power;draw();});
+fireBtn.addEventListener('click',fire);
+
+// Drag on cannon area to adjust angle/power directly (touch + mouse)
+let dragging=false;
+function pointerToAngle(px,py){
+  const dx=px-CANNON_X,dy=CANNON_Y-py;
+  let a=Math.atan2(dy,dx)*180/Math.PI;
+  a=Math.max(5,Math.min(85,a));
+  return a;
+}
+function pointerToPower(px,py){
+  const dx=px-CANNON_X,dy=CANNON_Y-py;
+  const dist=Math.sqrt(dx*dx+dy*dy);
+  return Math.max(20,Math.min(100,dist));
+}
+function getCanvasPos(e){
+  const rect=canvas.getBoundingClientRect();
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+function startDrag(e){
+  const p=getCanvasPos(e);
+  if(p.x<160){dragging=true;e.preventDefault();updateDrag(e);}
+}
+function updateDrag(e){
+  if(!dragging)return;
+  const p=getCanvasPos(e);
+  angle=Math.round(pointerToAngle(p.x,p.y));
+  power=Math.round(pointerToPower(p.x,p.y));
+  angleInput.value=angle;powerInput.value=power;
+  angleVal.textContent=angle+'°';powerVal.textContent=power;
+  draw();
+}
+function endDrag(){dragging=false;}
+canvas.addEventListener('mousedown',startDrag);
+canvas.addEventListener('mousemove',updateDrag);
+window.addEventListener('mouseup',endDrag);
+canvas.addEventListener('touchstart',startDrag,{passive:false});
+canvas.addEventListener('touchmove',e=>{updateDrag(e);e.preventDefault();},{passive:false});
+canvas.addEventListener('touchend',endDrag);
+
+document.addEventListener('keydown',e=>{
+  if(playArea.style.display==='none')return;
+  if(e.code==='ArrowUp'){angle=Math.min(85,angle+1);angleInput.value=angle;angleVal.textContent=angle+'°';draw();}
+  if(e.code==='ArrowDown'){angle=Math.max(5,angle-1);angleInput.value=angle;angleVal.textContent=angle+'°';draw();}
+  if(e.code==='ArrowRight'){power=Math.min(100,power+2);powerInput.value=power;powerVal.textContent=power;draw();}
+  if(e.code==='ArrowLeft'){power=Math.max(20,power-2);powerInput.value=power;powerVal.textContent=power;draw();}
+  if(e.code==='Space'){e.preventDefault();fire();}
+});
+
+document.getElementById('startBtn').addEventListener('click',startGame);
+document.getElementById('retryBtn').addEventListener('click',startGame);
+draw();
+</script></body></html>

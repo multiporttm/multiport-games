@@ -1,0 +1,280 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Metroidvania</title><meta name="description" content="Play Metroidvania free online — Move with Arrow Keys or WASD, jump with Space or the Jump button. Explore every room, defeat enemies, and collect the Double Jump power-up to reach new areas. Find all the items!"><link rel="canonical" href="https://games.multiportllc.com/games/metroidvania"><meta property="og:title" content="Metroidvania - Multiport Games"><meta property="og:description" content="Play Metroidvania free online — Move with Arrow Keys or WASD, jump with Space or the Jump button. Explore every room, defeat enemies, and collect the Double Jump power-up to reach new areas. Find all the items!"><meta property="og:url" content="https://games.multiportllc.com/games/metroidvania"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Metroidvania","description":"Play Metroidvania free online instantly. Move with Arrow Keys or WASD, jump with Space or the Jump button. Explore every room, defeat enemies, and collect the Double Jump power-up to reach new areas. Find all the items! No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/metroidvania","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#101425;display:block;border-radius:8px;touch-action:none}
+#hud{color:#7ec8ff;font-size:1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span b{color:#fff}
+#pad{display:flex;justify-content:space-between;align-items:flex-end;max-width:800px;margin:8px auto 0;padding:0 6px;user-select:none}
+.padbtn{width:56px;height:56px;border-radius:50%;background:#5c6bc0;color:#fff;font-weight:900;font-size:.85rem;display:flex;align-items:center;justify-content:center;border:2px solid #ffd54f88;touch-action:none}
+.padbtn.move{background:#16213e;border-color:#7ec85088}
+#dpad{display:flex;gap:8px}
+@media(min-width:640px){#pad{display:none}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Metroidvania</div>
+  <div class="game-frame">
+    <div id="hud"><span>❤️ <b id="hp">100</b></span><span>🚪 <b id="rooms">0</b>/<b id="totalrooms">7</b></span><span>💎 <b id="items">0</b>/<b id="totalitems">5</b></span><span>🏆 <b id="hi">0</b></span></div>
+    <canvas id="c" width="800" height="360"></canvas>
+    <div id="pad">
+      <div id="dpad">
+        <div class="padbtn move" id="btn-left">◀</div>
+        <div class="padbtn move" id="btn-right">▶</div>
+      </div>
+      <div class="padbtn" id="btn-jump">JUMP</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move with <b>Arrow Keys</b> or <b>WASD</b>, jump with <b>Space</b> or the <b>Jump</b> button. Explore every room, defeat enemies, and collect the <b>Double Jump</b> power-up to reach new areas. Find all the items!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=360;
+let best=parseInt(localStorage.getItem('metroidvania_best')||'0',10);
+document.getElementById('hi').textContent=best;
+
+// --- Map layout: 3x3-ish grid of rooms, some locked behind double-jump gaps ---
+// Room coords in grid units (col,row). Each room is W x H.
+const ROOMS={
+  '0,0':{platforms:[[0,330,800,30]],enemies:[],items:[],doors:{right:'1,0'},start:true},
+  '1,0':{platforms:[[0,330,800,30],[300,260,200,20]],enemies:[{x:500,y:298,range:120}],items:[{x:340,y:220,type:'item'}],doors:{left:'0,0',right:'2,0',down:'1,1'}},
+  '2,0':{platforms:[[0,330,800,30],[550,240,200,20]],enemies:[{x:150,y:298,range:100}],items:[],doors:{left:'1,0'}},
+  '1,1':{platforms:[[0,330,800,30],[0,200,180,20],[620,200,180,20]],enemies:[],items:[{x:80,y:160,type:'powerup'}],gap:[180,620],doors:{up:'1,0',left:'0,1',right:'2,1'}},
+  '0,1':{platforms:[[0,330,800,30],[250,240,300,20]],enemies:[{x:400,y:208,range:150}],items:[{x:370,y:200,type:'item'}],doors:{right:'1,1'}},
+  '2,1':{platforms:[[0,330,800,30],[550,180,200,20]],enemies:[],items:[{x:620,y:140,type:'item'},],needsDJ:true,doors:{left:'1,1',down:'2,2'}},
+  '2,2':{platforms:[[0,330,800,30],[300,260,200,20],[550,180,220,20]],enemies:[{x:250,y:298,range:100}],items:[{x:640,y:140,type:'item'}],needsDJ:true,doors:{up:'2,1'}},
+};
+const ROOM_KEYS=Object.keys(ROOMS);
+let visited=new Set();
+let collectedItems=new Set(); // keys "room:idx"
+let curRoomKey='0,0';
+let hasDoubleJump=false;
+
+const player={x:60,y:270,w:28,h:40,vx:0,vy:0,onGround:false,jumps:0,facing:1,hp:100,invuln:0};
+const keys={};
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  keys[k]=true;
+  if(['arrowleft','arrowright','arrowup','arrowdown',' '].includes(k))e.preventDefault();
+  if(k===' '||k==='arrowup'||k==='w')jump();
+  if(gameOver&&k===' ')resetGame();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+function bindPad(id,down,up){
+  const el=document.getElementById(id);
+  el.addEventListener('pointerdown',e=>{e.preventDefault();down();});
+  const upFn=e=>{e.preventDefault();if(up)up();};
+  el.addEventListener('pointerup',upFn);el.addEventListener('pointerleave',upFn);el.addEventListener('pointercancel',upFn);
+}
+bindPad('btn-left',()=>keys['arrowleft']=true,()=>keys['arrowleft']=false);
+bindPad('btn-right',()=>keys['arrowright']=true,()=>keys['arrowright']=false);
+bindPad('btn-jump',()=>jump());
+
+let gameOver=false;
+function jump(){
+  if(gameOver){resetGame();return;}
+  const maxJumps=hasDoubleJump?2:1;
+  if(player.jumps<maxJumps){
+    player.vy=-11;player.jumps++;SFX.jump();
+  }
+}
+
+function resetGame(){
+  visited=new Set();collectedItems=new Set();curRoomKey='0,0';hasDoubleJump=false;
+  player.x=60;player.y=270;player.vx=0;player.vy=0;player.hp=100;player.invuln=0;player.jumps=0;
+  gameOver=false;
+  loadRoom('0,0',null);
+}
+
+let currentEnemies=[];
+function loadRoom(key,fromDir){
+  curRoomKey=key;
+  visited.add(key);
+  const room=ROOMS[key];
+  currentEnemies=(room.enemies||[]).map(e=>({...e,baseX:e.x,dir:1,hp:20,dead:false}));
+  if(fromDir==='left')player.x=40;
+  else if(fromDir==='right')player.x=W-70;
+  else if(fromDir==='up')player.y=300;
+  else if(fromDir==='down')player.y=40;
+}
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function update(dt){
+  if(gameOver)return;
+  const room=ROOMS[curRoomKey];
+  let mv=0;
+  if(keys['arrowleft']||keys['a'])mv=-1;
+  if(keys['arrowright']||keys['d'])mv=1;
+  player.vx=mv*4;
+  if(mv!==0)player.facing=mv;
+  player.x+=player.vx*dt;
+  player.vy+=0.55*dt;
+  player.y+=player.vy*dt;
+
+  // gap check (falling through floor gap requires double jump already handled via platform absence)
+  player.onGround=false;
+  room.platforms.forEach(([px,py,pw,ph])=>{
+    if(room.gap && py===330){
+      const [gL,gR]=room.gap;
+      // split platform around gap
+      if(player.x+player.w>px && player.x<px+pw){
+        const withinGap = player.x+player.w/2>gL && player.x+player.w/2<gR;
+        if(withinGap)return; // no ground here
+      }
+    }
+    if(player.x+player.w>px && player.x<px+pw && player.y+player.h<=py+10 && player.y+player.h+player.vy*dt>=py && player.vy>=0){
+      player.y=py-player.h;player.vy=0;player.onGround=true;player.jumps=0;
+    }
+  });
+
+  if(player.y>H+40){ // fell off - respawn in room
+    player.y=50;player.x=60;player.vy=0;
+    player.hp-=10;SFX.hurt();
+  }
+
+  player.x=Math.max(0,Math.min(W-player.w,player.x));
+
+  // room transitions
+  if(room.doors){
+    if(room.doors.right && player.x>=W-player.w-2 && player.y>250){
+      const target=ROOMS[room.doors.right];
+      if(!target.needsDJ || hasDoubleJump){loadRoom(room.doors.right,'left');SFX.select();}
+      else player.x=W-player.w-2;
+    }
+    if(room.doors.left && player.x<=2 && player.y>250){
+      const target=ROOMS[room.doors.left];
+      if(!target.needsDJ || hasDoubleJump){loadRoom(room.doors.left,'right');SFX.select();}
+      else player.x=2;
+    }
+    if(room.doors.down && player.y+player.h>=H-2 && player.x>350&&player.x<450){
+      const target=ROOMS[room.doors.down];
+      if(!target.needsDJ || hasDoubleJump){loadRoom(room.doors.down,'up');SFX.select();}
+    }
+    if(room.doors.up && player.y<=2 && player.x>350&&player.x<450){
+      loadRoom(room.doors.up,'down');SFX.select();
+    }
+  }
+
+  if(player.invuln>0)player.invuln-=dt;
+
+  // enemies
+  currentEnemies.forEach(en=>{
+    if(en.dead)return;
+    en.x+=en.dir*1.2*dt;
+    if(Math.abs(en.x-en.baseX)>en.range)en.dir*=-1;
+    const eb={x:en.x,y:en.y-20,w:28,h:20};
+    if(rectsOverlap(player,eb)){
+      if(player.vy>0 && player.y+player.h-eb.y<14){
+        en.dead=true;SFX.point();player.vy=-7;
+      } else if(player.invuln<=0){
+        player.hp-=12;player.invuln=45;SFX.hurt();
+      }
+    }
+  });
+
+  // items
+  (room.items||[]).forEach((it,idx)=>{
+    const key=curRoomKey+':'+idx;
+    if(collectedItems.has(key))return;
+    const ib={x:it.x,y:it.y,w:20,h:20};
+    if(rectsOverlap(player,ib)){
+      collectedItems.add(key);
+      if(it.type==='powerup'){hasDoubleJump=true;SFX.powerup();}
+      else SFX.coin();
+    }
+  });
+
+  if(player.hp<=0){
+    gameOver=true;SFX.lose();
+    const score=visited.size*100+collectedItems.size*50;
+    if(score>best){best=score;localStorage.setItem('metroidvania_best',best);}
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0b0f24');sky.addColorStop(1,'#1a2440');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  const room=ROOMS[curRoomKey];
+  ctx.fillStyle='#2e3a5c';
+  room.platforms.forEach(([px,py,pw,ph])=>{
+    if(room.gap && py===330){
+      const [gL,gR]=room.gap;
+      ctx.fillRect(px,py,gL-px,ph);
+      ctx.fillRect(gR,py,px+pw-gR,ph);
+    } else {
+      ctx.fillRect(px,py,pw,ph);
+    }
+  });
+  // doors indicators
+  ctx.fillStyle='#ffd54f66';
+  if(room.doors&&room.doors.right)ctx.fillRect(W-14,240,14,90);
+  if(room.doors&&room.doors.left)ctx.fillRect(0,240,14,90);
+  if(room.doors&&room.doors.down)ctx.fillRect(360,H-14,80,14);
+  if(room.doors&&room.doors.up)ctx.fillRect(360,0,80,14);
+
+  // items
+  (room.items||[]).forEach((it,idx)=>{
+    const key=curRoomKey+':'+idx;
+    if(collectedItems.has(key))return;
+    ctx.save();
+    ctx.translate(it.x+10,it.y+10);
+    if(it.type==='powerup'){
+      ctx.fillStyle='#ff6bd6';ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#fff';ctx.font='bold 12px Arial';ctx.textAlign='center';ctx.fillText('2x',0,4);
+    }else{
+      ctx.fillStyle='#7ec8ff';ctx.beginPath();ctx.moveTo(0,-10);ctx.lineTo(9,0);ctx.lineTo(0,10);ctx.lineTo(-9,0);ctx.closePath();ctx.fill();
+    }
+    ctx.restore();
+  });
+
+  // enemies
+  currentEnemies.forEach(en=>{
+    if(en.dead)return;
+    ctx.fillStyle='#e94560';
+    ctx.fillRect(en.x,en.y-20,28,20);
+    ctx.fillStyle='#fff';ctx.fillRect(en.x+6,en.y-14,4,4);ctx.fillRect(en.x+18,en.y-14,4,4);
+  });
+
+  // player
+  ctx.save();
+  ctx.fillStyle=player.invuln>0&&Math.floor(player.invuln/4)%2===0?'#ffb3c1':'#4fc3f7';
+  ctx.fillRect(player.x,player.y,player.w,player.h);
+  ctx.fillStyle='#1a1a2e';
+  const eyeX=player.facing>0?player.x+player.w-8:player.x+4;
+  ctx.fillRect(eyeX,player.y+8,5,5);
+  ctx.restore();
+
+  document.getElementById('hp').textContent=Math.max(0,Math.ceil(player.hp));
+  document.getElementById('rooms').textContent=visited.size;
+  document.getElementById('items').textContent=collectedItems.size;
+  document.getElementById('hi').textContent=best;
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+22);
+  }
+}
+
+let lastTime=null;
+function loop(t){
+  const dt=lastTime===null?1:Math.min((t-lastTime)/16.6667,3);
+  lastTime=t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+resetGame();
+requestAnimationFrame(loop);
+</script></body></html>

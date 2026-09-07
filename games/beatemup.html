@@ -1,0 +1,268 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Beat 'Em Up</title><meta name="description" content="Play Beat 'Em Up free online — Move with Arrow Keys or WASD. Punch with J or the Punch button, kick with K or the Kick button. Defeat every enemy in a wave to advance. Watch out for tougher boss enemies every few waves!"><link rel="canonical" href="https://games.multiportllc.com/games/beatemup"><meta property="og:title" content="Beat 'Em Up - Multiport Games"><meta property="og:description" content="Play Beat 'Em Up free online — Move with Arrow Keys or WASD. Punch with J or the Punch button, kick with K or the Kick button. Defeat every enemy in a wave to advance. Watch out for tougher boss enemies every few waves!"><meta property="og:url" content="https://games.multiportllc.com/games/beatemup"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Beat 'Em Up","description":"Play Beat 'Em Up free online instantly. Move with Arrow Keys or WASD. Punch with J or the Punch button, kick with K or the Kick button. Defeat every enemy in a wave to advance. Watch out for tougher boss enemies every few waves! No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/beatemup","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a2f45;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffd54f;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#fff}
+#pad{display:flex;justify-content:space-between;align-items:flex-end;max-width:800px;margin:8px auto 0;padding:0 6px;user-select:none}
+#pad .side{display:flex;gap:8px}
+.padbtn{width:56px;height:56px;border-radius:50%;background:#e94560;color:#fff;font-weight:900;font-size:.85rem;display:flex;align-items:center;justify-content:center;border:2px solid #ffd54f88;touch-action:none}
+.padbtn.move{background:#16213e;border-color:#7ec85088}
+#dpad{display:grid;grid-template-columns:repeat(3,44px);grid-template-rows:repeat(2,44px);gap:4px}
+#dpad .padbtn{width:44px;height:44px;border-radius:10px;font-size:1.1rem}
+@media(min-width:640px){#pad{display:none}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Beat 'Em Up</div>
+  <div class="game-frame">
+    <div id="hud"><span>❤️ <b id="hp">100</b></span><span>🌊 <b id="wave">1</b></span><span>🥊 <b id="ko">0</b></span><span>🏁 <b id="dist">0</b>m</span><span>🏆 <b id="hi">0</b></span></div>
+    <canvas id="c" width="800" height="320"></canvas>
+    <div id="pad">
+      <div id="dpad">
+        <div></div><div class="padbtn move" id="btn-up">▲</div><div></div>
+        <div class="padbtn move" id="btn-left">◀</div><div></div><div class="padbtn move" id="btn-right">▶</div>
+      </div>
+      <div class="side">
+        <div class="padbtn" id="btn-punch">PUNCH</div>
+        <div class="padbtn" id="btn-kick">KICK</div>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move with <b>Arrow Keys</b> or <b>WASD</b>. Punch with <b>J</b> or the <b>Punch</b> button, kick with <b>K</b> or the <b>Kick</b> button. Defeat every enemy in a wave to advance. Watch out for tougher boss enemies every few waves!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320,GROUND=260;
+let hi=parseInt(localStorage.getItem('beatemup_best')||'0',10);
+document.getElementById('hi').textContent=hi;
+
+const keys={};
+document.addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();if(e.key.toLowerCase()==='j')doPunch();if(e.key.toLowerCase()==='k')doKick();if(gameOver&&e.key===' ')reset();});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function bindPad(id,onDown,onUp){
+  const el=document.getElementById(id);
+  const down=e=>{e.preventDefault();onDown();};
+  const up=e=>{e.preventDefault();if(onUp)onUp();};
+  el.addEventListener('pointerdown',down);
+  el.addEventListener('pointerup',up);
+  el.addEventListener('pointerleave',up);
+  el.addEventListener('pointercancel',up);
+}
+bindPad('btn-left',()=>keys['arrowleft']=true,()=>keys['arrowleft']=false);
+bindPad('btn-right',()=>keys['arrowright']=true,()=>keys['arrowright']=false);
+bindPad('btn-up',()=>keys['arrowup']=true,()=>keys['arrowup']=false);
+bindPad('btn-punch',()=>doPunch());
+bindPad('btn-kick',()=>doKick());
+c.addEventListener('pointerdown',e=>{ if(gameOver||!started)reset(); });
+
+const player={x:100,y:GROUND,w:36,h:60,vy:0,hp:100,facing:1,attack:null,attackTimer:0,hitEnemies:null,invuln:0,walkFrame:0};
+let enemies=[],wave=1,ko=0,dist=0,gameOver=false,started=false,spawnCooldown=0,bgOffset=0;
+
+function reset(){
+  player.x=100;player.y=GROUND;player.hp=100;player.facing=1;player.attack=null;player.attackTimer=0;player.invuln=0;
+  enemies=[];wave=1;ko=0;dist=0;gameOver=false;started=true;spawnCooldown=30;bgOffset=0;
+  spawnWave();
+}
+
+function enemyStats(isBoss){
+  return isBoss?{w:56,h:80,hp:60,speed:0.9,dmg:14}:{w:36,h:60,hp:20,speed:1.3,dmg:8};
+}
+
+function spawnWave(){
+  const isBoss=wave%4===0;
+  const count=isBoss?1:Math.min(2+Math.floor(wave/2),5);
+  for(let i=0;i<count;i++){
+    const st=enemyStats(isBoss && i===0);
+    enemies.push({
+      x:W+80+i*90,y:GROUND-(st.h-60),w:st.w,h:st.h,hp:st.hp,maxHp:st.hp,speed:st.speed,dmg:st.dmg,
+      isBoss:isBoss&&i===0,state:'walk',stateTimer:0,cooldown:60+Math.random()*40,hitFlash:0
+    });
+  }
+}
+
+function doPunch(){
+  if(gameOver)return;
+  if(!started){reset();return;}
+  if(player.attack)return;
+  player.attack='punch';player.attackTimer=16;player.hitEnemies=new Set();SFX.swoosh();
+}
+function doKick(){
+  if(gameOver)return;
+  if(!started){reset();return;}
+  if(player.attack)return;
+  player.attack='kick';player.attackTimer=20;player.hitEnemies=new Set();SFX.swoosh();
+}
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function update(dt){
+  if(!started||gameOver)return;
+  // movement
+  let mv=0;
+  if(keys['arrowleft']||keys['a'])mv=-1;
+  if(keys['arrowright']||keys['d'])mv=1;
+  if(mv!==0){player.facing=mv;player.x+=mv*3.2*dt;player.walkFrame+=dt;dist+=0.6*dt;}
+  if(keys['arrowup']||keys['w'])player.y=Math.max(GROUND-40,player.y-2.4*dt);
+  else if(keys['arrowdown']||keys['s'])player.y=Math.min(GROUND,player.y+2.4*dt);
+  player.x=Math.max(20,Math.min(W-60,player.x));
+  bgOffset=(bgOffset+ (mv>0?mv*3.2*dt:0))%80;
+
+  if(player.attack){
+    player.attackTimer-=dt;
+    const range=player.attack==='kick'?46:36;
+    const hitbox={x:player.facing>0?player.x+player.w:player.x-range,y:player.y-4,w:range,h:player.h+8};
+    enemies.forEach(en=>{
+      if(!player.hitEnemies.has(en)&&rectsOverlap(hitbox,en)){
+        player.hitEnemies.add(en);
+        const dmg=player.attack==='kick'?14:9;
+        en.hp-=dmg;en.hitFlash=8;en.state='hurt';en.stateTimer=14;
+        en.x+=player.facing*10;
+        SFX.hit();
+      }
+    });
+    if(player.attackTimer<=0){player.attack=null;}
+  }
+
+  if(player.invuln>0)player.invuln-=dt;
+
+  enemies=enemies.filter(en=>{
+    if(en.hp<=0){
+      if(en.hitFlash>-1){ko++;SFX.point();en.hitFlash=-1;}
+      return false;
+    }
+    return true;
+  });
+
+  enemies.forEach(en=>{
+    if(en.hitFlash>0)en.hitFlash-=dt;
+    if(en.state==='hurt'){
+      en.stateTimer-=dt;
+      if(en.stateTimer<=0)en.state='walk';
+      return;
+    }
+    const dx=player.x-en.x;
+    const distToPlayer=Math.abs(dx);
+    if(en.state==='attack'){
+      en.stateTimer-=dt;
+      if(en.stateTimer<=0){
+        en.state='walk';en.cooldown=70+Math.random()*50;
+        const hb={x:en.x-10,y:en.y-4,w:en.w+20,h:en.h+8};
+        if(player.invuln<=0 && rectsOverlap(hb,{x:player.x,y:player.y,w:player.w,h:player.h})){
+          player.hp-=en.dmg;player.invuln=45;SFX.hurt();
+        }
+      }
+      return;
+    }
+    en.cooldown-=dt;
+    if(distToPlayer<60){
+      if(en.cooldown<=0){en.state='attack';en.stateTimer=22;}
+      else{ en.x+= (dx>0?-1:1)*0.3*dt; }
+    } else {
+      en.x+=Math.sign(dx)*en.speed*dt;
+    }
+    en.y+=(Math.sign(player.y-en.y))*Math.min(1,Math.abs(player.y-en.y))*dt*0.5;
+  });
+
+  if(enemies.length===0 && spawnCooldown<=0){
+    wave++;spawnCooldown=50;SFX.levelup();
+  }
+  if(spawnCooldown>0){spawnCooldown-=dt; if(spawnCooldown<=0 && enemies.length===0){spawnWave();}}
+
+  if(player.hp<=0){
+    player.hp=0;gameOver=true;SFX.lose();
+    const finalScore=ko*100+Math.floor(dist);
+    if(finalScore>hi){hi=finalScore;localStorage.setItem('beatemup_best',hi);}
+  }
+}
+
+function drawBg(){
+  const sky=ctx.createLinearGradient(0,0,0,GROUND);
+  sky.addColorStop(0,'#1b1030');sky.addColorStop(1,'#3a2f45');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,GROUND);
+  ctx.fillStyle='#2a2038';
+  for(let i=-1;i<11;i++){
+    const x=i*80-bgOffset;
+    ctx.fillRect(x,60,50,GROUND-60-30);
+  }
+  ctx.fillStyle='#4b3b5a';ctx.fillRect(0,GROUND,W,H-GROUND);
+  ctx.fillStyle='#5a4a6a';
+  for(let i=-1;i<9;i++){const x=i*100-(bgOffset%100);ctx.fillRect(x,GROUND,60,6);}
+}
+
+function drawFighter(x,y,w,h,color,facing,flash,walkFrame,isAttacking,attackType){
+  ctx.save();
+  if(flash&&flash>0){ctx.fillStyle='#fff';}else{ctx.fillStyle=color;}
+  ctx.fillRect(x,y,w,h);
+  ctx.fillStyle=flash&&flash>0?'#fff':shade(color,-20);
+  ctx.fillRect(x+w*0.2,y-14,w*0.6,16);
+  const legOff=Math.floor(walkFrame/6)%2===0?0:6;
+  ctx.fillStyle=shade(color,-30);
+  ctx.fillRect(x+4,y+h,w*0.3,10+legOff);
+  ctx.fillRect(x+w-w*0.3-4,y+h,w*0.3,10+(6-legOff));
+  if(isAttacking){
+    ctx.fillStyle='#ffd54f';
+    const range=attackType==='kick'?46:36;
+    const ax=facing>0?x+w:x-range;
+    ctx.fillRect(ax,y+(attackType==='kick'?h*0.5:4),range,attackType==='kick'?14:10);
+  }
+  ctx.restore();
+}
+function shade(hex,amt){
+  const n=parseInt(hex.slice(1),16);
+  let r=(n>>16)+amt,g=((n>>8)&0xff)+amt,b=(n&0xff)+amt;
+  r=Math.max(0,Math.min(255,r));g=Math.max(0,Math.min(255,g));b=Math.max(0,Math.min(255,b));
+  return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+}
+
+function drawHpBar(x,y,w,hp,maxHp,color){
+  ctx.fillStyle='#000a';ctx.fillRect(x,y,w,6);
+  ctx.fillStyle=color;ctx.fillRect(x,y,w*Math.max(0,hp/maxHp),6);
+}
+
+let lastTime=null;
+function loop(t){
+  const dt=lastTime===null?1:Math.min((t-lastTime)/16.6667,3);
+  lastTime=t;
+  update(dt);
+  drawBg();
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap or press J/K to start'),W/2,H/2);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  enemies.slice().sort((a,b)=>a.y-b.y).forEach(en=>{
+    drawFighter(en.x,en.y,en.w,en.h,en.isBoss?'#e94560':'#7c4dff',-1,en.hitFlash,0,false,null);
+    drawHpBar(en.x-4,en.y-22,en.w+8,en.hp,en.maxHp,en.isBoss?'#ff5252':'#ff9a5a');
+  });
+
+  drawFighter(player.x,player.y,player.w,player.h,player.invuln>0&&Math.floor(player.invuln/4)%2===0?'#ffb3c1':'#4fc3f7',player.facing,0,player.walkFrame,!!player.attack,player.attack);
+
+  document.getElementById('hp').textContent=Math.ceil(player.hp);
+  document.getElementById('wave').textContent=wave;
+  document.getElementById('ko').textContent=ko;
+  document.getElementById('dist').textContent=Math.floor(dist);
+  document.getElementById('hi').textContent=hi;
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-16);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+20);
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

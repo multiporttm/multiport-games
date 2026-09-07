@@ -1,0 +1,284 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Hammer Throw</title><meta name="description" content="Play Hammer Throw free online — Build spin momentum with alternating left/right key presses or a circular drag, then release at the optimal angle for maximum distance."><link rel="canonical" href="https://games.multiportllc.com/games/hammerthrow"><meta property="og:title" content="Hammer Throw - Multiport Games"><meta property="og:description" content="Play Hammer Throw free online — Build spin momentum with alternating left/right key presses or a circular drag, then release at the optimal angle for maximum distance."><meta property="og:url" content="https://games.multiportllc.com/games/hammerthrow"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Hammer Throw","description":"Play Hammer Throw free online instantly. Build rotational spin momentum with alternating left/right key presses or a circular touch-drag, then release at the optimal release angle — shown by a moving indicator — for maximum distance. Releasing too early or too late reduces distance. Beat your longest throw across attempts as the optimal-release window narrows each round. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/hammerthrow","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(180deg,#8fd0ff 0%,#cdeeff 45%,#9fd88e 45%,#6cbf7c 100%);display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;font-size:.95rem;padding:8px 4px;flex-wrap:wrap;gap:4px}
+#hud span{color:#ffe066}
+#actionRow{display:flex;justify-content:center;gap:14px;margin-top:10px}
+#actionRow button{padding:14px 26px;background:#455a64;border:none;border-radius:22px;color:#fff;font-weight:800;font-size:1.05rem;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent;transition:transform .08s}
+#actionRow button:active{transform:scale(.94)}
+#releaseBtn{background:#e94560}
+#actionRow button.disabled{opacity:.35;pointer-events:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Hammer Throw</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div id="phaseLabel">Get ready to spin!</div>
+      <div>Best: <span id="bestVal">0.0</span>m</div>
+      <div>Attempt: <span id="attemptVal">1</span>/6</div>
+      <div>Last: <span id="lastVal">—</span></div>
+    </div>
+    <canvas id="c" width="800" height="300"></canvas>
+    <div id="actionRow">
+      <button id="leftBtn">◀ LEFT</button>
+      <button id="releaseBtn">RELEASE</button>
+      <button id="rightBtn">RIGHT ▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Build spin momentum by alternating <b>Left/Right Arrow</b> keys (or the ◀/▶ buttons) as fast as you can — or drag your finger in a circle on the field. Watch the moving indicator on the release-angle meter and press <b>Space</b> or tap <b>RELEASE</b> when it's inside the green zone for maximum distance. The optimal window narrows each round — beat your longest throw over 6 attempts!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const phaseLabel=document.getElementById('phaseLabel');
+const bestVal=document.getElementById('bestVal');
+const attemptVal=document.getElementById('attemptVal');
+const lastVal=document.getElementById('lastVal');
+const leftBtn=document.getElementById('leftBtn');
+const rightBtn=document.getElementById('rightBtn');
+const releaseBtn=document.getElementById('releaseBtn');
+
+const BEST_KEY='hammerthrow_best';
+let best=parseFloat(localStorage.getItem(BEST_KEY)||'0');
+bestVal.textContent=best.toFixed(1);
+
+const MAX_ATTEMPTS=6;
+let attempt=1;
+let phase='spin'; // spin, released, done-attempt
+let angle=0; // current hammer swing angle (radians)
+let spinSpeed=0; // radians/frame
+let momentum=0; // 0..1 quality
+let lastKey=null;
+let indicatorPos=0; // 0..1 across meter, oscillates
+let indicatorDir=1;
+let windowCenter=0.5,windowWidth=0.3;
+let throwActive=false;
+let throwDist=0,throwT=0,ballX=0,ballY=0,ballVX=0,ballVY=0,released=false,landed=false;
+let raf=null,lastTime=null;
+
+// touch circular drag tracking
+let dragging=false,lastDragAngle=null,dragAccum=0;
+
+function reset(){
+  attempt=1;phase='spin';angle=0;spinSpeed=0;momentum=0;lastKey=null;
+  indicatorPos=0;indicatorDir=1;
+  windowWidth=0.3;
+  throwActive=false;released=false;landed=false;
+  phaseLabel.textContent=I18N.t('phase_spin','Alternate Left/Right (or drag in a circle) to spin up!');
+  releaseBtn.classList.remove('disabled');
+  updateHud();
+}
+function updateHud(){
+  attemptVal.textContent=attempt+'/'+MAX_ATTEMPTS;
+  bestVal.textContent=best.toFixed(1);
+}
+
+function pressLeft(){
+  if(phase!=='spin')return;
+  if(lastKey!=='L'){momentum=Math.min(1,momentum+0.07);SFX.tick();}
+  lastKey='L';
+  spinSpeed=Math.min(0.55,spinSpeed+0.05);
+}
+function pressRight(){
+  if(phase!=='spin')return;
+  if(lastKey!=='R'){momentum=Math.min(1,momentum+0.07);SFX.tick();}
+  lastKey='R';
+  spinSpeed=Math.min(0.55,spinSpeed+0.05);
+}
+
+function doRelease(){
+  if(phase!=='spin'||throwActive)return;
+  if(momentum<0.15){
+    phaseLabel.textContent=I18N.t('fail_nomomentum','Not enough spin! Build momentum first.');
+    SFX.error();
+    return;
+  }
+  const diff=Math.abs(indicatorPos-windowCenter);
+  let qualityMult;
+  if(diff<=windowWidth*0.25){qualityMult=1.0;SFX.success();phaseLabel.textContent=I18N.t('perfect_release','PERFECT RELEASE!');}
+  else if(diff<=windowWidth*0.5){qualityMult=0.8;SFX.point();phaseLabel.textContent=I18N.t('good_release','Good release!');}
+  else if(diff<=windowWidth){qualityMult=0.55;SFX.tick();phaseLabel.textContent=I18N.t('ok_release','Okay release.');}
+  else{qualityMult=0.28;SFX.error();phaseLabel.textContent=I18N.t('poor_release','Poor timing on release!');}
+  throwDist=Math.round((momentum*55+10)*qualityMult*10)/10;
+  launchThrow();
+}
+
+function launchThrow(){
+  phase='released';
+  throwActive=true;
+  released=true;landed=false;throwT=0;
+  ballX=140;ballY=230;
+  const speedFactor=Math.sqrt(throwDist)*2.2;
+  ballVX=speedFactor;
+  ballVY=-speedFactor*0.62;
+  releaseBtn.classList.add('disabled');
+}
+
+function finishAttempt(){
+  lastVal.textContent=throwDist.toFixed(1)+'m';
+  if(throwDist>best){best=throwDist;localStorage.setItem(BEST_KEY,best.toFixed(1));}
+  updateHud();
+  attempt++;
+  if(attempt>MAX_ATTEMPTS){
+    phaseLabel.textContent=I18N.t('game_over_final','All attempts done! Best throw: {b}m').replace('{b}',best.toFixed(1));
+    phase='finished';
+    setTimeout(()=>{ if(confirm(I18N.t('play_again_confirm','Play again?'))) reset(); },300);
+    return;
+  }
+  windowWidth=Math.max(0.1,0.3-attempt*0.03);
+  setTimeout(()=>{
+    phase='spin';momentum=0;spinSpeed=0;angle=0;lastKey=null;throwActive=false;
+    releaseBtn.classList.remove('disabled');
+    phaseLabel.textContent=I18N.t('phase_spin_next','Attempt {a}: build momentum and release in the zone!').replace('{a}',attempt);
+    updateHud();
+  },1500);
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'){e.preventDefault();pressLeft();}
+  else if(e.code==='ArrowRight'){e.preventDefault();pressRight();}
+  else if(e.code==='Space'){e.preventDefault();doRelease();}
+});
+leftBtn.addEventListener('pointerdown',e=>{e.preventDefault();pressLeft();});
+rightBtn.addEventListener('pointerdown',e=>{e.preventDefault();pressRight();});
+releaseBtn.addEventListener('pointerdown',e=>{e.preventDefault();doRelease();});
+
+// circular drag on canvas as alternative input
+function angleFromEvent(e){
+  const rect=c.getBoundingClientRect();
+  const cx=rect.left+rect.width*0.28, cy=rect.top+rect.height*0.72;
+  const t=e.touches?e.touches[0]:e;
+  return Math.atan2(t.clientY-cy,t.clientX-cx);
+}
+c.addEventListener('pointerdown',e=>{
+  if(phase!=='spin')return;
+  dragging=true;lastDragAngle=angleFromEvent(e);
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging||phase!=='spin')return;
+  const a=angleFromEvent(e);
+  let d=a-lastDragAngle;
+  while(d>Math.PI)d-=2*Math.PI;
+  while(d<-Math.PI)d+=2*Math.PI;
+  dragAccum+=Math.abs(d);
+  if(dragAccum>0.35){
+    momentum=Math.min(1,momentum+0.09);
+    spinSpeed=Math.min(0.55,spinSpeed+0.05);
+    dragAccum=0;
+    SFX.tick();
+  }
+  lastDragAngle=a;
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+function updatePhysics(dt){
+  if(phase==='spin'){
+    spinSpeed=Math.max(0,spinSpeed-0.008*dt);
+    angle+=spinSpeed*dt;
+    indicatorPos+=0.014*dt*indicatorDir;
+    if(indicatorPos>=1){indicatorPos=1;indicatorDir=-1;}
+    if(indicatorPos<=0){indicatorPos=0;indicatorDir=1;}
+  }
+  if(phase==='released'&&throwActive){
+    throwT+=dt;
+    ballVY+=0.28*dt;
+    ballX+=ballVX*dt;
+    ballY+=ballVY*dt;
+    if(ballY>=230&&throwT>5){
+      landed=true;throwActive=false;
+      setTimeout(finishAttempt,400);
+    }
+  }
+}
+
+function drawField(){
+  ctx.clearRect(0,0,800,300);
+  const groundY=230;
+  ctx.fillStyle='rgba(255,255,255,.3)';
+  ctx.fillRect(0,groundY,800,3);
+  // distance markers
+  ctx.strokeStyle='rgba(255,255,255,.4)';ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='center';
+  for(let m=10;m<=80;m+=10){
+    const x=140+m*7.2;
+    if(x>790)continue;
+    ctx.beginPath();ctx.moveTo(x,groundY);ctx.lineTo(x,groundY+8);ctx.stroke();
+    ctx.fillText(m+'m',x,groundY+22);
+  }
+
+  // thrower circle
+  const circleX=140,circleY=210;
+  ctx.strokeStyle='rgba(255,255,255,.6)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(circleX,circleY,34,0,Math.PI*2);ctx.stroke();
+
+  if(phase==='spin'){
+    // athlete body (center)
+    ctx.save();
+    ctx.translate(circleX,circleY);
+    ctx.fillStyle='#1a1a2e';
+    ctx.beginPath();ctx.arc(0,-14,8,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#e94560';ctx.lineWidth=5;ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(0,-6);ctx.lineTo(0,14);ctx.stroke();
+    // hammer wire + ball, rotating
+    const hx=Math.cos(angle)*46,hy=Math.sin(angle)*46*0.5;
+    ctx.strokeStyle='#888';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(0,-2);ctx.lineTo(hx,hy);ctx.stroke();
+    ctx.fillStyle='#37474f';
+    ctx.beginPath();ctx.arc(hx,hy,10,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  } else {
+    // static thrower after release
+    ctx.save();
+    ctx.translate(circleX,circleY);
+    ctx.fillStyle='#1a1a2e';
+    ctx.beginPath();ctx.arc(0,-14,8,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#e94560';ctx.lineWidth=5;ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(0,-6);ctx.lineTo(0,14);ctx.stroke();
+    ctx.restore();
+  }
+
+  // ball in flight
+  if(phase==='released'){
+    ctx.fillStyle='#37474f';
+    ctx.beginPath();ctx.arc(ballX,Math.min(ballY,230),10,0,Math.PI*2);ctx.fill();
+    if(landed){
+      ctx.fillStyle='#ffe066';ctx.font='bold 16px Arial';ctx.textAlign='center';
+      ctx.fillText(throwDist.toFixed(1)+'m',ballX,210);
+    }
+  }
+
+  // momentum meter
+  ctx.fillStyle='rgba(0,0,0,.25)';ctx.fillRect(40,20,200,16);
+  ctx.fillStyle='#ff6b35';ctx.fillRect(40,20,200*momentum,16);
+  ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.strokeRect(40,20,200,16);
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('momentum_label','MOMENTUM'),42,15);
+
+  // release-angle meter
+  ctx.fillStyle='rgba(0,0,0,.25)';ctx.fillRect(560,20,200,16);
+  const winX1=560+200*(windowCenter-windowWidth/2);
+  const winW=200*windowWidth;
+  ctx.fillStyle='#7ec850';ctx.fillRect(winX1,20,winW,16);
+  ctx.fillStyle='#ffe066';ctx.fillRect(560+200*indicatorPos-2,18,4,20);
+  ctx.strokeStyle='#fff';ctx.strokeRect(560,20,200,16);
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('release_zone_label','RELEASE ZONE'),562,15);
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+  updatePhysics(dt);
+  drawField();
+  raf=requestAnimationFrame(loop);
+}
+reset();
+raf=requestAnimationFrame(loop);
+</script></body></html>

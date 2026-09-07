@@ -1,0 +1,298 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Pole Vault</title><meta name="description" content="Play Pole Vault free online — Sprint by mashing the key or tapping fast, plant your pole at the right moment, then time your release to clear the bar at increasing heights."><link rel="canonical" href="https://games.multiportllc.com/games/polevault"><meta property="og:title" content="Pole Vault - Multiport Games"><meta property="og:description" content="Play Pole Vault free online — Sprint by mashing the key or tapping fast, plant your pole at the right moment, then time your release to clear the bar at increasing heights."><meta property="og:url" content="https://games.multiportllc.com/games/polevault"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Pole Vault","description":"Play Pole Vault free online instantly. Build sprint speed with rapid key presses or taps, plant the pole at exactly the right moment, then time your release to clear the bar. Plant or release too early or too late and the vault fails. Clear the bar at increasing heights across attempts to set a new personal best. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/polevault","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(180deg,#6fc7ff 0%,#bfe9ff 55%,#8fd9a0 55%,#6cbf7c 100%);display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;font-size:.95rem;padding:8px 4px;flex-wrap:wrap;gap:4px}
+#hud span{color:#ffe066}
+#actionBtn{display:block;margin:10px auto 0;padding:14px 40px;background:#ff6b35;border:none;border-radius:24px;color:#fff;font-weight:800;font-size:1.1rem;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent;transition:transform .08s}
+#actionBtn:active{transform:scale(.94)}
+#actionBtn.disabled{opacity:.35;pointer-events:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Pole Vault</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div id="phaseLabel">Get ready to sprint!</div>
+      <div>Bar: <span id="barVal">1.00</span>m</div>
+      <div>Best: <span id="bestVal">0.00</span>m</div>
+      <div>Attempt: <span id="attemptVal">1</span></div>
+    </div>
+    <canvas id="c" width="800" height="280"></canvas>
+    <button id="actionBtn">SPRINT!</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Build sprint speed by rapidly pressing <b>Space</b> or tapping the button. When the speed bar is high and you reach the plant zone, press once to <b>plant</b> the pole — not too early, not too late. Then time a second press to <b>release</b> and clear the bar. Miss the timing and the vault fails. Clear the bar at ever-increasing heights for your best score!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const phaseLabel=document.getElementById('phaseLabel');
+const barVal=document.getElementById('barVal');
+const bestVal=document.getElementById('bestVal');
+const attemptVal=document.getElementById('attemptVal');
+const actionBtn=document.getElementById('actionBtn');
+
+const BEST_KEY='polevault_best';
+let best=parseFloat(localStorage.getItem(BEST_KEY)||'0');
+bestVal.textContent=best.toFixed(2);
+
+const GROUND=240;
+const RUNWAY_LEN=620;
+const PLANT_ZONE_START=520; // athlete x where plant zone begins
+const PLANT_ZONE_END=580;
+
+let phase='idle'; // idle, sprint, plant-wait, vaulting, cleared, failed
+let athleteX=40;
+let speed=0; // 0..1
+let barHeight=1.0; // meters
+let attempt=1;
+let vaultProgress=0; // 0..1 during vaulting animation
+let poleAngle=0;
+let failReason='';
+let clearedThisAttempt=false;
+let releaseWindowCenter=0.5,releaseWindowWidth=0.22; // as fraction of vaultProgress
+let raf=null;
+
+function reset(){
+  phase='idle';athleteX=40;speed=0;barHeight=1.0;attempt=1;vaultProgress=0;
+  actionBtn.textContent=I18N.t('sprint_btn','SPRINT!');
+  actionBtn.classList.remove('disabled');
+  phaseLabel.textContent=I18N.t('phase_ready','Get ready to sprint!');
+  updateHud();
+}
+function updateHud(){
+  barVal.textContent=barHeight.toFixed(2);
+  bestVal.textContent=best.toFixed(2);
+  attemptVal.textContent=attempt;
+}
+
+function startSprint(){
+  if(phase!=='idle')return;
+  phase='sprint';
+  actionBtn.textContent=I18N.t('go_btn','GO! (tap fast)');
+  phaseLabel.textContent=I18N.t('phase_sprint','Tap/press rapidly to sprint!');
+}
+
+function handleAction(){
+  if(phase==='idle'){startSprint();SFX.click();return;}
+  if(phase==='sprint'){
+    speed=Math.min(1,speed+0.09);
+    athleteX+=6+speed*10;
+    SFX.tick();
+    if(athleteX>=PLANT_ZONE_END+40){
+      // ran out of runway without planting
+      failVault(I18N.t('fail_noplant','You ran out of runway — plant sooner!'));
+    }
+    return;
+  }
+  if(phase==='plant-wait'){
+    // this press is the plant attempt
+    if(athleteX>=PLANT_ZONE_START&&athleteX<=PLANT_ZONE_END){
+      plantPole();
+    }else if(athleteX<PLANT_ZONE_START){
+      failVault(I18N.t('fail_early_plant','Planted too early — you lost momentum!'));
+    }else{
+      failVault(I18N.t('fail_late_plant','Planted too late — you overran the box!'));
+    }
+    return;
+  }
+  if(phase==='vaulting'){
+    attemptRelease();
+    return;
+  }
+}
+
+function plantPole(){
+  phase='plant-wait-locked';
+  SFX.swoosh();
+  phase='vaulting';
+  vaultProgress=0;
+  releaseWindowWidth=Math.max(0.08,0.24-attempt*0.012);
+  phaseLabel.textContent=I18N.t('phase_release','Press to RELEASE at the peak!');
+  actionBtn.textContent=I18N.t('release_btn','RELEASE!');
+}
+
+function attemptRelease(){
+  const diff=Math.abs(vaultProgress-releaseWindowCenter);
+  if(diff<=releaseWindowWidth/2){
+    clearBar();
+  }else if(vaultProgress<releaseWindowCenter){
+    failVault(I18N.t('fail_early_release','Released too early — you didn\'t clear the bar!'));
+  }else{
+    failVault(I18N.t('fail_late_release','Released too late — you knocked the bar!'));
+  }
+}
+
+function clearBar(){
+  phase='cleared';
+  SFX.win();
+  if(barHeight>best){best=barHeight;localStorage.setItem(BEST_KEY,best.toFixed(2));}
+  phaseLabel.textContent=I18N.t('cleared_label','Cleared {h}m!').replace('{h}',barHeight.toFixed(2));
+  actionBtn.classList.add('disabled');
+  setTimeout(()=>{
+    barHeight+=0.15;
+    attempt++;
+    athleteX=40;speed=0;phase='idle';
+    actionBtn.textContent=I18N.t('sprint_btn','SPRINT!');
+    actionBtn.classList.remove('disabled');
+    phaseLabel.textContent=I18N.t('phase_ready_next','Next height: {h}m — get ready!').replace('{h}',barHeight.toFixed(2));
+    updateHud();
+  },1400);
+}
+
+function failVault(reason){
+  phase='failed';
+  failReason=reason;
+  SFX.fail();
+  phaseLabel.textContent=reason;
+  actionBtn.classList.add('disabled');
+  setTimeout(()=>{
+    attempt++;
+    athleteX=40;speed=0;vaultProgress=0;phase='idle';
+    // slight height forgiveness after fail so game stays fun, but never below 1.0
+    actionBtn.textContent=I18N.t('sprint_btn','SPRINT!');
+    actionBtn.classList.remove('disabled');
+    phaseLabel.textContent=I18N.t('phase_retry','Try again — bar stays at {h}m').replace('{h}',barHeight.toFixed(2));
+    updateHud();
+  },1600);
+}
+
+actionBtn.addEventListener('pointerdown',e=>{e.preventDefault();handleAction();});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();handleAction();}
+});
+
+function decaySpeed(dt){
+  if(phase==='sprint'){
+    speed=Math.max(0,speed-0.006*dt);
+    if(speed<=0.001&&athleteX<PLANT_ZONE_START-100){
+      // stalled too early, gently nudge back to allow retry without hard fail spam
+    }
+    if(athleteX>=PLANT_ZONE_START&&phase==='sprint'){
+      phase='plant-wait';
+      phaseLabel.textContent=I18N.t('phase_plant','PLANT NOW!');
+      actionBtn.textContent=I18N.t('plant_btn','PLANT!');
+    }
+  }
+  if(phase==='vaulting'){
+    vaultProgress=Math.min(1,vaultProgress+0.012*dt);
+    poleAngle=Math.min(1,vaultProgress*1.3);
+    if(vaultProgress>=1){
+      failVault(I18N.t('fail_toolate','You never released — fell back down!'));
+    }
+  }
+}
+
+function drawTrack(){
+  ctx.clearRect(0,0,800,280);
+  // sky/grass handled by CSS background on canvas via gradient - draw runway
+  ctx.fillStyle='rgba(255,255,255,.35)';
+  ctx.fillRect(0,GROUND,800,4);
+  // plant box marker
+  const scale=800/700;
+  const zoneX1=40+PLANT_ZONE_START*scale*0; // unused, keep simple mapping below
+}
+
+function worldToCanvasX(x){
+  // map athleteX range [0, PLANT_ZONE_END+60] to canvas [40,760]
+  return 40+(x/(PLANT_ZONE_END+80))*680;
+}
+
+function drawScene(){
+  ctx.clearRect(0,0,800,280);
+  // plant box
+  const boxX1=worldToCanvasX(PLANT_ZONE_START),boxX2=worldToCanvasX(PLANT_ZONE_END);
+  ctx.fillStyle='rgba(255,255,255,.4)';
+  ctx.fillRect(boxX1,GROUND-4,boxX2-boxX1,8);
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;
+  ctx.strokeRect(boxX1,GROUND-4,boxX2-boxX1,8);
+
+  // bar & standards
+  const standardX=boxX2+70;
+  const barY=GROUND-60-Math.min(190,(barHeight-1)*70);
+  ctx.strokeStyle='#c9302c';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(standardX-30,GROUND);ctx.lineTo(standardX-30,barY);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(standardX+30,GROUND);ctx.lineTo(standardX+30,barY);ctx.stroke();
+  ctx.fillStyle='#ffe066';
+  ctx.fillRect(standardX-34,barY-3,68,6);
+
+  // athlete
+  let ax=worldToCanvasX(athleteX);
+  let ay=GROUND;
+  if(phase==='vaulting'){
+    // arc up and over the bar
+    const t=vaultProgress;
+    ax=boxX2+t*(standardX-boxX2+40);
+    ay=GROUND-Math.sin(Math.min(1,t*1.15)*Math.PI)*(150+barHeight*10);
+    if(phase==='cleared')ay=Math.min(ay,barY-20);
+  } else if(phase==='cleared'){
+    ax=standardX+50;ay=GROUND-20;
+  } else if(phase==='failed'){
+    ax=Math.min(ax,standardX-10);
+  }
+
+  ctx.save();
+  ctx.translate(ax,ay);
+  // simple runner/vaulter figure
+  ctx.fillStyle='#1a1a2e';
+  ctx.beginPath();ctx.arc(0,-46,10,0,Math.PI*2);ctx.fill(); // head
+  ctx.strokeStyle='#e94560';ctx.lineWidth=5;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(0,-36);ctx.lineTo(0,-8);ctx.stroke(); // torso
+  const legSwing=phase==='sprint'?Math.sin(athleteX*0.5)*14:phase==='vaulting'?12:0;
+  ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(-10+legSwing,10);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-8);ctx.lineTo(10-legSwing,10);ctx.stroke();
+  // pole
+  if(phase==='sprint'||phase==='plant-wait'){
+    ctx.strokeStyle='#8d6e63';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(-4,-30);ctx.lineTo(46,GROUND-ay+2);ctx.stroke();
+  } else if(phase==='vaulting'){
+    const bend=Math.sin(vaultProgress*Math.PI)*24;
+    ctx.strokeStyle='#8d6e63';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(-4,-30);
+    ctx.quadraticCurveTo(20-bend,10,40,GROUND-ay+4);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // speed meter
+  ctx.fillStyle='rgba(0,0,0,.25)';
+  ctx.fillRect(40,20,200,16);
+  ctx.fillStyle='#ff6b35';
+  ctx.fillRect(40,20,200*speed,16);
+  ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.strokeRect(40,20,200,16);
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('speed_label','SPEED'),42,15);
+
+  // release window indicator during vaulting
+  if(phase==='vaulting'){
+    ctx.fillStyle='rgba(0,0,0,.25)';
+    ctx.fillRect(560,20,200,16);
+    const winX1=560+200*(releaseWindowCenter-releaseWindowWidth/2);
+    const winW=200*releaseWindowWidth;
+    ctx.fillStyle='#7ec850';
+    ctx.fillRect(winX1,20,winW,16);
+    ctx.fillStyle='#ffe066';
+    ctx.fillRect(560+200*vaultProgress-2,18,4,20);
+    ctx.strokeStyle='#fff';ctx.strokeRect(560,20,200,16);
+    ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='left';
+    ctx.fillText(I18N.t('release_label','RELEASE WINDOW'),562,15);
+  }
+}
+
+let lastTime=null;
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+  decaySpeed(dt);
+  drawScene();
+  raf=requestAnimationFrame(loop);
+}
+reset();
+raf=requestAnimationFrame(loop);
+</script></body></html>

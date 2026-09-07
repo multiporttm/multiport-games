@@ -1,0 +1,315 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Text Adventure</title><meta name="description" content="Play Text Adventure free online — Explore a mysterious mansion room by room, click command buttons to look, take items, move through exits, and use items to solve puzzles and escape."><link rel="canonical" href="https://games.multiportllc.com/games/textadventure"><meta property="og:title" content="Text Adventure - Multiport Games"><meta property="og:description" content="Play Text Adventure free online — Explore a mysterious mansion room by room, click command buttons to look, take items, move through exits, and use items to solve puzzles and escape."><meta property="og:url" content="https://games.multiportllc.com/games/textadventure"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Text Adventure","description":"Play Text Adventure free online instantly. Explore a mysterious mansion room by room, click command buttons to look, take items, move through exits, and use items to solve puzzles and escape. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/textadventure","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#16213e;border-radius:14px;padding:16px;max-width:560px;margin:0 auto}
+#roomName{color:#ffd54f;font-size:1.2rem;font-weight:800;text-align:center;margin-bottom:6px}
+#log{background:#0d1730;border-radius:10px;padding:12px;height:220px;overflow-y:auto;color:#e8e8f0;font-size:.95rem;line-height:1.5;margin-bottom:10px;white-space:pre-wrap}
+#log .sys{color:#7ec850}
+#log .err{color:#ff6b6b}
+#inv{color:#ce93d8;font-size:.85rem;margin-bottom:8px;min-height:1.4em}
+#exits{color:#7ef9ff;font-size:.85rem;margin-bottom:10px}
+#stats{color:#aaa;font-size:.8rem;text-align:center;margin-bottom:8px}
+.btnrow{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:8px}
+.cmdbtn{background:#e94560;border:none;border-radius:16px;color:#fff;padding:8px 14px;font-size:.85rem;cursor:pointer}
+.cmdbtn:disabled{opacity:.35;cursor:not-allowed}
+.cmdbtn.dir{background:#4a5a9e}
+.cmdbtn.item{background:#2b7a4b}
+#itemPanel{display:none;background:#0d1730;border-radius:10px;padding:10px;margin-top:6px;text-align:center}
+#itemPanel.show{display:block}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Text Adventure</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="roomName">—</div>
+      <div id="stats">Rooms explored: 0 | Puzzles solved: 0</div>
+      <div id="log"></div>
+      <div id="inv">Inventory: (empty)</div>
+      <div id="exits"></div>
+      <div class="btnrow" id="dirRow"></div>
+      <div class="btnrow" id="actionRow"></div>
+      <div id="itemPanel">
+        <div style="color:#fff;margin-bottom:6px" id="itemPanelLabel">Use item on:</div>
+        <div class="btnrow" id="itemTargets"></div>
+        <button class="cmdbtn" id="cancelUse" style="background:#555">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Read the room description, then click command buttons — Look, Take, go North/South/East/West, Use an item — to explore a small mansion, pick up items, solve simple item-based puzzles (like using a key on a locked door), and find your way to the exit. Rooms explored and puzzles solved are tracked as your score.</div>
+</div>
+<script>
+const ROOMS={
+  hall:{
+    name:'Entrance Hall',
+    desc:'A dusty entrance hall with a grand staircase. Cobwebs cling to a dim chandelier. A door leads north, and a locked door leads east.',
+    exits:{north:'library', east:'studyDoorLocked'},
+    items:['rustyKey']
+  },
+  library:{
+    name:'Library',
+    desc:'Shelves of moldering books line the walls. Something glints on a high shelf. Exits lead south and west.',
+    exits:{south:'hall', west:'kitchen'},
+    items:['candle'],
+    onFirstEnter:'firstLibrary'
+  },
+  kitchen:{
+    name:'Kitchen',
+    desc:'An old kitchen, pots hanging from the ceiling. A dark cellar door sits closed on the floor. Exit is east.',
+    exits:{east:'library'},
+    items:['matchbox'],
+    locked:{dir:null}
+  },
+  study:{
+    name:'Study',
+    desc:'A cozy study with a heavy oak desk. A locked chest sits in the corner. The hall is west.',
+    exits:{west:'hall'},
+    items:['brassKey']
+  },
+  cellar:{
+    name:'Dark Cellar',
+    desc:"It's pitch black down here — you can barely see. Something valuable might be hidden in the shadows.",
+    exits:{up:'kitchen'},
+    items:[],
+    needsLight:true
+  },
+  treasureRoom:{
+    name:'Treasure Room',
+    desc:"Gold coins spill from an open chest! You found the treasure and solved the mansion's mystery. You win!",
+    exits:{},
+    items:['goldTreasure'],
+    isWin:true
+  }
+};
+
+const ITEMS={
+  rustyKey:{name:'Rusty Key',desc:'An old rusty key.'},
+  candle:{name:'Candle',desc:'An unlit candle.'},
+  matchbox:{name:'Matchbox',desc:'A box of matches.'},
+  brassKey:{name:'Brass Key',desc:'A shiny brass key — looks important.'},
+  litCandle:{name:'Lit Candle',desc:'A candle, burning bright.'},
+  goldTreasure:{name:'Gold Treasure',desc:'A heap of gold coins.'}
+};
+
+let state;
+function newGame(){
+  state={
+    room:'hall',
+    inventory:[],
+    visited:new Set(),
+    roomItems:{}, // roomId -> array of item ids remaining on floor
+    flags:{studyUnlocked:false,cellarUnlocked:false,candleLit:false},
+    puzzlesSolved:0,
+    log:[],
+    pendingUse:null
+  };
+  for(const id in ROOMS)state.roomItems[id]=[...ROOMS[id].items];
+  logMsg('sys',"You awaken in a strange mansion. Explore, gather items, and find your way to the treasure.");
+  enterRoom('hall',true);
+  render();
+}
+
+function logMsg(cls,text){
+  state.log.push({cls,text});
+  if(state.log.length>60)state.log.shift();
+}
+
+function enterRoom(id,silent){
+  state.room=id;
+  const first=!state.visited.has(id);
+  state.visited.add(id);
+  const r=ROOMS[id];
+  if(!silent)logMsg('sys',I18N.t('ta_enter','You move to the {room}.').replace('{room}',I18N.t('ta_room_'+id,r.name)));
+  if(first){
+    SFX.tick();
+  }
+}
+
+function currentRoom(){return ROOMS[state.room];}
+
+function hasItem(id){return state.inventory.includes(id);}
+
+function look(){
+  const r=currentRoom();
+  logMsg('room',I18N.t('ta_desc_'+state.room,r.desc));
+  const floorItems=state.roomItems[state.room];
+  if(state.room==='cellar'&&!state.flags.candleLit){
+    logMsg('err',I18N.t('ta_toodark',"It's too dark to see anything clearly. You'll need a light source."));
+  }else if(floorItems&&floorItems.length){
+    logMsg('sys',I18N.t('ta_see_items','You see: {items}').replace('{items}',floorItems.map(i=>I18N.t('ta_item_'+i,ITEMS[i].name)).join(', ')));
+  }else{
+    logMsg('sys',I18N.t('ta_nothing','There is nothing else of interest here.'));
+  }
+  if(r.isWin&&!state.won){
+    state.won=true;
+    state.puzzlesSolved++;
+    SFX.win();
+    logMsg('sys',I18N.t('ta_win','🎉 Congratulations — you escaped the mansion with the treasure!'));
+  }
+  render();
+}
+
+function take(){
+  const floorItems=state.roomItems[state.room];
+  if(state.room==='cellar'&&!state.flags.candleLit){
+    logMsg('err',I18N.t('ta_toodark2',"You can't see well enough to take anything."));
+    render();return;
+  }
+  if(!floorItems||floorItems.length===0){
+    logMsg('err',I18N.t('ta_nothing_take','There is nothing here to take.'));
+    render();return;
+  }
+  const id=floorItems.shift();
+  state.inventory.push(id);
+  SFX.coin();
+  logMsg('sys',I18N.t('ta_took','You take the {item}.').replace('{item}',I18N.t('ta_item_'+id,ITEMS[id].name)));
+  render();
+}
+
+function go(dir){
+  const r=currentRoom();
+  if(dir==='east'&&state.room==='hall'&&!state.flags.studyUnlocked){
+    logMsg('err',I18N.t('ta_locked_door','The east door is locked. You need a key.'));
+    render();return;
+  }
+  if(dir==='down'&&state.room==='kitchen'&&!state.flags.cellarUnlocked){
+    logMsg('err',I18N.t('ta_locked_cellar','The cellar door is stuck shut.'));
+    render();return;
+  }
+  const dest=r.exits[dir];
+  if(!dest){
+    logMsg('err',I18N.t('ta_no_exit',"You can't go that way."));
+    render();return;
+  }
+  enterRoom(dest);
+  render();
+}
+
+function beginUse(){
+  if(state.inventory.length===0){
+    logMsg('err',I18N.t('ta_no_items','You have no items to use.'));
+    render();return;
+  }
+  state.pendingUse='item';
+  render();
+}
+
+function useItemOn(itemId){
+  state.pendingUse=null;
+  const r=currentRoom();
+  let handled=false;
+
+  if(itemId==='rustyKey'&&state.room==='hall'&&!state.flags.studyUnlocked){
+    state.flags.studyUnlocked=true;
+    state.inventory=state.inventory.filter(i=>i!==itemId);
+    ROOMS.hall.exits.east='study';
+    state.puzzlesSolved++;
+    SFX.success();
+    logMsg('sys',I18N.t('ta_unlock_study','You use the rusty key on the east door. It creaks open, revealing a study!'));
+    handled=true;
+  } else if(itemId==='matchbox'&&hasItem('candle')&&!state.flags.candleLit){
+    state.inventory=state.inventory.filter(i=>i!=='candle'&&i!=='matchbox');
+    state.inventory.push('litCandle');
+    state.flags.candleLit=true;
+    state.puzzlesSolved++;
+    SFX.success();
+    logMsg('sys',I18N.t('ta_light_candle','You strike a match and light the candle. Now you can see in the dark!'));
+    handled=true;
+  } else if(itemId==='brassKey'&&state.room==='kitchen'&&!state.flags.cellarUnlocked){
+    state.flags.cellarUnlocked=true;
+    state.inventory=state.inventory.filter(i=>i!==itemId);
+    ROOMS.kitchen.exits.down='cellar';
+    state.puzzlesSolved++;
+    SFX.success();
+    logMsg('sys',I18N.t('ta_unlock_cellar','You use the brass key on the cellar door. It swings open!'));
+    handled=true;
+  } else if(itemId==='litCandle'&&state.room==='cellar'){
+    state.roomItems.cellar=['goldTreasure'];
+    ROOMS.cellar.exits.treasure='treasureRoom';
+    SFX.powerup();
+    logMsg('sys',I18N.t('ta_candle_light_cellar','The candlelight reveals a glimmering chest in the corner! Take it, then head deeper.'));
+    handled=true;
+  }
+
+  if(!handled){
+    SFX.error();
+    logMsg('err',I18N.t('ta_nothing_happens','Nothing happens.'));
+  }
+  render();
+}
+
+function inventoryDesc(){
+  if(state.inventory.length===0)return I18N.t('ta_inv_empty','Inventory: (empty)');
+  return I18N.t('ta_inv_label','Inventory: {items}').replace('{items}',state.inventory.map(i=>I18N.t('ta_item_'+i,ITEMS[i].name)).join(', '));
+}
+
+function render(){
+  document.getElementById('roomName').textContent=I18N.t('ta_room_'+state.room,currentRoom().name);
+  document.getElementById('stats').textContent=
+    I18N.t('ta_stats','Rooms explored: {r} | Puzzles solved: {p}')
+      .replace('{r}',state.visited.size).replace('{p}',state.puzzlesSolved);
+  const logEl=document.getElementById('log');
+  logEl.innerHTML=state.log.map(l=>`<div class="${l.cls==='err'?'err':(l.cls==='sys'?'sys':'')}">${l.text}</div>`).join('');
+  logEl.scrollTop=logEl.scrollHeight;
+  document.getElementById('inv').textContent=inventoryDesc();
+
+  const r=currentRoom();
+  const exitDirs=Object.keys(r.exits);
+  document.getElementById('exits').textContent=
+    I18N.t('ta_exits','Exits: {dirs}').replace('{dirs}', exitDirs.length? exitDirs.map(d=>I18N.t('ta_dir_'+d,d)).join(', '):I18N.t('ta_no_exits','none'));
+
+  const dirRow=document.getElementById('dirRow');
+  dirRow.innerHTML='';
+  ['north','south','east','west','up','down','treasure'].forEach(d=>{
+    if(r.exits[d]!==undefined || (d in r.exits)){
+      const b=document.createElement('button');
+      b.className='cmdbtn dir';
+      b.textContent='➡ '+I18N.t('ta_dir_'+d,d[0].toUpperCase()+d.slice(1));
+      b.onclick=()=>go(d);
+      dirRow.appendChild(b);
+    }
+  });
+
+  const actionRow=document.getElementById('actionRow');
+  actionRow.innerHTML='';
+  const lookBtn=document.createElement('button');
+  lookBtn.className='cmdbtn';lookBtn.textContent=I18N.t('ta_look','Look');lookBtn.onclick=look;
+  actionRow.appendChild(lookBtn);
+  const takeBtn=document.createElement('button');
+  takeBtn.className='cmdbtn';takeBtn.textContent=I18N.t('ta_take','Take');takeBtn.onclick=take;
+  actionRow.appendChild(takeBtn);
+  const useBtn=document.createElement('button');
+  useBtn.className='cmdbtn item';useBtn.textContent=I18N.t('ta_use','Use Item');useBtn.onclick=beginUse;
+  actionRow.appendChild(useBtn);
+  const restartBtn=document.createElement('button');
+  restartBtn.className='cmdbtn';restartBtn.style.background='#555';restartBtn.textContent=I18N.t('ta_restart','Restart');
+  restartBtn.onclick=()=>{newGame();};
+  actionRow.appendChild(restartBtn);
+
+  const panel=document.getElementById('itemPanel');
+  if(state.pendingUse){
+    panel.classList.add('show');
+    const targets=document.getElementById('itemTargets');
+    targets.innerHTML='';
+    state.inventory.forEach(id=>{
+      const b=document.createElement('button');
+      b.className='cmdbtn item';
+      b.textContent=I18N.t('ta_item_'+id,ITEMS[id].name);
+      b.onclick=()=>useItemOn(id);
+      targets.appendChild(b);
+    });
+  }else{
+    panel.classList.remove('show');
+  }
+}
+
+document.getElementById('cancelUse').onclick=()=>{state.pendingUse=null;render();};
+
+newGame();
+</script></body></html>

@@ -1,0 +1,317 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Pixel Platformer</title><meta name="description" content="Play Pixel Platformer free online — Use Arrow Keys/WASD or the on-screen buttons to run and jump across platforms, dodge patrolling enemies and bottomless pits, and collect coins across increasingly tricky levels."><link rel="canonical" href="https://games.multiportllc.com/games/pixelplatformer"><meta property="og:title" content="Pixel Platformer - Multiport Games"><meta property="og:description" content="Play Pixel Platformer free online — Use Arrow Keys/WASD or the on-screen buttons to run and jump across platforms, dodge patrolling enemies and bottomless pits, and collect coins across increasingly tricky levels."><meta property="og:url" content="https://games.multiportllc.com/games/pixelplatformer"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Pixel Platformer","description":"Play Pixel Platformer free online instantly. Use Arrow Keys/WASD or the on-screen buttons to run and jump across platforms, dodge patrolling enemies and bottomless pits, and collect coins across increasingly tricky levels. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/pixelplatformer","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{display:block;border-radius:8px;margin:0 auto;background:#5c94fc;touch-action:none}
+#ui{color:#ffd54f;text-align:center;padding:8px;font-size:1.05rem;font-weight:700}
+#pad{display:flex;justify-content:space-between;align-items:center;max-width:400px;margin:10px auto 4px;user-select:none;-webkit-user-select:none}
+#pad .side{display:flex;gap:6px}
+#pad button{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);border-radius:12px;color:#fff;font-size:1.4rem;cursor:pointer;-webkit-tap-highlight-color:transparent;width:58px;height:56px}
+#pad button:active{background:rgba(255,255,255,.25)}
+#pad .jump{width:80px;height:56px;font-size:1.1rem;font-weight:800}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Pixel Platformer</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="ui">Coins: 0 | Level: 1 | Best: 0</div>
+    <canvas id="c" width="400" height="300"></canvas>
+    <div id="pad">
+      <div class="side">
+        <button id="btnL">⬅️</button>
+        <button id="btnR">➡️</button>
+      </div>
+      <button class="jump" id="btnJ">JUMP</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Arrow Keys/WASD (or the on-screen buttons) to move; Space/Up/Jump button to jump. Cross platforms, avoid pits and patrolling enemies, and grab coins to reach the flag. Falling or touching an enemy ends the run — clear the flag to advance to the next level.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=400,H=300,TILE=20;
+const GRAVITY=0.6,MOVE=3.2,JUMP=-11;
+
+let best=parseInt(localStorage.getItem('pixelplatformer_best')||'0',10);
+let coins=0,level=1,gameOver=false,won=false,started=false,camX=0;
+let player,platforms,enemies,pits,coinObjs,flag,levelW;
+const keys={};
+
+function buildLevel(n){
+  levelW=900+n*180;
+  platforms=[{x:0,y:260,w:200,h:40}];
+  let x=200;
+  const groundY=260;
+  const gapChance=Math.min(0.55,0.18+n*0.05);
+  while(x<levelW-160){
+    if(Math.random()<gapChance){
+      const gap=40+Math.random()*30+Math.min(n*3,40);
+      x+=gap;
+      continue;
+    }
+    const segW=70+Math.random()*90;
+    const yOff=Math.random()<0.35?-(40+Math.random()*40):0;
+    platforms.push({x, y:groundY+yOff, w:segW, h:40});
+    x+=segW;
+  }
+  platforms.push({x:levelW-160,y:260,w:200,h:40});
+
+  enemies=[];
+  const enemyCount=2+Math.min(n,7);
+  for(let i=0;i<enemyCount;i++){
+    const p=platforms[1+Math.floor(Math.random()*(platforms.length-2))];
+    if(!p||p.w<50)continue;
+    enemies.push({x:p.x+10,y:p.y-16,w:16,h:16,minX:p.x+4,maxX:p.x+p.w-20,dir:Math.random()<0.5?1:-1,speed:0.8+Math.random()*0.6+n*0.06});
+  }
+
+  coinObjs=[];
+  platforms.forEach((p,i)=>{
+    if(i===0)return;
+    if(Math.random()<0.8){
+      const cx=p.x+p.w/2;
+      coinObjs.push({x:cx,y:p.y-24,w:12,h:12,taken:false});
+    }
+  });
+
+  pits=[];
+  for(let i=0;i<platforms.length-1;i++){
+    const a=platforms[i],b=platforms[i+1];
+    const gapStart=a.x+a.w, gapEnd=b.x;
+    if(gapEnd>gapStart+2)pits.push({x:gapStart,w:gapEnd-gapStart});
+  }
+
+  const last=platforms[platforms.length-1];
+  flag={x:last.x+last.w-40,y:last.y-50,w:14,h:50};
+
+  player={x:20,y:200,w:16,h:20,vx:0,vy:0,onGround:false,dead:false};
+  camX=0;
+}
+
+function reset(){
+  coins=0;level=1;gameOver=false;won=false;started=false;
+  buildLevel(level);
+}
+reset();
+
+function nextLevel(){
+  level++;
+  SFX.levelup();
+  buildLevel(level);
+  won=false;
+}
+
+function jumpAction(){
+  if(!started){started=true;return;}
+  if(gameOver){ reset(); return; }
+  if(won){ nextLevel(); return; }
+  if(player.onGround){player.vy=JUMP;player.onGround=false;SFX.jump();}
+}
+
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(['arrowleft','arrowright','arrowup',' ','w','a','d','spacebar'].includes(k)||e.code==='Space')e.preventDefault();
+  if(k==='arrowleft'||k==='a')keys.left=true;
+  if(k==='arrowright'||k==='d')keys.right=true;
+  if(k==='arrowup'||k==='w'||e.code==='Space')jumpAction();
+});
+document.addEventListener('keyup',e=>{
+  const k=e.key.toLowerCase();
+  if(k==='arrowleft'||k==='a')keys.left=false;
+  if(k==='arrowright'||k==='d')keys.right=false;
+});
+
+function bindHold(el,onDown,onUp){
+  el.addEventListener('mousedown',e=>{e.preventDefault();onDown();});
+  el.addEventListener('mouseup',e=>{e.preventDefault();onUp&&onUp();});
+  el.addEventListener('mouseleave',()=>{onUp&&onUp();});
+  el.addEventListener('touchstart',e=>{e.preventDefault();onDown();},{passive:false});
+  el.addEventListener('touchend',e=>{e.preventDefault();onUp&&onUp();},{passive:false});
+}
+bindHold(document.getElementById('btnL'),()=>keys.left=true,()=>keys.left=false);
+bindHold(document.getElementById('btnR'),()=>keys.right=true,()=>keys.right=false);
+bindHold(document.getElementById('btnJ'),()=>jumpAction());
+c.addEventListener('touchstart',e=>{e.preventDefault();if(!started||gameOver)jumpAction();},{passive:false});
+c.addEventListener('click',()=>{if(!started||gameOver)jumpAction();});
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function updateUI(){
+  document.getElementById('ui').textContent=
+    I18N.t('platformer_ui','Coins: {c} | Level: {l} | Best: {b}')
+      .replace('{c}',coins).replace('{l}',level).replace('{b}',best);
+}
+
+function update(dt){
+  if(keys.left){player.vx=-MOVE;}
+  else if(keys.right){player.vx=MOVE;}
+  else player.vx*=0.7;
+
+  player.vy+=GRAVITY*dt;
+  player.x+=player.vx*dt;
+  player.y+=player.vy*dt;
+  if(player.x<0)player.x=0;
+
+  player.onGround=false;
+  for(const p of platforms){
+    if(player.x+player.w>p.x&&player.x<p.x+p.w){
+      if(player.vy>=0&&player.y+player.h>=p.y&&player.y+player.h-player.vy*dt<=p.y+1){
+        player.y=p.y-player.h;player.vy=0;player.onGround=true;
+      }
+    }
+  }
+
+  // fell in pit
+  if(player.y>H+40){
+    gameOver=true;won=false;SFX.lose();
+  }
+
+  // enemies
+  enemies.forEach(en=>{
+    en.x+=en.dir*en.speed*dt;
+    if(en.x<en.minX){en.x=en.minX;en.dir=1;}
+    if(en.x>en.maxX){en.x=en.maxX;en.dir=-1;}
+    if(!gameOver&&rectsOverlap(player,en)){gameOver=true;won=false;SFX.hurt();}
+  });
+
+  // coins
+  coinObjs.forEach(co=>{
+    if(!co.taken&&rectsOverlap(player,{x:co.x-6,y:co.y-6,w:co.w,h:co.h})){
+      co.taken=true;coins++;SFX.coin();
+      if(coins>best){best=coins;localStorage.setItem('pixelplatformer_best',String(best));}
+    }
+  });
+
+  // flag
+  if(rectsOverlap(player,flag)){
+    won=true;
+  }
+
+  camX=Math.max(0,Math.min(levelW-W,player.x-W/2));
+}
+
+function drawBG(){
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#5c94fc');g.addColorStop(1,'#a7d0ff');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // parallax clouds
+  ctx.fillStyle='rgba(255,255,255,.85)';
+  for(let i=0;i<5;i++){
+    const cx=((i*180 - camX*0.3)%(W+160))-80;
+    ctx.beginPath();ctx.ellipse(cx,40+((i%3)*20),26,14,0,0,7);ctx.fill();
+  }
+}
+
+function drawPlayer(){
+  const px=player.x-camX,py=player.y;
+  ctx.fillStyle='#e64545';
+  ctx.fillRect(px,py+8,player.w,player.h-8);
+  ctx.fillStyle='#ffd9b3';
+  ctx.fillRect(px+2,py,player.w-4,10);
+  ctx.fillStyle='#1a1a2e';
+  ctx.fillRect(px+player.w-6,py+3,3,3);
+  ctx.fillStyle='#3d2b1f';
+  ctx.fillRect(px+4,py+player.h,4,4);
+  ctx.fillRect(px+player.w-8,py+player.h,4,4);
+}
+
+function drawPlatform(p){
+  ctx.fillStyle='#7a4a2b';
+  ctx.fillRect(p.x-camX,p.y,p.w,p.h);
+  ctx.fillStyle='#5aaa30';
+  ctx.fillRect(p.x-camX,p.y,p.w,6);
+}
+
+function drawEnemy(en){
+  ctx.fillStyle='#8b2fc9';
+  ctx.fillRect(en.x-camX,en.y,en.w,en.h);
+  ctx.fillStyle='#fff';
+  ctx.fillRect(en.x-camX+2,en.y+3,3,3);
+  ctx.fillRect(en.x-camX+en.w-5,en.y+3,3,3);
+}
+
+function drawCoin(co){
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(co.x-camX,co.y,7,0,7);ctx.fill();
+  ctx.fillStyle='#ffb300';
+  ctx.beginPath();ctx.arc(co.x-camX,co.y,3,0,7);ctx.fill();
+}
+
+function drawFlag(){
+  const fx=flag.x-camX;
+  ctx.fillStyle='#8b5a2b';
+  ctx.fillRect(fx,flag.y,4,flag.h);
+  ctx.fillStyle='#4caf50';
+  ctx.beginPath();
+  ctx.moveTo(fx+4,flag.y);ctx.lineTo(fx+28,flag.y+10);ctx.lineTo(fx+4,flag.y+20);
+  ctx.fill();
+}
+
+let lastTime=null;
+function loop(t){
+  const dt=lastTime===null?1:Math.min((t-lastTime)/16.6667,2.5);
+  lastTime=t;
+
+  drawBG();
+
+  if(!started){
+    platforms.forEach(drawPlatform);
+    drawFlag();
+    coinObjs.forEach(co=>{if(!co.taken)drawCoin(co);});
+    enemies.forEach(drawEnemy);
+    drawPlayer();
+    ctx.fillStyle='rgba(0,0,0,.35)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 22px monospace';ctx.textAlign='center';
+    ctx.fillText(I18N.t('platformer_title','PIXEL PLATFORMER'),W/2,110);
+    ctx.font='16px monospace';
+    ctx.fillText(I18N.t('platformer_start','Press Jump / Space / Tap to start'),W/2,140);
+    updateUI();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    platforms.forEach(drawPlatform);
+    coinObjs.forEach(co=>{if(!co.taken)drawCoin(co);});
+    enemies.forEach(drawEnemy);
+    drawPlayer();
+    ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px monospace';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,120);
+    ctx.font='16px monospace';
+    ctx.fillText(I18N.t('restart_hint2','Tap / Space to restart'),W/2,150);
+    updateUI();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(won){
+    platforms.forEach(drawPlatform);
+    drawFlag();
+    drawPlayer();
+    ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 24px monospace';ctx.textAlign='center';
+    ctx.fillText(I18N.t('level_clear','LEVEL CLEAR!'),W/2,120);
+    ctx.font='16px monospace';
+    ctx.fillText(I18N.t('next_level_hint','Tap / Space for next level'),W/2,150);
+    updateUI();
+    if(started&&(keys.left||keys.right)){/*no-op*/}
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  update(dt);
+  platforms.forEach(drawPlatform);
+  drawFlag();
+  coinObjs.forEach(co=>{if(!co.taken)drawCoin(co);});
+  enemies.forEach(drawEnemy);
+  drawPlayer();
+  updateUI();
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script></body></html>
