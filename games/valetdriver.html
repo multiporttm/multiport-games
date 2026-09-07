@@ -1,0 +1,218 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Valet Driver</title><meta name="description" content="Play Valet Driver free online — Click an arriving car, then click an open parking spot to park it. When an owner returns, click their ticket then click their car to retrieve it. Faster, busier lots each round!"><link rel="canonical" href="https://games.multiportllc.com/games/valetdriver"><meta property="og:title" content="Valet Driver - Multiport Games"><meta property="og:description" content="Play Valet Driver free online — Click an arriving car, then click an open parking spot to park it. When an owner returns, click their ticket then click their car to retrieve it. Faster, busier lots each round!"><meta property="og:url" content="https://games.multiportllc.com/games/valetdriver"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Valet Driver","description":"Play Valet Driver free online instantly. Click an arriving car, then click an open parking spot to park it. When an owner returns, click their ticket then click their car to retrieve it. Faster, busier lots each round! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/valetdriver","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#16213e;border-radius:14px;padding:14px;text-align:center;max-width:680px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#e0e6ff;font-weight:800;font-size:.95rem;padding:0 4px 8px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+#arrivals{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;min-height:56px;margin-bottom:8px;padding:6px;background:#0d1730;border-radius:10px}
+.car-chip{width:46px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.3rem;cursor:pointer;border:3px solid transparent;position:relative}
+.car-chip.selected{border-color:#ffd54f;transform:scale(1.1)}
+.car-chip .ticket{position:absolute;top:-10px;right:-6px;font-size:.65rem;background:#222;color:#fff;border-radius:6px;padding:1px 3px}
+#lot{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;background:#0d1730;border-radius:10px;padding:10px}
+.spot{aspect-ratio:1.3;background:#1e2b4d;border:2px dashed #445;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1.3rem;cursor:pointer;position:relative}
+.spot.reserved{background:#3a1e2b;border-color:#7a3550;cursor:not-allowed}
+.spot.occupied{background:#233a24;border-style:solid;border-color:#3d6b3f}
+.spot.occupied.wanted{outline:3px solid #ffd54f}
+.spot.hint{outline:3px solid #4caf50}
+#msg{color:#ffd54f;font-weight:800;min-height:1.3em;margin-top:8px}
+#overlay{position:absolute;inset:0;background:rgba(6,9,20,.9);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;border-radius:12px;z-index:5}
+#overlay h2{color:#ffd54f;margin:0 0 8px}
+#startBtn{padding:10px 24px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1.05rem;margin-top:10px}
+#lotWrap{position:relative}
+@media(max-width:480px){#lot{grid-template-columns:repeat(4,1fr)}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Valet Driver</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="hud"><div>Time: <span id="timeLeft">60</span>s</div><div>Score: <span id="score">0</span></div><div>Round: <span id="round">1</span></div></div>
+      <div id="arrivals"></div>
+      <div id="lotWrap">
+        <div id="lot"></div>
+        <div id="overlay">
+          <h2 id="ovTitle">Valet Driver</h2>
+          <div id="ovText">Park arriving cars, then retrieve them when their owner returns!</div>
+          <button id="startBtn">Start Shift</button>
+        </div>
+      </div>
+      <div id="msg"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Cars arrive in the queue above the lot. Click a car, then click an open (non-reserved, dashed-border) spot in the lot to park it. Occasionally a car's owner returns — a glowing spot marks a parked car and a ticket icon shows which one; click that highlighted parked car to retrieve it and drive it off the lot. Park and retrieve as many cars as you can before time runs out — busier lots each round!</div>
+</div>
+<script>
+const CARS=['🚗','🚙','🚕','🚓','🚐','🏎️','🚌'];
+const ROWS=3,COLS=6;
+let spots=[]; // {reserved,occupied:carObj|null,el}
+let queue=[]; // waiting cars {id,emoji,el}
+let selectedCarId=null;
+let retrieveTargets=[]; // list of spot indices currently wanted
+let score=0,timeLeft=60,round=1,running=false,spawnTimer=0,retrieveTimer=0,idCounter=0,best=0,lastTs=null;
+
+const lotEl=document.getElementById('lot');
+const arrivalsEl=document.getElementById('arrivals');
+const overlay=document.getElementById('overlay');
+const msgEl=document.getElementById('msg');
+
+function loadBest(){ best=parseInt(localStorage.getItem('valetdriver_best')||'0',10); }
+loadBest();
+
+function setMsg(t){ msgEl.textContent=t; }
+
+function buildLot(){
+  lotEl.innerHTML='';
+  spots=[];
+  const total=ROWS*COLS;
+  const reservedCount=Math.min(6,2+round);
+  const reservedIdx=new Set();
+  while(reservedIdx.size<reservedCount){ reservedIdx.add(Math.floor(Math.random()*total)); }
+  for(let i=0;i<total;i++){
+    const div=document.createElement('div');
+    div.className='spot'+(reservedIdx.has(i)?' reserved':'');
+    div.onclick=()=>onSpotClick(i);
+    lotEl.appendChild(div);
+    spots.push({reserved:reservedIdx.has(i),occupied:null,el:div});
+  }
+}
+
+function spawnCar(){
+  if(queue.length>=5)return;
+  const emoji=CARS[Math.floor(Math.random()*CARS.length)];
+  const car={id:idCounter++,emoji,el:null};
+  queue.push(car);
+  renderArrivals();
+}
+
+function renderArrivals(){
+  arrivalsEl.innerHTML='';
+  queue.forEach(c=>{
+    const div=document.createElement('div');
+    div.className='car-chip'+(selectedCarId===c.id?' selected':'');
+    div.textContent=c.emoji;
+    div.onclick=()=>selectCar(c.id);
+    arrivalsEl.appendChild(div);
+    c.el=div;
+  });
+}
+
+function selectCar(id){
+  if(!running)return;
+  selectedCarId=(selectedCarId===id)?null:id;
+  renderArrivals();
+}
+
+function onSpotClick(i){
+  if(!running)return;
+  const spot=spots[i];
+  if(spot.occupied){
+    // retrieval attempt
+    if(retrieveTargets.includes(i)){
+      score+=15;
+      SFX.success();
+      setMsg(I18N.t('retrieved_msg','Car retrieved! +15'));
+      spot.occupied=null;
+      spot.el.classList.remove('occupied','wanted');
+      retrieveTargets=retrieveTargets.filter(x=>x!==i);
+      updateHud();
+    } else {
+      score=Math.max(0,score-8);
+      SFX.error();
+      setMsg(I18N.t('wrong_car_msg','Wrong car! That owner is still waiting. -8'));
+      updateHud();
+    }
+    return;
+  }
+  if(spot.reserved){
+    SFX.error();
+    setMsg(I18N.t('reserved_msg','That spot is reserved — pick another.'));
+    return;
+  }
+  if(selectedCarId==null){
+    setMsg(I18N.t('select_car_first','Select a car from the queue first.'));
+    return;
+  }
+  const carIdx=queue.findIndex(c=>c.id===selectedCarId);
+  if(carIdx===-1)return;
+  const car=queue[carIdx];
+  spot.occupied=car;
+  spot.el.classList.add('occupied');
+  spot.el.textContent=car.emoji;
+  queue.splice(carIdx,1);
+  selectedCarId=null;
+  score+=10;
+  SFX.coin();
+  setMsg(I18N.t('parked_msg','Car parked! +10'));
+  renderArrivals();
+  updateHud();
+}
+
+function requestRetrieval(){
+  const occupiedIdx=spots.map((s,i)=>s.occupied?i:-1).filter(i=>i>=0&&!retrieveTargets.includes(i));
+  if(!occupiedIdx.length)return;
+  const i=occupiedIdx[Math.floor(Math.random()*occupiedIdx.length)];
+  retrieveTargets.push(i);
+  spots[i].el.classList.add('wanted');
+  setMsg(I18N.t('owner_returned_msg','An owner returned! Click the highlighted car to bring it out.'));
+  SFX.tick();
+}
+
+function updateHud(){
+  document.getElementById('score').textContent=score;
+  document.getElementById('round').textContent=round;
+  document.getElementById('timeLeft').textContent=Math.ceil(timeLeft);
+}
+
+function tick(dt){
+  spawnTimer-=dt;
+  const spawnInterval=Math.max(1.0,2.4-round*0.15);
+  if(spawnTimer<=0){ spawnTimer=spawnInterval; spawnCar(); }
+  retrieveTimer-=dt;
+  const retrieveInterval=Math.max(3,7-round*0.3);
+  if(retrieveTimer<=0){ retrieveTimer=retrieveInterval; requestRetrieval(); }
+  timeLeft-=dt;
+  round=1+Math.floor((60-timeLeft)/15);
+  if(timeLeft<=0){ endGame(); return; }
+  updateHud();
+}
+
+function loop(ts){
+  if(!running)return;
+  if(lastTs===null)lastTs=ts;
+  const dt=Math.min((ts-lastTs)/1000,0.2);
+  lastTs=ts;
+  tick(dt);
+  requestAnimationFrame(loop);
+}
+
+function startGame(){
+  buildLot();
+  queue=[];arrivalsEl.innerHTML='';
+  selectedCarId=null;retrieveTargets=[];
+  score=0;timeLeft=60;round=1;spawnTimer=0.3;retrieveTimer=6;lastTs=null;running=true;
+  overlay.style.display='none';
+  setMsg(I18N.t('shift_started','Shift started — park those cars!'));
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function endGame(){
+  running=false;
+  if(score>best){ best=score; localStorage.setItem('valetdriver_best',String(best)); }
+  document.getElementById('ovTitle').textContent=I18N.t('shift_over_title','Shift Over!');
+  document.getElementById('ovText').innerHTML=I18N.t('final_score_label','Score: {s} &nbsp; Best: {b}').replace('{s}',score).replace('{b}',best);
+  document.getElementById('startBtn').textContent=I18N.t('play_again','Play Again');
+  overlay.style.display='flex';
+  SFX.win();
+}
+
+document.getElementById('startBtn').addEventListener('click',startGame);
+
+updateHud();
+</script></body></html>

@@ -1,0 +1,309 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Chameleon Camouflage</title><meta name="description" content="Play Chameleon Camouflage free online — Move with Arrow Keys / WASD or drag. Click a color swatch to match your background and hide from patrolling birds. Wrong color while a bird looks your way means you're spotted!"><link rel="canonical" href="https://games.multiportllc.com/games/chameleoncamouflage"><meta property="og:title" content="Chameleon Camouflage - Multiport Games"><meta property="og:description" content="Play Chameleon Camouflage free online — Move with Arrow Keys / WASD or drag. Click a color swatch to match your background and hide from patrolling birds. Wrong color while a bird looks your way means you're spotted!"><meta property="og:url" content="https://games.multiportllc.com/games/chameleoncamouflage"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Chameleon Camouflage","description":"Play Chameleon Camouflage free online instantly. Move with Arrow Keys / WASD or drag. Click a color swatch to match your background and hide from patrolling birds. Wrong color while a bird looks your way means you're spotted! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/chameleoncamouflage","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2d5a27;display:block;border-radius:8px;touch-action:none}
+#hud{color:#e8ffe0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#swatches{display:flex;justify-content:center;gap:10px;padding:6px 0 14px;flex-wrap:wrap}
+.swatch{width:38px;height:38px;border-radius:50%;border:3px solid rgba(255,255,255,0.25);cursor:pointer;transition:transform .1s,border-color .15s}
+.swatch:hover{transform:scale(1.08)}
+.swatch.selected{border-color:#fff;transform:scale(1.12)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Chameleon Camouflage</div>
+  <div class="game-frame">
+    <div id="hud"><span>Time: <b id="timeDisp">0</b>s</span><span>Distance: <b id="distDisp">0</b></span><span>Best: <b id="bestDisp">0</b></span></div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <div id="swatches"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move with <b>Arrow Keys / WASD</b> or drag. Click a <b>color swatch</b> to match your background and hide from patrolling birds. Wrong color while a bird looks your way means you're spotted!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const BEST_KEY='chameleoncamouflage_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+document.getElementById('bestDisp').textContent=best;
+
+const PALETTE=[
+  {name:'green',hex:'#3fae52'},
+  {name:'brown',hex:'#8a5a2e'},
+  {name:'yellow',hex:'#e8c93a'},
+  {name:'grey',hex:'#8a8a94'},
+  {name:'red',hex:'#c9483a'},
+  {name:'blue',hex:'#3a7bc9'}
+];
+
+const swatchWrap=document.getElementById('swatches');
+PALETTE.forEach((p,i)=>{
+  const el=document.createElement('div');
+  el.className='swatch';
+  el.style.background=p.hex;
+  el.dataset.idx=i;
+  el.addEventListener('click',()=>selectColor(i));
+  swatchWrap.appendChild(el);
+});
+
+function renderSwatchSelection(){
+  [...swatchWrap.children].forEach((el,i)=>el.classList.toggle('selected',i===player.colorIdx));
+}
+
+let player,zones,birds,keys,timeAlive,dist,gameOver,started,lastTime,spotFlash,dragging;
+
+function reset(){
+  player={x:W/2,y:H/2,r:18,colorIdx:0,tx:undefined,ty:undefined};
+  zones=[];
+  let zx=0;
+  while(zx<W+300){
+    const w=140+Math.random()*120;
+    zones.push({x:zx,w,colorIdx:Math.floor(Math.random()*PALETTE.length)});
+    zx+=w;
+  }
+  birds=[
+    {x:100,y:80,dir:1,speed:1.6,lookTimer:60,looking:false,scanX:0},
+  ];
+  keys={};
+  timeAlive=0;dist=0;
+  gameOver=false;started=false;lastTime=null;spotFlash=0;dragging=false;
+  renderSwatchSelection();
+}
+reset();
+
+function selectColor(i){
+  if(!started){started=true;}
+  if(gameOver){reset();started=true;return;}
+  player.colorIdx=i;
+  renderSwatchSelection();
+  SFX.select();
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase()))e.preventDefault();
+  if(!started){started=true;}
+  else if(gameOver){reset();started=true;}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+c.addEventListener('pointerdown',e=>{
+  dragging=true;
+  if(!started){started=true;}
+  else if(gameOver){reset();started=true;}
+});
+c.addEventListener('pointerup',()=>{dragging=false;});
+c.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const rect=c.getBoundingClientRect();
+  const scale=W/rect.width;
+  player.tx=(e.clientX-rect.left)*scale;
+  player.ty=(e.clientY-rect.top)*scale;
+});
+
+function currentZoneColorIdx(worldX){
+  // zones repeat/scroll; find zone under player using scrollX offset stored globally
+  let acc=0;
+  for(const z of zones){
+    if(worldX>=z.x && worldX<z.x+z.w)return z.colorIdx;
+  }
+  return zones.length?zones[zones.length-1].colorIdx:0;
+}
+
+let scrollX=0;
+
+function ensureZones(){
+  // remove offscreen zones behind, add new ahead
+  while(zones.length && zones[0].x+zones[0].w<scrollX-100){
+    zones.shift();
+  }
+  let lastEdge=zones.length?zones[zones.length-1].x+zones[zones.length-1].w:scrollX;
+  while(lastEdge<scrollX+W+400){
+    const w=140+Math.random()*120;
+    let colorIdx;
+    do{colorIdx=Math.floor(Math.random()*PALETTE.length);}while(zones.length&&colorIdx===zones[zones.length-1].colorIdx);
+    zones.push({x:lastEdge,w,colorIdx});
+    lastEdge+=w;
+  }
+}
+
+function maybeSpawnBird(){
+  if(birds.length<Math.min(4,1+Math.floor(dist/400)) && Math.random()<0.01){
+    birds.push({
+      x:scrollX+W+40,
+      y:60+Math.random()*(H-160),
+      dir:-1,
+      speed:1+Math.random()*1.2,
+      lookTimer:60+Math.random()*60,
+      looking:false
+    });
+  }
+}
+
+function update(dt){
+  let ax=0,ay=0;
+  if(keys['arrowleft']||keys['a'])ax-=1;
+  if(keys['arrowright']||keys['d'])ax+=1;
+  if(keys['arrowup']||keys['w'])ay-=1;
+  if(keys['arrowdown']||keys['s'])ay+=1;
+  if(player.tx!==undefined){
+    const dx=player.tx-player.x,dy=player.ty-player.y;
+    const d=Math.hypot(dx,dy);
+    if(d>2){ax+=dx/d*1.3;ay+=dy/d*1.3;}
+  }
+  const mag=Math.hypot(ax,ay);
+  if(mag>0){ax/=mag;ay/=mag;}
+  const speed=3.4;
+  player.x+=ax*speed*dt;
+  player.y=Math.max(30,Math.min(H-30,player.y+ay*speed*dt));
+
+  // world scroll follows player's forward progress, keep player roughly centered-left
+  if(player.x>W*0.4){
+    const push=player.x-W*0.4;
+    scrollX+=push;
+    player.x=W*0.4;
+  }
+  if(player.x<40)player.x=40;
+
+  dist+=Math.max(0,ax)*speed*dt*0.5+ (scrollX>0?0:0);
+  timeAlive+=dt/60;
+
+  ensureZones();
+  maybeSpawnBird();
+
+  const worldX=scrollX+player.x;
+  const zoneColor=currentZoneColorIdx(worldX);
+  const matched=zoneColor===player.colorIdx;
+
+  if(spotFlash>0)spotFlash-=dt;
+
+  birds.forEach(b=>{
+    b.x+=b.dir*b.speed*dt;
+    b.lookTimer-=dt;
+    if(b.lookTimer<=0){
+      b.looking=!b.looking;
+      b.lookTimer=b.looking?45:70+Math.random()*40;
+    }
+    if(b.looking){
+      const screenX=b.x-scrollX;
+      const dx=screenX-player.x,dy=b.y-player.y;
+      const distToPlayer=Math.hypot(dx,dy);
+      if(distToPlayer<260 && !matched && !gameOver){
+        gameOver=true;
+        started=false;
+        spotFlash=30;
+        SFX.lose();
+        const score=Math.floor(dist);
+        if(score>best){best=score;localStorage.setItem(BEST_KEY,String(best));}
+      }
+    }
+  });
+  birds=birds.filter(b=>b.x>scrollX-100 && b.x<scrollX+W+200);
+
+  dist=Math.max(dist,Math.floor((scrollX+player.x)/4));
+}
+
+function drawBird(b){
+  const x=b.x-scrollX,y=b.y;
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(b.dir,1);
+  ctx.fillStyle=b.looking?'#ff5555':'#3a2a1a';
+  ctx.beginPath();ctx.ellipse(0,0,16,10,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.moveTo(14,-2);ctx.lineTo(24,0);ctx.lineTo(14,4);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#ffcc00';
+  ctx.beginPath();ctx.moveTo(16,0);ctx.lineTo(24,-2);ctx.lineTo(24,2);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath();ctx.arc(6,-3,3,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#000';
+  ctx.beginPath();ctx.arc(6,-3,1.4,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+
+  if(b.looking){
+    ctx.strokeStyle='rgba(255,80,80,0.35)';
+    ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(x,y,260,0,Math.PI*2);ctx.stroke();
+  }
+}
+
+function drawPlayer(matched){
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  ctx.fillStyle='rgba(0,0,0,0.25)';
+  ctx.beginPath();ctx.ellipse(0,player.r+4,player.r*0.8,5,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle=PALETTE[player.colorIdx].hex;
+  ctx.globalAlpha=matched?1:0.92;
+  ctx.beginPath();ctx.arc(0,0,player.r,0,Math.PI*2);ctx.fill();
+  ctx.globalAlpha=1;
+  // eye
+  ctx.fillStyle='#fff';
+  ctx.beginPath();ctx.arc(8,-8,5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#000';
+  ctx.beginPath();ctx.arc(9,-8,2.4,0,Math.PI*2);ctx.fill();
+  // tail curl
+  ctx.strokeStyle=PALETTE[player.colorIdx].hex;
+  ctx.lineWidth=6;
+  ctx.beginPath();ctx.arc(-16,6,10,0.2*Math.PI,1.8*Math.PI);ctx.stroke();
+  if(!matched){
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(0,0,player.r+5,0,Math.PI*2);ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // background zones
+  for(const z of zones){
+    const sx=z.x-scrollX;
+    if(sx+z.w<0||sx>W)continue;
+    ctx.fillStyle=PALETTE[z.colorIdx].hex;
+    ctx.fillRect(sx,0,z.w,H);
+    ctx.fillStyle='rgba(0,0,0,0.08)';
+    for(let i=0;i<3;i++){
+      ctx.beginPath();ctx.arc(sx+z.w*0.2+i*z.w*0.3,80+i*100,26,0,Math.PI*2);ctx.fill();
+    }
+  }
+  birds.forEach(drawBird);
+  const worldX=scrollX+player.x;
+  const zoneColor=currentZoneColorIdx(worldX);
+  const matched=zoneColor===player.colorIdx;
+  drawPlayer(matched);
+
+  if(spotFlash>0){
+    ctx.fillStyle=`rgba(255,0,0,${spotFlash/60})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('cham_start','Move or pick a color to begin'),W/2,H/2);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('cham_spotted','SPOTTED!'),W/2,H/2-30);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press a key to restart'),W/2,H/2+10);
+  }
+
+  document.getElementById('timeDisp').textContent=timeAlive.toFixed(1);
+  document.getElementById('distDisp').textContent=Math.floor(dist);
+  document.getElementById('bestDisp').textContent=best;
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  if(started&&!gameOver)update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

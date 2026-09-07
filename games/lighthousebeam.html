@@ -1,0 +1,273 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Lighthouse Beam</title><meta name="description" content="Play Lighthouse Beam free online — Drag across the sky or use Arrow Keys / A-D to rotate your beam. Shine light on a ship exactly when its distress light flashes to guide it safely home before it crashes on the rocks."><link rel="canonical" href="https://games.multiportllc.com/games/lighthousebeam"><meta property="og:title" content="Lighthouse Beam - Multiport Games"><meta property="og:description" content="Play Lighthouse Beam free online — Drag across the sky or use Arrow Keys / A-D to rotate your beam. Shine light on a ship exactly when its distress light flashes to guide it safely home before it crashes on the rocks."><meta property="og:url" content="https://games.multiportllc.com/games/lighthousebeam"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Lighthouse Beam","description":"Play Lighthouse Beam free online instantly. Drag across the sky or use Arrow Keys / A-D to rotate your beam. Shine light on a ship exactly when its distress light flashes to guide it safely home before it crashes on the rocks. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/lighthousebeam","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#050a1a;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#fff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:22px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Lighthouse Beam</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div>Ships Saved: <span id="lbScore">0</span></div>
+      <div>Best: <span id="lbBest">0</span></div>
+      <div>Time: <span id="lbTime">60</span>s</div>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag across the sky, or use <b>Arrow Keys</b> / <b>A-D</b>, to rotate your lighthouse beam. Each ship flashes a distress light as it nears the rocks — sweep your beam onto the ship while it flashes to guide it safely to harbor. Miss the flash and the ship wrecks. Guide as many ships as you can before the night ends!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const lhX=70,lhY=H-40;
+
+let beamAngle=-Math.PI/2.6; // radians, pointing up-right into the sea
+let score=0,best=parseInt(localStorage.getItem('lighthousebeam_best')||'0',10);
+let timeLeft=60,gameOver=false,started=false;
+let ships=[],spawnTimer=0,lastTime=null;
+let keys={};
+
+document.getElementById('lbBest').textContent=best;
+
+const MINA=-Math.PI*0.95,MAXA=-Math.PI*0.05;
+
+function reset(){
+  beamAngle=-Math.PI/2;score=0;timeLeft=60;gameOver=false;started=false;ships=[];spawnTimer=0;lastTime=null;
+  document.getElementById('lbScore').textContent=0;
+  document.getElementById('lbTime').textContent=60;
+}
+
+function spawnShip(){
+  const angle=MINA+Math.random()*(MAXA-MINA);
+  const dist=760;
+  const speed=0.55+Math.min(1.6,score*0.045)+Math.random()*0.3;
+  const flashAt=0.28+Math.random()*0.22; // fraction of journey remaining when flash starts
+  ships.push({angle,dist,speed,saved:false,wrecked:false,flashing:false,flashUntilDist:0,flashStartDist:dist*flashAt+90,litFrames:0,warnPlayed:false});
+}
+
+function shipPos(s){
+  return {x:lhX+Math.cos(s.angle)*s.dist,y:lhY+Math.sin(s.angle)*s.dist};
+}
+
+function angleDiffAbs(a,b){
+  let d=(a-b)%(Math.PI*2);
+  if(d>Math.PI)d-=Math.PI*2;
+  if(d<-Math.PI)d+=Math.PI*2;
+  return Math.abs(d);
+}
+
+function update(dt){
+  spawnTimer-=dt;
+  if(spawnTimer<=0){
+    spawnShip();
+    spawnTimer=90-Math.min(50,score*2.2)+Math.random()*30;
+  }
+  ships.forEach(s=>{
+    if(s.saved||s.wrecked)return;
+    s.dist-=s.speed*dt;
+    if(s.dist<=s.flashStartDist&&!s.warnPlayed){s.warnPlayed=true;}
+    s.flashing = s.dist<=s.flashStartDist && s.dist>90;
+    if(s.flashing){
+      const beamOn=angleDiffAbs(beamAngle,s.angle)<0.09;
+      if(beamOn){
+        s.litFrames+=dt;
+        if(s.litFrames>18){
+          s.saved=true;
+          score++;
+          document.getElementById('lbScore').textContent=score;
+          SFX.success();
+        }
+      }
+    }
+    if(s.dist<=90&&!s.saved){
+      s.wrecked=true;
+      SFX.hit();
+    }
+  });
+  ships=ships.filter(s=>!( (s.saved&&s.dist<40) || (s.wrecked&&s.dist<50) ));
+}
+
+function drawBeam(){
+  const len=800;
+  const spread=0.05;
+  const x1=lhX+Math.cos(beamAngle-spread)*len,y1=lhY+Math.sin(beamAngle-spread)*len;
+  const x2=lhX+Math.cos(beamAngle+spread)*len,y2=lhY+Math.sin(beamAngle+spread)*len;
+  const grad=ctx.createLinearGradient(lhX,lhY,lhX+Math.cos(beamAngle)*len,lhY+Math.sin(beamAngle)*len);
+  grad.addColorStop(0,'rgba(255,244,180,0.55)');
+  grad.addColorStop(1,'rgba(255,244,180,0)');
+  ctx.fillStyle=grad;
+  ctx.beginPath();
+  ctx.moveTo(lhX,lhY);
+  ctx.lineTo(x1,y1);
+  ctx.lineTo(x2,y2);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawLighthouse(){
+  ctx.fillStyle='#e8e3d8';
+  ctx.beginPath();
+  ctx.moveTo(lhX-8,lhY+20);
+  ctx.lineTo(lhX-16,lhY-90);
+  ctx.lineTo(lhX+16,lhY-90);
+  ctx.lineTo(lhX+8,lhY+20);
+  ctx.closePath();ctx.fill();
+  for(let i=0;i<3;i++){
+    ctx.fillStyle=i%2===0?'#e63946':'#e8e3d8';
+    const y0=lhY-20-i*24,y1p=y0-24;
+    const t=(y0-(lhY-90))/(20-(-90));
+    ctx.fillRect(lhX-14+i*0.5,y0-24,28-i,24);
+  }
+  ctx.fillStyle='#333';
+  ctx.fillRect(lhX-18,lhY-105,36,16);
+  ctx.fillStyle='#ffe98a';
+  ctx.beginPath();ctx.arc(lhX,lhY-97,9,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#8a5a3b';
+  ctx.fillRect(lhX-20,lhY+20,40,20);
+}
+
+function drawRocks(){
+  ctx.fillStyle='#2a2a35';
+  for(let i=0;i<5;i++){
+    const rx=lhX+40+i*10,ry=lhY+18+((i%2)*6);
+    ctx.beginPath();ctx.arc(rx,ry,8+((i*7)%6),0,Math.PI*2);ctx.fill();
+  }
+}
+
+function drawShip(s){
+  const p=shipPos(s);
+  ctx.save();
+  ctx.translate(p.x,p.y);
+  const lit=angleDiffAbs(beamAngle,s.angle)<0.09;
+  ctx.fillStyle=s.wrecked?'#5a2a2a':(lit?'#f4e3b0':'#2b3a52');
+  ctx.beginPath();
+  ctx.moveTo(-14,4);ctx.lineTo(14,4);ctx.lineTo(9,12);ctx.lineTo(-9,12);ctx.closePath();ctx.fill();
+  ctx.fillRect(-2,-14,4,18);
+  ctx.fillStyle=lit?'#fff7d6':'#445';
+  ctx.fillRect(-2,-14,10,7);
+  if(s.flashing&&!s.saved&&!s.wrecked){
+    const blink=Math.floor(performance.now()/150)%2===0;
+    if(blink){
+      ctx.fillStyle='#ff4d4d';
+      ctx.beginPath();ctx.arc(0,-18,4,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='rgba(255,77,77,.6)';
+      ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(0,-18,9,0,Math.PI*2);ctx.stroke();
+    }
+  }
+  if(s.saved){
+    ctx.fillStyle='#7ec850';
+    ctx.font='bold 12px Arial';ctx.textAlign='center';
+    ctx.fillText('✓',0,-24);
+  }
+  ctx.restore();
+}
+
+function rotateBeam(dir,dt){
+  beamAngle+=dir*0.032*dt;
+  beamAngle=Math.max(MINA,Math.min(MAXA,beamAngle));
+}
+
+// Input: keyboard
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowLeft','ArrowRight','KeyA','KeyD','Space'].includes(e.code))e.preventDefault();
+  if(!started&&e.code!=='ArrowLeft'&&e.code!=='ArrowRight'&&e.code!=='KeyA'&&e.code!=='KeyD'){}
+  if(!started){started=true;}
+  if(gameOver&&e.code==='Space'){reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+// Input: pointer drag
+let dragging=false;
+function angleFromPointer(px,py){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  const x=(px-rect.left)*scaleX,y=(py-rect.top)*scaleY;
+  return Math.atan2(y-lhY,x-lhX);
+}
+c.addEventListener('pointerdown',e=>{
+  if(gameOver){reset();return;}
+  started=true;
+  dragging=true;
+  const a=angleFromPointer(e.clientX,e.clientY);
+  beamAngle=Math.max(MINA,Math.min(MAXA,a));
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const a=angleFromPointer(e.clientX,e.clientY);
+  beamAngle=Math.max(MINA,Math.min(MAXA,a));
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#040814');sky.addColorStop(1,'#132038');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // stars
+  ctx.fillStyle='#fff';
+  for(let i=0;i<40;i++){
+    const sx=(i*197)%W,sy=(i*97)%(H-80);
+    ctx.globalAlpha=0.3+((i*53)%50)/100;
+    ctx.fillRect(sx,sy,2,2);
+  }
+  ctx.globalAlpha=1;
+  // sea
+  ctx.fillStyle='#0c1c30';
+  ctx.fillRect(0,H-40,W,40);
+
+  drawBeam();
+  ships.forEach(drawShip);
+  drawRocks();
+  drawLighthouse();
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('lb_start_hint','Drag or use Arrow Keys to aim — tap to start'),400,60);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('lb_over_title','NIGHT OVER'),400,170);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('lb_result','Ships saved: {n}').replace('{n}',score),400,210);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,248);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(keys['ArrowLeft']||keys['KeyA'])rotateBeam(-1,dt);
+  if(keys['ArrowRight']||keys['KeyD'])rotateBeam(1,dt);
+
+  update(dt);
+
+  timeLeft-=dt/60;
+  if(timeLeft<=0){
+    timeLeft=0;
+    gameOver=true;
+    if(score>best){best=score;localStorage.setItem('lighthousebeam_best',String(best));}
+    document.getElementById('lbBest').textContent=best;
+    SFX.win();
+  }
+  document.getElementById('lbTime').textContent=Math.ceil(timeLeft);
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

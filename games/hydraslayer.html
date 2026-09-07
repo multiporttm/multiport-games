@@ -1,0 +1,274 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Hydra Slayer</title><meta name="description" content="Play Hydra Slayer free online — Click or tap the glowing, active hydra head to strike it before it attacks. Hitting the wrong head does nothing. Watch out — defeating a head can make two more grow back!"><link rel="canonical" href="https://games.multiportllc.com/games/hydraslayer"><meta property="og:title" content="Hydra Slayer - Multiport Games"><meta property="og:description" content="Play Hydra Slayer free online — Click or tap the glowing, active hydra head to strike it before it attacks. Hitting the wrong head does nothing. Watch out — defeating a head can make two more grow back!"><meta property="og:url" content="https://games.multiportllc.com/games/hydraslayer"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Hydra Slayer","description":"Play Hydra Slayer free online instantly. Click or tap the glowing, active hydra head to strike it before it attacks. Hitting the wrong head does nothing. Watch out — defeating a head can make two more grow back! No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/hydraslayer","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d1f14;display:block;border-radius:8px;touch-action:none}
+#hud{color:#c8ffd8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#barwrap{max-width:900px;width:100%;margin:0 auto 8px;padding:0 16px;box-sizing:border-box}
+.barlabel{color:#ddd;font-size:.8rem;margin-bottom:2px}
+.barouter{background:#1a1a2e;border-radius:8px;height:14px;overflow:hidden;border:1px solid rgba(255,255,255,.15)}
+#hydraBar{background:linear-gradient(90deg,#7c3aed,#c026d3);height:100%;width:100%;transition:width .2s}
+#playerBar{background:linear-gradient(90deg,#22c55e,#4ade80);height:100%;width:100%;transition:width .2s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Hydra Slayer</div>
+  <div class="game-frame">
+    <div id="barwrap">
+      <div class="barlabel">Hydra Health</div>
+      <div class="barouter"><div id="hydraBar"></div></div>
+      <div class="barlabel" style="margin-top:6px">Your Health</div>
+      <div class="barouter"><div id="playerBar"></div></div>
+    </div>
+    <div id="hud"><span>Damage: <b id="dmgDisp">0</b></span><span>Hits Survived: <b id="hitsDisp">0</b></span><span>Best: <b id="bestDisp">0</b></span></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click or tap the glowing, <b>active</b> hydra head to strike it before it attacks. Hitting the wrong head does nothing. Watch out — defeating a head can make two more grow back!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const BEST_KEY='hydraslayer_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+document.getElementById('bestDisp').textContent=best;
+
+const SLOTS=[{x:180,y:170},{x:340,y:110},{x:500,y:110},{x:660,y:170},{x:260,y:230},{x:580,y:230}];
+
+let heads,hydraHP,hydraMaxHP,playerHP,playerMaxHP,dmgDealt,hitsSurvived,gameOver,started,lastTime,activeTimer,activeIdx,flashes,shakeT;
+
+function makeHead(slotIdx){
+  return {slot:slotIdx,alive:true,attackTimer:60+Math.random()*40,scale:1,hitFlash:0};
+}
+
+function reset(){
+  heads=SLOTS.map((s,i)=>i<3?makeHead(i):null);
+  hydraMaxHP=40;hydraHP=hydraMaxHP;
+  playerMaxHP=10;playerHP=playerMaxHP;
+  dmgDealt=0;hitsSurvived=0;
+  gameOver=false;started=false;
+  lastTime=null;
+  activeTimer=0;activeIdx=-1;
+  flashes=[];shakeT=0;
+  pickActive();
+}
+reset();
+
+function livingHeads(){return heads.filter(h=>h&&h.alive);}
+
+function pickActive(){
+  const living=livingHeads();
+  if(living.length===0)return;
+  const candidates=living.filter(h=>h.slot!==activeIdx);
+  const pool=candidates.length?candidates:living;
+  const h=pool[Math.floor(Math.random()*pool.length)];
+  activeIdx=h.slot;
+  activeTimer=65-Math.min(30,dmgDealt/6); // gets faster as fight progresses
+  if(activeTimer<28)activeTimer=28;
+}
+
+function regrowHeads(fromSlot){
+  // try to add up to 2 new heads in empty slots
+  const empties=[];
+  for(let i=0;i<SLOTS.length;i++)if(!heads[i])empties.push(i);
+  let count=Math.min(2,empties.length);
+  for(let i=0;i<count;i++){
+    const idx=empties[Math.floor(Math.random()*empties.length)];
+    empties.splice(empties.indexOf(idx),1);
+    heads[idx]=makeHead(idx);
+  }
+  return count;
+}
+
+function strike(slotIdx){
+  if(!started){started=true;return;}
+  if(gameOver){reset();started=true;return;}
+  const h=heads[slotIdx];
+  if(!h||!h.alive)return;
+  if(slotIdx!==activeIdx){
+    // wrong/inactive head: no damage
+    SFX.error();
+    h.hitFlash=10;
+    return;
+  }
+  // correct hit!
+  const dmg=8+Math.floor(Math.random()*5);
+  hydraHP-=dmg;
+  dmgDealt+=dmg;
+  h.alive=false;
+  h.hitFlash=18;
+  shakeT=10;
+  SFX.hit();
+  flashes.push({x:SLOTS[slotIdx].x,y:SLOTS[slotIdx].y,life:20});
+  heads[slotIdx]=null;
+
+  if(hydraHP<=0){
+    hydraHP=0;
+    gameOver=true;
+    started=false;
+    SFX.win();
+    const score=dmgDealt+hitsSurvived*5;
+    if(score>best){best=score;localStorage.setItem(BEST_KEY,String(best));}
+    return;
+  }
+
+  // regrow twist: ~35% chance a defeated head triggers regrowth of 2
+  if(Math.random()<0.35){
+    const grown=regrowHeads(slotIdx);
+    if(grown>0)SFX.powerup();
+  }
+  if(livingHeads().length===0){
+    // ensure at least one head remains
+    heads[slotIdx]=makeHead(slotIdx);
+  }
+  pickActive();
+}
+
+c.addEventListener('pointerdown',e=>{
+  const rect=c.getBoundingClientRect();
+  const scale=W/rect.width;
+  const mx=(e.clientX-rect.left)*scale;
+  const my=(e.clientY-rect.top)*scale;
+  if(!started||gameOver){strike(0);return;}
+  for(let i=0;i<SLOTS.length;i++){
+    const h=heads[i];
+    if(!h||!h.alive)continue;
+    const s=SLOTS[i];
+    if(Math.hypot(mx-s.x,my-s.y)<44){strike(i);return;}
+  }
+});
+
+document.addEventListener('keydown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver){reset();started=true;return;}
+  const n=parseInt(e.key,10);
+  if(!isNaN(n)&&n>=1&&n<=6){
+    const idx=n-1;
+    if(heads[idx]&&heads[idx].alive)strike(idx);
+  }
+});
+
+function drawHead(h,idx){
+  const s=SLOTS[idx];
+  ctx.save();
+  ctx.translate(s.x,s.y);
+  const active=idx===activeIdx;
+  if(h.hitFlash>0){
+    ctx.fillStyle=active?'rgba(255,80,80,0.9)':'rgba(150,150,150,0.9)';
+  } else {
+    ctx.fillStyle=active?'#e94560':'#4a7a52';
+  }
+  // neck
+  ctx.strokeStyle='#3d6b45';ctx.lineWidth=16;
+  ctx.beginPath();ctx.moveTo(0,90);ctx.lineTo(0,20);ctx.stroke();
+  // head glow if active
+  if(active){
+    ctx.save();
+    ctx.shadowColor='#ffd54f';ctx.shadowBlur=25;
+    ctx.beginPath();ctx.arc(0,0,32,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  } else {
+    ctx.beginPath();ctx.arc(0,0,32,0,Math.PI*2);ctx.fill();
+  }
+  // eyes
+  ctx.fillStyle='#ffe680';
+  ctx.beginPath();ctx.arc(-10,-6,5,0,Math.PI*2);ctx.arc(10,-6,5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#111';
+  ctx.beginPath();ctx.arc(-10,-6,2.4,0,Math.PI*2);ctx.arc(10,-6,2.4,0,Math.PI*2);ctx.fill();
+  // horns
+  ctx.fillStyle='#2f2f3a';
+  ctx.beginPath();ctx.moveTo(-22,-24);ctx.lineTo(-30,-42);ctx.lineTo(-14,-30);ctx.fill();
+  ctx.beginPath();ctx.moveTo(22,-24);ctx.lineTo(30,-42);ctx.lineTo(14,-30);ctx.fill();
+  ctx.restore();
+  if(h.hitFlash>0)h.hitFlash--;
+}
+
+function update(dt){
+  if(!started||gameOver)return;
+  activeTimer-=dt;
+  if(activeTimer<=0){
+    // active head attacks player!
+    playerHP-=1;
+    hitsSurvived++;
+    shakeT=14;
+    SFX.hurt();
+    pickActive();
+    if(playerHP<=0){
+      playerHP=0;
+      gameOver=true;
+      started=false;
+      SFX.lose();
+      const score=dmgDealt+hitsSurvived*5;
+      if(score>best){best=score;localStorage.setItem(BEST_KEY,String(best));}
+    }
+  }
+  if(shakeT>0)shakeT-=dt;
+  flashes=flashes.filter(f=>f.life>0);
+  flashes.forEach(f=>f.life-=dt);
+}
+
+function draw(){
+  ctx.save();
+  if(shakeT>0){
+    ctx.translate((Math.random()-0.5)*shakeT*0.6,(Math.random()-0.5)*shakeT*0.6);
+  }
+  ctx.clearRect(-20,-20,W+40,H+40);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0d1f14');bg.addColorStop(1,'#061109');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(20,60,30,0.5)';
+  ctx.beginPath();ctx.ellipse(W/2,H-20,300,40,0,0,Math.PI*2);ctx.fill();
+
+  heads.forEach((h,i)=>{if(h&&h.alive)drawHead(h,i);});
+
+  // attack countdown bar above active head
+  if(activeIdx>=0 && heads[activeIdx] && heads[activeIdx].alive){
+    const s=SLOTS[activeIdx];
+    const pct=Math.max(0,activeTimer/65);
+    ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(s.x-30,s.y-58,60,8);
+    ctx.fillStyle=pct<0.3?'#ff5555':'#ffd54f';
+    ctx.fillRect(s.x-30,s.y-58,60*pct,8);
+  }
+
+  flashes.forEach(f=>{
+    ctx.strokeStyle=`rgba(255,255,255,${f.life/20})`;
+    ctx.lineWidth=4;
+    ctx.beginPath();ctx.arc(f.x,f.y,40-(20-f.life)*1.5,0,Math.PI*2);ctx.stroke();
+  });
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('hydra_start','Click a head to begin the fight!'),W/2,H/2);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 38px Arial';ctx.textAlign='center';
+    const win=hydraHP<=0;
+    ctx.fillText(win?I18N.t('hydra_win','HYDRA SLAIN!'):I18N.t('hydra_lose','YOU FELL...'),W/2,H/2-30);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press a key to restart'),W/2,H/2+10);
+  }
+  ctx.restore();
+
+  document.getElementById('hydraBar').style.width=Math.max(0,hydraHP/hydraMaxHP*100)+'%';
+  document.getElementById('playerBar').style.width=Math.max(0,playerHP/playerMaxHP*100)+'%';
+  document.getElementById('dmgDisp').textContent=dmgDealt;
+  document.getElementById('hitsDisp').textContent=hitsSurvived;
+  document.getElementById('bestDisp').textContent=best;
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

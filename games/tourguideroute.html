@@ -1,0 +1,326 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Tour Guide Route</title><meta name="description" content="Play Tour Guide Route free online — Plan a walking tour by clicking connected landmarks on the city map in sequence. Visit every starred landmark within your time budget before the clock runs out. More landmarks and tighter budgets each round."><link rel="canonical" href="https://games.multiportllc.com/games/tourguideroute"><meta property="og:title" content="Tour Guide Route - Multiport Games"><meta property="og:description" content="Play Tour Guide Route free online — Plan a walking tour by clicking connected landmarks on the city map in sequence. Visit every starred landmark within your time budget before the clock runs out. More landmarks and tighter budgets each round."><meta property="og:url" content="https://games.multiportllc.com/games/tourguideroute"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Tour Guide Route","description":"Play Tour Guide Route free online instantly. Plan a walking tour by clicking connected landmarks on the city map in sequence, spending the shown travel time on each connection. Visit every starred landmark within your time budget before the clock runs out. More landmarks and tighter budgets each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/tourguideroute","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#tg-wrap{background:#0f2436;border-radius:14px;padding:16px;color:#e6f3fb;max-width:700px;margin:0 auto}
+#tg-hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;font-weight:800;margin-bottom:8px}
+#tg-hud span{color:#7ec8ff}
+#budgetBar{background:#0a1826;border-radius:8px;height:14px;overflow:hidden;border:2px solid #1c4a66;margin-bottom:4px}
+#budgetFill{height:100%;background:linear-gradient(90deg,#4caf50,#7ec8ff);width:100%;transition:width .2s linear}
+#clockBar{background:#0a1826;border-radius:8px;height:8px;overflow:hidden;border:2px solid #1c4a66;margin-bottom:10px}
+#clockFill{height:100%;background:linear-gradient(90deg,#ffd54f,#e94560);width:100%;transition:width .2s linear}
+#mapWrap{position:relative;width:100%;aspect-ratio:600/380;background:#123049;border-radius:10px;overflow:hidden;border:2px solid #1c4a66}
+#mapSvg{position:absolute;top:0;left:0;width:100%;height:100%}
+.tg-node{position:absolute;transform:translate(-50%,-50%);width:44px;height:44px;border-radius:50%;background:#1c4a66;border:3px solid #2f7ea3;color:#fff;font-size:1.3rem;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .1s,background .15s}
+.tg-node.start{background:#e94560;border-color:#ffb3c1}
+.tg-node.required{background:#8b5a2b;border-color:#ffd54f}
+.tg-node.visited{background:#1e4d2b;border-color:#4caf50}
+.tg-node.current{outline:3px solid #ffd54f}
+.tg-node:hover{transform:translate(-50%,-50%) scale(1.08)}
+.tg-node:disabled{cursor:default}
+#tg-actions{text-align:center;margin-top:10px}
+#tg-actions button{padding:9px 22px;background:#2f7ea3;border:none;border-radius:20px;color:#fff;font-weight:800;cursor:pointer;font-size:1rem;margin:0 5px}
+#tg-overlay{text-align:center;padding:20px 10px}
+#tg-overlay h2{margin:0 0 8px;color:#7ec8ff}
+#tg-overlay button.startBtn{margin-top:10px;padding:10px 26px;background:#e94560;border:none;border-radius:20px;color:#fff;font-weight:800;font-size:1rem;cursor:pointer}
+@media(max-width:480px){.tg-node{width:36px;height:36px;font-size:1.05rem}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Tour Guide Route</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="tg-wrap">
+      <div id="tg-hud">
+        <span id="hudRound">Round: 1</span>
+        <span id="hudScore">Score: 0</span>
+        <span id="hudBest">Best: 0</span>
+        <span id="hudNeeded">⭐ 0/0</span>
+      </div>
+      <div id="budgetBar"><div id="budgetFill"></div></div>
+      <div id="clockBar"><div id="clockFill"></div></div>
+      <div id="mapWrap" style="display:none">
+        <svg id="mapSvg" viewBox="0 0 600 380"></svg>
+      </div>
+      <div id="tg-actions" style="display:none"><button id="resetRouteBtn">Reset Route</button></div>
+      <div id="tg-overlay"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">🚩 is your starting hub, ⭐ are required landmarks. Click a connected landmark to walk there — each connection shows its travel time, which is spent from your time budget. Visit every ⭐ before your budget and the clock run out! More landmarks and tighter budgets each round.</div>
+</div>
+<script>
+const KEY_BEST='tourguideroute_best';
+const POSITIONS=[[300,190],[100,60],[500,60],[60,190],[540,190],[100,320],[500,320],[300,60],[300,320],[190,120],[410,260],[190,260]];
+
+let round=1,score=0,best=parseInt(localStorage.getItem(KEY_BEST)||'0',10);
+let nodes=[],edges=[],adj={},requiredIds=[],visitedRequired=new Set(),visitedNodes=new Set();
+let current=0,elapsed=0,budget=0,running=false,clockLeft=0,clockMax=0,clockTimer=null;
+
+function fmtScore(){return I18N.t('score_label','Score: {n}').replace('{n}',score);}
+function fmtBest(){return I18N.t('best_label','Best: {n}').replace('{n}',best);}
+function fmtRound(){return I18N.t('round_label','Round: {n}').replace('{n}',round);}
+
+function updateHud(){
+  document.getElementById('hudRound').textContent=fmtRound();
+  document.getElementById('hudScore').textContent=fmtScore();
+  document.getElementById('hudBest').textContent=fmtBest();
+  document.getElementById('hudNeeded').textContent='⭐ '+visitedRequired.size+'/'+requiredIds.length;
+}
+
+function dist(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1]);}
+
+function buildGraph(n){
+  const idxs=[];
+  for(let i=0;i<n;i++)idxs.push(i);
+  const pts=idxs.map(i=>POSITIONS[i]);
+  const inTree=[0];
+  const edgeSet=[];
+  const notIn=idxs.slice(1);
+  while(notIn.length){
+    let best=null,bi=-1,bj=-1;
+    inTree.forEach(i=>{
+      notIn.forEach((j,jj)=>{
+        const d=dist(pts[i],pts[j]);
+        if(best===null||d<best){best=d;bi=i;bj=j;}
+      });
+    });
+    edgeSet.push([bi,bj]);
+    inTree.push(bj);
+    notIn.splice(notIn.indexOf(bj),1);
+  }
+  idxs.forEach(i=>{
+    const dists=idxs.filter(j=>j!==i).map(j=>({j,d:dist(pts[i],pts[j])})).sort((a,b)=>a.d-b.d);
+    let added=0;
+    for(const {j,d} of dists){
+      if(added>=2)break;
+      const has=edgeSet.some(([a,b])=>(a===i&&b===j)||(a===j&&b===i));
+      if(!has&&Math.random()<0.55){edgeSet.push([i,j]);added++;}
+    }
+  });
+  const uniq=[];
+  edgeSet.forEach(([a,b])=>{
+    if(!uniq.some(([x,y])=>(x===a&&y===b)||(x===b&&y===a)))uniq.push([a,b]);
+  });
+  return uniq.map(([a,b])=>({a,b,time:Math.max(3,Math.round(dist(pts[a],pts[b])/18))}));
+}
+
+function buildAdj(){
+  adj={};
+  nodes.forEach((_,i)=>adj[i]=[]);
+  edges.forEach(e=>{
+    adj[e.a].push({to:e.b,time:e.time});
+    adj[e.b].push({to:e.a,time:e.time});
+  });
+}
+
+function dijkstra(src){
+  const dist={};nodes.forEach((_,i)=>dist[i]=Infinity);
+  dist[src]=0;
+  const visited=new Set();
+  while(visited.size<nodes.length){
+    let u=-1,best=Infinity;
+    for(let i=0;i<nodes.length;i++)if(!visited.has(i)&&dist[i]<best){best=dist[i];u=i;}
+    if(u===-1)break;
+    visited.add(u);
+    adj[u].forEach(({to,time})=>{
+      if(dist[u]+time<dist[to])dist[to]=dist[u]+time;
+    });
+  }
+  return dist;
+}
+
+function permutations(arr){
+  if(arr.length<=1)return [arr];
+  const res=[];
+  arr.forEach((v,i)=>{
+    const rest=arr.slice(0,i).concat(arr.slice(i+1));
+    permutations(rest).forEach(p=>res.push([v,...p]));
+  });
+  return res;
+}
+
+function optimalBudget(){
+  const distMaps={};
+  [0,...requiredIds].forEach(id=>distMaps[id]=dijkstra(id));
+  let bestTotal=Infinity;
+  permutations(requiredIds).forEach(perm=>{
+    let total=0,cur=0,ok=true;
+    perm.forEach(p=>{
+      const d=distMaps[cur][p];
+      if(d===Infinity){ok=false;return;}
+      total+=d;cur=p;
+    });
+    if(ok&&total<bestTotal)bestTotal=total;
+  });
+  return bestTotal===Infinity?60:bestTotal;
+}
+
+function setupRound(){
+  const n=Math.min(6+(round-1),POSITIONS.length);
+  const reqCount=Math.min(3+Math.floor((round-1)*0.8),n-1,8);
+  nodes=[];
+  for(let i=0;i<n;i++)nodes.push({id:i,x:POSITIONS[i][0],y:POSITIONS[i][1]});
+  edges=buildGraph(n);
+  buildAdj();
+  const pool=[];
+  for(let i=1;i<n;i++)pool.push(i);
+  for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]];}
+  requiredIds=pool.slice(0,reqCount);
+  budget=Math.round(optimalBudget()*Math.max(1.1,1.45-round*0.04));
+  elapsed=0;
+  current=0;
+  visitedRequired=new Set();
+  visitedNodes=new Set([0]);
+  clockMax=Math.max(30,75-round*3);
+  clockLeft=clockMax;
+  renderMap();
+  updateHud();
+  updateBars();
+}
+
+function renderMap(){
+  const wrap=document.getElementById('mapWrap');
+  wrap.style.display='block';
+  document.getElementById('tg-actions').style.display='block';
+  const svg=document.getElementById('mapSvg');
+  svg.innerHTML='';
+  edges.forEach(e=>{
+    const a=nodes[e.a],b=nodes[e.b];
+    const line=document.createElementNS('http://www.w3.org/2000/svg','line');
+    line.setAttribute('x1',a.x);line.setAttribute('y1',a.y);
+    line.setAttribute('x2',b.x);line.setAttribute('y2',b.y);
+    line.setAttribute('stroke','#2f7ea3');line.setAttribute('stroke-width','3');
+    svg.appendChild(line);
+    const label=document.createElementNS('http://www.w3.org/2000/svg','text');
+    label.setAttribute('x',(a.x+b.x)/2);label.setAttribute('y',(a.y+b.y)/2-4);
+    label.setAttribute('fill','#bfe6ff');label.setAttribute('font-size','12');label.setAttribute('text-anchor','middle');
+    label.textContent=e.time+'m';
+    svg.appendChild(label);
+  });
+  const wrapDiv=document.getElementById('mapWrap');
+  wrapDiv.querySelectorAll('.tg-node').forEach(n=>n.remove());
+  nodes.forEach((node,i)=>{
+    const b=document.createElement('button');
+    b.className='tg-node'+(i===0?' start':(requiredIds.includes(i)?' required':''));
+    b.style.left=(node.x/600*100)+'%';
+    b.style.top=(node.y/380*100)+'%';
+    b.textContent=i===0?'🚩':(requiredIds.includes(i)?'⭐':'📍');
+    b.setAttribute('aria-label','Landmark '+i);
+    b.onclick=()=>tryMove(i);
+    wrapDiv.appendChild(b);
+  });
+  updateNodeStates();
+}
+
+function updateNodeStates(){
+  document.querySelectorAll('.tg-node').forEach((el,i)=>{
+    el.classList.toggle('current',i===current);
+    el.classList.toggle('visited',visitedRequired.has(i));
+  });
+}
+
+function updateBars(){
+  document.getElementById('budgetFill').style.width=Math.max(0,((budget-elapsed)/budget*100))+'%';
+  document.getElementById('clockFill').style.width=Math.max(0,(clockLeft/clockMax*100))+'%';
+}
+
+function tryMove(target){
+  if(!running||target===current)return;
+  const link=adj[current].find(a=>a.to===target);
+  if(!link){SFX.error();return;}
+  elapsed+=link.time;
+  current=target;
+  visitedNodes.add(target);
+  if(requiredIds.includes(target)&&!visitedRequired.has(target)){
+    visitedRequired.add(target);
+    SFX.coin();
+  }else{
+    SFX.click();
+  }
+  updateHud();updateBars();updateNodeStates();
+  if(elapsed>budget){failRound('budget');return;}
+  if(visitedRequired.size===requiredIds.length){completeRound();}
+}
+
+function resetRoute(){
+  if(!running)return;
+  current=0;elapsed=0;visitedRequired=new Set();visitedNodes=new Set([0]);
+  SFX.swoosh();
+  updateHud();updateBars();updateNodeStates();
+}
+
+function completeRound(){
+  running=false;
+  clearInterval(clockTimer);
+  const spare=Math.max(0,budget-elapsed);
+  const pts=100+spare*4;
+  score+=pts;
+  if(score>best){best=score;localStorage.setItem(KEY_BEST,String(best));}
+  SFX.win();
+  updateHud();
+  document.getElementById('tg-actions').style.display='none';
+  const ov=document.getElementById('tg-overlay');
+  ov.style.display='block';
+  ov.innerHTML='<h2>'+I18N.t('tour_complete','Tour Complete!')+'</h2>'+
+    '<div>'+I18N.t('time_to_spare','Time to spare: {n} min').replace('{n}',spare)+'</div>'+
+    '<div>'+I18N.t('points_earned','+{n} points').replace('{n}',pts)+'</div>'+
+    '<button class="startBtn" id="nextBtn">'+I18N.t('next_round_btn','Next Round')+'</button>';
+  document.getElementById('nextBtn').onclick=()=>{round++;startRound();};
+}
+
+function failRound(reason){
+  running=false;
+  clearInterval(clockTimer);
+  SFX.lose();
+  document.getElementById('tg-actions').style.display='none';
+  const ov=document.getElementById('tg-overlay');
+  ov.style.display='block';
+  ov.innerHTML='<h2>'+I18N.t('tour_failed','Tour Failed')+'</h2>'+
+    '<div>'+(reason==='budget'?I18N.t('ran_out_budget','You ran out of time budget!'):I18N.t('ran_out_clock','The planning clock ran out!'))+'</div>'+
+    '<div>'+I18N.t('final_score','Final Score: {n}').replace('{n}',score)+'</div>'+
+    '<div>'+fmtBest()+'</div>'+
+    '<button class="startBtn" id="restartBtn">'+I18N.t('play_again','Play Again')+'</button>';
+  document.getElementById('restartBtn').onclick=startGame;
+}
+
+function clockTick(){
+  if(!running)return;
+  clockLeft-=0.2;
+  updateBars();
+  if(clockLeft<=0){failRound('clock');}
+}
+
+function startRound(){
+  document.getElementById('tg-overlay').style.display='none';
+  document.getElementById('tg-overlay').innerHTML='';
+  running=true;
+  setupRound();
+  clearInterval(clockTimer);
+  clockTimer=setInterval(clockTick,200);
+}
+
+function startGame(){
+  round=1;score=0;
+  startRound();
+}
+
+document.getElementById('resetRouteBtn').onclick=resetRoute;
+
+function showStart(){
+  document.getElementById('mapWrap').style.display='none';
+  document.getElementById('tg-actions').style.display='none';
+  const ov=document.getElementById('tg-overlay');
+  ov.style.display='block';
+  ov.innerHTML='<h2>'+I18N.t('tour_guide_route','Tour Guide Route')+'</h2>'+
+    '<div>'+I18N.t('tg_start_desc','Plan a walking route through every starred landmark before the budget and clock run out.')+'</div>'+
+    '<button class="startBtn" id="startBtn">'+I18N.t('start_tour','Start Tour')+'</button>';
+  document.getElementById('startBtn').onclick=startGame;
+  updateHud();
+}
+
+showStart();
+</script></body></html>

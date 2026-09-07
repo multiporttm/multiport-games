@@ -1,0 +1,283 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Billiards Pool</title><meta name="description" content="Play Billiards Pool free online — Drag from the cue ball to aim, pull back further for more power, and release to shoot. Pocket the numbered balls before you scratch or foul!"><link rel="canonical" href="https://games.multiportllc.com/games/billiardspool"><meta property="og:title" content="Billiards Pool - Multiport Games"><meta property="og:description" content="Play Billiards Pool free online — Drag from the cue ball to aim, pull back further for more power, and release to shoot. Pocket the numbered balls before you scratch or foul!"><meta property="og:url" content="https://games.multiportllc.com/games/billiardspool"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Billiards Pool","description":"Play Billiards Pool free online instantly. Drag from the cue ball to aim, pull back further for more power, and release to shoot. Pocket the numbered balls before you scratch or foul. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/billiardspool","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0b3d2e;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:1rem;font-weight:700;padding:8px 14px;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffd54f}
+#power-wrap{width:100%;max-width:800px;margin:0 auto 6px;padding:0 14px}
+#power-bar{width:100%;height:10px;background:rgba(255,255,255,.12);border-radius:6px;overflow:hidden}
+#power-fill{height:100%;width:0%;background:linear-gradient(90deg,#4caf50,#ffd54f,#e94560);transition:width .05s linear}
+#msg{text-align:center;color:#fff;font-weight:800;font-size:1.1rem;min-height:1.6em;padding:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Billiards Pool</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div>Score: <span id="score">0</span></div>
+      <div>Ball: <span id="turn">Solids/Stripes TBD</span></div>
+      <div>Best: <span id="best">0</span></div>
+    </div>
+    <div id="power-wrap"><div id="power-bar"><div id="power-fill"></div></div></div>
+    <div id="msg">Drag back from the cue ball to aim and set power</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag from the cue ball backward to aim, pull further back for more power, and release to shoot. Pocket your assigned group (solids 1-7 or stripes 9-15) then the 8-ball to win the rack. Sinking the cue ball or the 8-ball early is a foul/scratch. Clear racks for points — each rack gets a little tougher.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420,R=11;
+const POCKETS=[[24,24],[400,16],[776,24],[24,396],[400,404],[776,396]];
+let balls=[],score=0,best=+(localStorage.getItem('billiardspool_best')||0);
+let aiming=false,dragStart=null,dragCur=null,power=0,shotMoving=false;
+let playerGroup=null,rack=1,firstPocketedThisShot=[],cueWasHit=false,gameMsg='';
+document.getElementById('best').textContent=best;
+
+function rack15(){
+  const balls=[];
+  balls.push({id:0,x:200,y:H/2,vx:0,vy:0,color:'#fff',stripe:false,pocketed:false,num:0});
+  // triangle rack of 15 at x=550
+  const order=[1,9,2,10,8,3,11,4,12,13,5,14,6,15,7];
+  let idx=0;
+  const startX=560,spacing=R*2+1;
+  for(let row=0;row<5;row++){
+    for(let i=0;i<=row;i++){
+      const num=order[idx++];
+      const x=startX+row*(spacing*0.87);
+      const y=H/2-(row*spacing)/2+i*spacing;
+      balls.push({id:num,x,y,vx:0,vy:0,stripe:num>8,pocketed:false,num,
+        color:ballColor(num)});
+    }
+  }
+  return balls;
+}
+function ballColor(n){
+  const cols=['#fff','#e6b800','#1e5fbf','#d32f2f','#5e2d91','#e67e22','#2e7d32','#7a1f1f','#222','#e6b800','#1e5fbf','#d32f2f','#5e2d91','#e67e22','#2e7d32','#7a1f1f'];
+  return cols[n];
+}
+
+function reset(){
+  balls=rack15();
+  playerGroup=null;
+  power=0;shotMoving=false;aiming=false;
+  document.getElementById('turn').textContent=I18N.t('choose_group','Pocket any ball to pick your group');
+  setMsg(I18N.t('aim_hint','Drag back from the cue ball to aim and set power'));
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;gameMsg=t;}
+
+function cue(){return balls.find(b=>b.id===0);}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function anyMoving(){return balls.some(b=>!b.pocketed&&(Math.abs(b.vx)>0.02||Math.abs(b.vy)>0.02));}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*(W/rect.width),y:(cy-rect.top)*(H/rect.height)};
+}
+
+function startDrag(e){
+  if(shotMoving||anyMoving())return;
+  const cb=cue();
+  if(cb.pocketed)return;
+  e.preventDefault();
+  aiming=true;
+  dragStart=pointerPos(e);
+  dragCur=dragStart;
+}
+function moveDrag(e){
+  if(!aiming)return;
+  e.preventDefault();
+  dragCur=pointerPos(e);
+  const d=dist(dragStart,dragCur);
+  power=Math.min(1,d/160);
+  document.getElementById('power-fill').style.width=(power*100)+'%';
+}
+function endDrag(e){
+  if(!aiming)return;
+  aiming=false;
+  const cb=cue();
+  const dx=dragStart.x-dragCur.x,dy=dragStart.y-dragCur.y;
+  const d=Math.hypot(dx,dy);
+  if(d<8){document.getElementById('power-fill').style.width='0%';return;}
+  const speed=Math.min(1,d/160)*16+2;
+  const ang=Math.atan2(dy,dx);
+  cb.vx=Math.cos(ang)*speed;
+  cb.vy=Math.sin(ang)*speed;
+  SFX.hit();
+  shotMoving=true;
+  cueWasHit=false;
+  firstPocketedThisShot=[];
+  document.getElementById('power-fill').style.width='0%';
+  setMsg(I18N.t('shooting','...'));
+}
+
+c.addEventListener('mousedown',startDrag);
+c.addEventListener('mousemove',moveDrag);
+window.addEventListener('mouseup',endDrag);
+c.addEventListener('touchstart',startDrag,{passive:false});
+c.addEventListener('touchmove',moveDrag,{passive:false});
+c.addEventListener('touchend',endDrag,{passive:false});
+
+function physicsStep(){
+  const FRICTION=0.988;
+  balls.forEach(b=>{
+    if(b.pocketed)return;
+    b.x+=b.vx;b.y+=b.vy;
+    b.vx*=FRICTION;b.vy*=FRICTION;
+    if(Math.abs(b.vx)<0.03)b.vx=0;
+    if(Math.abs(b.vy)<0.03)b.vy=0;
+    if(b.x<24+R){b.x=24+R;b.vx*=-0.85;}
+    if(b.x>776-R){b.x=776-R;b.vx*=-0.85;}
+    if(b.y<24+R){b.y=24+R;b.vy*=-0.85;}
+    if(b.y>396-R){b.y=396-R;b.vy*=-0.85;}
+  });
+  // collisions
+  for(let i=0;i<balls.length;i++){
+    if(balls[i].pocketed)continue;
+    for(let j=i+1;j<balls.length;j++){
+      if(balls[j].pocketed)continue;
+      const a=balls[i],b=balls[j];
+      const dx=b.x-a.x,dy=b.y-a.y;
+      const d=Math.hypot(dx,dy);
+      if(d<R*2&&d>0){
+        const nx=dx/d,ny=dy/d;
+        const overlap=R*2-d;
+        a.x-=nx*overlap/2;a.y-=ny*overlap/2;
+        b.x+=nx*overlap/2;b.y+=ny*overlap/2;
+        const kx=a.vx-b.vx,ky=a.vy-b.vy;
+        const p=kx*nx+ky*ny;
+        if(p>0){
+          a.vx-=p*nx;a.vy-=p*ny;
+          b.vx+=p*nx;b.vy+=p*ny;
+          if(a.id===0&&!cueWasHit)cueWasHit=true;
+          if(b.id===0&&!cueWasHit)cueWasHit=true;
+          if(p>0.6)SFX.click();
+        }
+      }
+    }
+  }
+  // pockets
+  balls.forEach(b=>{
+    if(b.pocketed)return;
+    for(const [px,py] of POCKETS){
+      if(dist(b,{x:px,y:py})<20){
+        b.pocketed=true;b.vx=0;b.vy=0;
+        firstPocketedThisShot.push(b.id);
+        SFX.coin();
+        break;
+      }
+    }
+  });
+}
+
+function handleShotResult(){
+  const cb=cue();
+  const scratched=firstPocketedThisShot.includes(0);
+  const pocketedNums=firstPocketedThisShot.filter(n=>n!==0);
+  let foul=false;
+  if(!cueWasHit)foul=true;
+  if(scratched){
+    foul=true;
+    SFX.fail();
+    setMsg(I18N.t('scratch_msg','Scratch! Cue ball respotted — foul.'));
+    cb.pocketed=false;cb.x=200;cb.y=H/2;cb.vx=0;cb.vy=0;
+  }
+  if(pocketedNums.length){
+    if(playerGroup===null){
+      const n=pocketedNums.find(n=>n!==8);
+      if(n!==undefined){
+        playerGroup=n>8?'stripes':'solids';
+        document.getElementById('turn').textContent=I18N.t('your_group','Your group: {g}').replace('{g}',playerGroup);
+      }
+    }
+    pocketedNums.forEach(n=>{
+      if(n===8){
+        const remaining=balls.filter(b=>!b.pocketed&&b.num!==0&&b.num!==8&&(playerGroup==='stripes'?b.num>8:b.num<8));
+        if(playerGroup&&remaining.length===0&&!foul){
+          score+=50*rack;
+          SFX.win();
+          setMsg(I18N.t('rack_clear','Rack cleared! +'+50*rack+' pts — new rack!'));
+          rack++;
+          setTimeout(reset,1400);
+        } else {
+          score=Math.max(0,score-30);
+          SFX.lose();
+          setMsg(I18N.t('early_8','8-ball pocketed early — foul! New rack.'));
+          setTimeout(reset,1400);
+        }
+      } else if(playerGroup===null||((n>8)===(playerGroup==='stripes'))){
+        score+=10;
+        if(!foul)setMsg(I18N.t('nice_shot','Nice shot! +10'));
+      } else {
+        score=Math.max(0,score-5);
+        foul=true;
+        setMsg(I18N.t('wrong_ball','Wrong ball pocketed — foul. -5'));
+      }
+    });
+  } else if(!scratched){
+    if(!foul)setMsg(I18N.t('miss_msg','No ball pocketed. Your turn again.'));
+  }
+  document.getElementById('score').textContent=score;
+  if(score>best){best=score;localStorage.setItem('billiardspool_best',best);document.getElementById('best').textContent=best;}
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0b3d2e';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#5a3a1a';ctx.lineWidth=16;ctx.strokeRect(8,8,W-16,H-16);
+  POCKETS.forEach(([x,y])=>{
+    ctx.beginPath();ctx.arc(x,y,18,0,7);ctx.fillStyle='#000';ctx.fill();
+  });
+  if(aiming&&dragStart&&dragCur){
+    const cb=cue();
+    const dx=dragStart.x-dragCur.x,dy=dragStart.y-dragCur.y;
+    const ang=Math.atan2(dy,dx);
+    ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=2;ctx.setLineDash([6,5]);
+    ctx.beginPath();ctx.moveTo(cb.x,cb.y);ctx.lineTo(cb.x+Math.cos(ang)*300,cb.y+Math.sin(ang)*300);ctx.stroke();
+    ctx.setLineDash([]);
+    // cue stick
+    const pull=Math.min(1,Math.hypot(dx,dy)/160)*60+20;
+    ctx.strokeStyle='#c9975a';ctx.lineWidth=6;
+    ctx.beginPath();ctx.moveTo(cb.x-Math.cos(ang)*pull,cb.y-Math.sin(ang)*pull);ctx.lineTo(cb.x-Math.cos(ang)*(pull+120),cb.y-Math.sin(ang)*(pull+120));ctx.stroke();
+  }
+  balls.forEach(b=>{
+    if(b.pocketed)return;
+    ctx.beginPath();ctx.arc(b.x,b.y,R,0,7);
+    ctx.fillStyle=b.color;ctx.fill();
+    ctx.lineWidth=1;ctx.strokeStyle='rgba(0,0,0,.4)';ctx.stroke();
+    if(b.stripe&&b.num!==0){
+      ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(b.x,b.y,R-3,0,7);ctx.fill();
+      ctx.fillStyle=b.color;ctx.fillRect(b.x-R,b.y-4,R*2,8);
+    }
+    if(b.num>0){
+      ctx.beginPath();ctx.arc(b.x,b.y,6,0,7);ctx.fillStyle='#fff';ctx.fill();
+      ctx.fillStyle='#111';ctx.font='bold 8px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(b.num,b.x,b.y+1);
+    }
+  });
+}
+
+function loop(){
+  if(shotMoving){
+    physicsStep();
+    if(!anyMoving()){
+      shotMoving=false;
+      handleShotResult();
+    }
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

@@ -1,0 +1,210 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Hotel Concierge</title><meta name="description" content="Play Hotel Concierge free online — Guests arrive at your desk with requests shown as icons. Click the matching response button before their patience bar runs out. Handle multiple guests at once as your shift gets busier!"><link rel="canonical" href="https://games.multiportllc.com/games/hotelconcierge"><meta property="og:title" content="Hotel Concierge - Multiport Games"><meta property="og:description" content="Play Hotel Concierge free online — Guests arrive at your desk with requests shown as icons. Click the matching response button before their patience bar runs out. Handle multiple guests at once as your shift gets busier!"><meta property="og:url" content="https://games.multiportllc.com/games/hotelconcierge"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Hotel Concierge","description":"Play Hotel Concierge free online instantly. Guests arrive at your desk with requests shown as icons. Click the matching response button before their patience bar runs out. Handle multiple guests at once as your shift gets busier! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/hotelconcierge","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#2b1d12;border-radius:14px;padding:14px;text-align:center;max-width:640px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#f4e3c1;font-weight:800;font-size:1rem;padding:0 6px 8px}
+#hud span{color:#ffd54f}
+#desk{position:relative;min-height:330px;background:linear-gradient(#3a2a1a,#2b1d12);border-radius:12px;overflow:hidden;padding:8px}
+.guest{position:relative;background:#3c2b1e;border:2px solid #6b4a2f;border-radius:12px;margin:6px auto;padding:8px 10px;display:flex;align-items:center;gap:10px;max-width:560px;transition:opacity .2s, transform .2s}
+.guest.gone{opacity:0;transform:scale(.85)}
+.guest .face{font-size:1.8rem;width:44px;text-align:center}
+.guest .req{font-size:1.6rem;background:#1a1a2e;border-radius:8px;width:44px;height:44px;display:flex;align-items:center;justify-content:center}
+.guest .patience{flex:1;height:14px;background:#1a1a2e;border-radius:7px;overflow:hidden}
+.guest .patience-bar{height:100%;background:#4caf50;transition:width .1s linear,background .2s}
+.opts{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:8px}
+.opts button{padding:10px 12px;background:#8a5a2f;border:none;border-radius:10px;color:#fff;font-size:1.35rem;cursor:pointer;min-width:52px}
+.opts button:active{transform:scale(.92)}
+#msg{color:#ffd54f;font-weight:800;min-height:1.4em;margin-top:6px}
+#startBtn{padding:10px 24px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1.05rem;margin-top:10px}
+#overlay{position:absolute;inset:0;background:rgba(10,6,3,.88);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;border-radius:12px;z-index:5}
+#overlay h2{color:#ffd54f;margin:0 0 8px}
+@media(max-width:480px){.guest .face,.guest .req{font-size:1.4rem;width:36px;height:36px}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Hotel Concierge</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="hud"><div>Shift: <span id="timeLeft">60</span>s</div><div>Score: <span id="score">0</span></div><div>Missed: <span id="missed">0</span></div></div>
+      <div id="desk">
+        <div id="guestList"></div>
+        <div id="overlay">
+          <h2 id="ovTitle">Hotel Concierge</h2>
+          <div id="ovText">Serve guests before they lose patience!</div>
+          <button id="startBtn">Start Shift</button>
+        </div>
+      </div>
+      <div class="opts" id="opts"></div>
+      <div id="msg"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Guests arrive at your desk with a request icon and a shrinking patience bar. Click the matching response button (🛏️ room service, 🗺️ directions, 📅 reservation, 🧳 luggage, 🔑 key, 🚕 taxi) for each guest before their patience runs out. Multiple guests queue up as the shift gets busier — handle as many correctly as you can before time runs out!</div>
+</div>
+<script>
+const REQUESTS=[
+  {icon:'🛏️',key:'room_service',label:'Room Service'},
+  {icon:'🗺️',key:'directions',label:'Directions'},
+  {icon:'📅',key:'reservation',label:'Reservation'},
+  {icon:'🧳',key:'luggage',label:'Luggage'},
+  {icon:'🔑',key:'key',label:'Room Key'},
+  {icon:'🚕',key:'taxi',label:'Taxi'}
+];
+const FACES=['🧑','👩','👨','👵','👴','🧔','👱‍♀️','👨‍💼','👩‍💼'];
+let guests=[],score=0,missed=0,timeLeft=60,running=false,spawnTimer=0,best=0,idCounter=0,lastTs=null;
+
+const guestListEl=document.getElementById('guestList');
+const optsEl=document.getElementById('opts');
+const overlay=document.getElementById('overlay');
+const msgEl=document.getElementById('msg');
+
+function buildOpts(){
+  optsEl.innerHTML='';
+  REQUESTS.forEach(r=>{
+    const b=document.createElement('button');
+    b.textContent=r.icon;
+    b.title=I18N.t('req_'+r.key,r.label);
+    b.onclick=()=>respond(r.key);
+    optsEl.appendChild(b);
+  });
+}
+buildOpts();
+
+function loadBest(){ best=parseInt(localStorage.getItem('hotelconcierge_best')||'0',10); }
+loadBest();
+
+function setMsg(t){ msgEl.textContent=t; }
+
+function spawnGuest(){
+  const req=REQUESTS[Math.floor(Math.random()*REQUESTS.length)];
+  const face=FACES[Math.floor(Math.random()*FACES.length)];
+  const basePatience=Math.max(5.5,10-score*0.06);
+  guests.push({id:idCounter++,req,face,patience:basePatience,maxPatience:basePatience,el:null});
+}
+
+function render(){
+  guests.forEach(g=>{
+    if(!g.el){
+      const div=document.createElement('div');
+      div.className='guest';
+      div.innerHTML=`<div class="face">${g.face}</div><div class="req">${g.req.icon}</div><div class="patience"><div class="patience-bar"></div></div>`;
+      guestListEl.appendChild(div);
+      g.el=div;
+    }
+    const pct=Math.max(0,g.patience/g.maxPatience*100);
+    const bar=g.el.querySelector('.patience-bar');
+    bar.style.width=pct+'%';
+    bar.style.background = pct>50?'#4caf50':pct>25?'#ffb300':'#e94560';
+  });
+}
+
+function respond(key){
+  if(!running)return;
+  if(!guests.length){ setMsg(I18N.t('no_guests','No guests waiting right now.')); return; }
+  // choose the guest matching this key with lowest patience among matches; if none match, penalize the most impatient guest
+  const matches=guests.filter(g=>g.req.key===key);
+  if(matches.length){
+    matches.sort((a,b)=>a.patience-b.patience);
+    const g=matches[0];
+    fulfill(g,true);
+  } else {
+    guests.sort((a,b)=>a.patience-b.patience);
+    const g=guests[0];
+    fulfill(g,false);
+  }
+}
+
+function fulfill(g,correct){
+  if(correct){
+    score+=10;
+    SFX.success();
+    setMsg(I18N.t('served_msg','Served! +10'));
+  } else {
+    score=Math.max(0,score-5);
+    SFX.error();
+    setMsg(I18N.t('wrong_msg','Wrong response! -5'));
+  }
+  removeGuest(g);
+  updateHud();
+}
+
+function removeGuest(g){
+  if(g.el){
+    g.el.classList.add('gone');
+    setTimeout(()=>{ if(g.el&&g.el.parentNode)g.el.parentNode.removeChild(g.el); },200);
+  }
+  guests=guests.filter(x=>x!==g);
+}
+
+function updateHud(){
+  document.getElementById('score').textContent=score;
+  document.getElementById('missed').textContent=missed;
+  document.getElementById('timeLeft').textContent=Math.ceil(timeLeft);
+}
+
+function tick(dt){
+  spawnTimer-=dt;
+  if(spawnTimer<=0){
+    const interval=Math.max(1.1,2.6-score*0.01);
+    spawnTimer=interval;
+    if(guests.length<6)spawnGuest();
+  }
+  guests.forEach(g=>{ g.patience-=dt; });
+  const expired=guests.filter(g=>g.patience<=0);
+  expired.forEach(g=>{
+    missed++;
+    score=Math.max(0,score-3);
+    SFX.hurt();
+    removeGuest(g);
+  });
+  if(expired.length)setMsg(I18N.t('missed_msg','A guest left unhappy!'));
+  timeLeft-=dt;
+  if(timeLeft<=0){ endGame(); return; }
+  render();
+  updateHud();
+}
+
+function loop(ts){
+  if(!running)return;
+  if(lastTs===null)lastTs=ts;
+  const dt=Math.min((ts-lastTs)/1000,0.2);
+  lastTs=ts;
+  tick(dt);
+  requestAnimationFrame(loop);
+}
+
+function startGame(){
+  guests.forEach(g=>{ if(g.el&&g.el.parentNode)g.el.parentNode.removeChild(g.el); });
+  guests=[];guestListEl.innerHTML='';
+  score=0;missed=0;timeLeft=60;spawnTimer=0.5;lastTs=null;running=true;
+  overlay.style.display='none';
+  setMsg(I18N.t('shift_started','Shift started — good luck!'));
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function endGame(){
+  running=false;
+  if(score>best){ best=score; localStorage.setItem('hotelconcierge_best',String(best)); }
+  document.getElementById('ovTitle').textContent=I18N.t('shift_over_title','Shift Over!');
+  document.getElementById('ovText').innerHTML=I18N.t('final_score_label','Score: {s} &nbsp; Best: {b} &nbsp; Missed: {m}').replace('{s}',score).replace('{b}',best).replace('{m}',missed);
+  document.getElementById('startBtn').textContent=I18N.t('play_again','Play Again');
+  overlay.style.display='flex';
+  SFX.win();
+}
+
+document.getElementById('startBtn').addEventListener('click',startGame);
+
+document.addEventListener('keydown',e=>{
+  if(!running)return;
+  const n=parseInt(e.key,10);
+  if(n>=1&&n<=REQUESTS.length){ respond(REQUESTS[n-1].key); }
+});
+
+updateHud();
+</script></body></html>

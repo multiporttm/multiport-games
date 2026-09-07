@@ -1,0 +1,296 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Medusa Gaze</title><meta name="description" content="Play Medusa Gaze free online — Move with Arrow Keys / WASD or drag. Dodge the snakes and Medusa's sweeping gaze beam. Click/Tap to raise your mirror shield and reflect the gaze for bonus damage."><link rel="canonical" href="https://games.multiportllc.com/games/medusagaze"><meta property="og:title" content="Medusa Gaze - Multiport Games"><meta property="og:description" content="Play Medusa Gaze free online — Move with Arrow Keys / WASD or drag. Dodge the snakes and Medusa's sweeping gaze beam. Click/Tap to raise your mirror shield and reflect the gaze for bonus damage."><meta property="og:url" content="https://games.multiportllc.com/games/medusagaze"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Medusa Gaze","description":"Play Medusa Gaze free online instantly. Move with Arrow Keys / WASD or drag. Dodge the snakes and Medusa's sweeping gaze beam. Click/Tap to raise your mirror shield and reflect the gaze for bonus damage. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/medusagaze","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#241531;display:block;border-radius:8px;touch-action:none}
+#hud{color:#e6c9ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Medusa Gaze</div>
+  <div class="game-frame">
+    <div id="hud"><span>Distance: <b id="distDisp">0</b></span><span>Reflects: <b id="refDisp">0</b></span><span>Best: <b id="bestDisp">0</b></span></div>
+    <canvas id="c" width="800" height="450"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move with <b>Arrow Keys / WASD</b> or drag. Dodge the snakes and Medusa's sweeping gaze beam. Click/Tap to raise your mirror shield and reflect the gaze for bonus damage.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=450;
+const BEST_KEY='medusagaze_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+document.getElementById('bestDisp').textContent=best;
+
+let player,snakes,gazes,keys,dist,reflects,gameOver,started,shieldTimer,shieldCooldown,statin,damageFlash,lastTime,snakeTimer,gazeTimer,particles,stoneLevel,nextGazeIn=170;
+
+function reset(){
+  player={x:W/2,y:H-60,r:16,vx:0,vy:0};
+  snakes=[];
+  gazes=[];
+  keys={};
+  dist=0;
+  reflects=0;
+  gameOver=false;
+  started=false;
+  shieldTimer=0;
+  shieldCooldown=0;
+  statin=0; // petrify freeze timer
+  damageFlash=0;
+  lastTime=null;
+  snakeTimer=0;
+  gazeTimer=90;
+  particles=[];
+  stoneLevel=0;
+  nextGazeIn=170;
+}
+reset();
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(!started){started=true;}
+  if(gameOver){reset();started=true;}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function raiseShield(){
+  if(!started){started=true;return;}
+  if(gameOver){reset();started=true;return;}
+  if(shieldCooldown<=0){shieldTimer=18;shieldCooldown=45;SFX.select();}
+}
+
+let dragging=false;
+c.addEventListener('pointerdown',e=>{
+  dragging=true;
+  raiseShield();
+});
+c.addEventListener('pointerup',()=>{dragging=false;});
+c.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const rect=c.getBoundingClientRect();
+  const scale=W/rect.width;
+  const mx=(e.clientX-rect.left)*scale;
+  const my=(e.clientY-rect.top)*scale;
+  player.tx=mx;player.ty=my;
+});
+
+function spawnSnake(){
+  const side=Math.random()<0.5?0:1;
+  const x=side===0?-20:W+20;
+  const y=40+Math.random()*(H-140);
+  const spd=(1.2+Math.random()*1.3)*(side===0?1:-1);
+  snakes.push({x,y,vx:spd,vy:(Math.random()-0.5)*1.2,r:14,wob:Math.random()*10});
+}
+
+function spawnGaze(){
+  // horizontal beam sweep, telegraphed then fired
+  const y=60+Math.random()*(H-200);
+  gazes.push({y,phase:'telegraph',timer:55,h:34});
+}
+
+function circleHit(a,b){
+  const dx=a.x-b.x,dy=a.y-b.y;
+  return Math.hypot(dx,dy)<a.r+b.r;
+}
+
+function drawPlayer(){
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.beginPath();ctx.ellipse(0,player.r+6,player.r*0.8,5,0,0,Math.PI*2);ctx.fill();
+  // body
+  ctx.fillStyle=statin>0?'#8a8a99':'#5ec8ff';
+  ctx.beginPath();ctx.arc(0,0,player.r,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#dff';ctx.lineWidth=2;ctx.stroke();
+  // shield
+  if(shieldTimer>0){
+    ctx.strokeStyle='rgba(255,245,180,0.95)';
+    ctx.lineWidth=4;
+    ctx.beginPath();ctx.arc(0,0,player.r+7,0,Math.PI*2);ctx.stroke();
+    ctx.fillStyle='rgba(255,245,180,0.18)';
+    ctx.beginPath();ctx.arc(0,0,player.r+7,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawSnake(s){
+  ctx.save();
+  ctx.translate(s.x,s.y);
+  ctx.fillStyle='#3fae52';
+  for(let i=0;i<4;i++){
+    const off=Math.sin(Date.now()/120+i+s.wob)*4;
+    ctx.beginPath();ctx.arc(-i*10*(s.vx>0?1:-1),off,7-i*0.8,0,Math.PI*2);ctx.fill();
+  }
+  ctx.fillStyle='#ffcc00';
+  ctx.beginPath();ctx.arc(0,0,2.2,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function update(dt){
+  // movement
+  let ax=0,ay=0;
+  if(keys['arrowleft']||keys['a'])ax-=1;
+  if(keys['arrowright']||keys['d'])ax+=1;
+  if(keys['arrowup']||keys['w'])ay-=1;
+  if(keys['arrowdown']||keys['s'])ay+=1;
+  if(player.tx!==undefined){
+    const dx=player.tx-player.x,dy=player.ty-player.y;
+    const d=Math.hypot(dx,dy);
+    if(d>2){ax+=dx/d*1.4;ay+=dy/d*1.4;}
+  }
+  const mag=Math.hypot(ax,ay);
+  if(mag>0){ax/=mag;ay/=mag;}
+  const speed=statin>0?0:4.6;
+  player.x+=ax*speed*dt;
+  player.y+=ay*speed*dt;
+  player.x=Math.max(player.r,Math.min(W-player.r,player.x));
+  player.y=Math.max(player.r,Math.min(H-player.r,player.y));
+
+  if(shieldTimer>0)shieldTimer-=dt;
+  if(shieldCooldown>0)shieldCooldown-=dt;
+  if(statin>0){statin-=dt;return;}
+  if(damageFlash>0)damageFlash-=dt;
+
+  dist+=dt*0.6;
+
+  // snakes
+  snakeTimer+=dt;
+  const snakeInterval=Math.max(28,70-dist/8);
+  if(snakeTimer>=snakeInterval){snakeTimer=0;spawnSnake();}
+  snakes=snakes.filter(s=>s.x>-40&&s.x<W+40);
+  snakes.forEach(s=>{
+    s.x+=s.vx*dt;
+    s.y+=s.vy*dt;
+    if(s.y<30||s.y>H-30)s.vy*=-1;
+    if(circleHit(player,s)&&statin<=0){
+      statin=50;damageFlash=20;stoneLevel++;SFX.hurt();
+      snakes.splice(snakes.indexOf(s),1);
+    }
+  });
+
+  // gaze beams
+  gazes.forEach(g=>{
+    if(g.phase==='telegraph'){
+      g.timer-=dt;
+      if(g.timer<=0){g.phase='fire';g.timer=22;SFX.swoosh();}
+    } else if(g.phase==='fire'){
+      g.timer-=dt;
+      const inBeam=player.y>g.y-g.h/2-player.r&&player.y<g.y+g.h/2+player.r;
+      if(inBeam){
+        if(shieldTimer>0){
+          if(!g.reflected){
+            g.reflected=true;reflects++;SFX.powerup();
+            for(let i=0;i<14;i++)particles.push({x:player.x,y:player.y,vx:(Math.random()-0.5)*6,vy:(Math.random()-0.5)*6,life:24,c:'#ffe58a'});
+          }
+        } else if(statin<=0){
+          statin=70;damageFlash=30;stoneLevel+=2;SFX.hit();
+        }
+      }
+      if(g.timer<=0){g.phase='done';}
+    }
+  });
+  gazes=gazes.filter(g=>g.phase!=='done');
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;});
+
+  if(dist>best){best=dist;}
+}
+
+function scheduleGaze(dt){
+  if(gazes.length===0){
+    nextGazeIn-=dt;
+    if(nextGazeIn<=0){spawnGaze();nextGazeIn=170+Math.random()*70;}
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#2a1840');bg.addColorStop(1,'#150a20');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  // pillars
+  ctx.fillStyle='rgba(255,255,255,0.05)';
+  for(let i=0;i<6;i++){ctx.fillRect(40+i*140,0,26,H);}
+
+  gazes.forEach(g=>{
+    if(g.phase==='telegraph'){
+      const a=0.25+0.25*Math.sin(Date.now()/60);
+      ctx.fillStyle=`rgba(255,80,80,${a})`;
+      ctx.fillRect(0,g.y-g.h/2,W,g.h);
+      ctx.strokeStyle='rgba(255,120,120,0.8)';
+      ctx.setLineDash([8,6]);
+      ctx.strokeRect(0,g.y-g.h/2,W,g.h);
+      ctx.setLineDash([]);
+    } else if(g.phase==='fire'){
+      const grad=ctx.createLinearGradient(0,g.y-g.h/2,0,g.y+g.h/2);
+      const col=g.reflected?'150,255,180':'150,255,90';
+      grad.addColorStop(0,`rgba(${col},0)`);
+      grad.addColorStop(0.5,`rgba(${col},0.9)`);
+      grad.addColorStop(1,`rgba(${col},0)`);
+      ctx.fillStyle=grad;
+      ctx.fillRect(0,g.y-g.h/2,W,g.h);
+    }
+  });
+
+  snakes.forEach(drawSnake);
+  particles.forEach(p=>{
+    ctx.fillStyle=p.c;
+    ctx.globalAlpha=Math.max(0,p.life/24);
+    ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+  });
+  drawPlayer();
+
+  if(damageFlash>0){
+    ctx.fillStyle=`rgba(200,50,255,${damageFlash/40})`;
+    ctx.fillRect(0,0,W,H);
+  }
+  if(statin>0){
+    ctx.fillStyle='rgba(200,200,220,0.35)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('petrifying','TURNING TO STONE...'),W/2,50);
+  }
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_medusa','Move to begin — click/tap to raise shield'),W/2,H/2);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 40px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('petrified_title','PETRIFIED!'),W/2,H/2-30);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press a key to restart'),W/2,H/2+10);
+  }
+
+  document.getElementById('distDisp').textContent=Math.floor(dist);
+  document.getElementById('refDisp').textContent=reflects;
+  document.getElementById('bestDisp').textContent=Math.floor(best);
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  if(started&&!gameOver){
+    update(dt);
+    scheduleGaze(dt);
+    if(stoneLevel>=5){
+      gameOver=true;
+      localStorage.setItem(BEST_KEY,String(Math.floor(Math.max(best,dist))));
+      SFX.lose();
+    }
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

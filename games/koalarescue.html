@@ -1,0 +1,287 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Koala Rescue</title><meta name="description" content="Play Koala Rescue free online — Use Arrow Keys / WASD or drag on the canvas to move. Climb tree trunks to reach koalas, carry them one at a time back to the safe zone before the bushfire smoke catches you!"><link rel="canonical" href="https://games.multiportllc.com/games/koalarescue"><meta property="og:title" content="Koala Rescue - Multiport Games"><meta property="og:description" content="Play Koala Rescue free online — Use Arrow Keys / WASD or drag on the canvas to move. Climb tree trunks to reach koalas, carry them one at a time back to the safe zone before the bushfire smoke catches you!"><meta property="og:url" content="https://games.multiportllc.com/games/koalarescue"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Koala Rescue","description":"Play Koala Rescue free online instantly. Use Arrow Keys / WASD or drag on the canvas to move. Climb tree trunks to reach koalas, carry them one at a time back to the safe zone before the bushfire smoke catches you! No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/koalarescue","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d2b1e;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#ffd54f;font-size:1.05rem;font-weight:700;text-align:center;padding:8px}
+#hud span{color:#7ec850}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Koala Rescue</div>
+  <div class="game-frame">
+    <div id="hud">Round: <span id="roundD">1</span> | Score: <span id="scoreD">0</span> | Hi: <span id="hiD">0</span> | Lives: <span id="livesD">🐾🐾🐾</span> | Time: <span id="timeD">45</span></div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>drag</b> on the canvas to move. Walk onto a tree trunk to climb it and reach koalas stuck in the branches. Carry one koala at a time back to the ranger truck (safe zone) on the left before the rising bushfire smoke catches you. Rescue koalas before time runs out — each round brings more koalas and taller trees!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400,groundY=340,safeZoneW=90;
+let score=0,hi=+(localStorage.getItem('koalarescue_best')||0),lives=3,round=1,timeLeft=45,timeLimit=45;
+let trees=[],koalas=[],smokeY=H+80,smokeSpeed=6;
+let player={x:45,y:groundY,vx:0,vy:0,carrying:false};
+let target=null,dragging=false;
+let started=false,gameOver=false,lastTime=null,rescuedThisRound=0,koalasThisRound=0,msg='',msgTimer=0;
+
+function setupRound(){
+  trees=[];koalas=[];rescuedThisRound=0;
+  const numTrees=Math.min(3+Math.floor(round/2),6);
+  const numKoalas=Math.min(2+round,9);
+  koalasThisRound=numKoalas;
+  let x=220;
+  for(let i=0;i<numTrees;i++){
+    const trunkW=26;
+    const canopyTop=60+Math.random()*60-Math.min(round*4,60);
+    const top=Math.max(30,canopyTop);
+    trees.push({x,trunkW,top});
+    x+=110+Math.random()*40;
+  }
+  for(let i=0;i<numKoalas;i++){
+    const t=trees[Math.floor(Math.random()*trees.length)];
+    const y=t.top+20+Math.random()*(groundY-t.top-40);
+    koalas.push({x:t.x+t.trunkW/2,y,taken:false});
+  }
+  timeLimit=45+round*3;
+  timeLeft=timeLimit;
+  smokeY=H+80;
+  smokeSpeed=6+round*1.2;
+  player.x=45;player.y=groundY;player.carrying=false;
+  document.getElementById('roundD').textContent=round;
+}
+
+function resetGame(){
+  score=0;lives=3;round=1;gameOver=false;started=false;lastTime=null;msg='';
+  setupRound();
+}
+resetGame();
+
+function flashMsg(t){msg=t;msgTimer=90;}
+
+function onTree(px){
+  for(const t of trees) if(px>=t.x-4&&px<=t.x+t.trunkW+4) return t;
+  return null;
+}
+
+function loseLife(){
+  lives--;
+  player.carrying=false;
+  player.x=45;player.y=groundY;
+  SFX.hurt();
+  flashMsg(I18N.t('smoke_caught','Caught in the smoke!'));
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem('koalarescue_best',hi);}
+    SFX.lose();
+  }
+}
+
+function update(dt){
+  if(!started||gameOver)return;
+  timeLeft-=dt/60;
+  if(timeLeft<=0){
+    timeLeft=0;
+    loseLife();
+    if(!gameOver)setupRound();
+    return;
+  }
+  smokeY-=smokeSpeed*dt;
+
+  // movement
+  let mvx=player.vx,mvy=player.vy;
+  if(target){
+    const dx=target.x-player.x,dy=target.y-player.y;
+    const d=Math.hypot(dx,dy);
+    if(d>4){mvx=dx/d;mvy=dy/d;} else {mvx=0;mvy=0;target=null;}
+  }
+  const speed=2.6;
+  let nx=player.x+mvx*speed*dt;
+  let ny=player.y+mvy*speed*dt;
+  nx=Math.max(14,Math.min(W-14,nx));
+  const tree=onTree(nx);
+  if(ny<groundY){
+    if(!tree||ny<tree.top-10){ny=Math.max(ny,tree?tree.top-10:groundY);if(!tree)ny=groundY;}
+  }
+  ny=Math.min(groundY,ny);
+  player.x=nx;player.y=ny;
+
+  // smoke collision
+  if(player.y>=smokeY-6){
+    loseLife();
+    if(!gameOver)setupRound();
+    return;
+  }
+
+  // koala pickup
+  if(!player.carrying){
+    for(const k of koalas){
+      if(!k.taken&&Math.hypot(k.x-player.x,k.y-player.y)<22){
+        k.taken=true;player.carrying=true;
+        SFX.catch();
+        flashMsg(I18N.t('koala_picked','Koala rescued! Get it to safety!'));
+        break;
+      }
+    }
+  } else if(player.x<safeZoneW&&player.y>groundY-40){
+    player.carrying=false;
+    rescuedThisRound++;
+    score+=10*round;
+    SFX.coin();
+    flashMsg(I18N.t('koala_delivered','+{n} points!').replace('{n}',10*round));
+    if(rescuedThisRound>=koalasThisRound){
+      score+=25*round;
+      SFX.levelup();
+      round++;
+      flashMsg(I18N.t('round_clear','Round complete! Bonus points!'));
+      setupRound();
+    }
+  }
+  if(msgTimer>0)msgTimer--;
+}
+
+function drawTree(t){
+  ctx.fillStyle='#6b4423';
+  ctx.fillRect(t.x,t.top,t.trunkW,groundY-t.top+10);
+  ctx.fillStyle='#3d8020';
+  ctx.beginPath();ctx.ellipse(t.x+t.trunkW/2,t.top,48,42,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#4fa02e';
+  ctx.beginPath();ctx.ellipse(t.x+t.trunkW/2-14,t.top+16,32,28,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(t.x+t.trunkW/2+16,t.top+10,30,26,0,0,Math.PI*2);ctx.fill();
+}
+
+function drawKoala(k){
+  if(k.taken)return;
+  ctx.save();ctx.translate(k.x,k.y);
+  ctx.fillStyle='#9e9e9e';
+  ctx.beginPath();ctx.arc(0,0,13,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(-11,-9,7,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(11,-9,7,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#3a3a3a';
+  ctx.beginPath();ctx.arc(-4,1,2,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(4,1,2,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#222';ctx.beginPath();ctx.arc(0,6,2.5,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawPlayer(){
+  ctx.save();ctx.translate(player.x,player.y);
+  ctx.fillStyle='#e08a3c';
+  ctx.fillRect(-10,-28,20,28);
+  ctx.fillStyle='#ffe0b2';
+  ctx.beginPath();ctx.arc(0,-32,9,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#2b6cb0';
+  ctx.fillRect(-11,-30,22,7);
+  if(player.carrying){
+    ctx.fillStyle='#9e9e9e';
+    ctx.beginPath();ctx.arc(14,-20,10,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#3a3a3a';ctx.beginPath();ctx.arc(14,-19,2,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,groundY);
+  sky.addColorStop(0,'#1a2b3d');sky.addColorStop(1,'#2b4a3d');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,groundY);
+  ctx.fillStyle='#4a3520';ctx.fillRect(0,groundY,W,H-groundY);
+  ctx.fillStyle='#5aaa30';ctx.fillRect(0,groundY,W,4);
+
+  // safe zone
+  ctx.fillStyle='rgba(76,175,80,0.25)';
+  ctx.fillRect(0,0,safeZoneW,H);
+  ctx.strokeStyle='#4caf50';ctx.lineWidth=2;ctx.setLineDash([6,6]);
+  ctx.beginPath();ctx.moveTo(safeZoneW,0);ctx.lineTo(safeZoneW,H);ctx.stroke();ctx.setLineDash([]);
+  ctx.font='28px Arial';ctx.textAlign='center';ctx.fillText('🚙',safeZoneW/2,groundY-8);
+
+  trees.sort((a,b)=>a.x-b.x).forEach(drawTree);
+  koalas.forEach(drawKoala);
+  drawPlayer();
+
+  // smoke
+  if(smokeY<H+60){
+    const g=ctx.createLinearGradient(0,smokeY-40,0,H);
+    g.addColorStop(0,'rgba(255,120,40,0)');
+    g.addColorStop(0.5,'rgba(160,60,30,0.55)');
+    g.addColorStop(1,'rgba(60,30,20,0.9)');
+    ctx.fillStyle=g;
+    ctx.fillRect(0,smokeY-40,W,H-(smokeY-40));
+  }
+
+  if(msgTimer>0){
+    ctx.fillStyle='rgba(0,0,0,0.55)';
+    ctx.fillRect(W/2-180,20,360,34);
+    ctx.fillStyle='#ffd54f';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,44);
+  }
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Move to start rescuing!'),W/2,H/2);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint2','Tap or press any key to restart'),W/2,H/2+48);
+  }
+
+  document.getElementById('scoreD').textContent=score;
+  document.getElementById('hiD').textContent=hi;
+  document.getElementById('livesD').textContent='🐾'.repeat(Math.max(0,lives));
+  document.getElementById('timeD').textContent=Math.ceil(timeLeft);
+}
+
+function loop(t){
+  const dt=lastTime===null?1:Math.min((t-lastTime)/16.6667,3);
+  lastTime=t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function beginIfNeeded(){
+  if(gameOver){resetGame();return;}
+  if(!started){started=true;}
+}
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  beginIfNeeded();
+  updateVel();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;updateVel();});
+function updateVel(){
+  let vx=0,vy=0;
+  if(keys['arrowleft']||keys['a'])vx-=1;
+  if(keys['arrowright']||keys['d'])vx+=1;
+  if(keys['arrowup']||keys['w'])vy-=1;
+  if(keys['arrowdown']||keys['s'])vy+=1;
+  if(vx||vy){target=null;const l=Math.hypot(vx,vy);player.vx=vx/l;player.vy=vy/l;}
+  else{player.vx=0;player.vy=0;}
+}
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+c.addEventListener('pointerdown',e=>{beginIfNeeded();dragging=true;target=getPos(e);});
+c.addEventListener('pointermove',e=>{if(dragging)target=getPos(e);});
+window.addEventListener('pointerup',()=>{dragging=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();beginIfNeeded();dragging=true;target=getPos(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(dragging)target=getPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragging=false;},{passive:false});
+</script></body></html>

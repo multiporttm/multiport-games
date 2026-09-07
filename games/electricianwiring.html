@@ -1,0 +1,260 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Electrician Wiring</title><meta name="description" content="Play Electrician Wiring free online — Drag each colored wire from the junction box to its matching terminal on the panel. Don't cross wires or wire the wrong terminal or it will short! Denser panels each round."><link rel="canonical" href="https://games.multiportllc.com/games/electricianwiring"><meta property="og:title" content="Electrician Wiring - Multiport Games"><meta property="og:description" content="Play Electrician Wiring free online — Drag each colored wire from the junction box to its matching terminal on the panel. Don't cross wires or wire the wrong terminal or it will short! Denser panels each round."><meta property="og:url" content="https://games.multiportllc.com/games/electricianwiring"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Electrician Wiring","description":"Play Electrician Wiring free online instantly. Drag each colored wire from the junction box to its matching terminal on the panel. Don't cross wires or wire the wrong terminal or it will short! Denser panels each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/electricianwiring","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#1c1c22;border-radius:14px;padding:14px;text-align:center;max-width:680px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#e0e0e0;font-weight:800;font-size:1rem;padding:0 6px 8px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+#panelWrap{position:relative;background:#2a2a33;border-radius:12px;padding:10px}
+#panel{display:block;background:#333340;border-radius:8px;touch-action:none;width:100%;height:auto}
+#msg{color:#ffd54f;font-weight:800;min-height:1.3em;margin-top:8px}
+#overlay{position:absolute;inset:0;background:rgba(10,10,14,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;border-radius:12px;z-index:5}
+#overlay h2{color:#ffd54f;margin:0 0 8px}
+#startBtn{padding:10px 24px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1.05rem;margin-top:10px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Electrician Wiring</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="hud"><div>Panel: <span id="panelNum">1</span></div><div>Score: <span id="score">0</span></div><div>Shorts: <span id="shorts">0</span></div></div>
+      <div id="panelWrap">
+        <canvas id="panel" width="640" height="380"></canvas>
+        <div id="overlay">
+          <h2 id="ovTitle">Electrician Wiring</h2>
+          <div id="ovText">Wire every panel correctly — avoid shorts!</div>
+          <button id="startBtn">Start Wiring</button>
+        </div>
+      </div>
+      <div id="msg"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag from each colored wire on the left junction box to the terminal of the <b>same color</b> on the right wall panel. Crossing an already-completed wire or dropping on the wrong-colored terminal causes a <b>short</b> and fails that connection — you'll need to retry it. Wire every terminal to finish the panel; denser panels with more wires appear each round.</div>
+</div>
+<script>
+const canvas=document.getElementById('panel'),ctx=canvas.getContext('2d');
+const W=640,H=380;
+const COLORS=['#e94560','#4caf50','#2196f3','#ffb300','#9c27b0','#00bcd4','#ff5722','#8bc34a'];
+let panelNum=1,score=0,shorts=0,running=false,best=0;
+let wires=[]; // {color, sx,sy, tx,ty, connected:bool, order}
+let dragging=null; // {color,x,y,startX,startY}
+let flashTerm=null,flashTimer=0;
+let shortFlash=0;
+
+function loadBest(){ best=parseInt(localStorage.getItem('electricianwiring_best')||'0',10); }
+loadBest();
+
+function setMsg(t){ document.getElementById('msg').textContent=t; }
+
+function buildPanel(n){
+  const count=Math.min(8,3+n);
+  const cols=COLORS.slice(0,count);
+  // shuffle target order so colors aren't left-to-right matched visually
+  const targetOrder=cols.map((c,i)=>i);
+  for(let i=targetOrder.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [targetOrder[i],targetOrder[j]]=[targetOrder[j],targetOrder[i]]; }
+
+  wires=[];
+  const marginY=40;
+  const gapY=(H-marginY*2)/Math.max(1,count-1||1);
+  cols.forEach((color,i)=>{
+    const sy=count===1?H/2:marginY+i*gapY;
+    wires.push({color,sx:70,sy,tx:0,ty:0,connected:false});
+  });
+  // assign target y positions per shuffled order
+  targetOrder.forEach((origIdx,slot)=>{
+    const ty=count===1?H/2:marginY+slot*gapY;
+    wires[origIdx].tx=W-70;
+    wires[origIdx].ty=ty;
+  });
+}
+
+function allConnected(){ return wires.every(w=>w.connected); }
+
+function pointNear(x,y,px,py,r){ return (x-px)*(x-px)+(y-py)*(y-py) <= r*r; }
+
+function getPos(e){
+  const rect=canvas.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  const clientX=(e.touches?e.touches[0].clientX:e.clientX);
+  const clientY=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+
+function startDrag(e){
+  if(!running)return;
+  const p=getPos(e);
+  for(const w of wires){
+    if(w.connected)continue;
+    if(pointNear(p.x,p.y,w.sx,w.sy,18)){
+      dragging={wire:w,x:p.x,y:p.y};
+      SFX.click();
+      break;
+    }
+  }
+  if(dragging)e.preventDefault();
+}
+
+function moveDrag(e){
+  if(!dragging)return;
+  e.preventDefault();
+  const p=getPos(e);
+  dragging.x=p.x;dragging.y=p.y;
+}
+
+function segmentsIntersect(p1,p2,p3,p4){
+  function ccw(a,b,c){ return (c.y-a.y)*(b.x-a.x) > (b.y-a.y)*(c.x-a.x); }
+  return (ccw(p1,p3,p4)!==ccw(p2,p3,p4)) && (ccw(p1,p2,p3)!==ccw(p1,p2,p4));
+}
+
+function endDrag(e){
+  if(!dragging)return;
+  e.preventDefault();
+  const p=getPos(e);
+  const w=dragging.wire;
+  // find nearest terminal among all wires' target points
+  let target=null,bestDist=26;
+  wires.forEach(ww=>{
+    const d=Math.hypot(p.x-ww.tx,p.y-ww.ty);
+    if(d<bestDist){ bestDist=d; target=ww; }
+  });
+  if(!target){ dragging=null; setMsg(I18N.t('drag_hint','Drag the wire all the way to a terminal.')); return; }
+  if(target.color!==w.color){
+    shortFail(w);
+    dragging=null;
+    return;
+  }
+  if(target!==w){
+    // dropped on someone else's terminal slot even though color matched impossible since colors unique, but guard anyway
+    shortFail(w);
+    dragging=null;
+    return;
+  }
+  // check crossing with existing connected wires
+  const crosses=wires.some(other=>other.connected && other!==w && segmentsIntersect({x:w.sx,y:w.sy},{x:w.tx,y:w.ty},{x:other.sx,y:other.sy},{x:other.tx,y:other.ty}));
+  if(crosses){
+    shortFail(w);
+    dragging=null;
+    return;
+  }
+  w.connected=true;
+  score+=15;
+  SFX.success();
+  setMsg(I18N.t('connected_msg','Connected!'));
+  dragging=null;
+  updateHud();
+  if(allConnected()){
+    setTimeout(nextPanel,500);
+  }
+}
+
+function shortFail(w){
+  shorts++;
+  score=Math.max(0,score-8);
+  SFX.error();
+  setMsg(I18N.t('short_msg','SHORT! Wrong terminal or crossed wire. -8'));
+  shortFlash=0.4;
+  updateHud();
+}
+
+canvas.addEventListener('mousedown',startDrag);
+canvas.addEventListener('mousemove',moveDrag);
+window.addEventListener('mouseup',endDrag);
+canvas.addEventListener('touchstart',startDrag,{passive:false});
+canvas.addEventListener('touchmove',moveDrag,{passive:false});
+canvas.addEventListener('touchend',endDrag,{passive:false});
+
+function updateHud(){
+  document.getElementById('score').textContent=score;
+  document.getElementById('shorts').textContent=shorts;
+  document.getElementById('panelNum').textContent=panelNum;
+}
+
+function nextPanel(){
+  panelNum++;
+  score+=25;
+  SFX.levelup();
+  setMsg(I18N.t('panel_complete','Panel complete! Next panel...'));
+  buildPanel(panelNum);
+  updateHud();
+}
+
+function drawJunctionBox(){
+  ctx.fillStyle='#444450';
+  ctx.fillRect(20,10,60,H-20);
+  ctx.strokeStyle='#666';ctx.lineWidth=2;
+  ctx.strokeRect(20,10,60,H-20);
+}
+function drawWallPanel(){
+  ctx.fillStyle='#444450';
+  ctx.fillRect(W-80,10,60,H-20);
+  ctx.strokeStyle='#666';ctx.lineWidth=2;
+  ctx.strokeRect(W-80,10,60,H-20);
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#333340';ctx.fillRect(0,0,W,H);
+  if(shortFlash>0){
+    ctx.fillStyle=`rgba(233,69,96,${shortFlash*0.5})`;
+    ctx.fillRect(0,0,W,H);
+    shortFlash-=0.03;
+  }
+  drawJunctionBox();
+  drawWallPanel();
+
+  wires.forEach(w=>{
+    // source terminal
+    ctx.fillStyle=w.color;
+    ctx.beginPath();ctx.arc(w.sx,w.sy,10,0,Math.PI*2);ctx.fill();
+    if(w.connected){ ctx.fillStyle='#111';ctx.beginPath();ctx.arc(w.sx,w.sy,4,0,Math.PI*2);ctx.fill(); }
+    // target terminal ring
+    ctx.strokeStyle=w.color;ctx.lineWidth=3;
+    ctx.beginPath();ctx.arc(w.tx,w.ty,10,0,Math.PI*2);ctx.stroke();
+    if(w.connected){
+      ctx.fillStyle=w.color;
+      ctx.beginPath();ctx.arc(w.tx,w.ty,6,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle=w.color;ctx.lineWidth=4;
+      ctx.beginPath();ctx.moveTo(w.sx,w.sy);ctx.lineTo(w.tx,w.ty);ctx.stroke();
+    }
+  });
+
+  if(dragging){
+    const w=dragging.wire;
+    ctx.strokeStyle=w.color;ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(w.sx,w.sy);ctx.lineTo(dragging.x,dragging.y);ctx.stroke();
+    ctx.fillStyle=w.color;
+    ctx.beginPath();ctx.arc(dragging.x,dragging.y,7,0,Math.PI*2);ctx.fill();
+  }
+}
+
+function loop(){
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function startGame(){
+  panelNum=1;score=0;shorts=0;running=true;
+  buildPanel(panelNum);
+  document.getElementById('overlay').style.display='none';
+  setMsg(I18N.t('wire_hint','Drag each wire to its matching colored terminal.'));
+  updateHud();
+}
+
+document.getElementById('startBtn').addEventListener('click',startGame);
+
+updateHud();
+buildPanel(panelNum);
+loop();
+
+window.addEventListener('beforeunload',()=>{
+  if(score>best){ localStorage.setItem('electricianwiring_best',String(score)); }
+});
+setInterval(()=>{
+  if(score>best){ best=score; localStorage.setItem('electricianwiring_best',String(best)); }
+},2000);
+</script></body></html>

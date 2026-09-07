@@ -1,0 +1,288 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Harbor Master</title><meta name="description" content="Play Harbor Master free online — Click an incoming ship, then click an open berth that fits its size to dock it. Match small, medium and large ships to matching berths before the harbor fills up."><link rel="canonical" href="https://games.multiportllc.com/games/harbormaster"><meta property="og:title" content="Harbor Master - Multiport Games"><meta property="og:description" content="Play Harbor Master free online — Click an incoming ship, then click an open berth that fits its size to dock it. Match small, medium and large ships to matching berths before the harbor fills up."><meta property="og:url" content="https://games.multiportllc.com/games/harbormaster"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Harbor Master","description":"Play Harbor Master free online instantly. Click an incoming ship, then click an open berth that fits its size to dock it. Match small, medium and large ships to matching berths before the harbor fills up. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/harbormaster","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0b3d5c;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#fff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:22px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Harbor Master</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div>Docked: <span id="hmScore">0</span></div>
+      <div>Best: <span id="hmBest">0</span></div>
+      <div>Time: <span id="hmTime">60</span>s</div>
+      <div>Missed: <span id="hmMissed">0</span></div>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click an incoming ship waiting at sea, then click an open berth along the dock that's the right size for it (small, medium, or large) to guide it in. Ships that wait too long or get sent to a wrong-sized berth are turned away. Dock as many ships as you can before time runs out!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+
+let score=0,best=parseInt(localStorage.getItem('harbormaster_best')||'0',10);
+let missed=0,timeLeft=60,gameOver=false,started=false,lastTime=null,spawnTimer=0;
+
+document.getElementById('hmBest').textContent=best;
+
+const SIZES=[{k:'S',w:34,h:16,color:'#7ec850'},{k:'M',w:46,h:20,color:'#4fa8d8'},{k:'L',w:60,h:24,color:'#e67e22'}];
+
+// Berths along bottom dock, fixed slots each with a size
+const BERTHS=[];
+(function initBerths(){
+  const n=6;
+  const sizes=['S','M','L','S','M','L'];
+  const spacing=W/n;
+  for(let i=0;i<n;i++){
+    BERTHS.push({x:spacing*i+spacing/2,y:H-40,size:sizes[i],occupied:null});
+  }
+})();
+
+let ships=[]; // waiting ships at sea, approaching from top
+let selectedShip=null;
+let animatingShips=[]; // ships animating to berth
+let idCounter=0;
+
+function reset(){
+  score=0;missed=0;timeLeft=60;gameOver=false;started=false;ships=[];animatingShips=[];selectedShip=null;spawnTimer=0;lastTime=null;
+  BERTHS.forEach(b=>b.occupied=null);
+  document.getElementById('hmScore').textContent=0;
+  document.getElementById('hmMissed').textContent=0;
+  document.getElementById('hmTime').textContent=60;
+}
+
+function sizeInfo(k){return SIZES.find(s=>s.k===k);}
+
+function spawnShip(){
+  const sizeKeys=['S','M','L'];
+  const k=sizeKeys[Math.floor(Math.random()*3)];
+  const lane=Math.floor(Math.random()*4);
+  ships.push({
+    id:idCounter++,
+    size:k,
+    x:100+lane*180+Math.random()*40,
+    y:60+Math.random()*20,
+    patience:100, // decreases over time (out of 100)
+    maxPatience:100-Math.min(40,score*1.5),
+  });
+}
+
+function pickBerthAt(mx,my){
+  for(const b of BERTHS){
+    const info=sizeInfo(b.size);
+    if(mx>=b.x-info.w/2-8&&mx<=b.x+info.w/2+8&&my>=b.y-info.h/2-8&&my<=b.y+info.h/2+8)return b;
+  }
+  return null;
+}
+
+function pickShipAt(mx,my){
+  for(const s of ships){
+    const info=sizeInfo(s.size);
+    if(mx>=s.x-info.w/2-6&&mx<=s.x+info.w/2+6&&my>=s.y-info.h/2-6&&my<=s.y+info.h/2+6)return s;
+  }
+  return null;
+}
+
+function handleClick(mx,my){
+  if(gameOver){reset();return;}
+  if(!started){started=true;return;}
+  const shipHit=pickShipAt(mx,my);
+  if(shipHit){
+    selectedShip=selectedShip===shipHit?null:shipHit;
+    SFX.select();
+    return;
+  }
+  const berthHit=pickBerthAt(mx,my);
+  if(berthHit&&selectedShip){
+    if(berthHit.occupied){
+      SFX.error();
+      return;
+    }
+    if(berthHit.size===selectedShip.size){
+      // successful dock
+      const s=selectedShip;
+      ships=ships.filter(sh=>sh!==s);
+      berthHit.occupied={size:s.size,timer:60};
+      score++;
+      document.getElementById('hmScore').textContent=score;
+      SFX.coin();
+      selectedShip=null;
+    }else{
+      SFX.error();
+      missed++;
+      document.getElementById('hmMissed').textContent=missed;
+      ships=ships.filter(sh=>sh!==selectedShip);
+      selectedShip=null;
+    }
+  }
+}
+
+c.addEventListener('pointerdown',e=>{
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  const mx=(e.clientX-rect.left)*scaleX,my=(e.clientY-rect.top)*scaleY;
+  handleClick(mx,my);
+});
+
+// Keyboard: number keys select waiting ship by order, letter keys pick berth column
+document.addEventListener('keydown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver&&e.code==='Space'){reset();return;}
+  const num=parseInt(e.key,10);
+  if(!isNaN(num)&&num>=1&&num<=ships.length){
+    selectedShip=ships[num-1];
+    SFX.select();
+  }
+});
+
+function drawWater(){
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#0d4d73');grad.addColorStop(1,'#0b3d5c');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H-60);
+  ctx.fillStyle='#c9a876';ctx.fillRect(0,H-60,W,60);
+  // dock planks
+  ctx.strokeStyle='rgba(0,0,0,.15)';
+  for(let x=0;x<W;x+=20){ctx.beginPath();ctx.moveTo(x,H-60);ctx.lineTo(x,H);ctx.stroke();}
+}
+
+function drawBerths(){
+  BERTHS.forEach(b=>{
+    const info=sizeInfo(b.size);
+    ctx.strokeStyle=b.occupied?'rgba(255,255,255,.2)':'#ffd54f';
+    ctx.lineWidth=3;
+    ctx.setLineDash(b.occupied?[]:[6,4]);
+    ctx.strokeRect(b.x-info.w/2-8,b.y-info.h/2-8,info.w+16,info.h+16);
+    ctx.setLineDash([]);
+    ctx.fillStyle='rgba(255,255,255,.75)';
+    ctx.font='bold 12px Arial';ctx.textAlign='center';
+    ctx.fillText(b.size,b.x,b.y-info.h/2-12);
+    if(b.occupied){
+      drawShipShape(b.x,b.y,b.occupied.size,'#555',true);
+    }
+  });
+}
+
+function drawShipShape(x,y,size,overrideColor,docked){
+  const info=sizeInfo(size);
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle=overrideColor||info.color;
+  ctx.beginPath();
+  ctx.moveTo(-info.w/2,-info.h/2);
+  ctx.lineTo(info.w/2,-info.h/2);
+  ctx.lineTo(info.w/2-6,info.h/2);
+  ctx.lineTo(-info.w/2+6,info.h/2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.fillRect(-info.w/6,-info.h/2-8,info.w/3,8);
+  ctx.restore();
+}
+
+function drawShips(){
+  ships.forEach((s,i)=>{
+    const info=sizeInfo(s.size);
+    const selected=s===selectedShip;
+    ctx.save();
+    if(selected){
+      ctx.shadowColor='#ffd54f';ctx.shadowBlur=16;
+    }
+    drawShipShape(s.x,s.y,s.size);
+    ctx.restore();
+    // patience bar
+    const pct=Math.max(0,s.patience/s.maxPatience);
+    ctx.fillStyle='rgba(0,0,0,.4)';
+    ctx.fillRect(s.x-info.w/2,s.y-info.h/2-20,info.w,4);
+    ctx.fillStyle=pct>0.4?'#7ec850':'#e67e22';
+    ctx.fillRect(s.x-info.w/2,s.y-info.h/2-20,info.w*pct,4);
+    if(selected){
+      ctx.fillStyle='#ffd54f';
+      ctx.font='bold 14px Arial';ctx.textAlign='center';
+      ctx.fillText('▼',s.x,s.y-info.h/2-24);
+    }
+  });
+}
+
+function update(dt){
+  spawnTimer-=dt;
+  const spawnInterval=Math.max(55,110-score*2.5);
+  if(spawnTimer<=0&&ships.length<8){
+    spawnShip();
+    spawnTimer=spawnInterval+Math.random()*20;
+  }
+  ships.forEach(s=>{s.patience-=dt*0.5;});
+  const before=ships.length;
+  ships=ships.filter(s=>{
+    if(s.patience<=0){
+      if(s===selectedShip)selectedShip=null;
+      return false;
+    }
+    return true;
+  });
+  const lost=before-ships.length;
+  if(lost>0){
+    missed+=lost;
+    document.getElementById('hmMissed').textContent=missed;
+    SFX.hurt();
+  }
+  BERTHS.forEach(b=>{
+    if(b.occupied){
+      b.occupied.timer-=dt;
+      if(b.occupied.timer<=0)b.occupied=null;
+    }
+  });
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawWater();
+  drawBerths();
+  drawShips();
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('hm_start_hint','Click a ship, then click a matching berth — tap to start'),400,30);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('hm_over_title','HARBOR CLOSED'),400,180);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('hm_result','Ships docked: {n}').replace('{n}',score),400,220);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,258);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  update(dt);
+
+  timeLeft-=dt/60;
+  if(timeLeft<=0){
+    timeLeft=0;
+    gameOver=true;
+    if(score>best){best=score;localStorage.setItem('harbormaster_best',String(best));}
+    document.getElementById('hmBest').textContent=best;
+    SFX.win();
+  }
+  document.getElementById('hmTime').textContent=Math.ceil(timeLeft);
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>
