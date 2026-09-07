@@ -1,0 +1,254 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ferry Captain</title><meta name="description" content="Play Ferry Captain free online — Use Arrow Keys/WASD or drag on touch to steer your ferry across open water. Approach the dock slowly and lined up straight to dock smoothly. Watch the alignment and speed gauges. Currents and wind get trickier every route."><link rel="canonical" href="https://games.multiportllc.com/games/ferrycaptain"><meta property="og:title" content="Ferry Captain - Multiport Games"><meta property="og:description" content="Play Ferry Captain free online — Use Arrow Keys/WASD or drag on touch to steer your ferry across open water. Approach the dock slowly and lined up straight to dock smoothly. Watch the alignment and speed gauges. Currents and wind get trickier every route."><meta property="og:url" content="https://games.multiportllc.com/games/ferrycaptain"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ferry Captain","description":"Play Ferry Captain free online instantly. Steer your ferry across open water and dock smoothly, lined up straight and at low speed, watching the alignment and speed gauges. Currents and wind get trickier every route. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/ferrycaptain","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0b3d5c;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#hud{display:flex;justify-content:space-between;gap:8px;color:#fff;font-weight:700;padding:6px 4px;font-size:.95rem;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#gauges{display:flex;gap:16px;justify-content:center;margin-top:8px;color:#fff;font-size:.85rem;font-weight:700}
+.gauge{width:150px}
+.gaugeBar{height:12px;border-radius:6px;background:#123;overflow:hidden;margin-top:3px;position:relative}
+.gaugeFill{height:100%;background:#3ab255;width:50%;transition:width .1s}
+.gaugeMark{position:absolute;top:0;bottom:0;width:2px;background:#ffd54f;left:50%}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ferry Captain</div>
+  <div class="game-frame">
+    <div id="hud"><span>Route <b id="routeNum">1</b></span><span>Passengers <b id="pax">100%</b></span><span>Score <b id="score">0</b></span><span>Best <b id="best">0</b></span></div>
+    <canvas id="c" width="800" height="450"></canvas>
+    <div id="gauges">
+      <div class="gauge">Alignment<div class="gaugeBar"><div class="gaugeMark"></div><div class="gaugeFill" id="alignFill"></div></div></div>
+      <div class="gauge">Speed<div class="gaugeBar"><div class="gaugeMark" style="left:22%"></div><div class="gaugeFill" id="speedFill"></div></div></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>drag</b> on touch to steer your ferry across open water. Approach the dock slowly and lined up straight (green zone on both gauges) to dock smoothly — crashing in fast or sideways damages the ferry and upsets passengers. Wind and currents get trickier with every route!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=450;
+const BEST_KEY='ferrycaptain_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+document.getElementById('best').textContent=best;
+
+let route=1,score=0,pax=100;
+let ferry,dock,wind,current,phase,resultMsg,resultTimer,gameOver;
+const keys={up:false,down:false,left:false,right:false};
+
+function setup(){
+  ferry={x:120,y:H/2,ang:0,vx:0,vy:0,vang:0};
+  const side=Math.random()<0.5?1:-1; // dock on right or left-top area, vary
+  dock={x:W-110,y:80+Math.random()*(H-160),ang:0,w:70,h:120};
+  wind={x:(Math.random()-0.5)*0.02*route,y:(Math.random()-0.5)*0.02*route};
+  current={x:(Math.random()-0.5)*0.015*route,y:(Math.random()-0.5)*0.015*route};
+  phase='sailing';resultMsg='';resultTimer=0;
+  document.getElementById('routeNum').textContent=route;
+}
+function resetAll(){route=1;score=0;pax=100;gameOver=false;setup();}
+resetAll();
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','KeyW'].includes(e.code)){e.preventDefault();keys.up=true;}
+  if(['ArrowDown','KeyS'].includes(e.code)){e.preventDefault();keys.down=true;}
+  if(['ArrowLeft','KeyA'].includes(e.code)){e.preventDefault();keys.left=true;}
+  if(['ArrowRight','KeyD'].includes(e.code)){e.preventDefault();keys.right=true;}
+  if(e.code==='Space'&&!gameOver&&(phase==='docked'||phase==='crashed')){e.preventDefault();advance();}
+});
+document.addEventListener('keyup',e=>{
+  if(['ArrowUp','KeyW'].includes(e.code))keys.up=false;
+  if(['ArrowDown','KeyS'].includes(e.code))keys.down=false;
+  if(['ArrowLeft','KeyA'].includes(e.code))keys.left=false;
+  if(['ArrowRight','KeyD'].includes(e.code))keys.right=false;
+});
+
+// touch drag steering: drag vector from ferry relative to touch determines desired heading/throttle
+let dragging=false,dragVX=0,dragVY=0;
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  return {x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H};
+}
+c.addEventListener('pointerdown',e=>{
+  if(gameOver)return;
+  if(phase==='docked'||phase==='crashed'){advance();return;}
+  dragging=true;
+  const p=pointerPos(e);
+  dragVX=p.x;dragVY=p.y;
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const p=pointerPos(e);
+  dragVX=p.x;dragVY=p.y;
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+function advance(){
+  if(phase==='docked')route++;
+  setup();
+}
+
+function angDiff(a,b){
+  let d=(a-b)%(Math.PI*2);
+  if(d>Math.PI)d-=Math.PI*2;
+  if(d<-Math.PI)d+=Math.PI*2;
+  return d;
+}
+
+function loop(t){
+  const dt=(loop._last==null)?1:Math.min((t-loop._last)/16.6667,3);
+  loop._last=t;
+
+  ctx.clearRect(0,0,W,H);
+  const water=ctx.createLinearGradient(0,0,0,H);
+  water.addColorStop(0,'#12588a');water.addColorStop(1,'#083a5c');
+  ctx.fillStyle=water;ctx.fillRect(0,0,W,H);
+  // waves
+  ctx.strokeStyle='rgba(255,255,255,0.08)';ctx.lineWidth=2;
+  const wt=(t||0)/500;
+  for(let i=0;i<8;i++){
+    ctx.beginPath();
+    for(let x=0;x<=W;x+=20){
+      const y=60+i*50+Math.sin(x/40+wt+i)*6;
+      if(x===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+
+  if(phase==='sailing'&&!gameOver){
+    let thrustX=0,thrustY=0;
+    if(dragging){
+      const dx=dragVX-ferry.x, dy=dragVY-ferry.y;
+      const dist=Math.hypot(dx,dy);
+      if(dist>10){
+        thrustX=dx/dist; thrustY=dy/dist;
+      }
+    } else {
+      if(keys.up)thrustY-=1;
+      if(keys.down)thrustY+=1;
+      if(keys.left)thrustX-=1;
+      if(keys.right)thrustX+=1;
+      const m=Math.hypot(thrustX,thrustY);
+      if(m>0){thrustX/=m;thrustY/=m;}
+    }
+    const accel=0.12;
+    ferry.vx+=thrustX*accel*dt;
+    ferry.vy+=thrustY*accel*dt;
+    // wind & current
+    ferry.vx+=wind.x*dt+current.x*dt;
+    ferry.vy+=wind.y*dt+current.y*dt;
+    // drag
+    ferry.vx*=Math.pow(0.985,dt);
+    ferry.vy*=Math.pow(0.985,dt);
+    const spd=Math.hypot(ferry.vx,ferry.vy);
+    const maxSpd=4.2;
+    if(spd>maxSpd){ferry.vx*=maxSpd/spd;ferry.vy*=maxSpd/spd;}
+    ferry.x+=ferry.vx*dt;
+    ferry.y+=ferry.vy*dt;
+    if(spd>0.15){
+      const targetAng=Math.atan2(ferry.vy,ferry.vx);
+      ferry.ang+=angDiff(targetAng,ferry.ang)*0.08*dt;
+    }
+    ferry.x=Math.max(20,Math.min(W-20,ferry.x));
+    ferry.y=Math.max(20,Math.min(H-20,ferry.y));
+
+    // distance/approach check to dock
+    const ddx=ferry.x-dock.x, ddy=ferry.y-dock.y;
+    const ddist=Math.hypot(ddx,ddy);
+    const dockAngError=Math.abs(angDiff(ferry.ang,0)); // dock faces left (approaching from left), angle 0 = facing right toward dock's entry side... use simplified: alignment=heading toward dock roughly horizontal
+    const speedNow=Math.hypot(ferry.vx,ferry.vy);
+
+    // update gauges: alignment = how well ferry.ang aligns to approach angle 0 (facing dock, i.e. moving rightwards)
+    const align=Math.max(0,1-Math.abs(angDiff(ferry.ang,0))/Math.PI);
+    document.getElementById('alignFill').style.width=(align*100)+'%';
+    document.getElementById('alignFill').style.background = align>0.75?'#3ab255':align>0.45?'#ffd54f':'#e94560';
+    const speedPct=Math.min(1,speedNow/maxSpd);
+    document.getElementById('speedFill').style.width=(speedPct*100)+'%';
+    document.getElementById('speedFill').style.background = speedPct<0.35?'#3ab255':speedPct<0.6?'#ffd54f':'#e94560';
+
+    if(ddist<70){
+      if(speedNow<1.6 && align>0.5){
+        // docking attempt success scaled by smoothness
+        const smooth=Math.round((align*0.6+(1-speedPct)*0.4)*100);
+        phase='docked';
+        const paxDelta = smooth>80?0:(smooth>55?-5:-15);
+        pax=Math.max(0,pax+paxDelta);
+        score+=smooth;
+        resultMsg = smooth>85?'PERFECT DOCKING! +'+smooth : smooth>60?'Smooth dock +'+smooth : 'Rough dock +'+smooth;
+        resultTimer=999;
+        SFX[smooth>60?'success':'point']();
+        if(score>best){best=score;localStorage.setItem(BEST_KEY,String(best));}
+      } else if(ddist<40){
+        // crash
+        phase='crashed';
+        pax=Math.max(0,pax-25);
+        resultMsg='CRASH! Too fast or misaligned';
+        resultTimer=999;
+        SFX.hurt();
+      }
+    }
+  }
+
+  // dock
+  ctx.fillStyle='#6b4a2b';
+  ctx.fillRect(dock.x-8,dock.y-dock.h/2,16,dock.h);
+  ctx.fillStyle='#8a6a3f';
+  ctx.fillRect(dock.x-8,dock.y-dock.h/2-10,60,10);
+  ctx.fillStyle='#3ab255';
+  ctx.beginPath();ctx.arc(dock.x,dock.y,8,0,Math.PI*2);ctx.fill();
+
+  // ferry
+  ctx.save();
+  ctx.translate(ferry.x,ferry.y);
+  ctx.rotate(ferry.ang);
+  ctx.fillStyle='#fff';
+  ctx.beginPath();
+  ctx.moveTo(26,0);ctx.lineTo(-20,-14);ctx.lineTo(-20,14);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(-14,-9,18,18);
+  ctx.restore();
+
+  if(phase==='docked'||phase==='crashed'){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle=phase==='docked'?'#3ab255':'#e94560';
+    ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t(phase==='docked'?'docked_title':'crash_title',phase==='docked'?'DOCKED!':'CRASH!'),W/2,H/2-40);
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';
+    ctx.fillText(resultMsg,W/2,H/2);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('tap_next','Tap / Space for next route'),W/2,H/2+36);
+  }
+
+  if(pax<=0 && !gameOver){
+    gameOver=true;
+    if(score>best){best=score;localStorage.setItem(BEST_KEY,String(best));}
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff6b6b';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.fillStyle='#fff';ctx.font='bold 18px Arial';
+    ctx.fillText(I18N.t('score_label','Score: {s}').replace('{s}',score),W/2,H/2+16);
+    ctx.font='15px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+46);
+  }
+
+  document.getElementById('pax').textContent=Math.round(pax)+'%';
+  document.getElementById('score').textContent=score;
+  document.getElementById('best').textContent=best;
+
+  requestAnimationFrame(loop);
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(gameOver){resetAll();return;}
+});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&gameOver){resetAll();}
+});
+
+requestAnimationFrame(loop);
+</script></body></html>

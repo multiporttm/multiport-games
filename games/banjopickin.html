@@ -1,0 +1,238 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Banjo Pickin'</title><meta name="description" content="Play Banjo Pickin' free online — Picks scroll down 5 string lanes toward the hit-line. Press the matching key (1-5) or tap the matching string right as each pick crosses the line to nail the bluegrass run. Chain hits for combo as the pace speeds up every round."><link rel="canonical" href="https://games.multiportllc.com/games/banjopickin"><meta property="og:title" content="Banjo Pickin' - Multiport Games"><meta property="og:description" content="Play Banjo Pickin' free online — Picks scroll down 5 string lanes toward the hit-line. Press the matching key (1-5) or tap the matching string right as each pick crosses the line to nail the bluegrass run. Chain hits for combo as the pace speeds up every round."><meta property="og:url" content="https://games.multiportllc.com/games/banjopickin"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Banjo Pickin'","description":"Play Banjo Pickin' free online instantly. Picks scroll down 5 string lanes toward the hit-line. Press the matching key (1-5) or tap the matching string right as each pick crosses the line to nail the bluegrass run. Chain hits for combo as the pace speeds up every round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/banjopickin","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#2b1d10;border-radius:14px;padding:14px;text-align:center}
+#stats{display:flex;justify-content:space-between;color:#fff;font-weight:800;font-size:.95rem;padding:0 6px 8px;max-width:700px;margin:0 auto}
+#stats span{color:#ffd54f}
+#health{max-width:700px;margin:0 auto 8px;height:10px;border-radius:6px;background:#1a1108;overflow:hidden}
+#healthBar{height:100%;width:100%;background:linear-gradient(90deg,#4caf50,#8bc34a);transition:width .15s}
+#c{background:#1a1108;display:block;border-radius:10px;margin:0 auto;max-width:100%;touch-action:manipulation}
+#strings{display:flex;justify-content:center;gap:6px;max-width:700px;margin:10px auto 0}
+.sbtn{flex:1;height:56px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#2b1d10;font-size:.95rem;cursor:pointer;user-select:none;transition:transform .08s,filter .08s;box-shadow:0 4px 0 rgba(0,0,0,.4)}
+.sbtn:active,.sbtn.hit{transform:translateY(4px) scale(.97);filter:brightness(1.35)}
+#msg{color:#fff;font-size:1.3rem;font-weight:900;min-height:2rem;margin-top:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Banjo Pickin'</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="stats"><span id="scoreEl">Score: 0</span><span id="levelEl">Round 1</span><span id="comboEl">Combo: 0</span><span id="bestEl">Best: 0</span></div>
+      <div id="health"><div id="healthBar"></div></div>
+      <canvas id="c" width="700" height="360"></canvas>
+      <div id="strings"></div>
+      <div id="msg">Tap or press a key to begin</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Picks scroll down 5 string lanes toward the hit-line. Press the matching key (<b>1-5</b>) or tap the matching string right as each pick crosses the line to nail the bluegrass run. Chain hits for combo as the pace speeds up every round.</div>
+</div>
+<script>
+const LANES=5;
+const STRING_COLORS=['#f4c542','#e8a838','#d68c2e','#c07025','#a8541c'];
+const LABELS=['1','2','3','4','5'];
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const hitLineY=H-46,spawnY=-24;
+const laneW=W/LANES;
+
+const scoreEl=document.getElementById('scoreEl'),levelEl=document.getElementById('levelEl'),comboEl=document.getElementById('comboEl'),bestEl=document.getElementById('bestEl'),msgEl=document.getElementById('msg'),healthBar=document.getElementById('healthBar');
+const stringsWrap=document.getElementById('strings');
+let stringEls=[];
+for(let i=0;i<LANES;i++){
+  const d=document.createElement('div');
+  d.className='sbtn';d.style.background=STRING_COLORS[i];d.textContent=LABELS[i];
+  d.addEventListener('pointerdown',e=>{e.preventDefault();hitLane(i);});
+  stringsWrap.appendChild(d);stringEls.push(d);
+}
+
+let best=parseInt(localStorage.getItem('banjopickin_best')||'0',10);
+bestEl.textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+
+let state='ready';
+let score=0,combo=0,maxCombo=0,health=100,level=1;
+let bpm=110,secondsPerBeat=60/bpm,leadBeats=3.5,leadTime,speed;
+let gameTime=0,lastT=null;
+let notes=[];
+let roundNotesTotal=0,roundNotesDone=0;
+let flashes=[];
+
+function genRound(){
+  bpm=104+level*10;
+  secondsPerBeat=60/bpm;
+  leadTime=leadBeats*secondsPerBeat;
+  speed=(hitLineY-spawnY)/leadTime;
+  const len=10+Math.min(level*2,20);
+  notes=[];
+  let beat=1;
+  let lastLane=Math.floor(Math.random()*LANES);
+  const useHalf=level>=2;
+  for(let i=0;i<len;i++){
+    // bluegrass runs tend to walk between adjacent strings
+    let step=Math.random()<0.6?(Math.random()<0.5?-1:1):(Math.floor(Math.random()*LANES)-lastLane);
+    let lane=((lastLane+step)%LANES+LANES)%LANES;
+    if(lane===lastLane)lane=(lane+1)%LANES;
+    lastLane=lane;
+    notes.push({lane,hitTime:beat*secondsPerBeat,judged:false});
+    beat+=(useHalf&&Math.random()<0.45)?0.5:1;
+  }
+  roundNotesTotal=notes.length;
+  roundNotesDone=0;
+  gameTime=0;lastT=null;
+  levelEl.textContent=I18N.t('round_label','Round {n}').replace('{n}',level);
+}
+
+function startGame(){
+  score=0;combo=0;maxCombo=0;health=100;level=1;
+  state='playing';
+  msgEl.textContent='';
+  updateStats();
+  genRound();
+}
+
+function updateStats(){
+  scoreEl.textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  comboEl.textContent=I18N.t('combo_label','Combo: {c}').replace('{c}',combo);
+  healthBar.style.width=Math.max(0,health)+'%';
+  healthBar.style.background=health>50?'linear-gradient(90deg,#4caf50,#8bc34a)':(health>20?'linear-gradient(90deg,#ff9800,#ffc107)':'linear-gradient(90deg,#e53935,#ff5252)');
+}
+
+function playPickSound(lane){
+  const fns=[SFX.tick,SFX.click,SFX.point,SFX.select,SFX.catch];
+  (fns[lane%fns.length]||SFX.click)();
+}
+
+function judgeAt(lane){
+  if(state!=='playing')return;
+  let best=null,bestDiff=Infinity;
+  for(const n of notes){
+    if(n.judged||n.lane!==lane)continue;
+    const diff=Math.abs(gameTime-n.hitTime);
+    if(diff<bestDiff){bestDiff=diff;best=n;}
+  }
+  if(!best||bestDiff>0.2){
+    combo=0;health=Math.max(0,health-8);
+    updateStats();SFX.error();
+    if(health<=0)return gameOver();
+    return;
+  }
+  best.judged=true;roundNotesDone++;
+  flashes.push({lane,t:0});
+  if(bestDiff<0.07){score+=100;combo++;health=Math.min(100,health+2);SFX.success();}
+  else if(bestDiff<0.14){score+=60;combo++;health=Math.min(100,health+1);playPickSound(lane);}
+  else {score+=25;playPickSound(lane);}
+  maxCombo=Math.max(maxCombo,combo);
+  updateStats();
+  stringEls[lane].classList.add('hit');setTimeout(()=>stringEls[lane].classList.remove('hit'),90);
+  if(roundNotesDone>=roundNotesTotal){
+    state='transition';
+    setTimeout(nextRound,600);
+  }
+}
+
+function nextRound(){
+  if(state==='gameover')return;
+  level++;state='playing';genRound();
+}
+
+function hitLane(lane){
+  if(state==='ready'||state==='gameover'){startGame();return;}
+  judgeAt(lane);
+}
+
+function gameOver(){
+  if(state==='gameover')return;
+  state='gameover';
+  SFX.lose();
+  if(score>best){best=score;localStorage.setItem('banjopickin_best',String(best));}
+  bestEl.textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+  msgEl.textContent=I18N.t('gameover_tap','Game Over — Score {s} — Tap or press a key to retry').replace('{s}',score);
+}
+
+document.addEventListener('keydown',e=>{
+  const idx=LABELS.indexOf(e.key);
+  if(idx>=0){e.preventDefault();hitLane(idx);}
+  else if(e.code==='Space'&&(state==='ready'||state==='gameover')){e.preventDefault();startGame();}
+});
+c.addEventListener('pointerdown',e=>{
+  if(state==='ready'||state==='gameover'){startGame();return;}
+  const rect=c.getBoundingClientRect();
+  const x=(e.clientX-rect.left)*(W/rect.width);
+  const lane=Math.min(LANES-1,Math.max(0,Math.floor(x/laneW)));
+  hitLane(lane);
+});
+
+function checkMisses(){
+  for(const n of notes){
+    if(!n.judged&&gameTime-n.hitTime>0.24){
+      n.judged=true;roundNotesDone++;
+      combo=0;health=Math.max(0,health-10);
+      updateStats();
+      if(health<=0){gameOver();return;}
+    }
+  }
+  if(state==='playing'&&roundNotesDone>=roundNotesTotal){
+    state='transition';
+    setTimeout(nextRound,600);
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#1a1108');sky.addColorStop(1,'#2b1d10');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  for(let i=1;i<LANES;i++){
+    ctx.strokeStyle='rgba(255,255,255,.07)';
+    ctx.beginPath();ctx.moveTo(i*laneW,0);ctx.lineTo(i*laneW,H);ctx.stroke();
+  }
+
+  ctx.fillStyle='rgba(255,255,255,.85)';
+  ctx.fillRect(0,hitLineY,W,3);
+
+  for(const n of notes){
+    if(n.judged)continue;
+    const y=spawnY+speed*(gameTime-(n.hitTime-leadTime));
+    if(y<-30||y>H+30)continue;
+    const x=n.lane*laneW+laneW/2;
+    ctx.fillStyle=STRING_COLORS[n.lane];
+    ctx.beginPath();ctx.roundRect(x-laneW*0.34,y-12,laneW*0.68,24,7);ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,.4)';ctx.lineWidth=2;ctx.stroke();
+  }
+
+  flashes.forEach(f=>{
+    const x=f.lane*laneW+laneW/2;
+    const alpha=1-f.t/0.22;
+    ctx.fillStyle=`rgba(255,255,255,${Math.max(0,alpha*0.6)})`;
+    ctx.beginPath();ctx.arc(x,hitLineY,22*(1+f.t*2.2),0,Math.PI*2);ctx.fill();
+  });
+  flashes=flashes.filter(f=>f.t<0.22);
+
+  if(state==='ready'){
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint5','Tap a string or press 1-5 to start'),W/2,H/2);
+  }
+}
+
+function loop(ts){
+  if(state==='playing'){
+    if(lastT===null)lastT=ts;
+    const dt=(ts-lastT)/1000;lastT=ts;
+    gameTime+=dt;
+    flashes.forEach(f=>f.t+=dt);
+    checkMisses();
+  } else {
+    lastT=null;
+    flashes.forEach(f=>f.t+=1/60);
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

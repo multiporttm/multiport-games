@@ -1,0 +1,203 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Monorail Transit</title><meta name="description" content="Play Monorail Transit free online — Press the Accelerate/Brake buttons or Up/Down arrows to control your monorail's speed and stop exactly within the green target window at each station. Score on-schedule stops across the route — schedules get tighter each round!"><link rel="canonical" href="https://games.multiportllc.com/games/monorailtransit"><meta property="og:title" content="Monorail Transit - Multiport Games"><meta property="og:description" content="Play Monorail Transit free online — Press the Accelerate/Brake buttons or Up/Down arrows to control your monorail's speed and stop exactly within the green target window at each station. Score on-schedule stops across the route — schedules get tighter each round!"><meta property="og:url" content="https://games.multiportllc.com/games/monorailtransit"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Monorail Transit","description":"Play Monorail Transit free online instantly. Control an elevated monorail's speed, accelerating and braking to hit each station stop within its scheduled time window. Scored by on-schedule stops across a route, with tighter schedules each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/monorailtransit","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1b1b2f;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#fff;font-size:1.05rem;font-weight:700;padding:6px 4px;flex-wrap:wrap;gap:4px}
+#controls{display:flex;justify-content:center;gap:14px;margin-top:8px}
+#controls button{width:130px;height:56px;border-radius:12px;border:none;font-weight:900;font-size:1.05rem;cursor:pointer;user-select:none}
+#accelBtn{background:#2ecc71;color:#053}
+#brakeBtn{background:#e74c3c;color:#fff}
+#controls button:active{filter:brightness(0.85)}
+#schedBoard{color:#ffd54f;text-align:center;font-size:.95rem;margin-top:4px;min-height:1.4em}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Monorail Transit</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">On-Time: 0</span>
+      <span id="round-display">Round: 1</span>
+      <span id="hi-display">Best: 0</span>
+    </div>
+    <div id="schedBoard">Next stop window: —</div>
+    <canvas id="c" width="800" height="300"></canvas>
+    <div id="controls">
+      <button id="accelBtn">▲ ACCEL</button>
+      <button id="brakeBtn">▼ BRAKE</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Up Arrow</b>/<b>ACCEL</b> to speed up and <b>Down Arrow</b>/<b>BRAKE</b> to slow down. Watch the schedule board — arrive at each station stop marker while inside the green target window (not too early, not too late) to score an on-schedule stop. The route gets longer and windows get tighter each round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=300;
+const TRACK_Y=180;
+let best=parseInt(localStorage.getItem('monorailtransit_best')||'0');
+
+let pos,vel,accelHeld,brakeHeld,stations,curStationIdx,elapsed,onTime,round,gameOver,started,lastTime,worldOffset;
+const PPS=1; // position pixel scale
+
+function makeStations(round){
+  const list=[];
+  let x=500;
+  const count=5+Math.min(round,4);
+  for(let i=0;i<count;i++){
+    x+=380+Math.random()*160-round*6;
+    const targetTime=x/ (2.4+round*0.12); // approx expected arrival "time units"
+    const windowSize=Math.max(28,70-round*6);
+    list.push({x,passed:false,targetLow:targetTime-windowSize/2,targetHigh:targetTime+windowSize/2,windowSize});
+  }
+  return list;
+}
+
+function reset(round_=1){
+  round=round_;
+  pos=0;vel=0;accelHeld=false;brakeHeld=false;
+  stations=makeStations(round);
+  curStationIdx=0;elapsed=0;onTime=0;gameOver=false;started=false;lastTime=null;worldOffset=0;
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowUp'){e.preventDefault();accelHeld=true;if(!started)started=true;if(gameOver)reset(1);}
+  if(e.key==='ArrowDown'){e.preventDefault();brakeHeld=true;if(!started)started=true;if(gameOver)reset(1);}
+});
+document.addEventListener('keyup',e=>{
+  if(e.key==='ArrowUp')accelHeld=false;
+  if(e.key==='ArrowDown')brakeHeld=false;
+});
+function pressAccel(v){accelHeld=v;if(v){if(!started)started=true;if(gameOver)reset(1);}}
+function pressBrake(v){brakeHeld=v;if(v){if(!started)started=true;if(gameOver)reset(1);}}
+const accelBtn=document.getElementById('accelBtn'),brakeBtn=document.getElementById('brakeBtn');
+accelBtn.addEventListener('pointerdown',e=>{e.preventDefault();pressAccel(true);});
+accelBtn.addEventListener('pointerup',()=>pressAccel(false));
+accelBtn.addEventListener('pointerleave',()=>pressAccel(false));
+brakeBtn.addEventListener('pointerdown',e=>{e.preventDefault();pressBrake(true);});
+brakeBtn.addEventListener('pointerup',()=>pressBrake(false));
+brakeBtn.addEventListener('pointerleave',()=>pressBrake(false));
+
+function drawTrack(){
+  ctx.fillStyle='#444';ctx.fillRect(0,TRACK_Y+22,W,10);
+  ctx.fillStyle='#333';
+  for(let x=-((worldOffset)%80);x<W;x+=80){
+    ctx.fillRect(x,TRACK_Y+32,10,40);
+  }
+}
+
+function drawTrain(){
+  ctx.save();
+  ctx.translate(120,TRACK_Y);
+  ctx.fillStyle='#3498db';
+  ctx.beginPath();
+  ctx.moveTo(-50,0);ctx.lineTo(-46,-22);ctx.lineTo(46,-22);ctx.lineTo(52,0);ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle='#eaf6ff';
+  for(let i=-38;i<40;i+=22){ctx.fillRect(i,-18,14,10);}
+  ctx.fillStyle='#2c3e50';
+  ctx.fillRect(-40,4,90,10);
+  ctx.restore();
+}
+
+function updateSchedBoard(){
+  if(curStationIdx>=stations.length){
+    document.getElementById('schedBoard').textContent=I18N.t('route_complete','Route complete!');
+    return;
+  }
+  const s=stations[curStationIdx];
+  document.getElementById('schedBoard').textContent=I18N.t('sched_label','Next stop window: {a}–{b}s (station {n}/{t})')
+    .replace('{a}',s.targetLow.toFixed(1)).replace('{b}',s.targetHigh.toFixed(1)).replace('{n}',curStationIdx+1).replace('{t}',stations.length);
+}
+
+function updateHud(){
+  document.getElementById('score-display').textContent=I18N.t('ontime_label','On-Time: {n}').replace('{n}',onTime);
+  document.getElementById('round-display').textContent=I18N.t('round_label','Round: {r}').replace('{r}',round);
+  document.getElementById('hi-display').textContent=I18N.t('best_label3','Best: {b}').replace('{b}',best);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0f2027');sky.addColorStop(1,'#2c5364');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    drawTrack();drawTrain();
+    ctx.fillStyle='#ffd54f';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('mono_start_hint','Hold ACCEL/Up Arrow to depart!'),W/2,60);
+    updateSchedBoard();updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawTrack();drawTrain();
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-30);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('mono_result','On-schedule stops: {n}').replace('{n}',onTime),W/2,H/2);
+    ctx.fillText(I18N.t('restart_hint4','Press ACCEL to try again'),W/2,H/2+30);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(accelHeld)vel+=0.18*dt;
+  if(brakeHeld)vel-=0.32*dt;
+  vel-=0.02*dt; // rolling friction
+  vel=Math.max(0,Math.min(vel,9));
+  pos+=vel*dt;
+  worldOffset+=vel*dt;
+  elapsed+=dt/60;
+
+  drawTrack();
+
+  // draw upcoming stations relative to train position (train fixed at screen x=120)
+  stations.forEach((s,i)=>{
+    if(s.passed)return;
+    const screenX=120+(s.x-pos);
+    if(screenX<-40||screenX>W+40)return;
+    ctx.fillStyle='#f39c12';
+    ctx.fillRect(screenX-4,TRACK_Y-40,8,62);
+    ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='center';
+    ctx.fillText('STA '+(i+1),screenX,TRACK_Y-46);
+  });
+
+  drawTrain();
+
+  // check current station arrival: train "arrives" when station x reaches train position (pos>=s.x)
+  if(curStationIdx<stations.length){
+    const s=stations[curStationIdx];
+    if(!s.passed && pos>=s.x){
+      s.passed=true;
+      const t=elapsed;
+      if(t>=s.targetLow && t<=s.targetHigh){
+        onTime++;SFX.success();
+      } else {
+        SFX.fail();
+      }
+      curStationIdx++;
+      updateSchedBoard();
+      if(curStationIdx>=stations.length){
+        gameOver=true;
+        if(onTime>best){best=onTime;localStorage.setItem('monorailtransit_best',String(best));}
+        // allow advancing to next round on restart with harder settings
+      }
+    }
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset(1);
+updateSchedBoard();
+loop();
+</script></body></html>

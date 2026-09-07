@@ -1,0 +1,266 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bridge Inspector</title><meta name="description" content="Play Bridge Inspector free online — Click or tap each hidden structural flaw — cracks, rust spots, loose bolts — on the bridge before the inspection timer runs out. More flaws and subtler defects each round."><link rel="canonical" href="https://games.multiportllc.com/games/bridgeinspector"><meta property="og:title" content="Bridge Inspector - Multiport Games"><meta property="og:description" content="Play Bridge Inspector free online — Click or tap each hidden structural flaw — cracks, rust spots, loose bolts — on the bridge before the inspection timer runs out. More flaws and subtler defects each round."><meta property="og:url" content="https://games.multiportllc.com/games/bridgeinspector"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bridge Inspector","description":"Play Bridge Inspector free online instantly. Click or tap each hidden structural flaw — cracks, rust spots, loose bolts — on the bridge before the inspection timer runs out. More flaws and subtler defects each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/bridgeinspector","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;color:#fff;padding:10px 14px;font-weight:700}
+#hud .stat{font-size:.95rem;color:#dcd6c8}
+#hud .stat b{color:#ffd54f}
+#c{background:linear-gradient(#8fc0e8,#c9e4f5);display:block;border-radius:10px;margin:0 auto;touch-action:none;cursor:crosshair}
+#msg{color:#ffd54f;font-weight:800;text-align:center;min-height:1.6em;font-size:1.1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bridge Inspector</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <div class="stat">🎯 <span id="round-display">Round: 1</span></div>
+      <div class="stat">⭐ <span id="score-display">Score: 0</span></div>
+      <div class="stat">🔍 <span id="found-display">Found: 0/0</span></div>
+      <div class="stat">⏱ <span id="time-display">Time: 30</span></div>
+      <div class="stat">🏆 <span id="hi-display">Best: 0</span></div>
+    </div>
+    <div id="msg">Find all the structural flaws!</div>
+    <canvas id="c" width="640" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Inspect the bridge and <b>click/tap</b> every hidden flaw — cracks, rust spots, and loose bolts — hidden among the normal beams and panels. Find them all before the timer runs out to clear the round! Wrong clicks cost a little time. Each round hides more flaws that are harder to spot.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=640,H=340;
+let round=1,score=0,hi=0,timeLeft=30,gameOver=false,started=false;
+let flaws=[],foundCount=0,lastTime=null,clickFx=[];
+const deckY=180, towerXs=[130,510], deckH=40;
+let beams=[];
+
+try{ hi=parseInt(localStorage.getItem('bridgeinspector_best')||'0',10)||0; }catch(e){}
+
+function updateHud(){
+  document.getElementById('round-display').textContent=I18N.t('round_label','Round: {r}').replace('{r}',round);
+  document.getElementById('score-display').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('found-display').textContent=I18N.t('found_label','Found: {f}/{n}').replace('{f}',foundCount).replace('{n}',flaws.length);
+  document.getElementById('time-display').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(Math.max(0,timeLeft)));
+  document.getElementById('hi-display').textContent=I18N.t('best_label','Best: {h}').replace('{h}',hi);
+}
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function genBeams(){
+  beams=[];
+  // vertical suspender beams across the deck
+  for(let x=60;x<=580;x+=40){
+    beams.push({x,y1:deckY,y2:deckY-70-30*Math.sin((x-60)/520*Math.PI)});
+  }
+}
+
+function setupRound(){
+  const flawCount=Math.min(3+round,12);
+  const sizeReduction=Math.max(5,11-round*0.5);
+  flaws=[];
+  genBeams();
+  const types=['crack','rust','bolt'];
+  let tries=0;
+  while(flaws.length<flawCount && tries<400){
+    tries++;
+    const x=50+Math.random()*540;
+    const y=deckY-100+Math.random()*140;
+    // avoid too-close overlap
+    if(flaws.some(f=>Math.hypot(f.x-x,f.y-y)<28))continue;
+    const type=types[Math.floor(Math.random()*types.length)];
+    flaws.push({x,y,type,r:sizeReduction,found:false,rot:Math.random()*Math.PI});
+  }
+  foundCount=0;
+  timeLeft=Math.max(16,30-round*0.6)+flaws.length*1.2;
+  setMsg(I18N.t('round_start','Round {r}: {n} flaws hidden — find them all!').replace('{r}',round).replace('{n}',flaws.length));
+  updateHud();
+}
+
+function restart(){
+  round=1;score=0;gameOver=false;started=true;
+  setupRound();
+  lastTime=null;
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const t=e.touches?(e.changedTouches?e.changedTouches[0]:e.touches[0]):e;
+  return {x:(t.clientX-rect.left)*(W/rect.width),y:(t.clientY-rect.top)*(H/rect.height)};
+}
+
+function handleClick(e){
+  if(!started){started=true;lastTime=null;return;}
+  if(gameOver){restart();return;}
+  const p=pointerPos(e);
+  let hit=false;
+  for(const f of flaws){
+    if(f.found)continue;
+    if(Math.hypot(f.x-p.x,f.y-p.y)<=f.r+6){
+      f.found=true;foundCount++;hit=true;
+      score+=Math.max(10,30-round);
+      SFX.point();
+      clickFx.push({x:f.x,y:f.y,life:1,ok:true});
+      break;
+    }
+  }
+  if(!hit){
+    timeLeft=Math.max(0,timeLeft-2);
+    SFX.error();
+    clickFx.push({x:p.x,y:p.y,life:1,ok:false});
+  }
+  if(foundCount>=flaws.length && flaws.length>0){
+    const bonus=Math.round(timeLeft*5);
+    score+=bonus;
+    SFX.win();
+    if(score>hi){hi=score;try{localStorage.setItem('bridgeinspector_best',String(hi));}catch(e){}}
+    setMsg(I18N.t('cleared_msg','✅ Bridge cleared! +{b} time bonus').replace('{b}',bonus));
+    updateHud();
+    setTimeout(()=>{round++;setupRound();},1200);
+  }
+}
+c.addEventListener('click',handleClick);
+c.addEventListener('touchstart',e=>{e.preventDefault();handleClick(e);},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){ if(!started){started=true;} else if(gameOver){restart();} }
+});
+
+function drawCrack(f){
+  ctx.strokeStyle='#3a2a1a';
+  ctx.lineWidth=1.5;
+  ctx.save();
+  ctx.translate(f.x,f.y);ctx.rotate(f.rot);
+  ctx.beginPath();
+  ctx.moveTo(-f.r,0);
+  ctx.lineTo(-f.r*0.3,f.r*0.4);
+  ctx.lineTo(0,-f.r*0.2);
+  ctx.lineTo(f.r*0.3,f.r*0.3);
+  ctx.lineTo(f.r,0);
+  ctx.stroke();
+  ctx.restore();
+}
+function drawRust(f){
+  ctx.save();
+  ctx.translate(f.x,f.y);
+  const grad=ctx.createRadialGradient(0,0,0,0,0,f.r);
+  grad.addColorStop(0,'rgba(160,70,30,0.85)');
+  grad.addColorStop(1,'rgba(160,70,30,0)');
+  ctx.fillStyle=grad;
+  ctx.beginPath();ctx.arc(0,0,f.r,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+function drawBolt(f){
+  ctx.save();
+  ctx.translate(f.x,f.y);
+  ctx.rotate(f.rot);
+  ctx.fillStyle='#4a4a4a';
+  ctx.beginPath();ctx.arc(0,0,f.r*0.7,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#222';ctx.lineWidth=1;
+  for(let i=0;i<6;i++){
+    const a=i*Math.PI/3;
+    ctx.beginPath();ctx.moveTo(Math.cos(a)*f.r*0.7,Math.sin(a)*f.r*0.7);
+    ctx.lineTo(Math.cos(a)*f.r*0.9,Math.sin(a)*f.r*0.9);
+    ctx.stroke();
+  }
+  // slight offset ring to show "loose" look
+  ctx.strokeStyle='#ffcc0055';
+  ctx.beginPath();ctx.arc(1.5,1.5,f.r*0.9,0,Math.PI*2);ctx.stroke();
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  // sky
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#8fc0e8');sky.addColorStop(1,'#dff0fb');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // water
+  ctx.fillStyle='#3a7ca8';ctx.fillRect(0,deckY+deckH+20,W,H-(deckY+deckH+20));
+
+  // towers
+  ctx.fillStyle='#5a5a5a';
+  towerXs.forEach(tx=>{
+    ctx.fillRect(tx-10,60,20,deckY-60+deckH);
+  });
+  // suspension cables
+  ctx.strokeStyle='#333';ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(towerXs[0],70);
+  ctx.quadraticCurveTo(W/2,deckY-30,towerXs[1],70);
+  ctx.stroke();
+  // suspenders
+  ctx.lineWidth=2;
+  beams.forEach(b=>{
+    ctx.beginPath();ctx.moveTo(b.x,b.y2+40);ctx.lineTo(b.x,deckY);ctx.stroke();
+  });
+  // deck
+  ctx.fillStyle='#8a6a4a';
+  ctx.fillRect(30,deckY,580,deckH);
+  ctx.fillStyle='#6a4a30';
+  for(let x=30;x<610;x+=30)ctx.fillRect(x,deckY,3,deckH);
+  ctx.strokeStyle='#4a3520';ctx.lineWidth=2;ctx.strokeRect(30,deckY,580,deckH);
+  // railings
+  ctx.strokeStyle='#555';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(30,deckY-6);ctx.lineTo(610,deckY-6);ctx.stroke();
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Space to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  // draw flaws not yet found (subtle) — found ones show a green check
+  flaws.forEach(f=>{
+    if(f.found)return;
+    if(f.type==='crack')drawCrack(f);
+    else if(f.type==='rust')drawRust(f);
+    else drawBolt(f);
+  });
+  flaws.forEach(f=>{
+    if(!f.found)return;
+    ctx.fillStyle='rgba(76,175,80,0.85)';
+    ctx.beginPath();ctx.arc(f.x,f.y,f.r+4,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(f.x-4,f.y);ctx.lineTo(f.x-1,f.y+4);ctx.lineTo(f.x+5,f.y-5);
+    ctx.stroke();
+  });
+
+  // click feedback
+  clickFx=clickFx.filter(fx=>fx.life>0);
+  clickFx.forEach(fx=>{
+    fx.life-=0.05;
+    ctx.strokeStyle=fx.ok?`rgba(76,175,80,${fx.life})`:`rgba(255,60,60,${fx.life})`;
+    ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(fx.x,fx.y,20*(1-fx.life)+8,0,Math.PI*2);ctx.stroke();
+  });
+
+  if(!gameOver){
+    timeLeft-=dt;
+    if(timeLeft<=0){
+      timeLeft=0;gameOver=true;SFX.lose();
+      setMsg(I18N.t('game_over_msg','Inspection failed! Final score: {s}. Click/Space to retry.').replace('{s}',score));
+    }
+  }
+  updateHud();
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click / Tap / Space to try again'),W/2,H/2+22);
+  }
+
+  requestAnimationFrame(loop);
+}
+setupRound();
+loop();
+</script></body></html>

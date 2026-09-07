@@ -1,0 +1,244 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Satellite Dish</title><meta name="description" content="Play Satellite Dish free online — Drag the dish or use Arrow Keys to adjust azimuth and elevation. Watch the signal-strength meter peak as you align with the target satellite, then lock it in before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/satellitedish"><meta property="og:title" content="Satellite Dish - Multiport Games"><meta property="og:description" content="Play Satellite Dish free online — Drag the dish or use Arrow Keys to adjust azimuth and elevation. Watch the signal-strength meter peak as you align with the target satellite, then lock it in before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/satellitedish"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Satellite Dish","description":"Play Satellite Dish free online instantly. Drag the dish or use Arrow Keys to adjust azimuth and elevation. Watch the signal-strength meter peak as you align with the target satellite, then lock it in before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/satellitedish","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;color:#fff;padding:10px 14px;font-weight:700}
+#hud .stat{font-size:.95rem;color:#dcd6c8}
+#hud .stat b{color:#ffd54f}
+#c{background:linear-gradient(#050818,#101a35);display:block;border-radius:10px;margin:0 auto;touch-action:none;cursor:grab}
+#c:active{cursor:grabbing}
+#meterWrap{max-width:400px;margin:8px auto 0;background:#111;border-radius:10px;padding:8px 12px}
+#meterLabel{color:#ddd;font-size:.8rem;text-align:center;margin-bottom:4px;font-weight:700}
+#meterBar{height:16px;background:#222;border-radius:8px;overflow:hidden;position:relative}
+#meterFill{height:100%;width:0%;background:linear-gradient(90deg,#ff5533,#ffd54f,#4caf50);transition:width .05s linear}
+#meterTarget{position:absolute;top:0;bottom:0;width:6px;background:#fff;opacity:.85}
+#msg{color:#ffd54f;font-weight:800;text-align:center;min-height:1.6em;font-size:1.1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Satellite Dish</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <div class="stat">🎯 <span id="round-display">Round: 1</span></div>
+      <div class="stat">⭐ <span id="score-display">Score: 0</span></div>
+      <div class="stat">⏱ <span id="time-display">Time: 30</span></div>
+      <div class="stat">🏆 <span id="hi-display">Best: 0</span></div>
+    </div>
+    <div id="msg">Align the dish with the satellite!</div>
+    <canvas id="c" width="480" height="300"></canvas>
+    <div id="meterWrap">
+      <div id="meterLabel">SIGNAL STRENGTH</div>
+      <div id="meterBar"><div id="meterFill"></div><div id="meterTarget"></div></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>Drag</b> the dish or use <b>Arrow Keys</b> (left/right = azimuth, up/down = elevation) to aim it at the target satellite. The <b>signal-strength meter</b> peaks when you're aligned — hold near the peak to auto-lock the signal for points. Lock as many satellites as you can before time runs out; alignment tolerance narrows each round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=480,H=300;
+const dishCX=W/2,dishCY=H-40;
+let round=1,score=0,hi=0,timeLeft=30,gameOver=false,started=false;
+let azimuth=0,elevation=30; // azimuth -90..90 (deg from center), elevation 0..90
+let targetAz=0,targetEl=0,tolerance=14,lockProgress=0,locked=false;
+let dragging=false;
+let lastTime=null;
+let stars=[];
+
+try{ hi=parseInt(localStorage.getItem('satellitedish_best')||'0',10)||0; }catch(e){}
+for(let i=0;i<60;i++)stars.push({x:Math.random()*W,y:Math.random()*(H-60),r:Math.random()*1.5+0.3,tw:Math.random()*Math.PI*2});
+
+function updateHud(){
+  document.getElementById('round-display').textContent=I18N.t('round_label','Round: {r}').replace('{r}',round);
+  document.getElementById('score-display').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('time-display').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+  document.getElementById('hi-display').textContent=I18N.t('best_label','Best: {h}').replace('{h}',hi);
+}
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function setupTarget(){
+  targetAz=(Math.random()-0.5)*160;
+  targetEl=20+Math.random()*60;
+  tolerance=Math.max(5,15-round*0.9);
+  locked=false;lockProgress=0;
+  document.getElementById('meterTarget').style.left='calc('+(50)+'% - 3px)'; // recalculated in draw via width proportion instead
+}
+
+function restart(){
+  round=1;score=0;timeLeft=30;gameOver=false;started=true;
+  azimuth=0;elevation=30;
+  setupTarget();
+  lastTime=null;
+  updateHud();
+}
+
+document.addEventListener('keydown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver){ if(e.code==='Space'){restart();} return; }
+  let handled=true;
+  if(e.key==='ArrowLeft')azimuth-=3;
+  else if(e.key==='ArrowRight')azimuth+=3;
+  else if(e.key==='ArrowUp')elevation+=3;
+  else if(e.key==='ArrowDown')elevation-=3;
+  else handled=false;
+  if(handled){
+    e.preventDefault();
+    azimuth=Math.max(-90,Math.min(90,azimuth));
+    elevation=Math.max(0,Math.min(90,elevation));
+  }
+});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  return {x:(t.clientX-rect.left)*(W/rect.width),y:(t.clientY-rect.top)*(H/rect.height)};
+}
+let lastPointer=null;
+function onDown(e){
+  if(!started){started=true;}
+  if(gameOver){restart();return;}
+  dragging=true;lastPointer=pointerPos(e);
+}
+function onMove(e){
+  if(!dragging)return;
+  const p=pointerPos(e);
+  const dx=p.x-lastPointer.x, dy=p.y-lastPointer.y;
+  azimuth+=dx*0.4;
+  elevation-=dy*0.4;
+  azimuth=Math.max(-90,Math.min(90,azimuth));
+  elevation=Math.max(0,Math.min(90,elevation));
+  lastPointer=p;
+}
+function onUp(){dragging=false;}
+c.addEventListener('mousedown',e=>{onDown(e);});
+window.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();onDown(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();onMove(e);},{passive:false});
+window.addEventListener('touchend',onUp);
+
+function signalStrength(){
+  const dAz=Math.abs(azimuth-targetAz);
+  const dEl=Math.abs(elevation-targetEl);
+  const dist=Math.sqrt(dAz*dAz+dEl*dEl);
+  return Math.max(0,100-dist*2.2);
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  // stars
+  stars.forEach(s=>{
+    const a=0.4+0.4*Math.sin(now/500+s.tw);
+    ctx.fillStyle=`rgba(255,255,255,${a})`;
+    ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fill();
+  });
+  // ground
+  ctx.fillStyle='#1b2a1b';ctx.fillRect(0,H-20,W,20);
+
+  if(!started){
+    ctx.fillStyle='#ffd54f';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Drag/Arrows to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(!gameOver){
+    timeLeft-=dt;
+    if(timeLeft<=0){
+      timeLeft=0;gameOver=true;SFX.lose();
+      setMsg(I18N.t('game_over_msg','Time up! Final score: {s}. Click/Space to retry.').replace('{s}',score));
+    }
+  }
+
+  // target satellite indicator drawn as small icon along an arc at top based on az/el mapping
+  const arcCX=dishCX, arcCY=dishCY;
+  function angPos(az,el){
+    // map azimuth to horizontal spread, elevation to height
+    const ang=(az/90)*70*Math.PI/180; // spread
+    const dist=140-(el/90)*90;
+    return {x:arcCX+Math.sin(ang)*dist, y:arcCY-Math.cos(ang)*dist- (el/90)*20};
+  }
+  const tgt=angPos(targetAz,targetEl);
+  const strength=signalStrength();
+  if(!gameOver){
+    const pulse=6+4*Math.sin(now/150);
+    ctx.fillStyle=strength>80?'#4caf50':'#ff6688';
+    ctx.beginPath();ctx.arc(tgt.x,tgt.y,pulse,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='16px Arial';ctx.textAlign='center';
+    ctx.fillText('🛰',tgt.x,tgt.y-12);
+    // signal waves when close
+    if(strength>40){
+      ctx.strokeStyle=`rgba(120,255,180,${(strength-40)/60})`;
+      ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(tgt.x,tgt.y,pulse+10,0,Math.PI*2);ctx.stroke();
+    }
+  }
+
+  // dish base
+  ctx.fillStyle='#555';
+  ctx.fillRect(dishCX-6,dishCY,12,H-20-dishCY);
+  // dish dish (rotates with azimuth visually tilts, elevation tilts up)
+  ctx.save();
+  ctx.translate(dishCX,dishCY);
+  const dishAngle=(azimuth/90)*0.6;
+  const dishTilt=-(elevation/90)*1.1-0.2;
+  ctx.rotate(dishAngle*0.3);
+  ctx.save();
+  ctx.rotate(dishTilt);
+  ctx.fillStyle='#d8d8e0';
+  ctx.beginPath();
+  ctx.ellipse(0,-30,34,14,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle='#999';ctx.lineWidth=2;ctx.stroke();
+  // feed arm
+  ctx.strokeStyle='#aaa';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(0,-30);ctx.lineTo(0,-55);ctx.stroke();
+  ctx.fillStyle='#ffd54f';ctx.beginPath();ctx.arc(0,-57,4,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+  ctx.restore();
+
+  // lock-on logic
+  if(!gameOver && strength>=100-tolerance){
+    lockProgress+=dt*1.4;
+    if(lockProgress>=1 && !locked){
+      locked=true;
+      const bonus=Math.max(60,250-round*10);
+      score+=bonus;
+      SFX.success();
+      if(score>hi){hi=score;try{localStorage.setItem('satellitedish_best',String(hi));}catch(e){}}
+      setMsg(I18N.t('lock_msg','📡 Signal locked! +{b} points').replace('{b}',bonus));
+      updateHud();
+      setTimeout(()=>{round++;setupTarget();updateHud();},900);
+    }
+  } else {
+    lockProgress=Math.max(0,lockProgress-dt*2);
+  }
+
+  // meter fill DOM
+  document.getElementById('meterFill').style.width=Math.min(100,strength)+'%';
+  const targetPct=100-tolerance;
+  document.getElementById('meterTarget').style.left=`calc(${targetPct}% - 3px)`;
+
+  updateHud();
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click / Space to try again'),W/2,H/2+22);
+  }
+
+  requestAnimationFrame(loop);
+}
+setupTarget();
+updateHud();
+loop();
+</script></body></html>

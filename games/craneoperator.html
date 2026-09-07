@@ -1,0 +1,276 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Crane Operator</title><meta name="description" content="Play Crane Operator free online — Arrow Keys/WASD or drag to move the hook horizontally, Up/Down (or W/S) to raise or lower the cable. Press Space (or tap the Grab button) near a beam to grab or release it. Lower each piece precisely onto its outlined slot without swinging into other structures. Builds get taller and trickier each round."><link rel="canonical" href="https://games.multiportllc.com/games/craneoperator"><meta property="og:title" content="Crane Operator - Multiport Games"><meta property="og:description" content="Play Crane Operator free online — Arrow Keys/WASD or drag to move the hook horizontally, Up/Down (or W/S) to raise or lower the cable. Press Space (or tap the Grab button) near a beam to grab or release it. Lower each piece precisely onto its outlined slot without swinging into other structures. Builds get taller and trickier each round."><meta property="og:url" content="https://games.multiportllc.com/games/craneoperator"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Crane Operator","description":"Play Crane Operator free online instantly. Arrow Keys/WASD or drag to move the hook horizontally, Up/Down (or W/S) to raise or lower the cable. Press Space (or tap the Grab button) near a beam to grab or release it. Lower each piece precisely onto its outlined slot without swinging into other structures. Builds get taller and trickier each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/craneoperator","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#bcdff0;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;flex-wrap:wrap;justify-content:center;gap:16px;color:#dff3ff;font-weight:700;padding:6px 0;font-size:.95rem}
+#hud b{color:#ffd54f}
+#grabBtn{display:block;margin:10px auto 0;padding:12px 30px;background:linear-gradient(135deg,#ffb020,#c47a00);border:none;border-radius:24px;color:#241a00;font-weight:900;font-size:1.05rem;cursor:pointer;box-shadow:0 4px 0 #7a4d00}
+#grabBtn:active{transform:translateY(3px);box-shadow:0 1px 0 #7a4d00}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Crane Operator</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>Level: <b id="levelLabel">1</b></span>
+      <span>Placed: <b id="placedLabel">0/0</b></span>
+      <span>Score: <b id="scoreLabel">0</b></span>
+      <span>Best: <b id="bestLabel">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="460"></canvas>
+    <button id="grabBtn">🪝 GRAB / RELEASE (Space)</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys/WASD</b> or drag to move the hook horizontally, and <b>Up/Down</b> (or W/S) to raise or lower the cable. Press <b>Space</b> (or tap the <b>Grab</b> button) near a beam to grab or release it. Lower each piece precisely onto its outlined slot without swinging into other structures. Builds get taller and trickier each round.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=460;
+const GROUND=H-30;
+
+let best=parseInt(localStorage.getItem('craneoperator_best')||'0',10);
+document.getElementById('bestLabel').textContent=best;
+
+let level=1,score=0;
+let hook,cable,pieces,slots,placedStructures;
+let keys={left:false,right:false,up:false,down:false};
+let dragTargetX=null;
+let state='playing'; // playing, levelclear, gameover
+let timeLeft=0,levelTimeMax=0;
+
+function initLevel(){
+  hook={x:W/2,ropeLen:80,minRope:40,maxRope:GROUND-60,carrying:null,vx:0};
+  cable={};
+  const pieceCount=3+Math.min(level,4);
+  pieces=[];
+  slots=[];
+  placedStructures=[];
+  const baseY=GROUND;
+  // build target outline: a stack of slots at x positions forming a small tower silhouette
+  const slotW=60,slotH=30;
+  const towerX=560+Math.random()*60;
+  for(let i=0;i<pieceCount;i++){
+    slots.push({x:towerX,y:baseY-i*slotH,w:slotW,h:slotH,filled:false});
+  }
+  // spawn pieces at a staging area on the left, stacked
+  for(let i=0;i<pieceCount;i++){
+    pieces.push({x:120+ (i%3)*80,y:baseY-Math.floor(i/3)*32,w:slotW-6,h:slotH-4,grabbed:false,placed:false});
+  }
+  // decorative obstacle structure between staging and tower to add risk
+  placedStructures.push({x:360,y:baseY-70,w:24,h:70});
+  placedStructures.push({x:360,y:baseY-70});
+
+  timeLeft=0;
+  levelTimeMax=9999;
+  state='playing';
+  document.getElementById('levelLabel').textContent=level;
+  document.getElementById('placedLabel').textContent='0/'+pieceCount;
+}
+
+function resetGame(){level=1;score=0;initLevel();}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','a','A'].includes(e.key)){keys.left=true;e.preventDefault();}
+  if(['ArrowRight','d','D'].includes(e.key)){keys.right=true;e.preventDefault();}
+  if(['ArrowUp','w','W'].includes(e.key)){keys.up=true;e.preventDefault();}
+  if(['ArrowDown','s','S'].includes(e.key)){keys.down=true;e.preventDefault();}
+  if(e.code==='Space'){e.preventDefault();doGrab();}
+});
+document.addEventListener('keyup',e=>{
+  if(['ArrowLeft','a','A'].includes(e.key))keys.left=false;
+  if(['ArrowRight','d','D'].includes(e.key))keys.right=false;
+  if(['ArrowUp','w','W'].includes(e.key))keys.up=false;
+  if(['ArrowDown','s','S'].includes(e.key))keys.down=false;
+});
+
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  dragTargetX=(e.clientX-r.left)*(W/r.width);
+});
+c.addEventListener('pointermove',e=>{
+  if(dragTargetX===null)return;
+  const r=c.getBoundingClientRect();
+  dragTargetX=(e.clientX-r.left)*(W/r.width);
+});
+window.addEventListener('pointerup',()=>{dragTargetX=null;});
+
+document.getElementById('grabBtn').addEventListener('pointerdown',e=>{e.preventDefault();doGrab();});
+
+function doGrab(){
+  if(state!=='playing')return;
+  const hx=hook.x,hy=hook.ropeLen+40;
+  if(hook.carrying){
+    // try release/place
+    const p=hook.carrying;
+    const slot=slots.find(s=>!s.filled&&Math.abs((hx)-s.x)<22&&Math.abs((hy)-s.y)<22);
+    if(slot){
+      slot.filled=true;
+      p.placed=true;
+      p.x=slot.x;p.y=slot.y;
+      hook.carrying=null;
+      score+=100;
+      SFX.success();
+      const filledCount=slots.filter(s=>s.filled).length;
+      document.getElementById('placedLabel').textContent=filledCount+'/'+slots.length;
+      document.getElementById('scoreLabel').textContent=score;
+      if(filledCount===slots.length){
+        state='levelclear';
+        SFX.win();
+        if(score>best){best=score;localStorage.setItem('craneoperator_best',best);document.getElementById('bestLabel').textContent=best;}
+      }
+    } else {
+      // drop it - fails, piece falls to ground near current x
+      p.grabbed=false;
+      p.x=hx;p.y=GROUND;
+      hook.carrying=null;
+      SFX.fail();
+    }
+  } else {
+    // try grab nearest ungrabbed, unplaced piece within range
+    let best2=null,bestD=26;
+    pieces.forEach(p=>{
+      if(p.placed||p.grabbed)return;
+      const d=Math.hypot(p.x-hx,p.y-hy);
+      if(d<bestD){bestD=d;best2=p;}
+    });
+    if(best2){
+      best2.grabbed=true;
+      hook.carrying=best2;
+      SFX.click();
+    }
+  }
+}
+
+function rectsOverlap(ax,ay,aw,ah,bx,by,bw,bh){
+  return ax<bx+bw&&ax+aw>bx&&ay<by+bh&&ay+ah>by;
+}
+
+function update(dt){
+  if(state!=='playing')return;
+  let targetX=hook.x;
+  if(dragTargetX!==null)targetX=dragTargetX;
+  else if(keys.left)targetX=hook.x-6*dt;
+  else if(keys.right)targetX=hook.x+6*dt;
+  hook.vx=(targetX-hook.x)*0.14;
+  hook.x+=hook.vx;
+  hook.x=Math.max(40,Math.min(W-40,hook.x));
+
+  if(keys.up)hook.ropeLen-=3*dt;
+  if(keys.down)hook.ropeLen+=3*dt;
+  hook.ropeLen=Math.max(hook.minRope,Math.min(hook.maxRope,hook.ropeLen));
+
+  const hx=hook.x,hy=hook.ropeLen+40;
+
+  if(hook.carrying){
+    hook.carrying.x=hx;hook.carrying.y=hy;
+    // collision with obstacle structure -> drop piece as penalty
+    const obs=placedStructures[0];
+    if(obs&&rectsOverlap(hx-14,hy-14,28,28,obs.x-obs.w/2,obs.y-obs.h/2,obs.w,obs.h)){
+      hook.carrying.grabbed=false;
+      hook.carrying.x=hx;hook.carrying.y=GROUND;
+      hook.carrying=null;
+      SFX.hurt();
+      score=Math.max(0,score-20);
+      document.getElementById('scoreLabel').textContent=score;
+    }
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#7fc4e8');sky.addColorStop(1,'#d8f0fa');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#6b7280';ctx.fillRect(0,GROUND+30,W,H-GROUND-30);
+  ctx.fillStyle='#454b52';ctx.fillRect(0,GROUND+30,W,4);
+
+  // crane rail
+  ctx.fillStyle='#333';ctx.fillRect(0,20,W,8);
+  ctx.fillStyle='#d33';ctx.fillRect(20,0,14,40);
+  ctx.fillStyle='#d33';ctx.fillRect(W-34,0,14,40);
+
+  // obstacle structure
+  placedStructures.forEach((o,idx)=>{
+    if(idx!==0)return;
+    ctx.fillStyle='#8a5a3a';
+    ctx.fillRect(o.x-o.w/2,o.y-o.h/2,o.w,o.h);
+    ctx.fillStyle='#5c3b23';
+    ctx.fillRect(o.x-o.w/2,o.y-o.h/2,o.w,6);
+  });
+
+  // slots outline
+  slots.forEach(s=>{
+    ctx.strokeStyle=s.filled?'#4caf50':'#ffd54f';
+    ctx.lineWidth=3;
+    ctx.setLineDash(s.filled?[]:[6,4]);
+    ctx.strokeRect(s.x-s.w/2,s.y-s.h/2,s.w,s.h);
+    ctx.setLineDash([]);
+    if(s.filled){
+      ctx.fillStyle='#c0463d';
+      ctx.fillRect(s.x-s.w/2+3,s.y-s.h/2+3,s.w-6,s.h-6);
+    }
+  });
+
+  // pieces (not grabbed)
+  pieces.forEach(p=>{
+    if(p.grabbed||p.placed)return;
+    ctx.fillStyle='#e94560';
+    ctx.fillRect(p.x-p.w/2,p.y-p.h,p.w,p.h);
+    ctx.strokeStyle='#7a1f2b';ctx.lineWidth=2;
+    ctx.strokeRect(p.x-p.w/2,p.y-p.h,p.w,p.h);
+  });
+
+  // trolley + cable + hook
+  const hx=hook.x,topY=24,hy=hook.ropeLen+40;
+  ctx.fillStyle='#333';ctx.fillRect(hx-16,topY,32,14);
+  ctx.strokeStyle='#222';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(hx,topY+14);ctx.lineTo(hx,hy-6);ctx.stroke();
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(hx,hy,8,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#7a5a00';ctx.lineWidth=2;ctx.stroke();
+
+  if(hook.carrying){
+    const p=hook.carrying;
+    ctx.fillStyle='#e94560';
+    ctx.fillRect(p.x-p.w/2,p.y-p.h/2,p.w,p.h);
+    ctx.strokeStyle='#7a1f2b';ctx.lineWidth=2;
+    ctx.strokeRect(p.x-p.w/2,p.y-p.h/2,p.w,p.h);
+  }
+
+  ctx.textAlign='center';
+  if(state==='levelclear'){
+    ctx.fillStyle='rgba(0,0,0,.35)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';
+    ctx.fillText(I18N.t('crane_clear','🏗️ Structure Complete!'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('crane_next','Tap or Space to build the next, taller structure'),W/2,H/2+16);
+  }
+}
+
+function tryAdvance(){
+  if(state==='levelclear'){
+    level++;
+    initLevel();
+  }
+}
+
+c.addEventListener('pointerdown',()=>{ if(state==='levelclear')tryAdvance(); });
+document.addEventListener('keydown',e=>{ if(e.code==='Space'&&state==='levelclear')tryAdvance(); });
+document.getElementById('grabBtn').addEventListener('pointerdown',()=>{ if(state==='levelclear')tryAdvance(); });
+
+let lastTime=null;
+function loop(t){
+  const dt=lastTime===null?1:Math.min((t-lastTime)/16.6667,3);
+  lastTime=t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+initLevel();
+requestAnimationFrame(loop);
+</script></body></html>

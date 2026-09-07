@@ -1,0 +1,253 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Power Line Repair</title><meta name="description" content="Play Power Line Repair free online — Use Arrow Keys / A-D or drag to walk the lineworker along the wire toward the damaged section. Keep the wobble meter balanced, then hit the flashing keys in order to complete the repair before the spark meter maxes out."><link rel="canonical" href="https://games.multiportllc.com/games/powerlinerepair"><meta property="og:title" content="Power Line Repair - Multiport Games"><meta property="og:description" content="Play Power Line Repair free online — Use Arrow Keys / A-D or drag to walk the lineworker along the wire toward the damaged section. Keep the wobble meter balanced, then hit the flashing keys in order to complete the repair before the spark meter maxes out."><meta property="og:url" content="https://games.multiportllc.com/games/powerlinerepair"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Power Line Repair","description":"Play Power Line Repair free online instantly. Use Arrow Keys / A-D or drag to walk the lineworker along the wire toward the damaged section. Keep the wobble meter balanced, then hit the flashing keys in order to complete the repair before the spark meter maxes out. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/powerlinerepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;color:#fff;padding:10px 14px;font-weight:700}
+#hud .stat{font-size:.95rem;color:#dcd6c8}
+#hud .stat b{color:#ffd54f}
+#c{background:linear-gradient(#1a2a4a,#0d1626);display:block;border-radius:10px;margin:0 auto;touch-action:none}
+#msg{color:#ffd54f;font-weight:800;text-align:center;min-height:1.6em;font-size:1.1rem}
+#seqRow{display:flex;justify-content:center;gap:8px;margin:6px 0;min-height:2.2em}
+.seqkey{width:34px;height:34px;border-radius:8px;background:rgba(255,255,255,0.12);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.1rem;border:2px solid rgba(255,255,255,0.2)}
+.seqkey.done{background:#4caf50;border-color:#4caf50}
+.seqkey.active{background:#ffd54f;color:#222;border-color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Power Line Repair</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <div class="stat">🎯 <span id="round-display">Round: 1</span></div>
+      <div class="stat">⭐ <span id="score-display">Score: 0</span></div>
+      <div class="stat">🔧 <span id="lives-display">Lives: 3</span></div>
+      <div class="stat">🏆 <span id="hi-display">Best: 0</span></div>
+    </div>
+    <div id="msg">Walk to the damaged section (red flash)!</div>
+    <div id="seqRow"></div>
+    <canvas id="c" width="760" height="240"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / A-D</b> or <b>drag left/right</b> to walk the lineworker along the power line to the damaged (flashing) section. Watch the <b>wobble meter</b> — moving too fast tips you over. Once you reach it, press the flashing keys shown <b>in order</b> before the spark meter fills up to complete the repair. Each round is faster and trickier!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=240;
+const poleXs=[40,380,720];
+const wireY=110;
+let round=1,score=0,lives=3,hi=0,gameOver=false;
+let workerX=40,wobble=0,fallDir=0,falling=false,repairing=false,damageX=0,repairProgress=0,sparkMeter=0,seq=[],seqIdx=0,seqFlashT=0;
+let keysDown={};
+let dragging=false,dragStartX=0,dragStartWorkerX=0;
+const KEYS=['A','S','D','W','J','K'];
+
+try{ hi=parseInt(localStorage.getItem('powerlinerepair_best')||'0',10)||0; }catch(e){}
+
+function updateHud(){
+  document.getElementById('round-display').textContent=I18N.t('round_label','Round: {r}').replace('{r}',round);
+  document.getElementById('score-display').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('lives-display').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}',lives);
+  document.getElementById('hi-display').textContent=I18N.t('best_label','Best: {h}').replace('{h}',hi);
+}
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function setupRound(){
+  workerX=poleXs[0]+20;
+  wobble=0;falling=false;repairing=false;repairProgress=0;sparkMeter=0;
+  damageX=poleXs[1]+ (Math.random()<0.5?-1:1)*(60+Math.random()*180);
+  damageX=Math.max(poleXs[0]+60,Math.min(poleXs[2]-60,damageX));
+  const seqLen=Math.min(3+Math.floor(round/2),6);
+  seq=Array.from({length:seqLen},()=>KEYS[Math.floor(Math.random()*KEYS.length)]);
+  seqIdx=0;
+  renderSeq();
+  setMsg(I18N.t('round_start','Round {r}: Reach the damage!').replace('{r}',round));
+  updateHud();
+}
+
+function renderSeq(){
+  const row=document.getElementById('seqRow');
+  row.innerHTML='';
+  if(!repairing){return;}
+  seq.forEach((k,i)=>{
+    const d=document.createElement('div');
+    d.className='seqkey'+(i<seqIdx?' done':(i===seqIdx?' active':''));
+    d.textContent=k;
+    row.appendChild(d);
+  });
+}
+
+function restart(){
+  round=1;score=0;lives=3;gameOver=false;
+  setupRound();
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameOver){ if(e.code==='Space'){restart();} return; }
+  const k=e.key.toUpperCase();
+  keysDown[k]=true;
+  if(['ARROWLEFT','ARROWRIGHT'].includes(e.key.toUpperCase()))e.preventDefault();
+  if(repairing){
+    if(k===seq[seqIdx]){
+      seqIdx++;
+      SFX.click();
+      renderSeq();
+      if(seqIdx>=seq.length)completeRepair();
+    } else if(KEYS.includes(k)){
+      sparkMeter=Math.min(100,sparkMeter+18);
+      SFX.error();
+    }
+  }
+});
+document.addEventListener('keyup',e=>{ keysDown[e.key.toUpperCase()]=false; });
+
+c.addEventListener('mousedown',e=>{ if(gameOver){restart();return;} dragging=true;dragStartX=e.clientX;dragStartWorkerX=workerX; });
+window.addEventListener('mouseup',()=>dragging=false);
+window.addEventListener('mousemove',e=>{
+  if(!dragging||repairing||falling)return;
+  const rect=c.getBoundingClientRect();
+  const scale=W/rect.width;
+  const dx=(e.clientX-dragStartX)*scale;
+  workerX=dragStartWorkerX+dx*0.6;
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){restart();return;}
+  dragging=true;dragStartX=e.touches[0].clientX;dragStartWorkerX=workerX;
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(!dragging||repairing||falling)return;
+  const rect=c.getBoundingClientRect();
+  const scale=W/rect.width;
+  const dx=(e.touches[0].clientX-dragStartX)*scale;
+  workerX=dragStartWorkerX+dx*0.6;
+},{passive:false});
+c.addEventListener('touchend',()=>dragging=false);
+
+function completeRepair(){
+  repairing=false;
+  const bonus=Math.max(80,300-round*10);
+  score+=bonus;
+  SFX.success();
+  if(score>hi){hi=score;try{localStorage.setItem('powerlinerepair_best',String(hi));}catch(e){}}
+  setMsg(I18N.t('repair_done','✅ Repair complete! +{b} points').replace('{b}',bonus));
+  updateHud();
+  renderSeq();
+  setTimeout(()=>{round++;setupRound();},1300);
+}
+
+function failFall(){
+  falling=true;
+  lives--;
+  SFX.lose();
+  updateHud();
+  if(lives<=0){
+    setTimeout(()=>{gameOver=true;setMsg(I18N.t('game_over_msg','You fell! Final score: {s}. Space/Tap to retry.').replace('{s}',score));},600);
+  } else {
+    setMsg(I18N.t('fall_msg','⚡ You lost balance! {l} lives left.').replace('{l}',lives));
+    setTimeout(()=>{ setupRound(); },1200);
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  // sky gradient handled by CSS bg; draw poles + wire
+  ctx.strokeStyle='#8a8a8a';
+  ctx.lineWidth=8;
+  poleXs.forEach(px=>{
+    ctx.beginPath();ctx.moveTo(px,wireY);ctx.lineTo(px,H);ctx.stroke();
+  });
+  ctx.strokeStyle='#333';
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(poleXs[0],wireY);
+  ctx.quadraticCurveTo((poleXs[0]+poleXs[2])/2,wireY+18,poleXs[2],wireY);
+  ctx.stroke();
+
+  // damage marker (flashing)
+  const flash=Math.sin(performance.now()/120)>0;
+  ctx.fillStyle=flash?'#ff3344':'#992222';
+  ctx.beginPath();ctx.arc(damageX,wireY,9,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText('⚠',damageX,wireY-14);
+
+  if(!gameOver){
+    if(!falling && !repairing){
+      let move=0;
+      if(keysDown['ARROWLEFT']||keysDown['A'])move=-1;
+      if(keysDown['ARROWRIGHT']||keysDown['D'])move=1;
+      const spd=3.4-round*0.12;
+      const clampedSpd=Math.max(1.6,spd);
+      workerX+=move*clampedSpd;
+      workerX=Math.max(poleXs[0]+15,Math.min(poleXs[2]-15,workerX));
+      // wobble builds with speed of movement, decays when still, tougher each round
+      const wobbleGain=0.9+round*0.15;
+      if(move!==0)wobble+=(Math.random()-0.5)*wobbleGain;
+      else wobble*=0.92;
+      wobble=Math.max(-100,Math.min(100,wobble));
+      if(Math.abs(wobble)>=95){failFall();}
+      // reached damage?
+      if(Math.abs(workerX-damageX)<14){
+        repairing=true;
+        setMsg(I18N.t('repair_prompt','Press the keys in order!'));
+        renderSeq();
+      }
+    } else if(repairing){
+      sparkMeter+=0.35+round*0.08;
+      wobble*=0.9;
+      if(sparkMeter>=100){
+        repairing=false;
+        failFall();
+      }
+    }
+  }
+
+  // worker figure
+  const wy=wireY-2;
+  ctx.save();
+  ctx.translate(workerX,wy);
+  ctx.rotate(Math.max(-0.5,Math.min(0.5,wobble/100)));
+  // legs straddling wire
+  ctx.strokeStyle='#2d3a55';ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(-6,0);ctx.lineTo(-10,16);ctx.moveTo(6,0);ctx.lineTo(10,16);ctx.stroke();
+  // body
+  ctx.fillStyle='#ff9900';
+  ctx.fillRect(-8,-24,16,24);
+  // head
+  ctx.fillStyle='#f0c090';
+  ctx.beginPath();ctx.arc(0,-30,7,0,Math.PI*2);ctx.fill();
+  // hard hat
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(0,-33,7,Math.PI,0);ctx.fill();
+  ctx.restore();
+
+  // wobble meter
+  ctx.fillStyle='#222';
+  ctx.fillRect(W/2-60,H-24,120,10);
+  ctx.fillStyle=Math.abs(wobble)>60?'#ff3333':'#4caf50';
+  ctx.fillRect(W/2-2+ (wobble/100)*58,H-24,4,10);
+  ctx.strokeStyle='#555';ctx.strokeRect(W/2-60,H-24,120,10);
+
+  // spark meter while repairing
+  if(repairing){
+    ctx.fillStyle='#222';ctx.fillRect(damageX-30,wireY-50,60,8);
+    ctx.fillStyle='#ff5533';ctx.fillRect(damageX-30,wireY-50,60*(sparkMeter/100),8);
+    ctx.strokeStyle='#555';ctx.strokeRect(damageX-30,wireY-50,60,8);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Space / Tap to try again'),W/2,H/2+22);
+  }
+
+  requestAnimationFrame(loop);
+}
+setupRound();
+loop();
+</script></body></html>

@@ -1,0 +1,246 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Xylophone Mallet</title><meta name="description" content="Play Xylophone Mallet free online — Colored notes fall toward the hit-line. Press the matching number key (1-6) or tap the matching bar right as the note crosses the line to play it in tune. Chain hits for combo, and the tempo speeds up every round."><link rel="canonical" href="https://games.multiportllc.com/games/xylophonemallet"><meta property="og:title" content="Xylophone Mallet - Multiport Games"><meta property="og:description" content="Play Xylophone Mallet free online — Colored notes fall toward the hit-line. Press the matching number key (1-6) or tap the matching bar right as the note crosses the line to play it in tune. Chain hits for combo, and the tempo speeds up every round."><meta property="og:url" content="https://games.multiportllc.com/games/xylophonemallet"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Xylophone Mallet","description":"Play Xylophone Mallet free online instantly. Colored notes fall toward the hit-line. Press the matching number key (1-6) or tap the matching bar right as the note crosses the line to play it in tune. Chain hits for combo, and the tempo speeds up every round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/xylophonemallet","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:14px;text-align:center}
+#stats{display:flex;justify-content:space-between;color:#fff;font-weight:800;font-size:.95rem;padding:0 6px 8px;max-width:760px;margin:0 auto}
+#stats span{color:#ffd54f}
+#health{max-width:760px;margin:0 auto 8px;height:10px;border-radius:6px;background:#0b0b1a;overflow:hidden}
+#healthBar{height:100%;width:100%;background:linear-gradient(90deg,#4caf50,#8bc34a);transition:width .15s}
+#c{background:#0b0b1a;display:block;border-radius:10px;margin:0 auto;max-width:100%;touch-action:manipulation}
+#bars{display:flex;justify-content:center;gap:6px;max-width:760px;margin:10px auto 0}
+.bar{flex:1;height:56px;border-radius:8px;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;font-weight:900;color:#08080f;font-size:.85rem;cursor:pointer;user-select:none;transition:transform .08s,filter .08s;box-shadow:0 4px 0 rgba(0,0,0,.35)}
+.bar:active,.bar.hit{transform:translateY(4px) scale(.97);filter:brightness(1.4)}
+#msg{color:#fff;font-size:1.3rem;font-weight:900;min-height:2rem;margin-top:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Xylophone Mallet</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="stats"><span id="scoreEl">Score: 0</span><span id="levelEl">Round 1</span><span id="comboEl">Combo: 0</span><span id="bestEl">Best: 0</span></div>
+      <div id="health"><div id="healthBar"></div></div>
+      <canvas id="c" width="760" height="360"></canvas>
+      <div id="bars"></div>
+      <div id="msg">Tap or press a key to begin</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Colored notes fall toward the hit-line. Press the matching number key (<b>1-6</b>) or tap the matching bar right as the note crosses the line to play it in tune. Chain hits for combo, and the tempo speeds up every round.</div>
+</div>
+<script>
+const NOTE_COLORS=['#ff5252','#ff9800','#ffeb3b','#4caf50','#2196f3','#9c27b0'];
+const NOTE_FREQS=[523.25,587.33,659.25,698.46,783.99,880.00];
+const LABELS=['1','2','3','4','5','6'];
+const LANES=6;
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const hitLineY=H-46,spawnY=-24;
+const laneW=W/LANES;
+
+const scoreEl=document.getElementById('scoreEl'),levelEl=document.getElementById('levelEl'),comboEl=document.getElementById('comboEl'),bestEl=document.getElementById('bestEl'),msgEl=document.getElementById('msg'),healthBar=document.getElementById('healthBar');
+const barsWrap=document.getElementById('bars');
+let barEls=[];
+for(let i=0;i<LANES;i++){
+  const d=document.createElement('div');
+  d.className='bar';d.style.background=NOTE_COLORS[i];d.textContent=LABELS[i];
+  d.addEventListener('pointerdown',e=>{e.preventDefault();hitLane(i);});
+  barsWrap.appendChild(d);barEls.push(d);
+}
+
+let best=parseInt(localStorage.getItem('xylophonemallet_best')||'0',10);
+bestEl.textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+
+let state='ready'; // ready|playing|gameover
+let score=0,combo=0,maxCombo=0,health=100,level=1;
+let bpm=90,secondsPerBeat=60/bpm,leadBeats=4,leadTime=leadBeats*secondsPerBeat,speed=(hitLineY-spawnY)/leadTime;
+let gameTime=0,lastT=null;
+let notes=[]; // {lane,hitTime,judged}
+let roundNotesTotal=0,roundNotesDone=0;
+let flashes=[]; // hit-line flash feedback {lane,t}
+
+function genRound(){
+  level=level; // keep
+  bpm=84+level*7;
+  secondsPerBeat=60/bpm;
+  leadTime=leadBeats*secondsPerBeat;
+  speed=(hitLineY-spawnY)/leadTime;
+  const len=8+Math.min(level,10);
+  const useHalf=level>=3;
+  notes=[];
+  let beat=1;
+  let lastLane=-1;
+  for(let i=0;i<len;i++){
+    let lane=Math.floor(Math.random()*LANES);
+    if(lane===lastLane)lane=(lane+1)%LANES;
+    lastLane=lane;
+    notes.push({lane,hitTime:beat*secondsPerBeat,judged:false});
+    beat+=(useHalf&&Math.random()<0.35)?0.5:1;
+  }
+  roundNotesTotal=notes.length;
+  roundNotesDone=0;
+  gameTime=0;
+  lastT=null;
+  levelEl.textContent=I18N.t('round_label','Round {n}').replace('{n}',level);
+}
+
+function startGame(){
+  score=0;combo=0;maxCombo=0;health=100;level=1;
+  state='playing';
+  msgEl.textContent='';
+  updateStats();
+  genRound();
+}
+
+function updateStats(){
+  scoreEl.textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  comboEl.textContent=I18N.t('combo_label','Combo: {c}').replace('{c}',combo);
+  healthBar.style.width=Math.max(0,health)+'%';
+  healthBar.style.background=health>50?'linear-gradient(90deg,#4caf50,#8bc34a)':(health>20?'linear-gradient(90deg,#ff9800,#ffc107)':'linear-gradient(90deg,#e53935,#ff5252)');
+}
+
+function playNoteSound(lane){
+  // reuse SFX tone-ish feedback via available functions; pick by lane for variety
+  const fns=[SFX.point,SFX.coin,SFX.select,SFX.click,SFX.tick,SFX.catch];
+  (fns[lane%fns.length]||SFX.click)();
+}
+
+function judgeAt(lane){
+  if(state!=='playing')return;
+  let best=null,bestDiff=Infinity;
+  for(const n of notes){
+    if(n.judged||n.lane!==lane)continue;
+    const diff=Math.abs(gameTime-n.hitTime);
+    if(diff<bestDiff){bestDiff=diff;best=n;}
+  }
+  if(!best||bestDiff>0.22){
+    // wrong/no note nearby
+    combo=0;health=Math.max(0,health-8);
+    updateStats();
+    SFX.error();
+    if(health<=0)return gameOver();
+    return;
+  }
+  best.judged=true;roundNotesDone++;
+  flashes.push({lane,t:0,good:true});
+  if(bestDiff<0.08){score+=100;combo++;health=Math.min(100,health+2);SFX.success();}
+  else if(bestDiff<0.16){score+=60;combo++;health=Math.min(100,health+1);playNoteSound(lane);}
+  else {score+=25;combo=Math.max(0,combo-0);playNoteSound(lane);}
+  maxCombo=Math.max(maxCombo,combo);
+  updateStats();
+  barEls[lane].classList.add('hit');
+  setTimeout(()=>barEls[lane].classList.remove('hit'),100);
+  if(roundNotesDone>=roundNotesTotal){
+    setTimeout(nextRound,600);
+    state='transition';
+  }
+}
+
+function nextRound(){
+  if(state==='gameover')return;
+  level++;
+  state='playing';
+  genRound();
+}
+
+function hitLane(lane){
+  if(state==='ready'){startGame();return;}
+  if(state==='gameover'){startGame();return;}
+  judgeAt(lane);
+}
+
+function gameOver(){
+  if(state==='gameover')return;
+  state='gameover';
+  SFX.lose();
+  if(score>best){best=score;localStorage.setItem('xylophonemallet_best',String(best));}
+  bestEl.textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+  msgEl.textContent=I18N.t('gameover_tap','Game Over — Score {s} — Tap or press a key to retry').replace('{s}',score);
+}
+
+document.addEventListener('keydown',e=>{
+  const idx=LABELS.indexOf(e.key);
+  if(idx>=0){e.preventDefault();hitLane(idx);}
+  else if(e.code==='Space'&&(state==='ready'||state==='gameover')){e.preventDefault();startGame();}
+});
+c.addEventListener('pointerdown',e=>{
+  if(state==='ready'||state==='gameover'){startGame();return;}
+  const rect=c.getBoundingClientRect();
+  const x=(e.clientX-rect.left)*(W/rect.width);
+  const lane=Math.min(LANES-1,Math.max(0,Math.floor(x/laneW)));
+  hitLane(lane);
+});
+
+function checkMisses(){
+  for(const n of notes){
+    if(!n.judged&&gameTime-n.hitTime>0.28){
+      n.judged=true;roundNotesDone++;
+      combo=0;health=Math.max(0,health-10);
+      updateStats();
+      if(health<=0){gameOver();return;}
+    }
+  }
+  if(state==='playing'&&roundNotesDone>=roundNotesTotal){
+    state='transition';
+    setTimeout(nextRound,600);
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0b0b1a');sky.addColorStop(1,'#16213e');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  for(let i=1;i<LANES;i++){
+    ctx.strokeStyle='rgba(255,255,255,.06)';
+    ctx.beginPath();ctx.moveTo(i*laneW,0);ctx.lineTo(i*laneW,H);ctx.stroke();
+  }
+
+  ctx.fillStyle='rgba(255,255,255,.85)';
+  ctx.fillRect(0,hitLineY,W,3);
+
+  for(const n of notes){
+    if(n.judged)continue;
+    const y=spawnY+speed*(gameTime-(n.hitTime-leadTime));
+    if(y<-30||y>H+30)continue;
+    const x=n.lane*laneW+laneW/2;
+    ctx.fillStyle=NOTE_COLORS[n.lane];
+    ctx.beginPath();ctx.roundRect(x-laneW*0.36,y-14,laneW*0.72,28,8);ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,.35)';ctx.lineWidth=2;ctx.stroke();
+  }
+
+  flashes.forEach(f=>{
+    const x=f.lane*laneW+laneW/2;
+    const alpha=1-f.t/0.25;
+    ctx.fillStyle=`rgba(255,255,255,${Math.max(0,alpha*0.6)})`;
+    ctx.beginPath();ctx.arc(x,hitLineY,24*(1+f.t*2),0,Math.PI*2);ctx.fill();
+  });
+  flashes=flashes.filter(f=>f.t<0.25);
+
+  if(state==='ready'){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint2','Tap a bar or press 1-6 to start'),W/2,H/2);
+  }
+}
+
+function loop(ts){
+  if(state==='playing'){
+    if(lastT===null)lastT=ts;
+    const dt=(ts-lastT)/1000;lastT=ts;
+    gameTime+=dt;
+    flashes.forEach(f=>f.t+=dt);
+    checkMisses();
+  } else {
+    lastT=null;
+    flashes.forEach(f=>f.t+=1/60);
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

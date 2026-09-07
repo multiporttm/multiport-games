@@ -1,0 +1,299 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Dog Sled Express</title><meta name="description" content="Play Dog Sled Express free online — Steer with Arrow Keys/WASD or drag. Click/Tap the Mush! button (or hit Space) to shout at your dogs for a speed burst — it drains stamina faster, so pace it. Dodge ice cracks and rocks, and beat the rival sleds across all legs of the race."><link rel="canonical" href="https://games.multiportllc.com/games/dogsledexpress"><meta property="og:title" content="Dog Sled Express - Multiport Games"><meta property="og:description" content="Play Dog Sled Express free online — Steer with Arrow Keys/WASD or drag. Click/Tap the Mush! button (or hit Space) to shout at your dogs for a speed burst — it drains stamina faster, so pace it. Dodge ice cracks and rocks, and beat the rival sleds across all legs of the race."><meta property="og:url" content="https://games.multiportllc.com/games/dogsledexpress"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Dog Sled Express","description":"Play Dog Sled Express free online instantly. Steer with Arrow Keys/WASD or drag. Click/Tap the Mush! button (or hit Space) to shout at your dogs for a speed burst — it drains stamina faster, so pace it. Dodge ice cracks and rocks, and beat the rival sleds across all legs of the race. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/dogsledexpress","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#dcf0fa;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;color:#dff3ff;font-weight:700;padding:6px 0;font-size:.95rem}
+#hud span b{color:#ffd54f}
+#stamWrap{width:180px;height:14px;background:#0b2a3d;border-radius:7px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px;border:1px solid #2a5a76}
+#stamBar{height:100%;background:linear-gradient(90deg,#ff8a3d,#ffd54f);width:100%;transition:width .1s linear}
+#mushBtn{display:block;margin:10px auto 0;padding:12px 30px;background:linear-gradient(135deg,#3d8bcf,#1d4e7a);border:none;border-radius:24px;color:#fff;font-weight:900;font-size:1.05rem;cursor:pointer;box-shadow:0 4px 0 #123453}
+#mushBtn:active{transform:translateY(3px);box-shadow:0 1px 0 #123453}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Dog Sled Express</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="legLabel">Leg 1/4</span>
+      <span>Pos: <b id="posLabel">1st</b></span>
+      <span>Stamina<span id="stamWrap"><span id="stamBar"></span></span></span>
+      <span>Best: <b id="bestLabel">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <button id="mushBtn">🐕 MUSH! (Space)</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Steer with <b>Arrow Keys/WASD</b> or drag. Click/Tap the <b>Mush!</b> button (or hit <b>Space</b>) to shout at your dogs for a speed burst — it drains stamina faster, so pace it. Dodge ice cracks and rocks, and beat the rival sleds across all legs of the race.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const TOTAL_LEGS=4;
+const LEG_DIST=3200;
+const LANE_L=90,LANE_R=W-90;
+
+let best=parseFloat(localStorage.getItem('dogsledexpress_best')||'0');
+document.getElementById('bestLabel').textContent=best?best.toFixed(1)+'s':'—';
+
+let state='ready'; // ready, racing, legdone, finished, crashed
+let leg=1,legTimer=0,totalTime=0;
+let player,rivals,obstacles,scenery;
+let keys={left:false,right:false};
+let dragX=null;
+let mushHeld=false,mushCooldown=0;
+
+function initPlayer(){
+  return {x:W/2,y:340,w:70,h:56,vx:0,progress:0,stamina:100,baseSpeed:2.6,mushMult:1};
+}
+function initRivals(){
+  return [
+    {x:W/2-140,y:340,w:60,h:48,progress:0,skill:0.86+Math.random()*0.12,color:'#c0463d',name:'Frost'},
+    {x:W/2+140,y:340,w:60,h:48,progress:0,skill:0.84+Math.random()*0.14,color:'#3d7fc0',name:'Blaze'},
+  ];
+}
+function spawnObstacles(){
+  const arr=[];
+  let d=400;
+  while(d<LEG_DIST-200){
+    d+=180+Math.random()*260;
+    const type=Math.random()<0.5?'rock':'crack';
+    const lane=LANE_L+Math.random()*(LANE_R-LANE_L-40);
+    arr.push({dist:d,x:lane,w:type==='rock'?38:60,h:type==='rock'?34:20,type,hit:false});
+  }
+  return arr;
+}
+function spawnScenery(){
+  const arr=[];
+  for(let i=0;i<40;i++)arr.push({dist:Math.random()*LEG_DIST,side:Math.random()<0.5?-1:1,size:14+Math.random()*22});
+  return arr;
+}
+
+function startLeg(){
+  player=initPlayer();
+  rivals=initRivals();
+  obstacles=spawnObstacles();
+  scenery=spawnScenery();
+  legTimer=0;
+  state='racing';
+  document.getElementById('legLabel').textContent=I18N.t('leg_label','Leg {n}/{t}').replace('{n}',leg).replace('{t}',TOTAL_LEGS);
+}
+
+function resetGame(){
+  leg=1;totalTime=0;
+  startLeg();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','a','A'].includes(e.key)){keys.left=true;e.preventDefault();}
+  if(['ArrowRight','d','D'].includes(e.key)){keys.right=true;e.preventDefault();}
+  if(e.code==='Space'){e.preventDefault();mushHeld=true;if(state==='ready'||state==='legdone'||state==='crashed'||state==='finished')advance();}
+});
+document.addEventListener('keyup',e=>{
+  if(['ArrowLeft','a','A'].includes(e.key))keys.left=false;
+  if(['ArrowRight','d','D'].includes(e.key))keys.right=false;
+  if(e.code==='Space')mushHeld=false;
+});
+
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  dragX=(e.clientX-r.left)*(W/r.width);
+  if(state==='ready'||state==='legdone'||state==='crashed'||state==='finished')advance();
+});
+c.addEventListener('pointermove',e=>{
+  if(dragX===null)return;
+  const r=c.getBoundingClientRect();
+  dragX=(e.clientX-r.left)*(W/r.width);
+});
+window.addEventListener('pointerup',()=>{dragX=null;});
+
+const mushBtn=document.getElementById('mushBtn');
+mushBtn.addEventListener('pointerdown',e=>{e.preventDefault();mushHeld=true;if(state==='ready'||state==='legdone'||state==='crashed'||state==='finished')advance();});
+window.addEventListener('pointerup',()=>{mushHeld=false;});
+mushBtn.addEventListener('pointercancel',()=>{mushHeld=false;});
+
+function advance(){
+  if(state==='ready'){startLeg();return;}
+  if(state==='crashed'){startLeg();return;}
+  if(state==='legdone'){
+    leg++;
+    if(leg>TOTAL_LEGS){state='finished';return;}
+    startLeg();
+    return;
+  }
+  if(state==='finished'){leg=1;totalTime=0;startLeg();return;}
+}
+
+function rect(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function updateRacing(dt){
+  legTimer+=dt;totalTime+=dt;
+
+  // steering
+  let target=player.x;
+  if(dragX!==null)target=dragX;
+  else if(keys.left)target=player.x-40;
+  else if(keys.right)target=player.x+40;
+  const steerSpeed=0.16;
+  player.vx=(target-player.x)*steerSpeed;
+  player.x+=player.vx;
+  if(player.x<LANE_L+player.w/2)player.x=LANE_L+player.w/2;
+  if(player.x>LANE_R-player.w/2)player.x=LANE_R-player.w/2;
+
+  // mush / stamina
+  if(mushHeld&&player.stamina>0){
+    player.mushMult=1.75;
+    player.stamina-=1.1;
+  } else {
+    player.mushMult=1;
+    player.stamina=Math.min(100,player.stamina+0.35);
+  }
+  if(player.stamina<=0){player.mushMult=1;}
+  document.getElementById('stamBar').style.width=Math.max(0,player.stamina)+'%';
+
+  const speed=player.baseSpeed*player.mushMult*(0.7+player.stamina/250);
+  player.progress+=speed*dt;
+
+  rivals.forEach(r=>{
+    let rs=player.baseSpeed*r.skill;
+    rs+=Math.sin((legTimer+r.progress*0.01))*0.15;
+    r.progress+=rs*dt;
+  });
+
+  // obstacle collision
+  obstacles.forEach(o=>{
+    if(o.hit)return;
+    if(Math.abs(o.dist-player.progress)<30 && Math.abs(o.x-player.x)<(o.w/2+player.w/2-14)){
+      o.hit=true;
+      SFX.hit();
+      player.stamina=Math.max(0,player.stamina-18);
+      player.progress-=40;
+      if(o.type==='crack'){player.x+=(Math.random()<0.5?-1:1)*30;}
+    }
+  });
+
+  if(player.progress>=LEG_DIST){
+    state='legdone';
+    SFX.success();
+    if(leg===TOTAL_LEGS){
+      state='finished';
+      SFX.win();
+      if(best===0||totalTime<best){best=totalTime;localStorage.setItem('dogsledexpress_best',best.toFixed(2));document.getElementById('bestLabel').textContent=best.toFixed(1)+'s';}
+    }
+  }
+
+  // position rank
+  const allProg=[player.progress,...rivals.map(r=>r.progress)];
+  const rank=1+rivals.filter(r=>r.progress>player.progress).length;
+  const ord=rank===1?'1st':rank===2?'2nd':'3rd';
+  document.getElementById('posLabel').textContent=ord;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#bfe3f7');sky.addColorStop(1,'#eef8ff');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  // trail (perspective-ish flat track)
+  ctx.fillStyle='#f4fbff';ctx.fillRect(LANE_L-30,0,LANE_R-LANE_L+60,H);
+  ctx.strokeStyle='#c9e4f2';ctx.lineWidth=6;
+  ctx.setLineDash([20,16]);
+  const off=state==='racing'?-(player.progress*2)%40:0;
+  ctx.beginPath();ctx.moveTo(LANE_L,off);ctx.lineTo(LANE_L,H);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(LANE_R,off);ctx.lineTo(LANE_R,H);ctx.stroke();
+  ctx.setLineDash([]);
+
+  if(state==='racing'||state==='legdone'||state==='finished'){
+    // scenery (trees) scrolling by progress
+    scenery.forEach(s=>{
+      const rel=s.dist-player.progress;
+      if(rel<-100||rel>900)return;
+      const sy=60+((rel*0.3)%340+340)%340;
+      const sx=s.side<0?LANE_L-40-s.size:LANE_R+40;
+      ctx.fillStyle='#2d6a3f';
+      ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx+s.size/2,sy-s.size);ctx.lineTo(sx-s.size/2,sy-s.size);ctx.closePath();ctx.fill();
+      ctx.fillStyle='#6b4226';ctx.fillRect(sx-3,sy,6,10);
+    });
+
+    // obstacles
+    obstacles.forEach(o=>{
+      const rel=o.dist-player.progress;
+      if(rel<-60||rel>360)return;
+      const oy=380-rel*0.9;
+      if(o.type==='rock'){
+        ctx.fillStyle=o.hit?'#999':'#666';
+        ctx.beginPath();ctx.ellipse(o.x,oy,o.w/2,o.h/2,0,0,Math.PI*2);ctx.fill();
+      } else {
+        ctx.strokeStyle=o.hit?'#88c':'#2596d1';ctx.lineWidth=4;
+        ctx.beginPath();ctx.moveTo(o.x-o.w/2,oy);ctx.lineTo(o.x,oy-8);ctx.lineTo(o.x+o.w/2,oy);ctx.stroke();
+      }
+    });
+
+    // rivals (draw offset by relative progress)
+    rivals.forEach(r=>{
+      const rel=r.progress-player.progress;
+      const ry=340-rel*0.9;
+      if(ry>-60&&ry<420)drawSled(r.x,ry,r.color,0.8);
+    });
+
+    // player sled
+    drawSled(player.x,player.y,'#e94560',1,player.mushMult>1);
+  }
+
+  ctx.textAlign='center';
+  if(state==='ready'){
+    ctx.fillStyle='#123453';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('dse_ready','Tap or Space to start the race!'),W/2,H/2);
+  } else if(state==='legdone'&&leg<TOTAL_LEGS){
+    ctx.fillStyle='#123453';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('dse_leg_done','Leg complete!'),W/2,H/2-16);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('dse_continue','Tap or Space for next leg'),W/2,H/2+20);
+  } else if(state==='finished'){
+    ctx.fillStyle='#123453';ctx.font='bold 32px Arial';
+    ctx.fillText(I18N.t('dse_finish','🏁 Race Finished!'),W/2,H/2-30);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('dse_time','Total time: {t}s').replace('{t}',totalTime.toFixed(1)),W/2,H/2+6);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('dse_restart','Tap or Space to race again'),W/2,H/2+36);
+  }
+}
+
+function drawSled(x,y,color,scale,boost){
+  ctx.save();
+  ctx.translate(x,y);ctx.scale(scale,scale);
+  // dogs
+  for(let i=0;i<3;i++){
+    ctx.fillStyle='#8a5a3a';
+    ctx.fillRect(-14+i*0,-70-i*26,28,20);
+    ctx.fillStyle='#5c3b23';
+    ctx.fillRect(-16+i*0,-72-i*26,8,8);
+  }
+  // sled
+  ctx.fillStyle=color;
+  ctx.fillRect(-22,-4,44,26);
+  ctx.fillStyle='#333';
+  ctx.fillRect(-24,20,10,8);
+  ctx.fillRect(14,20,10,8);
+  if(boost){
+    ctx.fillStyle='rgba(255,180,60,.55)';
+    ctx.beginPath();ctx.moveTo(0,-96);ctx.lineTo(-10,-80);ctx.lineTo(10,-80);ctx.closePath();ctx.fill();
+  }
+  ctx.restore();
+}
+
+let lastTime=null;
+function loop(t){
+  const dt=lastTime===null?1:Math.min((t-lastTime)/16.6667,3);
+  lastTime=t;
+  if(state==='racing')updateRacing(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

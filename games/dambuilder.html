@@ -1,0 +1,256 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Dam Builder</title><meta name="description" content="Play Dam Builder free online — Click a material in the palette, then click a grid cell to place it. Build a solid wall of beams and wall sections from bank to bank before the water rises to the top. Stay within budget — weak spots leak and burst under pressure. Each round the water rises faster."><link rel="canonical" href="https://games.multiportllc.com/games/dambuilder"><meta property="og:title" content="Dam Builder - Multiport Games"><meta property="og:description" content="Play Dam Builder free online — Click a material in the palette, then click a grid cell to place it. Build a solid wall of beams and wall sections from bank to bank before the water rises to the top. Stay within budget — weak spots leak and burst under pressure. Each round the water rises faster."><meta property="og:url" content="https://games.multiportllc.com/games/dambuilder"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Dam Builder","description":"Play Dam Builder free online instantly. Click a material in the palette, then click a grid cell to place it. Build a solid wall of beams and wall sections from bank to bank before the water rises to the top. Stay within budget — weak spots leak and burst under pressure. Each round the water rises faster. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/dambuilder","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{display:flex;flex-direction:column;align-items:center;gap:10px}
+#hud{display:flex;flex-wrap:wrap;justify-content:center;gap:16px;color:#dff3ff;font-weight:700;font-size:.95rem}
+#hud b{color:#ffd54f}
+#pressureWrap{width:200px;height:16px;background:#0b2a3d;border-radius:8px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px;border:1px solid #2a5a76}
+#pressureBar{height:100%;background:linear-gradient(90deg,#3d8bcf,#e94560);width:0%;transition:width .3s linear}
+#palette{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin:4px 0}
+.mat{padding:9px 14px;border-radius:10px;border:2px solid transparent;background:#16213e;color:#fff;font-weight:700;cursor:pointer;font-size:.85rem;min-width:86px;text-align:center}
+.mat small{display:block;font-weight:500;opacity:.75;font-size:.7rem}
+.mat.sel{border-color:#ffd54f}
+.mat:disabled{opacity:.35;cursor:not-allowed}
+#gridBox{background:#0b3d2e;padding:8px;border-radius:12px}
+#grid{display:grid;gap:2px}
+.cell{background:#dcefe0;border-radius:2px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:.8rem}
+.cell.beam{background:#8a5a3a}
+.cell.wall{background:#7b8794}
+.cell.reinforced{background:#4c5560}
+.cell.leak{outline:2px solid #ff4444;animation:leakPulse .6s infinite alternate}
+.cell.bank{background:#3d8020;cursor:default}
+@keyframes leakPulse{from{box-shadow:0 0 2px #ff4444}to{box-shadow:0 0 10px #ff4444}}
+#msg{color:#fff;font-weight:800;min-height:1.6em;text-align:center}
+#newRoundBtn{padding:10px 24px;background:#e94560;border:none;border-radius:20px;color:#fff;font-weight:800;cursor:pointer;font-size:1rem;display:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Dam Builder</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span id="roundLabel">Round 1</span>
+        <span>Budget: <b id="budgetLabel">0</b></span>
+        <span>Dams built: <b id="scoreLabel">0</b></span>
+        <span>Pressure<span id="pressureWrap"><span id="pressureBar"></span></span></span>
+      </div>
+      <div id="palette"></div>
+      <div id="gridBox"><div id="grid"></div></div>
+      <div id="msg">Place materials to seal the gap before pressure maxes out!</div>
+      <button id="newRoundBtn">Next Round ▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a material in the palette, then click a grid cell to place it. Build a solid wall of <b>beams</b> and <b>wall sections</b> from bank to bank before the water rises to the top. Stay within budget — weak spots leak and burst under pressure. Each round the water rises faster.</div>
+</div>
+<script>
+const ROWS=8,COLS=10;
+const MATERIALS=[
+  {id:'beam',label:'Beam',cost:2,strength:1,emoji:'🪵'},
+  {id:'wall',label:'Wall Section',cost:4,strength:2,emoji:'🧱'},
+  {id:'reinforced',label:'Reinforced',cost:7,strength:4,emoji:'🛡️'},
+];
+
+let round=1,score=parseInt(localStorage.getItem('dambuilder_best')||'0',10);
+let budget=0,budgetTotal=0;
+let grid=[]; // grid[r][c] = null or {type, strength}
+let selectedMat=MATERIALS[0].id;
+let pressure=0,pressureMax=100,rising=false,raf=null,lastT=null;
+let ended=false;
+
+document.getElementById('scoreLabel').textContent=score;
+
+function setupRound(){
+  ended=false;
+  document.getElementById('newRoundBtn').style.display='none';
+  budgetTotal=26+round*4;
+  budget=budgetTotal;
+  pressure=0;
+  rising=false;
+  grid=Array.from({length:ROWS},()=>Array(COLS).fill(null));
+  // bank columns (left & right edges are solid ground, cannot be built on, act as anchors)
+  document.getElementById('roundLabel').textContent=I18N.t('dam_round','Round {n}').replace('{n}',round);
+  document.getElementById('budgetLabel').textContent=budget;
+  document.getElementById('msg').textContent=I18N.t('dam_msg_start','Place materials to seal the gap before pressure maxes out!');
+  renderGrid();
+  renderPalette();
+  updatePressureBar();
+  if(!raf)raf=requestAnimationFrame(loop);
+}
+
+function renderPalette(){
+  const pal=document.getElementById('palette');
+  pal.innerHTML='';
+  MATERIALS.forEach(m=>{
+    const b=document.createElement('button');
+    b.className='mat'+(selectedMat===m.id?' sel':'');
+    b.innerHTML=`${m.emoji} ${I18N.t('mat_'+m.id,m.label)}<small>${I18N.t('cost_label','Cost')}: ${m.cost}</small>`;
+    b.disabled=m.cost>budget||ended;
+    b.onclick=()=>{selectedMat=m.id;SFX.select();renderPalette();};
+    pal.appendChild(b);
+  });
+}
+
+function renderGrid(){
+  const g=document.getElementById('grid');
+  const cw=Math.min(48,Math.floor(560/COLS));
+  g.style.gridTemplateColumns=`repeat(${COLS},${cw}px)`;
+  g.style.gridTemplateRows=`repeat(${ROWS},${cw}px)`;
+  g.innerHTML='';
+  for(let r=0;r<ROWS;r++){
+    for(let cIdx=0;cIdx<COLS;cIdx++){
+      const cell=document.createElement('div');
+      cell.className='cell';
+      cell.style.width=cw+'px';cell.style.height=cw+'px';
+      const v=grid[r][cIdx];
+      if(v){
+        cell.classList.add(v.type);
+        const m=MATERIALS.find(m=>m.id===v.type);
+        cell.textContent=m.emoji;
+        if(v.leak)cell.classList.add('leak');
+      }
+      cell.onclick=()=>placeAt(r,cIdx);
+      g.appendChild(cell);
+    }
+  }
+}
+
+function placeAt(r,c){
+  if(ended)return;
+  if(grid[r][c])return;
+  const mat=MATERIALS.find(m=>m.id===selectedMat);
+  if(mat.cost>budget){SFX.error();document.getElementById('msg').textContent=I18N.t('dam_no_budget','Not enough budget for that piece!');return;}
+  budget-=mat.cost;
+  grid[r][c]={type:mat.id,strength:mat.strength,leak:false};
+  document.getElementById('budgetLabel').textContent=budget;
+  SFX.click();
+  renderGrid();renderPalette();
+  checkStartRising();
+}
+
+function checkStartRising(){
+  // Once at least one full row (bottom row) has any coverage, water starts rising
+  if(!rising){
+    const filledCount=grid.flat().filter(Boolean).length;
+    if(filledCount>=1){rising=true;}
+  }
+}
+
+function coverageStrengthAtRow(r){
+  // total strength of pieces at or below row r, summed per column, min across columns = weakest link
+  let minCol=Infinity;
+  for(let c=0;c<COLS;c++){
+    let s=0;
+    for(let rr=r;rr<ROWS;rr++){
+      if(grid[rr][c])s+=grid[rr][c].strength;
+    }
+    if(s<minCol)minCol=s;
+  }
+  return minCol;
+}
+
+function loop(t){
+  const dt=lastT===null?0:Math.min((t-lastT)/1000,0.1);
+  lastT=t;
+  if(rising&&!ended){
+    const speed=3+round*0.6;
+    pressure+=speed*dt;
+    updatePressureBar();
+    evaluateStructure();
+    if(pressure>=pressureMax){
+      failRound(I18N.t('dam_overtopped','The dam was overtopped! Water broke through.'));
+    }
+  }
+  raf=requestAnimationFrame(loop);
+}
+
+function updatePressureBar(){
+  const pct=Math.min(100,pressure);
+  document.getElementById('pressureBar').style.width=pct+'%';
+}
+
+function evaluateStructure(){
+  // The required strength to hold at current pressure level
+  const needed=pressure/8;
+  let anyLeak=false;
+  const minStrength=coverageStrengthAtRow(0);
+  if(minStrength<needed){
+    anyLeak=true;
+  }
+  // mark weakest columns as leaking for visual feedback
+  for(let c=0;c<COLS;c++){
+    let s=0;
+    for(let rr=0;rr<ROWS;rr++){if(grid[rr][c])s+=grid[rr][c].strength;}
+    for(let rr=0;rr<ROWS;rr++){
+      if(grid[rr][c])grid[rr][c].leak=(s<needed);
+    }
+  }
+  if(anyLeak&&Math.random()<0.03){SFX.hurt();}
+  renderGrid();
+  if(minStrength<needed-6){
+    failRound(I18N.t('dam_burst','A weak spot burst under the pressure!'));
+  }
+  // win condition: covered whole width with decent strength and pressure survives to max threshold for round
+  if(pressure>=pressureMax*0.999)return;
+  const fullyCovered=allColumnsCovered();
+  if(fullyCovered&&minStrength>=needed&&pressure>pressureMax*0.6&&!ended&&pressure>=pressureMax-0.5){
+    // handled by overall pressure reaching max below (success path)
+  }
+}
+
+function allColumnsCovered(){
+  for(let c=0;c<COLS;c++){
+    let has=false;
+    for(let r=0;r<ROWS;r++)if(grid[r][c]){has=true;break;}
+    if(!has)return false;
+  }
+  return true;
+}
+
+function failRound(msg){
+  ended=true;
+  document.getElementById('msg').textContent='💥 '+msg;
+  document.getElementById('newRoundBtn').textContent=I18N.t('dam_try_again','Try Again ▶');
+  document.getElementById('newRoundBtn').style.display='inline-block';
+  SFX.fail();
+  round=1; // reset difficulty on failure, but keep best score
+}
+
+function succeedRound(){
+  ended=true;
+  score++;
+  localStorage.setItem('dambuilder_best',score);
+  document.getElementById('scoreLabel').textContent=score;
+  document.getElementById('msg').textContent='✅ '+I18N.t('dam_success','Dam held! The reservoir is secure.');
+  document.getElementById('newRoundBtn').textContent=I18N.t('dam_next','Next Round ▶');
+  document.getElementById('newRoundBtn').style.display='inline-block';
+  SFX.win();
+  round++;
+}
+
+// success check: reach full pressure without failing
+const origLoop=loop;
+document.getElementById('newRoundBtn').onclick=()=>{setupRound();};
+
+function tickPressureComplete(){}
+
+// override evaluateStructure success trigger via pressure cap watcher
+setInterval(()=>{
+  if(!ended&&pressure>=pressureMax){
+    const needed=pressureMax/8;
+    const minStrength=coverageStrengthAtRow(0);
+    if(allColumnsCovered()&&minStrength>=needed){
+      succeedRound();
+    } else if(!ended){
+      failRound(I18N.t('dam_overtopped','The dam was overtopped! Water broke through.'));
+    }
+  }
+},200);
+
+setupRound();
+</script></body></html>
