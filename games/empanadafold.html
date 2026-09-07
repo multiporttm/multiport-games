@@ -1,0 +1,269 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Empanada Fold</title><meta name="description" content="Play Empanada Fold free online — Drag from the golden dot along the dashed fold line, staying inside the crimping band, all the way to the end to seal each crimp. Use a mouse, finger, or arrow keys. Nail every crimp for a perfect empanada, then face more crimps and a tighter band next round!"><link rel="canonical" href="https://games.multiportllc.com/games/empanadafold"><meta property="og:title" content="Empanada Fold - Multiport Games"><meta property="og:description" content="Play Empanada Fold free online — Drag from the golden dot along the dashed fold line, staying inside the crimping band, all the way to the end to seal each crimp. Use a mouse, finger, or arrow keys. Nail every crimp for a perfect empanada, then face more crimps and a tighter band next round!"><meta property="og:url" content="https://games.multiportllc.com/games/empanadafold"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Empanada Fold","description":"Play Empanada Fold free online instantly. Drag from the golden dot along the dashed fold line, staying inside the crimping band, all the way to the end to seal each crimp. Nail every crimp for a perfect empanada, then face more crimps and a tighter band next round! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/empanadafold","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#2a1a10;border-radius:14px;padding:14px;text-align:center}
+#hud{display:flex;justify-content:space-between;max-width:800px;margin:0 auto 8px;color:#ffe0b0;font-weight:800;font-size:1rem;padding:0 6px}
+#hud span b{color:#ffcc66}
+#c{background:#3d2415;display:block;border-radius:10px;margin:0 auto;touch-action:none;max-width:100%}
+#overlay{position:relative}
+#msg{color:#ffd54f;font-weight:900;font-size:1.05rem;min-height:1.4em;margin-top:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Empanada Fold</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span>Round <b id="roundLbl">1</b></span><span>Score <b id="scoreLbl">0</b></span><span>Best <b id="bestLbl">0</b></span></div>
+      <canvas id="c" width="800" height="360"></canvas>
+      <div id="msg">Grab the golden dot and drag to the end!</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Grab the golden dot and drag (mouse, finger, or Enter + Arrow keys) all the way along the dashed fold line to the finish flag, staying inside the lighter crimping band. Each mark you cross is a crimp — the closer you stay to the line, the better the crimp. Complete every crimp to seal the empanada, then take on more crimps and a tighter band next round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=360;
+const scoreLbl=document.getElementById('scoreLbl'),roundLbl=document.getElementById('roundLbl'),bestLbl=document.getElementById('bestLbl'),msgEl=document.getElementById('msg');
+
+let round=1,score=0,best=parseInt(localStorage.getItem('empanadafold_best')||'0',10);
+bestLbl.textContent=best;
+
+let path=null,crimps=[],tolerance=26;
+let state='idle'; // idle, dragging, result
+let ptr={x:0,y:0,down:false};
+let maxProgressX=0;
+let crimpResults=[];
+let dragStartTime=0;
+let keysHeld={};
+let kbActive=false,kbY=0;
+let resultData=null;
+
+function pathY(x,p){
+  return p.midY + p.amp*Math.sin((x-p.startX)*p.freq);
+}
+
+function buildPath(){
+  const n=5+(round-1)*2;
+  tolerance=Math.max(9,26-(round-1)*2.2);
+  const startX=90,endX=W-90,midY=H/2;
+  const amp=32+Math.min(40,round*3);
+  const freq=0.012+Math.min(0.01,round*0.0012);
+  const p={startX,endX,midY,amp,freq,n};
+  const cps=[];
+  for(let i=1;i<=n;i++){
+    const x=startX+(endX-startX)*i/(n+1);
+    cps.push({x,y:pathY(x,p),hit:false,quality:0,passed:false});
+  }
+  path=p;crimps=cps;
+  state='idle';maxProgressX=startX;crimpResults=[];resultData=null;
+  ptr.x=startX;ptr.y=pathY(startX,p);
+  msgEl.textContent=I18N.t('grab_start','Grab the golden dot and drag to the end!');
+}
+
+function startDrag(x,y){
+  const dx=x-path.startX,dy=y-pathY(path.startX,path);
+  if(state==='idle' && Math.hypot(dx,dy)<40){
+    state='dragging';
+    dragStartTime=performance.now();
+    maxProgressX=path.startX;
+    SFX.select();
+  } else if(state==='result'){
+    nextEmpanada();
+  }
+}
+
+function updateDrag(x,y){
+  if(state!=='dragging')return;
+  const cx=Math.max(path.startX,Math.min(path.endX,x));
+  if(cx>maxProgressX)maxProgressX=cx;
+  ptr.x=cx;ptr.y=y;
+  crimps.forEach(cp=>{
+    if(!cp.passed && cx>=cp.x){
+      cp.passed=true;
+      const dev=Math.abs(y-cp.y);
+      const q=Math.max(0,1-dev/tolerance);
+      cp.quality=q;cp.hit=q>0.35;
+      crimpResults.push(q);
+      if(cp.hit)SFX.tick(); else SFX.error();
+    }
+  });
+  if(cx>=path.endX-2){
+    finishEmpanada(true);
+  }
+}
+
+function endDrag(){
+  if(state!=='dragging')return;
+  if(maxProgressX<path.endX-2){
+    finishEmpanada(false);
+  }
+}
+
+function finishEmpanada(reachedEnd){
+  crimps.forEach(cp=>{ if(!cp.passed){cp.passed=true;cp.quality=0;cp.hit=false;crimpResults.push(0);} });
+  const avg=crimpResults.length?crimpResults.reduce((a,b)=>a+b,0)/crimpResults.length:0;
+  const elapsed=(performance.now()-dragStartTime)/1000;
+  const targetTime=(path.endX-path.startX)/230;
+  const speedBonus=reachedEnd?Math.max(0,Math.min(1,targetTime/Math.max(elapsed,0.1))):0;
+  const roundScore=Math.round(avg*100*round*(0.7+0.3*speedBonus));
+  score+=roundScore;
+  if(score>best){best=score;localStorage.setItem('empanadafold_best',String(best));}
+  scoreLbl.textContent=score;bestLbl.textContent=best;
+  resultData={avg,speedBonus,roundScore,reachedEnd};
+  state='result';
+  if(!reachedEnd){
+    SFX.fail();
+    msgEl.textContent=I18N.t('let_go_early','You let go too early! Tap/click to try this round again.');
+  } else if(avg>0.85){
+    SFX.win();
+    msgEl.textContent=I18N.t('perfect_fold','Perfect fold! +'+roundScore+' — Tap/click for round '+(round+1));
+  } else if(avg>0.5){
+    SFX.success();
+    msgEl.textContent=I18N.t('good_fold','Good fold! +'+roundScore+' — Tap/click for round '+(round+1));
+  } else {
+    SFX.hurt();
+    msgEl.textContent=I18N.t('messy_fold','Messy fold! +'+roundScore+' — Tap/click for round '+(round+1));
+  }
+}
+
+function nextEmpanada(){
+  if(resultData && resultData.reachedEnd)round++;
+  roundLbl.textContent=round;
+  buildPath();
+}
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+
+c.addEventListener('pointerdown',e=>{c.setPointerCapture(e.pointerId);const p=getPos(e);ptr.down=true;startDrag(p.x,p.y);updateDrag(p.x,p.y);});
+c.addEventListener('pointermove',e=>{if(!ptr.down)return;const p=getPos(e);updateDrag(p.x,p.y);});
+c.addEventListener('pointerup',e=>{ptr.down=false;endDrag();});
+c.addEventListener('pointercancel',e=>{ptr.down=false;endDrag();});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter',' '].includes(e.key)){e.preventDefault();}
+  keysHeld[e.key]=true;
+  if(e.key==='Enter'||e.key===' '){
+    if(state==='idle'){ kbActive=true; kbY=pathY(path.startX,path); startDrag(path.startX,kbY); }
+    else if(state==='result'){ nextEmpanada(); }
+  }
+});
+document.addEventListener('keyup',e=>{keysHeld[e.key]=false;});
+
+function keyboardTick(dt){
+  if(!kbActive||state!=='dragging')return;
+  let nx=ptr.x,ny=kbY;
+  if(keysHeld['ArrowRight'])nx+=2.6*dt;
+  if(keysHeld['ArrowLeft'])nx-=2.0*dt;
+  if(keysHeld['ArrowUp'])ny-=1.6*dt;
+  if(keysHeld['ArrowDown'])ny+=1.6*dt;
+  nx=Math.max(path.startX,Math.min(path.endX,nx));
+  kbY=ny;
+  updateDrag(nx,ny);
+  if(state!=='dragging')kbActive=false;
+}
+
+function drawEmpanada(){
+  ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#4a2c18');g.addColorStop(1,'#2a1710');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+
+  // dough body
+  ctx.save();
+  ctx.beginPath();
+  ctx.ellipse(W/2,H/2+70,W/2-40,150,0,0,Math.PI*2);
+  ctx.fillStyle='#e8c48a';
+  ctx.fill();
+  ctx.restore();
+
+  // tolerance band along path
+  ctx.beginPath();
+  for(let x=path.startX;x<=path.endX;x+=4)ctx.lineTo(x,pathY(x,path)-tolerance);
+  for(let x=path.endX;x>=path.startX;x-=4)ctx.lineTo(x,pathY(x,path)+tolerance);
+  ctx.closePath();
+  ctx.fillStyle='rgba(255,204,102,0.22)';
+  ctx.fill();
+
+  // dashed fold line
+  ctx.beginPath();
+  ctx.setLineDash([10,8]);
+  ctx.lineWidth=3;
+  ctx.strokeStyle='#a5672c';
+  for(let x=path.startX;x<=path.endX;x+=4){
+    const y=pathY(x,path);
+    if(x===path.startX)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // crimp checkpoints
+  crimps.forEach(cp=>{
+    ctx.beginPath();
+    ctx.arc(cp.x,cp.y,7,0,Math.PI*2);
+    if(!cp.passed)ctx.fillStyle='#c98a3f';
+    else ctx.fillStyle=cp.hit?'#7ec850':'#e94560';
+    ctx.fill();
+    ctx.strokeStyle='#3d2415';ctx.lineWidth=2;ctx.stroke();
+  });
+
+  // start marker
+  ctx.beginPath();
+  ctx.arc(path.startX,pathY(path.startX,path),13,0,Math.PI*2);
+  ctx.fillStyle=state==='idle'?'#ffd54f':'#8a6a3a';
+  ctx.fill();
+  ctx.strokeStyle='#3d2415';ctx.lineWidth=2;ctx.stroke();
+
+  // finish flag
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(path.endX-2,pathY(path.endX,path)-30,4,30);
+  ctx.beginPath();
+  ctx.moveTo(path.endX+2,pathY(path.endX,path)-30);
+  ctx.lineTo(path.endX+22,pathY(path.endX,path)-24);
+  ctx.lineTo(path.endX+2,pathY(path.endX,path)-18);
+  ctx.fill();
+
+  // player pointer trail
+  if(state==='dragging'){
+    ctx.beginPath();
+    ctx.arc(ptr.x,ptr.y,9,0,Math.PI*2);
+    ctx.fillStyle='#fff3d6';
+    ctx.fill();
+    ctx.strokeStyle='#e94560';ctx.lineWidth=2;ctx.stroke();
+  }
+
+  if(state==='result'){
+    ctx.fillStyle='rgba(0,0,0,0.55)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffd54f';
+    ctx.textAlign='center';
+    ctx.font='bold 30px Arial';
+    ctx.fillText(resultData.reachedEnd?I18N.t('round_complete','Round Complete!'):I18N.t('round_failed','Fold Broke!'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('crimp_accuracy','Crimp accuracy: {p}%').replace('{p}',Math.round(resultData.avg*100)),W/2,H/2+16);
+    ctx.fillText(I18N.t('tap_continue','Tap / click / Enter to continue'),W/2,H/2+46);
+  }
+}
+
+let lastT=null;
+function loop(now){
+  const dt=lastT===null?1:Math.min((now-lastT)/16.6667,3);
+  lastT=now;
+  keyboardTick(dt);
+  drawEmpanada();
+  requestAnimationFrame(loop);
+}
+buildPath();
+requestAnimationFrame(loop);
+</script></body></html>

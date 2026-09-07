@@ -1,0 +1,251 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Downhill Skiing</title><meta name="description" content="Play Downhill Skiing free online — Use Arrow Keys / WASD or drag to steer your skier through the slalom gates while dodging trees and rocks. Missed gates cost time — race for the fastest run!"><link rel="canonical" href="https://games.multiportllc.com/games/downhillskiing"><meta property="og:title" content="Downhill Skiing - Multiport Games"><meta property="og:description" content="Play Downhill Skiing free online — Use Arrow Keys / WASD or drag to steer your skier through the slalom gates while dodging trees and rocks. Missed gates cost time — race for the fastest run!"><meta property="og:url" content="https://games.multiportllc.com/games/downhillskiing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Downhill Skiing","description":"Play Downhill Skiing free online instantly. Use Arrow Keys / WASD or drag to steer your skier through the slalom gates while dodging trees and rocks. Missed gates cost time penalties. Scored by fastest course time, with more technical courses each round. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/downhillskiing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#eaf4fb;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#12233d;font-size:.95rem;font-weight:700;padding:6px 10px;background:#dceefb}
+#hud span{color:#c0392b}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Downhill Skiing</div>
+  <div class="game-frame">
+    <div id="hud"><span id="course">Course 1</span><span id="time">Time: 0.0s</span><span id="best">Best: —</span></div>
+    <canvas id="c" width="800" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>drag</b> to steer your skier left and right. Weave <b>through the slalom gates</b> (pairs of flags) as you race downhill — missing a gate adds a time penalty! Dodge <b>trees and rocks</b> or you'll crash and lose time. Reach the finish line as fast as you can. Each new course gets more technical.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480;
+const courseEl=document.getElementById('course'),timeEl=document.getElementById('time'),bestEl=document.getElementById('best');
+
+let courseNum=1;
+let bestTimes=JSON.parse(localStorage.getItem('downhillskiing_best')||'{}');
+
+let skier,gates,obstacles,worldY,elapsed,gameOver,started,keys,dragX,dragging,lastTime,penalty,courseLen,gatesHit,gatesTotal,finished;
+
+function updateBestDisplay(){
+  const b=bestTimes[courseNum];
+  bestEl.textContent=I18N.t('ski_best_label','Best: {v}').replace('{v}', b!=null?b.toFixed(1)+'s':'—');
+}
+
+function reset(){
+  skier={x:W/2,vx:0};
+  courseLen=3000+courseNum*600;
+  const gateCount=6+courseNum*2;
+  gates=[];
+  for(let i=0;i<gateCount;i++){
+    const y=300+i*(courseLen/gateCount);
+    const cx=W/2+Math.sin(i*1.3+courseNum)*(W/2-160);
+    gates.push({y,cx,gap:130-Math.min(50,courseNum*6),hit:false,passed:false});
+  }
+  obstacles=[];
+  const obsCount=8+courseNum*4;
+  for(let i=0;i<obsCount;i++){
+    const y=250+Math.random()*courseLen;
+    const x=60+Math.random()*(W-120);
+    obstacles.push({x,y,type:Math.random()<0.5?'tree':'rock',hit:false});
+  }
+  worldY=0;
+  elapsed=0;
+  penalty=0;
+  gameOver=false;
+  started=false;
+  finished=false;
+  keys={};
+  dragX=null;dragging=false;
+  lastTime=null;
+  gatesHit=0;gatesTotal=gateCount;
+  courseEl.textContent=I18N.t('ski_course_label','Course {n}').replace('{n}',courseNum);
+  updateBestDisplay();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','KeyA','KeyD','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(!started)started=true;
+  if(gameOver){ if(finished)courseNum++; reset(); started=true; }
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function pointerX(e){
+  const rect=c.getBoundingClientRect();
+  const clientX=(e.touches?e.touches[0].clientX:e.clientX);
+  return (clientX-rect.left)*(W/rect.width);
+}
+c.addEventListener('pointerdown',e=>{
+  if(!started)started=true;
+  if(gameOver){ if(finished)courseNum++; reset(); started=true; return; }
+  dragging=true;dragX=pointerX(e);
+});
+window.addEventListener('pointermove',e=>{ if(dragging)dragX=pointerX(e); });
+window.addEventListener('pointerup',()=>{dragging=false;dragX=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(!started)started=true;if(gameOver){if(finished)courseNum++;reset();started=true;return;}dragging=true;dragX=pointerX(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(dragging)dragX=pointerX(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragging=false;dragX=null;},{passive:false});
+
+function circleHit(x1,y1,r1,x2,y2,r2){
+  return Math.hypot(x1-x2,y1-y2)<r1+r2;
+}
+
+function drawSkier(shake){
+  ctx.save();
+  ctx.translate(skier.x+shake,H*0.72);
+  ctx.rotate(skier.vx*0.02);
+  ctx.strokeStyle='#c0392b';ctx.lineWidth=4;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(-16,20);ctx.lineTo(-16,-10);ctx.moveTo(16,20);ctx.lineTo(16,-10);ctx.stroke();
+  ctx.fillStyle='#2b3a67';
+  ctx.fillRect(-8,-14,16,20);
+  ctx.beginPath();ctx.arc(0,-20,7,0,Math.PI*2);ctx.fillStyle='#f4c28d';ctx.fill();
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(-9,-27,18,6);
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#dff0fb');bg.addColorStop(1,'#f5fbff');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#12233d';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('ski_start_hint','Arrows/WASD or Drag to steer — Press any key or tap to start'),W/2,60);
+    drawSkier(0);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawWorld();
+    ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(finished?I18N.t('ski_finish_title','FINISH!'):I18N.t('game_over_title','WIPEOUT!'),W/2,180);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('ski_time_result','Time: {t}s').replace('{t}',elapsed.toFixed(1)),W/2,214);
+    ctx.font='18px Arial';
+    ctx.fillText(finished?I18N.t('ski_next_hint','Tap or press a key for the next course'):I18N.t('ski_retry_hint','Tap or press a key to retry'),W/2,246);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // Steering
+  let accel=0;
+  if(keys['ArrowLeft']||keys['KeyA'])accel-=0.5;
+  if(keys['ArrowRight']||keys['KeyD'])accel+=0.5;
+  if(dragging&&dragX!=null){
+    accel=(dragX-skier.x)*0.03;
+    accel=Math.max(-1.2,Math.min(1.2,accel));
+  }
+  skier.vx+=accel*dt;
+  skier.vx*=0.9;
+  skier.vx=Math.max(-9,Math.min(9,skier.vx));
+  skier.x+=skier.vx*dt;
+  skier.x=Math.max(20,Math.min(W-20,skier.x));
+
+  const downSpeed=7+courseNum*0.3;
+  worldY+=downSpeed*dt;
+  elapsed+=dt/60+ (penalty>0?0:0);
+  penalty=Math.max(0,penalty-0.02*dt);
+
+  // Check gates
+  gates.forEach(g=>{
+    const screenY=H*0.72-(g.y-worldY);
+    if(!g.passed&&screenY>H*0.7&&screenY<H*0.75){
+      g.passed=true;
+      const left=g.cx-g.gap/2,right=g.cx+g.gap/2;
+      if(skier.x>left&&skier.x<right){
+        g.hit=true;gatesHit++;SFX.point();
+      } else {
+        elapsed+=2; SFX.error();
+      }
+    }
+  });
+
+  // Check obstacles
+  obstacles.forEach(o=>{
+    const screenY=H*0.72-(o.y-worldY);
+    if(!o.hit&&screenY>H*0.68&&screenY<H*0.76){
+      if(circleHit(skier.x,H*0.72,12,o.x,screenY,16)){
+        o.hit=true;
+        elapsed+=1.5;
+        SFX.hit();
+      }
+    }
+  });
+
+  if(worldY>=courseLen){
+    gameOver=true;finished=true;
+    SFX.win();
+    const prevBest=bestTimes[courseNum];
+    if(prevBest==null||elapsed<prevBest){
+      bestTimes[courseNum]=elapsed;
+      localStorage.setItem('downhillskiing_best',JSON.stringify(bestTimes));
+    }
+  }
+
+  drawWorld();
+
+  timeEl.textContent=I18N.t('ski_time_label','Time: {t}s').replace('{t}',elapsed.toFixed(1));
+  updateBestDisplay();
+
+  requestAnimationFrame(loop);
+}
+
+function drawWorld(){
+  // snow texture stripes scrolling
+  ctx.fillStyle='rgba(180,210,235,.35)';
+  const stripeOffset=(worldY*0.6)%60;
+  for(let y=-60+stripeOffset;y<H;y+=60){
+    ctx.fillRect(0,y,W,4);
+  }
+
+  gates.forEach(g=>{
+    const screenY=H*0.72-(g.y-worldY);
+    if(screenY<-40||screenY>H+40)return;
+    const left=g.cx-g.gap/2,right=g.cx+g.gap/2;
+    ctx.fillStyle=g.hit?'#7ec850':(g.passed?'#e94560':'#3d5af1');
+    ctx.fillRect(left-4,screenY-24,8,24);
+    ctx.fillRect(right-4,screenY-24,8,24);
+    ctx.fillStyle=g.hit?'#7ec850cc':(g.passed?'#e94560cc':'#3d5af1cc');
+    ctx.beginPath();ctx.moveTo(left+4,screenY-24);ctx.lineTo(left+22,screenY-18);ctx.lineTo(left+4,screenY-12);ctx.fill();
+    ctx.beginPath();ctx.moveTo(right-4,screenY-24);ctx.lineTo(right-22,screenY-18);ctx.lineTo(right-4,screenY-12);ctx.fill();
+  });
+
+  obstacles.forEach(o=>{
+    const screenY=H*0.72-(o.y-worldY);
+    if(screenY<-40||screenY>H+40)return;
+    if(o.hit)return;
+    if(o.type==='tree'){
+      ctx.fillStyle='#5a3a20';ctx.fillRect(o.x-3,screenY,6,14);
+      ctx.fillStyle='#2d6a2d';
+      ctx.beginPath();ctx.moveTo(o.x,screenY-30);ctx.lineTo(o.x-16,screenY);ctx.lineTo(o.x+16,screenY);ctx.fill();
+      ctx.beginPath();ctx.moveTo(o.x,screenY-20);ctx.lineTo(o.x-12,screenY+6);ctx.lineTo(o.x+12,screenY+6);ctx.fill();
+    } else {
+      ctx.fillStyle='#8a8a8a';
+      ctx.beginPath();ctx.ellipse(o.x,screenY,14,10,0,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#6a6a6a';
+      ctx.beginPath();ctx.ellipse(o.x-4,screenY-2,6,4,0,0,Math.PI*2);ctx.fill();
+    }
+  });
+
+  drawSkier(0);
+
+  // progress bar
+  ctx.fillStyle='rgba(0,0,0,.15)';ctx.fillRect(20,20,W-40,10);
+  ctx.fillStyle='#e94560';ctx.fillRect(20,20,(W-40)*Math.min(1,worldY/courseLen),10);
+}
+
+reset();
+loop();
+</script></body></html>

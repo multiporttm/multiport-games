@@ -1,0 +1,212 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bouldering Wall</title><meta name="description" content="Play Bouldering Wall free online — Click the colored holds in order, matching the highlighted route color, to climb to the top before your chalk runs out. Wrong hold or an empty chalk bag means you fall!"><link rel="canonical" href="https://games.multiportllc.com/games/boulderingwall"><meta property="og:title" content="Bouldering Wall - Multiport Games"><meta property="og:description" content="Play Bouldering Wall free online — Click the colored holds in order, matching the highlighted route color, to climb to the top before your chalk runs out. Wrong hold or an empty chalk bag means you fall!"><meta property="og:url" content="https://games.multiportllc.com/games/boulderingwall"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bouldering Wall","description":"Play Bouldering Wall free online instantly. Click the colored holds in order, matching the highlighted route color, to climb to the top before your chalk runs out. Wrong hold or an empty chalk bag means you fall. Scored by routes completed, with harder routes and more holds each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/boulderingwall","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3b3b4a;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:.95rem;font-weight:700;padding:6px 10px;background:rgba(0,0,0,.35)}
+#hud span{color:#ffd54f}
+#chalkbar{width:120px;height:12px;background:rgba(255,255,255,.15);border-radius:6px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+#chalkfill{height:100%;background:linear-gradient(90deg,#7ec850,#ffd54f,#e94560);width:100%;transition:width .2s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bouldering Wall</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="routeLabel">Route: —</span>
+      <span>Chalk<span id="chalkbar"><span id="chalkfill"></span></span></span>
+      <span id="routesDone">Routes: 0</span>
+      <span id="best">Best: 0</span>
+    </div>
+    <canvas id="c" width="800" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click (or tap) the colored holds <b>in order</b>, matching the highlighted <b>route color</b> shown at the top, from bottom to top. Each move — right or wrong — costs <b>chalk</b>. Click a wrong-order hold and you'll fall! Reach the top before your chalk runs out to complete the route. Each completed route gets a little harder, with more holds and less chalk.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480;
+const routeLabelEl=document.getElementById('routeLabel'),chalkFillEl=document.getElementById('chalkfill');
+const routesDoneEl=document.getElementById('routesDone'),bestEl=document.getElementById('best');
+
+let best=parseInt(localStorage.getItem('boulderingwall_best')||'0',10);
+bestEl.textContent=I18N.t('best_label','Best: {v}').replace('{v}',best);
+
+const COLORS=[
+  {name:'red',hex:'#e94560'},
+  {name:'blue',hex:'#4f9dff'},
+  {name:'yellow',hex:'#ffd54f'},
+  {name:'green',hex:'#7ec850'},
+  {name:'purple',hex:'#b06fe0'},
+];
+
+let holds,routeColor,routeOrder,nextIdx,chalk,maxChalk,routesDone,climberY,gameOver,fell,climbing,shakeT;
+
+function routeLabelText(){
+  return I18N.t('bould_route_label','Route: {c} (follow bottom to top)').replace('{c}',I18N.t('color_'+routeColor.name,routeColor.name));
+}
+
+function newRoute(){
+  routesDone=routesDone||0;
+  const numHolds=8+Math.min(10,routesDone*2);
+  maxChalk=Math.max(14,26-routesDone);
+  chalk=maxChalk;
+  routeColor=COLORS[Math.floor(Math.random()*COLORS.length)];
+  holds=[];
+  // Build a vertical route: numHolds holds spaced from bottom to top, with x jitter
+  const marginTop=60,marginBottom=60;
+  for(let i=0;i<numHolds;i++){
+    const t=i/(numHolds-1);
+    const y=H-marginBottom-t*(H-marginTop-marginBottom);
+    const x=120+Math.random()*(W-240)+Math.sin(i*1.7)*60;
+    const isRoute=true; // route holds placed first, then decoys
+    holds.push({x:Math.max(50,Math.min(W-50,x)),y,r:22,color:routeColor,order:i,isRoute:true,clicked:false});
+  }
+  // Add decoy holds of other colors scattered around, non-clickable-order (wrong color)
+  const decoyCount=6+Math.min(8,routesDone*2);
+  for(let i=0;i<decoyCount;i++){
+    let col;
+    do{col=COLORS[Math.floor(Math.random()*COLORS.length)];}while(col.name===routeColor.name);
+    const y=60+Math.random()*(H-120);
+    const x=40+Math.random()*(W-80);
+    holds.push({x,y,r:18,color:col,order:-1,isRoute:false,clicked:false});
+  }
+  nextIdx=0;
+  climberY=H-30;
+  gameOver=false;
+  fell=false;
+  climbing=true;
+  shakeT=0;
+  routeLabelEl.textContent=routeLabelText();
+  updateChalkBar();
+  routesDoneEl.textContent=I18N.t('bould_routes_label','Routes: {v}').replace('{v}',routesDone);
+}
+
+function updateChalkBar(){
+  chalkFillEl.style.width=Math.max(0,100*chalk/maxChalk)+'%';
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const clientX=(e.touches?e.touches[0].clientX:e.clientX);
+  const clientY=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+
+function handleClick(pos){
+  if(!climbing){
+    newRoute();
+    return;
+  }
+  // find nearest hold under click
+  let hit=null,bestD=1e9;
+  holds.forEach(h=>{
+    const d=Math.hypot(h.x-pos.x,h.y-pos.y);
+    if(d<h.r+8&&d<bestD){bestD=d;hit=h;}
+  });
+  if(!hit)return;
+  chalk--;
+  updateChalkBar();
+  if(hit.isRoute&&hit.order===nextIdx&&!hit.clicked){
+    hit.clicked=true;
+    climberY=hit.y;
+    nextIdx++;
+    SFX.select();
+    if(nextIdx>=holds.filter(h=>h.isRoute).length){
+      // reached top!
+      climbing=false;
+      routesDone++;
+      if(routesDone>best){best=routesDone;localStorage.setItem('boulderingwall_best',String(best));}
+      SFX.success();
+      gameOver='win';
+    }
+  } else {
+    SFX.error();
+    fell=true;
+    climbing=false;
+    gameOver='fall';
+  }
+  if(chalk<=0&&climbing){
+    fell=true;climbing=false;gameOver='chalk';
+    SFX.fail();
+  }
+}
+
+c.addEventListener('click',e=>{handleClick(pointerPos(e));});
+c.addEventListener('touchstart',e=>{e.preventDefault();handleClick(pointerPos(e));},{passive:false});
+
+function drawWall(){
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#4a4a5c');grad.addColorStop(1,'#2b2b38');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+  // texture lines
+  ctx.strokeStyle='rgba(255,255,255,.03)';
+  for(let i=0;i<20;i++){
+    ctx.beginPath();ctx.moveTo(i*45,0);ctx.lineTo(i*45-40,H);ctx.stroke();
+  }
+}
+
+function drawHold(h){
+  const routeHolds=holds.filter(x=>x.isRoute);
+  const isNext=h.isRoute&&h.order===nextIdx;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(h.x,h.y,h.r,0,Math.PI*2);
+  ctx.fillStyle=h.clicked?'#555':h.color.hex;
+  ctx.globalAlpha=h.clicked?0.35:1;
+  ctx.fill();
+  if(isNext){
+    ctx.lineWidth=4;
+    ctx.strokeStyle='#fff';
+    ctx.globalAlpha=0.9;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawClimber(){
+  const x=holds.filter(h=>h.isRoute)[Math.max(0,nextIdx-1)]?.x ?? 120;
+  ctx.save();
+  ctx.translate(x,climberY-26);
+  ctx.fillStyle='#f4c28d';
+  ctx.beginPath();ctx.arc(0,0,10,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#3d5af1';
+  ctx.fillRect(-9,8,18,26);
+  ctx.strokeStyle='#3d5af1';ctx.lineWidth=6;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(-9,14);ctx.lineTo(-20,30);ctx.moveTo(9,14);ctx.lineTo(20,30);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-4,34);ctx.lineTo(-10,50);ctx.moveTo(4,34);ctx.lineTo(10,50);ctx.stroke();
+  ctx.restore();
+}
+
+function render(){
+  drawWall();
+  holds.forEach(drawHold);
+  if(!fell)drawClimber();
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#fff';
+    if(gameOver==='win'){
+      ctx.font='bold 34px Arial';
+      ctx.fillText(I18N.t('bould_win_title','ROUTE COMPLETE!'),W/2,H/2-20);
+      ctx.font='18px Arial';
+      ctx.fillText(I18N.t('bould_next_hint','Tap to climb the next route'),W/2,H/2+16);
+    } else {
+      ctx.font='bold 34px Arial';
+      ctx.fillText(gameOver==='chalk'?I18N.t('bould_outofchalk','OUT OF CHALK!'):I18N.t('bould_fell','YOU FELL!'),W/2,H/2-20);
+      ctx.font='18px Arial';
+      ctx.fillText(I18N.t('bould_retry_hint','Tap to try again'),W/2,H/2+16);
+    }
+  }
+  requestAnimationFrame(render);
+}
+
+routesDone=0;
+newRoute();
+render();
+</script></body></html>

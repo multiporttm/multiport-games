@@ -1,0 +1,269 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Sashimi Slicing</title><meta name="description" content="Play Sashimi Slicing free online — Drag the knife handle in one smooth motion to slice the fillet at the highlighted target thickness on the gauge. Steady, even cuts score best. Use a mouse, finger, or arrow keys plus Enter to cut. Thinner target cuts each round!"><link rel="canonical" href="https://games.multiportllc.com/games/sashimislicing"><meta property="og:title" content="Sashimi Slicing - Multiport Games"><meta property="og:description" content="Play Sashimi Slicing free online — Drag the knife handle in one smooth motion to slice the fillet at the highlighted target thickness on the gauge. Steady, even cuts score best. Use a mouse, finger, or arrow keys plus Enter to cut. Thinner target cuts each round!"><meta property="og:url" content="https://games.multiportllc.com/games/sashimislicing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Sashimi Slicing","description":"Play Sashimi Slicing free online instantly. Drag the knife handle in one smooth motion to slice the fillet at the highlighted target thickness on the gauge. Steady, even cuts score best. Thinner target cuts each round! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/sashimislicing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#0e2a3a;border-radius:14px;padding:14px;text-align:center}
+#hud{display:flex;justify-content:space-between;max-width:800px;margin:0 auto 8px;color:#eaf6ff;font-weight:800;font-size:1rem;padding:0 6px}
+#hud span b{color:#7ed6ff}
+#c{background:#123245;display:block;border-radius:10px;margin:0 auto;touch-action:none;max-width:100%}
+#msg{color:#7ed6ff;font-weight:900;font-size:1.05rem;min-height:1.4em;margin-top:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Sashimi Slicing</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span>Round <b id="roundLbl">1</b></span><span>Slice <b id="sliceLbl">1</b>/<b id="totalLbl">6</b></span><span>Score <b id="scoreLbl">0</b></span><span>Best <b id="bestLbl">0</b></span></div>
+      <canvas id="c" width="800" height="360"></canvas>
+      <div id="msg">Drag the knife handle down through the fillet in one motion!</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Grab the knife handle above the fillet and drag it straight down through the fish in one smooth motion (mouse, finger, or arrow keys + Enter). Release inside the highlighted target band on the thickness gauge, and keep the stroke steady — wobbling side to side ruins an otherwise good slice. Cut through the whole fillet to finish the round, then face thinner targets and tighter tolerance!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=360;
+const scoreLbl=document.getElementById('scoreLbl'),roundLbl=document.getElementById('roundLbl'),bestLbl=document.getElementById('bestLbl'),msgEl=document.getElementById('msg'),sliceLbl=document.getElementById('sliceLbl'),totalLbl=document.getElementById('totalLbl');
+
+let round=1,score=0,best=parseInt(localStorage.getItem('sashimislicing_best')||'0',10);
+bestLbl.textContent=best;
+
+const filletTop=60,filletBottom=230,filletLeft=60,filletRight=680;
+let leftEdge=filletLeft,totalSlices=6,sliceIndex=0,perfectCount=0;
+let targetThickness=70,tolerance=16;
+let knifeX=filletLeft,knifeY=filletTop-30;
+let dragging=false,dragPath=[];
+let state='ready'; // ready, dragging, sliced, roundEnd
+let lastResult=null;
+let served=[];
+
+function setupRound(){
+  targetThickness=Math.max(22,72-(round-1)*7);
+  tolerance=Math.max(6,17-(round-1)*1.3);
+  totalSlices=Math.min(9,5+Math.floor((round-1)/1));
+  leftEdge=filletLeft;
+  sliceIndex=0;perfectCount=0;served=[];
+  totalLbl.textContent=totalSlices;
+  sliceLbl.textContent=1;
+  state='ready';
+  knifeX=leftEdge+targetThickness;
+  knifeY=filletTop-30;
+  msgEl.textContent=I18N.t('drag_knife','Drag the knife handle down through the fillet!');
+}
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+
+function tryStart(x,y){
+  if(state!=='ready'){
+    if(state==='sliced'||state==='roundEnd'){advance();}
+    return;
+  }
+  if(Math.hypot(x-knifeX,y-knifeY)<30){
+    dragging=true;state='dragging';dragPath=[{x,y}];
+    SFX.select();
+  }
+}
+
+function updateDrag(x,y){
+  if(state!=='dragging')return;
+  knifeX=Math.max(leftEdge+8,Math.min(filletRight-8,x));
+  knifeY=Math.max(filletTop-40,Math.min(filletBottom+40,y));
+  dragPath.push({x:knifeX,y:knifeY});
+  if(knifeY>=filletBottom+30){
+    commitSlice();
+  }
+}
+
+function endDrag(){
+  if(state!=='dragging')return;
+  if(knifeY<filletBottom-10){
+    // released too early - cancel, snap back
+    state='ready';dragging=false;knifeY=filletTop-30;
+    msgEl.textContent=I18N.t('too_short','Not a full stroke — drag all the way through!');
+    SFX.error();
+    return;
+  }
+  commitSlice();
+}
+
+function commitSlice(){
+  dragging=false;
+  const thickness=knifeX-leftEdge;
+  let pathLen=0;
+  for(let i=1;i<dragPath.length;i++){
+    pathLen+=Math.abs(dragPath[i].x-dragPath[i-1].x);
+  }
+  const wobble=pathLen; // total horizontal wobble accumulated during the vertical stroke
+  const smooth=Math.max(0,1-wobble/60);
+  const diff=Math.abs(thickness-targetThickness);
+  const thickOk=diff<=tolerance;
+  const quality=Math.max(0,1-diff/(tolerance*2.2))*Math.max(0.15,smooth);
+  const perfect=thickOk && smooth>0.6;
+  if(perfect){perfectCount++;SFX.success();}
+  else if(thickOk){SFX.point();}
+  else SFX.hurt();
+  const pts=Math.round(quality*40*round);
+  score+=pts;
+  if(score>best){best=score;localStorage.setItem('sashimislicing_best',String(best));}
+  scoreLbl.textContent=score;bestLbl.textContent=best;
+  served.push({w:thickness,perfect,thickOk});
+  leftEdge+=thickness;
+  sliceIndex++;
+  lastResult={perfect,thickOk,thickness,smooth};
+  if(perfect)msgEl.textContent=I18N.t('perfect_slice','Perfect slice! +'+pts);
+  else if(thickOk)msgEl.textContent=I18N.t('wobbly_slice','A bit wobbly, but good thickness. +'+pts);
+  else if(thickness>targetThickness)msgEl.textContent=I18N.t('too_thick','Too thick! +'+pts);
+  else msgEl.textContent=I18N.t('too_thin','Too thin! +'+pts);
+  if(sliceIndex>=totalSlices || leftEdge>=filletRight-16){
+    state='roundEnd';
+    setTimeout(()=>{},0);
+  } else {
+    state='sliced';
+    sliceLbl.textContent=sliceIndex+1;
+    knifeX=Math.min(filletRight-8,leftEdge+targetThickness);
+    knifeY=filletTop-30;
+  }
+}
+
+function advance(){
+  if(state==='sliced'){
+    state='ready';
+    msgEl.textContent=I18N.t('drag_knife','Drag the knife handle down through the fillet!');
+  } else if(state==='roundEnd'){
+    round++;
+    roundLbl.textContent=round;
+    setupRound();
+  }
+}
+
+c.addEventListener('pointerdown',e=>{c.setPointerCapture(e.pointerId);const p=getPos(e);tryStart(p.x,p.y);});
+c.addEventListener('pointermove',e=>{const p=getPos(e);updateDrag(p.x,p.y);});
+c.addEventListener('pointerup',e=>{endDrag();});
+c.addEventListener('pointercancel',e=>{endDrag();});
+
+let keysHeld={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter',' '].includes(e.key))e.preventDefault();
+  keysHeld[e.key]=true;
+  if(e.key==='Enter'||e.key===' '){
+    if(state==='ready'){dragging=true;state='dragging';dragPath=[{x:knifeX,y:knifeY}];SFX.select();}
+    else if(state==='sliced'||state==='roundEnd'){advance();}
+  }
+});
+document.addEventListener('keyup',e=>{keysHeld[e.key]=false;});
+
+function keyboardTick(dt){
+  if(!dragging||state!=='dragging')return;
+  let nx=knifeX,ny=knifeY;
+  if(keysHeld['ArrowLeft'])nx-=1.4*dt;
+  if(keysHeld['ArrowRight'])nx+=1.4*dt;
+  ny+=3.2*dt;
+  updateDrag(nx,ny);
+}
+
+function drawGauge(){
+  const gx=730,gy=60,gh=170,gw=26;
+  ctx.fillStyle='#0a1f2b';
+  ctx.fillRect(gx,gy,gw,gh);
+  const maxT=100;
+  const bandTop=gy+gh-((targetThickness+tolerance)/maxT)*gh;
+  const bandH=(2*tolerance/maxT)*gh;
+  ctx.fillStyle='rgba(126,214,255,0.35)';
+  ctx.fillRect(gx,bandTop,gw,bandH);
+  const curThick=Math.max(0,knifeX-leftEdge);
+  const curY=gy+gh-Math.min(1,curThick/maxT)*gh;
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(gx-4,curY-2,gw+8,4);
+  ctx.strokeStyle='#7ed6ff';ctx.lineWidth=2;ctx.strokeRect(gx,gy,gw,gh);
+  ctx.fillStyle='#eaf6ff';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('gauge_label','Thickness'),gx+gw/2,gy-8);
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0e2a3a');bg.addColorStop(1,'#08161f');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // cutting board
+  ctx.fillStyle='#3a2413';
+  ctx.fillRect(filletLeft-20,filletTop-10,filletRight-filletLeft+40,filletBottom-filletTop+20);
+
+  // served slices (stacked left)
+  served.forEach((s,i)=>{
+    const sx=20+ (i%3)*14;
+    const sy=290+Math.floor(i/3)*18;
+    ctx.fillStyle=s.perfect?'#ff8a80':(s.thickOk?'#ffab91':'#e57373');
+    ctx.fillRect(sx,sy,10,12);
+  });
+
+  // remaining fillet
+  const fw=filletRight-leftEdge;
+  if(fw>0){
+    const grad=ctx.createLinearGradient(leftEdge,0,filletRight,0);
+    grad.addColorStop(0,'#ff8a80');grad.addColorStop(0.5,'#ffcdd2');grad.addColorStop(1,'#ff8a80');
+    ctx.fillStyle=grad;
+    ctx.fillRect(leftEdge,filletTop,fw,filletBottom-filletTop);
+    ctx.strokeStyle='#c62828';ctx.lineWidth=2;
+    for(let i=1;i<4;i++){
+      ctx.beginPath();ctx.moveTo(leftEdge+fw*i/4,filletTop);ctx.lineTo(leftEdge+fw*i/4,filletBottom);ctx.stroke();
+    }
+  }
+
+  // target band on fillet itself
+  if(state==='ready'||state==='dragging'){
+    const bx=leftEdge+targetThickness;
+    ctx.fillStyle='rgba(126,214,255,0.28)';
+    ctx.fillRect(bx-tolerance,filletTop-6,tolerance*2,filletBottom-filletTop+12);
+    ctx.strokeStyle='#7ed6ff';ctx.lineWidth=2;
+    ctx.strokeRect(bx-tolerance,filletTop-6,tolerance*2,filletBottom-filletTop+12);
+  }
+
+  drawGauge();
+
+  // knife
+  ctx.save();
+  ctx.strokeStyle='#ddd';ctx.lineWidth=6;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(knifeX,filletTop-45);ctx.lineTo(knifeX,knifeY);ctx.stroke();
+  ctx.fillStyle=state==='dragging'?'#ffd54f':'#c0c0c0';
+  ctx.beginPath();ctx.arc(knifeX,knifeY,16,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#333';ctx.lineWidth=2;ctx.stroke();
+  ctx.restore();
+
+  if(state==='sliced'||state==='roundEnd'){
+    ctx.fillStyle='rgba(0,0,0,0.5)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#7ed6ff';ctx.textAlign='center';ctx.font='bold 26px Arial';
+    if(state==='roundEnd'){
+      ctx.fillText(I18N.t('round_done','Fillet finished!'),W/2,H/2-20);
+      ctx.font='18px Arial';ctx.fillStyle='#fff';
+      ctx.fillText(I18N.t('perfect_count','Perfect slices: {p}/{t}').replace('{p}',perfectCount).replace('{t}',totalSlices),W/2,H/2+12);
+      ctx.fillText(I18N.t('tap_continue','Tap / click / Enter for next round'),W/2,H/2+42);
+    } else {
+      ctx.font='20px Arial';ctx.fillStyle='#fff';
+      ctx.fillText(I18N.t('tap_next_slice','Tap / click / Enter for next slice'),W/2,H/2);
+    }
+  }
+}
+
+let lastT=null;
+function loop(now){
+  const dt=lastT===null?1:Math.min((now-lastT)/16.6667,3);
+  lastT=now;
+  keyboardTick(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+setupRound();
+requestAnimationFrame(loop);
+</script></body></html>

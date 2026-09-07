@@ -1,0 +1,283 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Paella Cooking</title><meta name="description" content="Play Paella Cooking free online — Follow the recipe card and click the right ingredient when its window lights up, while clicking hot-spots in the pan to stir them before they burn. Use a mouse, finger, number keys, or arrow keys plus Enter. Trickier recipes and heat management each round!"><link rel="canonical" href="https://games.multiportllc.com/games/paellacooking"><meta property="og:title" content="Paella Cooking - Multiport Games"><meta property="og:description" content="Play Paella Cooking free online — Follow the recipe card and click the right ingredient when its window lights up, while clicking hot-spots in the pan to stir them before they burn. Use a mouse, finger, number keys, or arrow keys plus Enter. Trickier recipes and heat management each round!"><meta property="og:url" content="https://games.multiportllc.com/games/paellacooking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Paella Cooking","description":"Play Paella Cooking free online instantly. Follow the recipe card and click the right ingredient when its window lights up, while clicking hot-spots in the pan to stir them before they burn. Trickier recipes and heat management each round! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/paellacooking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#2a1f0a;border-radius:14px;padding:14px;text-align:center}
+#hud{display:flex;justify-content:space-between;max-width:800px;margin:0 auto 8px;color:#fff3d6;font-weight:800;font-size:.95rem;padding:0 6px;flex-wrap:wrap;gap:4px}
+#hud span b{color:#ffcc66}
+#c{background:#3a2c10;display:block;border-radius:10px;margin:0 auto;touch-action:none;max-width:100%}
+#msg{color:#ffcc66;font-weight:900;font-size:1.02rem;min-height:1.4em;margin-top:8px}
+#ingRow{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:10px}
+#ingRow button{background:#5a4420;color:#fff3d6;border:2px solid #8a6a30;border-radius:10px;padding:8px 12px;font-weight:700;cursor:pointer;font-size:.9rem}
+#ingRow button.active{background:#ffcc66;color:#2a1f0a;border-color:#fff}
+#ingRow button:active{transform:scale(.95)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Paella Cooking</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span>Round <b id="roundLbl">1</b></span><span>Step <b id="stepLbl">0</b>/<b id="totalLbl">6</b></span><span>Score <b id="scoreLbl">0</b></span><span>Best <b id="bestLbl">0</b></span></div>
+      <canvas id="c" width="800" height="320"></canvas>
+      <div id="ingRow"></div>
+      <div id="msg">Watch the recipe card — add the highlighted ingredient in time, and stir hot zones before they burn!</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Follow the recipe card at the top: when an ingredient lights up, click its button below (or press its number key, or use Arrow keys + Enter) while the timing bar is still lit to add it correctly. At the same time, watch the pan's heat-map — click (or tap) any zone glowing orange or red to stir and cool it before it burns. Finish the recipe with every zone in good shape for the best score, then face longer recipes and faster heat next round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320;
+const scoreLbl=document.getElementById('scoreLbl'),roundLbl=document.getElementById('roundLbl'),bestLbl=document.getElementById('bestLbl'),msgEl=document.getElementById('msg'),stepLbl=document.getElementById('stepLbl'),totalLbl=document.getElementById('totalLbl'),ingRow=document.getElementById('ingRow');
+
+let round=1,score=0,best=parseInt(localStorage.getItem('paellacooking_best')||'0',10);
+bestLbl.textContent=best;
+
+const ALL_ING=['Oil','Rice','Saffron','Chicken','Shrimp','Peas','Tomato','Broth','Pepper'];
+const ZONES=[[0,0],[1,0],[2,0],[0,1],[1,1],[2,1]]; // 3x2 grid
+const panX=60,panY=170,panW=680,panH=130;
+
+let recipe=[],curStep=0,windowStart=0,windowLen=0,gameTime=0,lastTs=null;
+let zoneHeat=[],zoneBurnt=[];
+let heatRate=1,state='playing',correctCount=0,burntZones=0;
+let stepAdvanceLock=false;
+
+function buildRecipe(){
+  const n=Math.min(9,5+Math.floor((round-1)*0.8));
+  const pool=ALL_ING.slice();
+  const steps=[];
+  for(let i=0;i<n;i++){
+    steps.push(pool[Math.floor(Math.random()*pool.length)]);
+  }
+  return steps;
+}
+
+function setupRound(){
+  recipe=buildRecipe();
+  curStep=0;gameTime=0;
+  windowLen=Math.max(2.6,4.6-(round-1)*0.15);
+  windowStart=1.2;
+  heatRate=1+(round-1)*0.18;
+  zoneHeat=ZONES.map(()=>10+Math.random()*10);
+  zoneBurnt=ZONES.map(()=>false);
+  correctCount=0;burntZones=0;
+  totalLbl.textContent=recipe.length;
+  stepLbl.textContent=0;
+  state='playing';
+  stepAdvanceLock=false;
+  msgEl.textContent=I18N.t('watch_card','Watch the recipe card and add ingredients in time!');
+  buildIngRow();
+}
+
+function buildIngRow(){
+  ingRow.innerHTML='';
+  ALL_ING.forEach((ing,i)=>{
+    const b=document.createElement('button');
+    b.textContent=(i+1)+'. '+ing;
+    b.onclick=()=>tryAdd(ing);
+    ingRow.appendChild(b);
+  });
+}
+
+function currentTarget(){ return recipe[curStep]; }
+
+function tryAdd(ing){
+  if(state!=='playing'||stepAdvanceLock)return;
+  const target=currentTarget();
+  const inWindow=gameTime>=windowStart&&gameTime<=windowStart+windowLen;
+  if(ing===target&&inWindow){
+    const center=windowStart+windowLen/2;
+    const closeness=1-Math.abs(gameTime-center)/(windowLen/2);
+    const pts=Math.round((40+60*closeness)*round*0.5);
+    score+=pts;correctCount++;
+    if(score>best){best=score;localStorage.setItem('paellacooking_best',String(best));}
+    scoreLbl.textContent=score;bestLbl.textContent=best;
+    msgEl.textContent=I18N.t('added_ing','Added {i}! +{p}').replace('{i}',ing).replace('{p}',pts);
+    SFX.success();
+    advanceStep();
+  } else if(ing===target){
+    msgEl.textContent=I18N.t('wrong_timing','Right ingredient, wrong timing!');
+    SFX.error();
+  } else {
+    msgEl.textContent=I18N.t('wrong_ing','That is not the next ingredient!');
+    SFX.error();
+  }
+}
+
+function advanceStep(){
+  stepAdvanceLock=true;
+  curStep++;
+  stepLbl.textContent=curStep;
+  if(curStep>=recipe.length){
+    finishRound();
+    return;
+  }
+  windowStart=gameTime+1.0+Math.random()*0.6;
+  setTimeout(()=>{stepAdvanceLock=false;},50);
+}
+
+function finishRound(){
+  state='roundEnd';
+  const goodZones=zoneBurnt.filter(b=>!b).length;
+  const bonus=Math.round(goodZones*20*round*0.4);
+  score+=bonus;
+  scoreLbl.textContent=score;
+  if(score>best){best=score;localStorage.setItem('paellacooking_best',String(best));}
+  bestLbl.textContent=best;
+  msgEl.textContent=I18N.t('dish_done','Paella finished! Zone bonus +{b}').replace('{b}',bonus);
+  SFX.win();
+}
+
+function stirZone(i){
+  if(state!=='playing')return;
+  if(zoneBurnt[i]){ SFX.error(); return; }
+  zoneHeat[i]=Math.max(15,zoneHeat[i]-45);
+  SFX.click();
+}
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+
+function zoneRect(i){
+  const [cx,cy]=ZONES[i];
+  const zw=panW/3,zh=panH/2;
+  return {x:panX+cx*zw,y:panY+cy*zh,w:zw,h:zh};
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(state==='roundEnd'){ round++; roundLbl.textContent=round; setupRound(); return; }
+  const p=getPos(e);
+  for(let i=0;i<ZONES.length;i++){
+    const r=zoneRect(i);
+    if(p.x>=r.x&&p.x<=r.x+r.w&&p.y>=r.y&&p.y<=r.y+r.h){ stirZone(i); return; }
+  }
+});
+
+let selIdx=0;
+document.addEventListener('keydown',e=>{
+  if(state==='roundEnd'&&(e.key==='Enter'||e.key===' ')){ round++; roundLbl.textContent=round; setupRound(); return; }
+  const n=parseInt(e.key,10);
+  if(!isNaN(n)&&n>=1&&n<=ALL_ING.length){ tryAdd(ALL_ING[n-1]); return; }
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter'].includes(e.key)){
+    e.preventDefault();
+    const cols=3;
+    if(e.key==='ArrowRight')selIdx=(selIdx+1)%ZONES.length;
+    else if(e.key==='ArrowLeft')selIdx=(selIdx-1+ZONES.length)%ZONES.length;
+    else if(e.key==='ArrowDown')selIdx=(selIdx+cols)%ZONES.length;
+    else if(e.key==='ArrowUp')selIdx=(selIdx-cols+ZONES.length)%ZONES.length;
+    else if(e.key==='Enter')stirZone(selIdx);
+  }
+});
+
+function heatColor(h){
+  if(h<40)return `rgb(${80+h},${140},60)`;
+  if(h<70){const t=(h-40)/30;return lerp('rgb(120,180,60)','rgb(230,180,40)',t);}
+  if(h<90){const t=(h-70)/20;return lerp('rgb(230,180,40)','rgb(230,90,30)',t);}
+  return 'rgb(120,20,10)';
+}
+function lerp(a,b,t){
+  const pa=a.match(/\d+/g).map(Number),pb=b.match(/\d+/g).map(Number);
+  const r=Math.round(pa[0]+(pb[0]-pa[0])*t),g=Math.round(pa[1]+(pb[1]-pa[1])*t),bl=Math.round(pa[2]+(pb[2]-pa[2])*t);
+  return `rgb(${r},${g},${bl})`;
+}
+
+function drawRecipeCard(){
+  ctx.fillStyle='#1f1608';
+  ctx.fillRect(10,10,W-20,80);
+  ctx.strokeStyle='#8a6a30';ctx.lineWidth=2;ctx.strokeRect(10,10,W-20,80);
+  ctx.font='bold 12px Arial';ctx.textAlign='left';ctx.fillStyle='#ffe9c0';
+  ctx.fillText(I18N.t('recipe_label','Recipe'),20,26);
+  const boxW=Math.min(78,(W-40)/Math.max(1,recipe.length));
+  recipe.forEach((ing,i)=>{
+    const bx=20+i*boxW;
+    const active=i===curStep;
+    const inWindow=active&&gameTime>=windowStart&&gameTime<=windowStart+windowLen;
+    ctx.fillStyle=i<curStep?'#4a7a3a':(inWindow?'#ffcc66':(active?'#8a6a30':'#3a2c10'));
+    ctx.fillRect(bx,34,boxW-6,44);
+    ctx.strokeStyle='#8a6a30';ctx.strokeRect(bx,34,boxW-6,44);
+    ctx.fillStyle=inWindow?'#2a1f0a':'#fff3d6';
+    ctx.font='bold 10px Arial';ctx.textAlign='center';
+    ctx.fillText(ing,bx+(boxW-6)/2,60,boxW-8);
+    if(active&&!inWindow&&gameTime<windowStart){
+      const pct=Math.max(0,(windowStart-gameTime));
+      ctx.fillStyle='#ffe9c0';ctx.font='9px Arial';
+      ctx.fillText('~'+pct.toFixed(1)+'s',bx+(boxW-6)/2,74);
+    }
+    if(inWindow){
+      const pct=(gameTime-windowStart)/windowLen;
+      ctx.fillStyle='rgba(255,255,255,0.5)';
+      ctx.fillRect(bx,74,(boxW-6)*(1-pct),4);
+    }
+  });
+}
+
+function drawPan(){
+  ctx.fillStyle='#111';
+  ctx.beginPath();ctx.ellipse(panX+panW/2,panY+panH/2,panW/2+14,panH/2+14,0,0,Math.PI*2);ctx.fill();
+  ZONES.forEach((z,i)=>{
+    const r=zoneRect(i);
+    ctx.fillStyle=zoneBurnt[i]?'#1a0a05':heatColor(zoneHeat[i]);
+    ctx.fillRect(r.x+2,r.y+2,r.w-4,r.h-4);
+    ctx.strokeStyle='#2a1f0a';ctx.lineWidth=2;ctx.strokeRect(r.x+2,r.y+2,r.w-4,r.h-4);
+    if(zoneBurnt[i]){
+      ctx.fillStyle='#ff8a80';ctx.font='bold 11px Arial';ctx.textAlign='center';
+      ctx.fillText(I18N.t('burnt_label','BURNT'),r.x+r.w/2,r.y+r.h/2+4);
+    } else if(i===selIdx){
+      ctx.strokeStyle='#fff';ctx.lineWidth=3;ctx.strokeRect(r.x+2,r.y+2,r.w-4,r.h-4);
+    }
+  });
+  ctx.strokeStyle='#5a4420';ctx.lineWidth=6;
+  ctx.beginPath();ctx.ellipse(panX+panW/2,panY+panH/2,panW/2+14,panH/2+14,0,0,Math.PI*2);ctx.stroke();
+}
+
+function update(dt){
+  if(state!=='playing')return;
+  gameTime+=dt;
+  if(gameTime>windowStart+windowLen+3 && curStep<recipe.length){
+    // missed the window entirely
+    msgEl.textContent=I18N.t('missed_window','Missed the window for {i}!').replace('{i}',currentTarget());
+    SFX.hurt();
+    advanceStep();
+  }
+  for(let i=0;i<ZONES.length;i++){
+    if(zoneBurnt[i])continue;
+    zoneHeat[i]+=heatRate*dt*6;
+    if(zoneHeat[i]>=100){ zoneHeat[i]=100; zoneBurnt[i]=true; burntZones++; SFX.fail(); }
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#2a1f0a';ctx.fillRect(0,0,W,H);
+  drawRecipeCard();
+  drawPan();
+  if(state==='roundEnd'){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffcc66';ctx.textAlign='center';ctx.font='bold 26px Arial';
+    ctx.fillText(I18N.t('paella_ready','Paella is ready!'),W/2,H/2-16);
+    ctx.font='16px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('ingredients_score','Ingredients timed right: {c}/{t}').replace('{c}',correctCount).replace('{t}',recipe.length),W/2,H/2+14);
+    ctx.fillText(I18N.t('tap_continue','Tap / click / Enter for next round'),W/2,H/2+38);
+  }
+}
+
+let lastT=null;
+function loop(now){
+  const dt=lastT===null?0:Math.min((now-lastT)/1000,0.1);
+  lastT=now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+setupRound();
+requestAnimationFrame(loop);
+</script></body></html>

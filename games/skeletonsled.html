@@ -1,0 +1,300 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Skeleton Sled</title><meta name="description" content="Play Skeleton Sled free online — Race headfirst down an icy curved track. Use Left/Right Arrows or drag to steer, hug the curves, and beat the target time."><link rel="canonical" href="https://games.multiportllc.com/games/skeletonsled"><meta property="og:title" content="Skeleton Sled - Multiport Games"><meta property="og:description" content="Play Skeleton Sled free online — Race headfirst down an icy curved track. Use Left/Right Arrows or drag to steer, hug the curves, and beat the target time."><meta property="og:url" content="https://games.multiportllc.com/games/skeletonsled"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Skeleton Sled","description":"Play Skeleton Sled free online instantly. Race headfirst down an icy curved track. Use Left/Right Arrows or drag to steer, hug the curves without hitting the walls, and beat the target time across multiple tracks. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/skeletonsled","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0a1830;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#dff0ff;font-size:.95rem;font-weight:700;padding:8px 10px;flex-wrap:wrap;gap:4px}
+#hud span b{color:#7ecbff}
+#trackPicker{display:flex;justify-content:center;gap:10px;padding:10px;flex-wrap:wrap}
+.trackBtn{padding:8px 16px;border-radius:12px;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.08);color:#fff;font-family:inherit;font-weight:700;cursor:pointer}
+.trackBtn.active{background:linear-gradient(135deg,#0f3460,#7ecbff);border-color:transparent}
+.trackBtn .best{display:block;font-size:.7rem;color:#9fd3ff;font-weight:600}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Skeleton Sled</div>
+  <div class="game-frame">
+    <div id="trackPicker"></div>
+    <div id="hud">
+      <span>Track: <b id="trackName">-</b></span>
+      <span>Time: <b id="timeDisp">0.00s</b></span>
+      <span>Best: <b id="bestDisp">--</b></span>
+      <span>Speed: <b id="speedDisp">0</b></span>
+    </div>
+    <canvas id="c" width="420" height="560"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Pick a track, then press <b>Space</b> or <b>Tap</b> to launch. Use <b>Left/Right Arrow keys</b> (or drag left/right on the track) to shift your weight and steer the sled headfirst down the icy course. Stay off the walls or you'll crash — reach the finish line as fast as possible to beat your best time!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=420,H=560;
+
+const TRACKS=[
+  {name:'Frost Straight',length:3600,baseWidth:150,minWidth:95,segs:[[0,0,1],[1,0.9,3],[1,-1.0,2.4],[1,0.7,2.8],[1,0,1]]},
+  {name:'Ice Serpent',length:4600,baseWidth:135,minWidth:82,segs:[[0,0,0.6],[1,1.2,2.2],[1,-1.3,2.0],[1,1.1,1.8],[1,-1.4,2.0],[1,1.3,1.6],[1,-1.0,1.8],[1,0,1]]},
+  {name:'Glacier Gauntlet',length:5600,baseWidth:118,minWidth:70,segs:[[0,0,0.5],[1,1.5,1.6],[1,-1.6,1.4],[1,1.7,1.3],[1,-1.5,1.5],[1,1.6,1.2],[1,-1.8,1.3],[1,1.4,1.4],[1,-1.2,1.6],[1,0,1]]}
+];
+
+// Build a curve function centerOffset(dist) in range roughly [-1,1] using accumulated segments (each segment: [type,curveTarget,lengthFactor])
+function buildCurve(track){
+  const total=track.length;
+  const segs=track.segs;
+  const totalFactor=segs.reduce((a,s)=>a+s[2],0);
+  const points=[];
+  let d=0,val=0;
+  segs.forEach(s=>{
+    const segLen=total*(s[2]/totalFactor);
+    points.push({d0:d,d1:d+segLen,from:val,to:s[1]});
+    val=s[1];
+    d+=segLen;
+  });
+  return function(dist){
+    if(dist<=0)return points[0].from;
+    if(dist>=total)return points[points.length-1].to;
+    for(const p of points){
+      if(dist>=p.d0&&dist<=p.d1){
+        const t=(dist-p.d0)/(p.d1-p.d0);
+        const smooth=t*t*(3-2*t);
+        return p.from+(p.to-p.from)*smooth;
+      }
+    }
+    return val;
+  };
+}
+
+let trackIdx=0;
+let curveFn=buildCurve(TRACKS[0]);
+let bests=TRACKS.map((t,i)=>{const v=localStorage.getItem('skeletonsled_best_'+i);return v?parseFloat(v):null;});
+
+let state='ready'; // ready, racing, crashed, finished
+let dist=0,speed=0,elapsed=0,steerX=0,steerVel=0;
+let dragActive=false,dragStartX=0,dragStartSteer=0;
+let keyLeft=false,keyRight=false;
+let particles=[];
+let shakeT=0;
+
+function centerAt(distAhead){
+  return curveFn(distAhead)*(W/2-70);
+}
+function halfWidthAt(track,d){
+  const prog=Math.min(1,d/track.length);
+  return track.baseWidth/2 - (track.baseWidth/2-track.minWidth/2)*prog;
+}
+
+function resetRun(){
+  dist=0;speed=0;elapsed=0;steerX=0;steerVel=0;particles=[];shakeT=0;
+  state='ready';
+  updateHud();
+}
+
+function selectTrack(i){
+  trackIdx=i;
+  curveFn=buildCurve(TRACKS[i]);
+  resetRun();
+  renderPicker();
+}
+
+function renderPicker(){
+  const el=document.getElementById('trackPicker');
+  el.innerHTML='';
+  TRACKS.forEach((t,i)=>{
+    const b=document.createElement('button');
+    b.className='trackBtn'+(i===trackIdx?' active':'');
+    const bestStr=bests[i]!=null?bests[i].toFixed(2)+'s':'--';
+    b.innerHTML=I18N.t('track_name_'+i,t.name)+'<span class="best">'+I18N.t('best_label','Best')+': '+bestStr+'</span>';
+    b.onclick=()=>selectTrack(i);
+    el.appendChild(b);
+  });
+  document.getElementById('trackName').textContent=I18N.t('track_name_'+trackIdx,TRACKS[trackIdx].name);
+  document.getElementById('bestDisp').textContent=bests[trackIdx]!=null?bests[trackIdx].toFixed(2)+'s':'--';
+}
+
+function updateHud(){
+  document.getElementById('timeDisp').textContent=elapsed.toFixed(2)+'s';
+  document.getElementById('speedDisp').textContent=Math.round(speed*10);
+  document.getElementById('bestDisp').textContent=bests[trackIdx]!=null?bests[trackIdx].toFixed(2)+'s':'--';
+}
+
+function launch(){
+  if(state==='ready'){ state='racing'; SFX.swoosh(); }
+  else if(state==='crashed'||state==='finished'){ resetRun(); }
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();launch();}
+  if(e.code==='ArrowLeft'){e.preventDefault();keyLeft=true;}
+  if(e.code==='ArrowRight'){e.preventDefault();keyRight=true;}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft')keyLeft=false;
+  if(e.code==='ArrowRight')keyRight=false;
+});
+
+c.addEventListener('pointerdown',e=>{
+  if(state==='ready'||state==='crashed'||state==='finished'){launch();return;}
+  dragActive=true;
+  const r=c.getBoundingClientRect();
+  dragStartX=(e.clientX-r.left)*(W/r.width);
+  dragStartSteer=steerX;
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragActive)return;
+  const r=c.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width);
+  const delta=x-dragStartX;
+  steerVel=(dragStartSteer+delta*0.9-steerX)*0.25;
+});
+window.addEventListener('pointerup',()=>{dragActive=false;});
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function spawnSnow(x,y){
+  for(let i=0;i<4;i++){
+    particles.push({x:x+rand(-8,8),y:y,vx:rand(-1.5,1.5),vy:rand(-3,-1),life:20});
+  }
+}
+
+function crash(){
+  state='crashed';
+  speed=0;
+  SFX.hit();
+  shakeT=18;
+}
+
+function finish(){
+  state='finished';
+  SFX.win();
+  const t=TRACKS[trackIdx];
+  if(bests[trackIdx]==null||elapsed<bests[trackIdx]){
+    bests[trackIdx]=elapsed;
+    localStorage.setItem('skeletonsled_best_'+trackIdx,elapsed.toFixed(2));
+  }
+  renderPicker();
+}
+
+let lastTime=null;
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  const track=TRACKS[trackIdx];
+
+  if(state==='racing'){
+    elapsed+=dt/60;
+    speed=Math.min(speed+0.06*dt,9);
+    dist+=speed*dt*4;
+
+    let steerInput=0;
+    if(keyLeft)steerInput-=1;
+    if(keyRight)steerInput+=1;
+    if(steerInput!==0){
+      steerVel+=steerInput*0.9*dt;
+    } else if(!dragActive){
+      steerVel*=0.9;
+    }
+    steerVel*=0.92;
+    steerVel=Math.max(-6,Math.min(6,steerVel));
+    steerX+=steerVel*dt;
+    steerX=Math.max(-160,Math.min(160,steerX));
+
+    const hw=halfWidthAt(track,dist);
+    const centerOffsetHere=centerAt(dist);
+    const rel=steerX-centerOffsetHere;
+    if(Math.abs(rel)>hw-14){
+      speed*=0.82;
+      steerVel*=-0.4;
+      steerX=centerOffsetHere+Math.sign(rel)*(hw-14);
+      SFX.hurt();
+      shakeT=6;
+      if(speed<1.2)crash();
+    }
+
+    if(Math.random()<0.5*dt)spawnSnow(W/2+steerX*0.3,H-90);
+
+    if(dist>=track.length)finish();
+    updateHud();
+  }
+
+  particles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;});
+  particles=particles.filter(p=>p.life>0);
+
+  // Render
+  ctx.save();
+  if(shakeT>0){
+    ctx.translate(rand(-shakeT/3,shakeT/3),rand(-shakeT/3,shakeT/3));
+    shakeT-=dt;
+  }
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0a1830');sky.addColorStop(1,'#16324f');
+  ctx.fillStyle=sky;ctx.fillRect(-20,-20,W+40,H+40);
+
+  // Draw track bands from far to near
+  const viewDepth=900;
+  const bands=60;
+  for(let i=bands;i>=0;i--){
+    const bandDist=dist+ (i/bands)*viewDepth;
+    const y=H-90-(i/bands)*(H-140);
+    const persp=1-(i/bands)*0.75;
+    const cOff=centerAt(bandDist);
+    const hw2=halfWidthAt(track,bandDist)*persp;
+    const cx=W/2+cOff*persp - (state==='racing'?steerX*0*persp:0);
+    const shade=210-i*2.2;
+    ctx.fillStyle=`rgb(${Math.max(120,shade-40)},${Math.max(150,shade)},${Math.min(255,shade+30)})`;
+    ctx.fillRect(cx-hw2,y-4,hw2*2,8);
+    // wall markers
+    if(i%6===0){
+      ctx.fillStyle='#ff6b6b';
+      ctx.fillRect(cx-hw2-4,y-3,4,6);
+      ctx.fillRect(cx+hw2,y-3,4,6);
+    }
+  }
+
+  // snow particles
+  ctx.fillStyle='#eaf6ff';
+  particles.forEach(p=>{ctx.fillRect(p.x,p.y,3,3);});
+
+  // sled (fixed screen position near bottom, offset by relative steering vs track center)
+  const hw0=halfWidthAt(track,dist);
+  const relPos=steerX-centerAt(dist);
+  const sledX=W/2+ (relPos)*0.9;
+  const sledY=H-70;
+  ctx.save();
+  ctx.translate(sledX,sledY);
+  const tilt=Math.max(-0.35,Math.min(0.35,steerVel*0.05));
+  ctx.rotate(tilt);
+  ctx.fillStyle='#c8d6e5';
+  ctx.fillRect(-14,10,28,34);
+  ctx.fillStyle='#2b2b3a';
+  ctx.beginPath();ctx.ellipse(0,0,13,16,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath();ctx.ellipse(-5,-3,3,3,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(5,-3,3,3,0,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+
+  ctx.restore();
+
+  ctx.fillStyle='#eaf6ff';
+  ctx.font='bold 22px Arial';ctx.textAlign='center';
+  if(state==='ready'){
+    ctx.fillText(I18N.t('sled_ready','Space / Tap to launch'),W/2,H/2);
+  } else if(state==='crashed'){
+    ctx.fillStyle='#ff6b6b';
+    ctx.fillText(I18N.t('sled_crashed','CRASHED! Tap to retry'),W/2,H/2);
+  } else if(state==='finished'){
+    ctx.fillStyle='#7ecbff';
+    ctx.fillText(I18N.t('sled_finish','FINISH! ')+elapsed.toFixed(2)+'s',W/2,H/2-14);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('sled_retry','Tap to race again'),W/2,H/2+16);
+  }
+
+  requestAnimationFrame(loop);
+}
+renderPicker();
+requestAnimationFrame(loop);
+</script></body></html>

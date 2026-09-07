@@ -1,0 +1,311 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Paragliding Flight</title><meta name="description" content="Play Paragliding Flight free online — Use Arrow Keys / WASD or drag to steer your paraglider. Ride the rising thermal columns to gain altitude, glide over the mountains, and avoid cliffs and birds."><link rel="canonical" href="https://games.multiportllc.com/games/paraglidingflight"><meta property="og:title" content="Paragliding Flight - Multiport Games"><meta property="og:description" content="Play Paragliding Flight free online — Use Arrow Keys / WASD or drag to steer your paraglider. Ride the rising thermal columns to gain altitude, glide over the mountains, and avoid cliffs and birds."><meta property="og:url" content="https://games.multiportllc.com/games/paraglidingflight"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Paragliding Flight","description":"Play Paragliding Flight free online instantly. Use Arrow Keys / WASD or drag to steer your paraglider. Ride the rising thermal columns to gain altitude, glide over the mountains, and avoid cliffs and birds. Scored by distance traveled and altitude maintained. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/paraglidingflight","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#7ec9e8;display:block;border-radius:8px;touch-action:none;cursor:grab}
+#c:active{cursor:grabbing}
+#hud{display:flex;justify-content:space-between;color:#fff;font-size:.95rem;font-weight:700;padding:6px 10px;background:rgba(0,0,0,.35)}
+#hud span{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Paragliding Flight</div>
+  <div class="game-frame">
+    <div id="hud"><span id="dist">Distance: 0m</span><span id="alt">Altitude: 0m</span><span id="best">Best: 0m</span></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>click-drag / touch-drag</b> to steer your paraglider. Fly through the rising <b>thermal columns</b> (shaded air) to gain altitude and glide farther across the mountains. Avoid crashing into cliffs, peaks, or birds. Score is based on distance traveled — the higher and longer you stay aloft, the further you go!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const distEl=document.getElementById('dist'),altEl=document.getElementById('alt'),bestEl=document.getElementById('best');
+let best=parseFloat(localStorage.getItem('paraglidingflight_best')||'0');
+bestEl.textContent=I18N.t('best_label','Best: {v}m').replace('{v}',Math.floor(best));
+
+let glider,thermals,mountains,birds,camX,dist,gameOver,started,keys,dragY,dragging,lastTime;
+
+function reset(){
+  glider={x:200,y:180,vy:0,vx:3.2,angle:0};
+  thermals=[];
+  mountains=[];
+  birds=[];
+  camX=0;
+  dist=0;
+  gameOver=false;
+  started=false;
+  keys={};
+  dragY=null;dragging=false;
+  lastTime=null;
+  genMountains(0,2400);
+  spawnThermal(900);
+  spawnThermal(1500);
+}
+
+function groundHeightAt(x){
+  // smooth rolling terrain via layered sine waves, deterministic by x
+  return 340 + Math.sin(x*0.0025)*40 + Math.sin(x*0.006+1.4)*25 + Math.sin(x*0.013+3)*14;
+}
+function ceilingHeightAt(x){
+  return 10 + Math.sin(x*0.004+2)*8;
+}
+
+function genMountains(fromX,toX){
+  // just used for peak markers (visual only, ground line is a function)
+}
+
+function spawnThermal(x){
+  thermals.push({x,w:70+Math.random()*40,strength:2.2+Math.random()*1.3});
+}
+function spawnBird(x){
+  const y=60+Math.random()*220;
+  birds.push({x,y,w:26,h:14,vy:(Math.random()-0.5)*1.5,frame:Math.random()*10});
+}
+
+let thermalTimer=0,birdTimer=0;
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(!started){started=true;}
+  if(gameOver){reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function pointerY(e){
+  const rect=c.getBoundingClientRect();
+  const clientY=(e.touches?e.touches[0].clientY:e.clientY);
+  return (clientY-rect.top)*(H/rect.height);
+}
+c.addEventListener('pointerdown',e=>{
+  if(!started){started=true;}
+  if(gameOver){reset();return;}
+  dragging=true;dragY=pointerY(e);
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  dragY=pointerY(e);
+});
+window.addEventListener('pointerup',()=>{dragging=false;dragY=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(!started)started=true;if(gameOver){reset();return;}dragging=true;dragY=pointerY(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(dragging)dragY=pointerY(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragging=false;dragY=null;},{passive:false});
+
+function drawGlider(gx,gy,angle){
+  ctx.save();
+  ctx.translate(gx,gy);
+  ctx.rotate(angle);
+  // wing (canopy)
+  ctx.fillStyle='#ff5e5e';
+  ctx.beginPath();
+  ctx.moveTo(-30,-18);ctx.quadraticCurveTo(0,-30,30,-18);ctx.quadraticCurveTo(0,-8,-30,-18);
+  ctx.fill();
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();
+  ctx.moveTo(-15,-17);ctx.quadraticCurveTo(0,-25,15,-17);ctx.quadraticCurveTo(0,-12,-15,-17);
+  ctx.fill();
+  // lines
+  ctx.strokeStyle='rgba(255,255,255,.7)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(-18,-16);ctx.lineTo(-4,4);ctx.moveTo(18,-16);ctx.lineTo(4,4);ctx.stroke();
+  // pilot
+  ctx.fillStyle='#2b2b3d';
+  ctx.fillRect(-5,2,10,12);
+  ctx.beginPath();ctx.arc(0,-2,5,0,Math.PI*2);ctx.fillStyle='#f4c28d';ctx.fill();
+  ctx.restore();
+}
+
+function rectCirc(rx,ry,rw,rh,cx,cy,cr){
+  const nx=Math.max(rx,Math.min(cx,rx+rw));
+  const ny=Math.max(ry,Math.min(cy,ry+rh));
+  const dx=cx-nx,dy=cy-ny;
+  return dx*dx+dy*dy<cr*cr;
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#3a8fd6');sky.addColorStop(0.6,'#8fd0ec');sky.addColorStop(1,'#cdeffb');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    drawStaticScene();
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('para_start_hint','Arrows/WASD or Drag to fly — Press any key or tap to start'),W/2,60);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawScene();
+    ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,180);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('para_restart_hint','Tap or press any key to fly again'),W/2,218);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // Controls
+  let steer=0;
+  if(keys['ArrowUp']||keys['KeyW'])steer-=1;
+  if(keys['ArrowDown']||keys['KeyS'])steer+=1;
+  if(dragging&&dragY!=null){
+    const targetY=dragY;
+    steer=(targetY-glider.y)*0.05;
+    steer=Math.max(-1.6,Math.min(1.6,steer));
+  }
+  if(keys['ArrowLeft']||keys['KeyA'])glider.vx=Math.max(1.8,glider.vx-0.08*dt);
+  if(keys['ArrowRight']||keys['KeyD'])glider.vx=Math.min(6,glider.vx+0.08*dt);
+
+  glider.vy+=0.16*dt; // gravity/sink
+  glider.vy+=steer*0.28*dt;
+  glider.vy=Math.max(-6,Math.min(6,glider.vy));
+
+  // Thermal lift
+  const worldX=camX+glider.x;
+  let inThermal=false;
+  thermals.forEach(t=>{
+    if(worldX>t.x-t.w/2&&worldX<t.x+t.w/2){
+      glider.vy-=t.strength*0.14*dt;
+      inThermal=true;
+    }
+  });
+
+  glider.y+=glider.vy*dt;
+  glider.angle=Math.max(-0.5,Math.min(0.5,glider.vy*0.08));
+
+  const groundY=groundHeightAt(worldX);
+  const ceilY=ceilingHeightAt(worldX);
+  if(glider.y>=groundY-14){glider.y=groundY-14;gameOver=true;SFX.lose();}
+  if(glider.y<=ceilY+14){glider.y=ceilY+14;glider.vy=0.5;}
+
+  camX+=glider.vx*dt;
+  dist=camX/10;
+
+  // spawn thermals/birds ahead
+  thermalTimer+=dt;
+  if(thermalTimer>90){thermalTimer=0;spawnThermal(camX+W+200+Math.random()*400);}
+  birdTimer+=dt;
+  if(birdTimer>150&&dist>50){birdTimer=0;spawnBird(camX+W+200+Math.random()*300);}
+  thermals=thermals.filter(t=>t.x>camX-200);
+  birds=birds.filter(b=>b.x>camX-100);
+
+  birds.forEach(b=>{
+    b.x-=1.2*dt;
+    b.y+=Math.sin((now/300)+b.frame)*0.5;
+    b.frame+=0.02*dt;
+    const sx=b.x-camX;
+    const gy=glider.y-14,gh=28;
+    if(rectCirc(sx-b.w/2,b.y-b.h/2,b.w,b.h,glider.x,glider.y,16)){
+      gameOver=true;SFX.lose();
+    }
+  });
+
+  const altitude=Math.max(0,Math.floor(groundHeightAt(worldX)-glider.y));
+  if(dist>best){best=dist;}
+
+  drawScene();
+
+  distEl.textContent=I18N.t('para_dist_label','Distance: {v}m').replace('{v}',Math.floor(dist));
+  altEl.textContent=I18N.t('para_alt_label','Altitude: {v}m').replace('{v}',altitude);
+  bestEl.textContent=I18N.t('best_label','Best: {v}m').replace('{v}',Math.floor(best));
+
+  if(gameOver){
+    if(dist>parseFloat(localStorage.getItem('paraglidingflight_best')||'0')){
+      localStorage.setItem('paraglidingflight_best',String(dist));
+    }
+    SFX.hurt();
+  }
+
+  requestAnimationFrame(loop);
+}
+
+function drawStaticScene(){
+  // preview terrain around start
+  ctx.beginPath();
+  ctx.moveTo(0,H);
+  for(let sx=0;sx<=W;sx+=10){
+    ctx.lineTo(sx,groundHeightAt(sx));
+  }
+  ctx.lineTo(W,H);ctx.closePath();
+  ctx.fillStyle='#6b8f4e';ctx.fill();
+  drawGlider(glider.x,glider.y,0);
+}
+
+function drawScene(){
+  // clouds (parallax)
+  ctx.fillStyle='rgba(255,255,255,.6)';
+  for(let i=0;i<5;i++){
+    const cx2=((i*300-camX*0.2)%(W+200)+W+200)%(W+200)-100;
+    ctx.beginPath();ctx.ellipse(cx2,60+i*20%80,40,16,0,0,Math.PI*2);ctx.fill();
+  }
+
+  // thermals (rising air columns)
+  thermals.forEach(t=>{
+    const sx=t.x-camX;
+    if(sx<-100||sx>W+100)return;
+    const grad=ctx.createLinearGradient(0,0,0,H);
+    grad.addColorStop(0,'rgba(255,220,120,0.05)');
+    grad.addColorStop(1,'rgba(255,220,120,0.25)');
+    ctx.fillStyle=grad;
+    ctx.fillRect(sx-t.w/2,0,t.w,H);
+    // rising streaks
+    for(let k=0;k<4;k++){
+      const off=((performance.now()/8+k*40)%H);
+      ctx.fillStyle='rgba(255,255,255,0.35)';
+      ctx.fillRect(sx-t.w/2+8+k*(t.w-16)/4,H-off,3,20);
+    }
+  });
+
+  // mountains/ground
+  ctx.beginPath();
+  ctx.moveTo(0,H);
+  for(let sx=0;sx<=W;sx+=10){
+    ctx.lineTo(sx,groundHeightAt(sx+camX));
+  }
+  ctx.lineTo(W,H);ctx.closePath();
+  const gg=ctx.createLinearGradient(0,300,0,H);
+  gg.addColorStop(0,'#8fae5e');gg.addColorStop(1,'#5a7a3a');
+  ctx.fillStyle=gg;ctx.fill();
+  // snow caps
+  ctx.fillStyle='rgba(255,255,255,.8)';
+  for(let sx=0;sx<=W;sx+=10){
+    const gy=groundHeightAt(sx+camX);
+    if(gy<310)ctx.fillRect(sx,gy,10,6);
+  }
+
+  // ceiling (rock overhangs)
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  for(let sx=0;sx<=W;sx+=10){
+    ctx.lineTo(sx,ceilingHeightAt(sx+camX));
+  }
+  ctx.lineTo(W,0);ctx.closePath();
+  ctx.fillStyle='#4a4a5a';ctx.fill();
+
+  // birds
+  birds.forEach(b=>{
+    const sx=b.x-camX;
+    ctx.fillStyle='#2b2b3d';
+    const wing=Math.sin(b.frame*3)*6;
+    ctx.beginPath();
+    ctx.moveTo(sx-b.w/2,b.y);ctx.lineTo(sx,b.y-wing);ctx.lineTo(sx+b.w/2,b.y);
+    ctx.lineTo(sx,b.y+4);ctx.closePath();ctx.fill();
+  });
+
+  drawGlider(glider.x,glider.y,glider.angle);
+}
+
+reset();
+loop();
+</script></body></html>
