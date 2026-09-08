@@ -1,0 +1,345 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Shoe Shining</title><meta name="description" content="Play Shoe Shining free online — Drag the applicator to spread polish evenly over the shoe, then buff each section with quick back-and-forth strokes to a shine before time runs out, without over-buffing."><link rel="canonical" href="https://games.multiportllc.com/games/shoeshining"><meta property="og:title" content="Shoe Shining - Multiport Games"><meta property="og:description" content="Play Shoe Shining free online — Drag the applicator to spread polish evenly over the shoe, then buff each section with quick back-and-forth strokes to a shine before time runs out, without over-buffing."><meta property="og:url" content="https://games.multiportllc.com/games/shoeshining"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Shoe Shining","description":"Play Shoe Shining free online instantly. Drag the applicator to spread polish evenly over the shoe, then buff each section with quick back-and-forth strokes to a shine before time runs out, without over-buffing. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/shoeshining","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#181310;border-radius:14px;padding:16px;text-align:center}
+#hud{display:flex;justify-content:space-between;align-items:center;max-width:460px;margin:0 auto 8px;color:#fff;font-weight:800;font-size:.95rem}
+#timerBarOuter{max-width:460px;margin:0 auto 8px;height:10px;background:#2b2118;border-radius:6px;overflow:hidden}
+#timerBar{height:100%;background:linear-gradient(90deg,#d4a24c,#f4d160);width:100%;transition:width .1s linear}
+#modeLabel{color:#f4d160;font-weight:800;margin:4px 0}
+canvas#c{background:#221a12;border-radius:12px;display:block;margin:8px auto;touch-action:none}
+#status{color:#fff;font-size:1rem;font-weight:800;margin:8px 0;min-height:1.5em}
+#nextBtn{display:none;margin-top:6px;padding:9px 24px;background:#f4d160;border:none;border-radius:20px;color:#221a12;font-weight:800;cursor:pointer;font-size:1rem}
+#restartBtn{display:none;margin-top:8px;padding:9px 22px;background:#f4d160;border:none;border-radius:20px;color:#221a12;font-weight:800;cursor:pointer;font-size:1rem}
+#stats{color:#c9a878;font-size:.85rem;margin-top:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Shoe Shining</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span>Shoe #<span id="shoeNum">1</span></span><span id="batchLabel">Batch: 0/5</span></div>
+      <div id="timerBarOuter"><div id="timerBar"></div></div>
+      <div id="modeLabel" id="modeText">Apply Polish</div>
+      <canvas id="c" width="440" height="220"></canvas>
+      <div id="status">Drag the applicator across the shoe to spread polish evenly</div>
+      <button id="nextBtn">Next Shoe</button>
+      <button id="restartBtn">Play Again</button>
+      <div id="stats">Shoes shined: 0 | Best: 0</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">First <b>apply polish</b>: drag across the shoe to cover it evenly (watch the coverage heatmap — don't leave bare patches). Then <b>buff</b>: rapidly drag back-and-forth over the polished shoe to bring up a shine. Buff too little and it stays dull; buff too much in one spot and you'll wear straight through the polish. Finish each shoe within the time limit — later batches give you less time.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=440,H=220;
+const GRID_C=22, GRID_R=10;
+const cellW=W/GRID_C, cellH=H/GRID_R;
+const BATCH_SIZE=5;
+let level=1, shoeIndex=0, batchGood=0, shined=0, best=0, gameOver=false, mode='apply';
+let polish=[], buff=[], timeLeft=0, timeTotal=0, timerId=null, active=false;
+let dragging=false, lastPt=null, dirHistory=[];
+
+shined = parseInt(localStorage.getItem('shoeshining_shined')||'0');
+best = parseInt(localStorage.getItem('shoeshining_best')||'0');
+
+function settingsForLevel(lv){
+  return { timeApply: Math.max(6,11-lv*0.4), timeBuff: Math.max(6,12-lv*0.4) };
+}
+
+function shoeMask(x,y){
+  // simple shoe silhouette within grid coords (x:0..GRID_C-1,y:0..GRID_R-1)
+  const cx=GRID_C*0.42, footLen=GRID_C*0.8;
+  // sole line
+  if(y>=GRID_R-2){ return x>1 && x<GRID_C-2; }
+  // toe rounded, heel raised
+  const t=x/GRID_C;
+  const topCurve = 2 + Math.sin(t*Math.PI)*1.5;
+  return y>=topCurve-1 && x>0 && x<GRID_C-1;
+}
+
+function initGrids(){
+  polish=[]; buff=[];
+  for(let y=0;y<GRID_R;y++){
+    const pr=[],br=[];
+    for(let x=0;x<GRID_C;x++){ pr.push(0); br.push(0); }
+    polish.push(pr); buff.push(br);
+  }
+}
+
+function newShoe(){
+  const s=settingsForLevel(level);
+  initGrids();
+  mode='apply';
+  timeTotal=s.timeApply; timeLeft=timeTotal;
+  active=true; gameOver=false;
+  document.getElementById('nextBtn').style.display='none';
+  updateHud();
+  setModeLabel();
+  setStatus(I18N.t('ss_apply_go','Drag across the shoe to spread polish!'));
+  clearInterval(timerId);
+  timerId=setInterval(tick,100);
+  draw();
+}
+
+function setModeLabel(){
+  document.getElementById('modeText').textContent = mode==='apply'? I18N.t('ss_mode_apply','Step 1: Apply Polish') : I18N.t('ss_mode_buff','Step 2: Buff to a Shine');
+}
+
+function updateHud(){
+  document.getElementById('shoeNum').textContent = shined+1;
+  document.getElementById('batchLabel').textContent = I18N.t('ss_batch','Batch: {n}/{m}').replace('{n}',batchGood).replace('{m}',BATCH_SIZE);
+}
+
+function setStatus(t){ document.getElementById('status').textContent=t; }
+
+function tick(){
+  if(!active)return;
+  timeLeft-=0.1;
+  document.getElementById('timerBar').style.width=Math.max(0,(timeLeft/timeTotal)*100)+'%';
+  if(timeLeft<=0){
+    timeLeft=0;
+    finishStage(false);
+  }
+}
+
+function cellCoordsFromXY(px,py){
+  return {cx:Math.floor(px/cellW), cy:Math.floor(py/cellH)};
+}
+
+function pos(e){
+  const r=c.getBoundingClientRect();
+  const p = e.touches? e.touches[0]:e;
+  return {x:(p.clientX-r.left)*(W/r.width), y:(p.clientY-r.top)*(H/r.height)};
+}
+
+function startDrag(e){
+  if(!active)return;
+  e.preventDefault();
+  dragging=true;
+  const p=pos(e);
+  lastPt=p;
+  dirHistory=[];
+  applyAt(p);
+}
+function moveDrag(e){
+  if(!dragging)return;
+  e.preventDefault();
+  const p=pos(e);
+  if(mode==='buff' && lastPt){
+    const dx=p.x-lastPt.x;
+    if(Math.abs(dx)>3){
+      dirHistory.push(dx>0?1:-1);
+      if(dirHistory.length>10)dirHistory.shift();
+    }
+  }
+  // interpolate along the segment so fast drags don't skip cells
+  if(lastPt){
+    const steps=Math.max(1,Math.ceil(Math.hypot(p.x-lastPt.x,p.y-lastPt.y)/6));
+    for(let i=1;i<=steps;i++){
+      applyAt({x:lastPt.x+(p.x-lastPt.x)*i/steps, y:lastPt.y+(p.y-lastPt.y)*i/steps});
+    }
+  } else {
+    applyAt(p);
+  }
+  lastPt=p;
+  draw();
+}
+function endDrag(){
+  dragging=false; lastPt=null;
+}
+
+function applyAt(p){
+  const {cx,cy}=cellCoordsFromXY(p.x,p.y);
+  const rad=1;
+  for(let dy=-rad;dy<=rad;dy++){
+    for(let dx=-rad;dx<=rad;dx++){
+      const x=cx+dx, y=cy+dy;
+      if(x<0||x>=GRID_C||y<0||y>=GRID_R)continue;
+      if(!shoeMask(x,y))continue;
+      const falloff = 1-(Math.hypot(dx,dy)/1.6);
+      if(falloff<=0)continue;
+      if(mode==='apply'){
+        polish[y][x]=Math.min(1,polish[y][x]+0.09*falloff);
+      } else {
+        // buffing requires reversing direction to count as effective; measured via dirHistory changes
+        const changes = countDirChanges();
+        const rate = changes>=2? 0.05:0.012;
+        buff[y][x]=Math.min(1.3,buff[y][x]+rate*falloff);
+      }
+    }
+  }
+}
+
+function countDirChanges(){
+  let c2=0;
+  for(let i=1;i<dirHistory.length;i++) if(dirHistory[i]!==dirHistory[i-1]) c2++;
+  return c2;
+}
+
+c.addEventListener('mousedown',startDrag);
+c.addEventListener('touchstart',startDrag,{passive:false});
+window.addEventListener('mousemove',moveDrag);
+c.addEventListener('touchmove',moveDrag,{passive:false});
+window.addEventListener('mouseup',endDrag);
+c.addEventListener('touchend',endDrag,{passive:false});
+
+// keyboard support: arrow keys move a virtual applicator over the grid
+let kx=2,ky=Math.floor(GRID_R/2);
+document.addEventListener('keydown',e=>{
+  if(!active)return;
+  let moved=false;
+  if(e.code==='ArrowRight'){kx=Math.min(GRID_C-1,kx+1);moved=true; if(mode==='buff'){dirHistory.push(1);if(dirHistory.length>10)dirHistory.shift();}}
+  else if(e.code==='ArrowLeft'){kx=Math.max(0,kx-1);moved=true; if(mode==='buff'){dirHistory.push(-1);if(dirHistory.length>10)dirHistory.shift();}}
+  else if(e.code==='ArrowUp'){ky=Math.max(0,ky-1);moved=true;}
+  else if(e.code==='ArrowDown'){ky=Math.min(GRID_R-1,ky+1);moved=true;}
+  if(moved){ e.preventDefault(); applyAt({x:(kx+0.5)*cellW,y:(ky+0.5)*cellH}); draw(); }
+});
+
+function coverageStats(){
+  let total=0, covered=0, sum=0;
+  for(let y=0;y<GRID_R;y++)for(let x=0;x<GRID_C;x++){
+    if(!shoeMask(x,y))continue;
+    total++; sum+=polish[y][x];
+    if(polish[y][x]>=0.55)covered++;
+  }
+  return {pct: total? covered/total:0, avg: total? sum/total:0};
+}
+function buffStats(){
+  let total=0, shined_=0, worn=0;
+  for(let y=0;y<GRID_R;y++)for(let x=0;x<GRID_C;x++){
+    if(!shoeMask(x,y))continue;
+    total++;
+    if(buff[y][x]>=0.5 && buff[y][x]<1.05)shined_++;
+    if(buff[y][x]>=1.05)worn++;
+  }
+  return {pct: total? shined_/total:0, wornPct: total? worn/total:0};
+}
+
+function finishStage(timedOut){
+  active=false;
+  clearInterval(timerId);
+  if(mode==='apply'){
+    const s=coverageStats();
+    if(s.pct>=0.75){
+      SFX.point();
+      setStatus(I18N.t('ss_apply_done','Nice even coat! Now buff it to a shine.'));
+    } else {
+      SFX.error();
+      setStatus(I18N.t('ss_apply_weak','Uneven coverage — buffing will be tougher.'));
+    }
+    setTimeout(()=>{
+      mode='buff';
+      const st=settingsForLevel(level);
+      timeTotal=st.timeBuff; timeLeft=timeTotal;
+      active=true;
+      setModeLabel();
+      setStatus(I18N.t('ss_buff_go',"Buff briskly back-and-forth — don't overdo any one spot!"));
+      clearInterval(timerId);
+      timerId=setInterval(tick,100);
+      draw();
+    },1200);
+  } else {
+    evaluateShoe();
+  }
+}
+
+function evaluateShoe(){
+  const cov=coverageStats();
+  const bf=buffStats();
+  const good = cov.pct>=0.7 && bf.pct>=0.55 && bf.wornPct<0.15;
+  if(good){
+    SFX.win();
+    shined++; batchGood++;
+    localStorage.setItem('shoeshining_shined',shined);
+    if(shined>best){ best=shined; localStorage.setItem('shoeshining_best',best); }
+    setStatus(I18N.t('ss_shoe_good','Beautiful shine! Shoe complete.'));
+  } else if(bf.wornPct>=0.15){
+    SFX.error();
+    setStatus(I18N.t('ss_shoe_worn','Over-buffed in spots — you wore through the polish.'));
+  } else {
+    SFX.error();
+    setStatus(I18N.t('ss_shoe_dull','Still a bit dull in places — not quite ready.'));
+  }
+  updateStats();
+  draw();
+  shoeIndex++;
+  if(shoeIndex>=BATCH_SIZE){
+    setTimeout(endBatch,900);
+  } else {
+    document.getElementById('nextBtn').style.display='inline-block';
+  }
+}
+
+document.getElementById('nextBtn').onclick=()=>{
+  document.getElementById('nextBtn').style.display='none';
+  newShoe();
+};
+
+function endBatch(){
+  gameOver=true;
+  if(batchGood>=Math.ceil(BATCH_SIZE*0.6)){
+    setStatus(I18N.t('ss_batch_done','Batch complete: {n}/{m} shoes shined! Next batch, less time.').replace('{n}',batchGood).replace('{m}',BATCH_SIZE));
+    level++;
+    setTimeout(()=>{ shoeIndex=0; batchGood=0; newShoe(); },1800);
+  } else {
+    SFX.lose();
+    setStatus(I18N.t('ss_batch_fail','Batch failed — too many shoes left unfinished.'));
+    document.getElementById('restartBtn').style.display='inline-block';
+  }
+}
+
+document.getElementById('restartBtn').onclick=()=>{
+  level=1; shoeIndex=0; batchGood=0;
+  document.getElementById('restartBtn').style.display='none';
+  newShoe();
+};
+
+function updateStats(){
+  document.getElementById('stats').textContent = I18N.t('ss_stats','Shoes shined: {n} | Best: {b}').replace('{n}',shined).replace('{b}',best);
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#241c14';ctx.fillRect(0,0,W,H);
+  for(let y=0;y<GRID_R;y++){
+    for(let x=0;x<GRID_C;x++){
+      if(!shoeMask(x,y))continue;
+      let col;
+      if(mode==='apply'){
+        const v=polish[y][x];
+        const g=Math.round(60+v*70), r2=Math.round(40+v*40);
+        col=`rgb(${r2},${g/2+20},${20})`;
+        col = v<=0? '#3a2e1e' : `rgba(${120+v*60},${70+v*40},${20+v*20},1)`;
+      } else {
+        const b=Math.min(1,buff[y][x]);
+        const worn=buff[y][x]>1.05;
+        if(worn){ col='#5a3a3a'; }
+        else { col=`rgba(${140+b*90},${100+b*100},${50+b*130},1)`; }
+      }
+      ctx.fillStyle=col;
+      ctx.fillRect(x*cellW,y*cellH,cellW-1,cellH-1);
+    }
+  }
+  // outline
+  ctx.strokeStyle='#0c0d14';ctx.lineWidth=2;
+  ctx.strokeRect(1,1,W-2,H-2);
+
+  if(mode==='buff'){
+    ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='left';
+    ctx.fillText(I18N.t('ss_coverage_label','Coverage {c}% | Shine {s}%').replace('{c}',Math.round(coverageStats().pct*100)).replace('{s}',Math.round(buffStats().pct*100)),8,H-6);
+  } else {
+    ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='left';
+    ctx.fillText(I18N.t('ss_coverage_only','Coverage {c}%').replace('{c}',Math.round(coverageStats().pct*100)),8,H-6);
+  }
+}
+
+updateStats();
+newShoe();
+setInterval(()=>{ if(active) draw(); },80);
+</script></body></html>

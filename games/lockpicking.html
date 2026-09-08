@@ -1,0 +1,221 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Lock Picking</title><meta name="description" content="Play Lock Picking free online — Hold Tension to apply steady pressure, then click each pin in order and release the pick right when it clicks into place. Too much tension too early resets the pins!"><link rel="canonical" href="https://games.multiportllc.com/games/lockpicking"><meta property="og:title" content="Lock Picking - Multiport Games"><meta property="og:description" content="Play Lock Picking free online — Hold Tension to apply steady pressure, then click each pin in order and release the pick right when it clicks into place. Too much tension too early resets the pins!"><meta property="og:url" content="https://games.multiportllc.com/games/lockpicking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Lock Picking","description":"Play Lock Picking free online instantly. Hold Tension to apply steady pressure, then click each pin in order and release the pick right when it clicks into place. Too much tension too early resets the pins! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/lockpicking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:18px;text-align:center;color:#fff}
+#hud{display:flex;justify-content:space-between;max-width:640px;margin:0 auto 10px;font-weight:700;color:#ffd54f;flex-wrap:wrap;gap:6px}
+#timeBar{max-width:640px;margin:0 auto 10px;height:10px;background:#222;border-radius:6px;overflow:hidden}
+#timeFill{height:100%;background:linear-gradient(90deg,#4caf50,#ffd54f,#e94560);width:100%;transition:width .1s linear}
+canvas{display:block;margin:0 auto;background:#0d0d18;border-radius:10px;touch-action:none}
+#status{font-size:1.05rem;font-weight:800;min-height:1.6em;margin:10px 0}
+#tensionBtn{padding:14px 30px;background:#3a7bd5;border:none;border-radius:24px;color:#fff;cursor:pointer;font-size:1.05rem;font-weight:800;user-select:none;touch-action:none}
+#tensionBtn.active{background:#ffd54f;color:#222}
+#tensionBtn:disabled{opacity:.4}
+#controls{margin-top:12px}
+#newLockBtn{padding:10px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:6px;font-weight:700}
+#newLockBtn:disabled{opacity:.35;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Lock Picking</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span id="roundLabel">Lock 1</span><span id="scoreLabel">Score: 0 | Best: 0</span></div>
+      <div id="timeBar"><div id="timeFill"></div></div>
+      <canvas id="lockCanvas" width="600" height="180"></canvas>
+      <div id="status">Hold Tension steady, then click each pin in order (left to right) to pick it.</div>
+      <button id="tensionBtn">Hold Tension</button>
+      <div id="controls"><button id="newLockBtn">New Lock</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press and hold <b>Hold Tension</b> (or hold the <b>T</b> key) to apply steady pressure to the lock. While holding tension, click each <b>pin</b> in order from left to right — a pin flashes green and gives a soft click cue when it's set correctly. Applying tension too hard before any pin is picked, or picking out of order, springs the pins back and you must start the lock over. Pick every pin before the timer runs out to open the lock. Each round adds more pins and a tighter timer!</div>
+</div>
+<script>
+let round=1,score=0,best=parseInt(localStorage.getItem('lockpicking_best')||'0',10);
+let pinCount,pinSet,curPin,tensionHeld,timeLeft,timeLimit,rafId,lastT,locked,gameActive;
+
+const canvas=document.getElementById('lockCanvas'),ctx=canvas.getContext('2d');
+const statusEl=document.getElementById('status');
+const scoreLabel=document.getElementById('scoreLabel');
+const roundLabel=document.getElementById('roundLabel');
+const tensionBtn=document.getElementById('tensionBtn');
+const newLockBtn=document.getElementById('newLockBtn');
+const timeFill=document.getElementById('timeFill');
+
+function updateScoreLabel(){
+  scoreLabel.textContent=I18N.t('score_best_label','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+}
+
+function newLock(){
+  pinCount=Math.min(4+Math.floor((round-1)/2),9);
+  pinSet=new Array(pinCount).fill(false);
+  curPin=0;
+  tensionHeld=false;
+  locked=false;
+  gameActive=true;
+  timeLimit=Math.max(9,16-round*0.6)*1000;
+  timeLeft=timeLimit;
+  lastT=null;
+  roundLabel.textContent=I18N.t('round_label','Lock {r}').replace('{r}',round);
+  statusEl.textContent=I18N.t('lock_intro','Hold tension, then pick pin 1.');
+  tensionBtn.disabled=false;
+  newLockBtn.disabled=true;
+  draw();
+  if(rafId)cancelAnimationFrame(rafId);
+  rafId=requestAnimationFrame(tick);
+}
+
+function pinX(i){
+  const pad=50,usable=canvas.width-pad*2;
+  return pad + usable*(i/(pinCount-1||1));
+}
+
+function draw(){
+  const w=canvas.width,h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+  // lock body
+  ctx.fillStyle='#333';
+  ctx.fillRect(20,60,w-40,60);
+  // keyway
+  ctx.fillStyle='#111';
+  ctx.fillRect(20,80,w-40,20);
+  for(let i=0;i<pinCount;i++){
+    const x=pinX(i);
+    const set=pinSet[i];
+    const isCur=i===curPin && !locked;
+    ctx.fillStyle = set ? '#4caf50' : (isCur ? '#ffd54f' : '#888');
+    ctx.fillRect(x-10,20,20,60);
+    ctx.fillStyle='#0d0d18';
+    ctx.fillRect(x-10,20,20,10);
+    if(isCur){
+      ctx.strokeStyle='#fff';ctx.lineWidth=2;
+      ctx.strokeRect(x-13,17,26,66);
+    }
+    ctx.fillStyle='#9fd8ff';
+    ctx.font='11px sans-serif';ctx.textAlign='center';
+    ctx.fillText(i+1,x,150);
+  }
+  // tension indicator
+  ctx.fillStyle=tensionHeld?'#ffd54f':'#555';
+  ctx.font='bold 13px sans-serif';
+  ctx.fillText(tensionHeld?I18N.t('tension_on','TENSION APPLIED'):I18N.t('tension_off','no tension'),w/2,170);
+}
+
+function pickPin(i){
+  if(!gameActive||locked)return;
+  if(!tensionHeld){
+    statusEl.textContent=I18N.t('need_tension','Hold tension first!');
+    SFX.error();
+    return;
+  }
+  if(i!==curPin){
+    // wrong order / already-set pin clicked -> spring reset
+    springReset(I18N.t('wrong_order','Wrong pin order — pins sprang back!'));
+    return;
+  }
+  pinSet[i]=true;
+  curPin++;
+  SFX.tick();
+  draw();
+  if(curPin>=pinCount){
+    openLock();
+  } else {
+    statusEl.textContent=I18N.t('pin_set','Pin {n} set! Pick pin {m} next.').replace('{n}',i+1).replace('{m}',curPin+1);
+  }
+}
+
+function springReset(msg){
+  pinSet=new Array(pinCount).fill(false);
+  curPin=0;
+  tensionHeld=false;
+  statusEl.textContent=msg;
+  SFX.hurt();
+  draw();
+}
+
+function openLock(){
+  locked=true;
+  gameActive=false;
+  score++;
+  if(score>best){best=score;localStorage.setItem('lockpicking_best',String(best));}
+  updateScoreLabel();
+  statusEl.textContent=I18N.t('lock_open','🔓 Lock opened! Great work.');
+  SFX.success();
+  tensionBtn.disabled=true;
+  newLockBtn.disabled=false;
+  if(rafId)cancelAnimationFrame(rafId);
+}
+
+function failLock(){
+  locked=true;
+  gameActive=false;
+  statusEl.textContent=I18N.t('lock_time_up',"⏰ Time's up! The lock stays shut.");
+  SFX.fail();
+  tensionBtn.disabled=true;
+  newLockBtn.disabled=false;
+  if(rafId)cancelAnimationFrame(rafId);
+}
+
+function tick(ts){
+  if(!gameActive){return;}
+  if(lastT===null)lastT=ts;
+  const dt=ts-lastT;lastT=ts;
+  timeLeft-=dt;
+  if(timeLeft<=0){
+    timeLeft=0;
+    timeFill.style.width='0%';
+    failLock();
+    return;
+  }
+  timeFill.style.width=(100*timeLeft/timeLimit)+'%';
+  rafId=requestAnimationFrame(tick);
+}
+
+function startTension(){
+  if(!gameActive||locked)return;
+  tensionHeld=true;
+  draw();
+}
+function stopTension(){
+  tensionHeld=false;
+  if(gameActive)draw();
+}
+
+tensionBtn.addEventListener('pointerdown',e=>{e.preventDefault();startTension();});
+tensionBtn.addEventListener('pointerup',e=>{e.preventDefault();stopTension();});
+tensionBtn.addEventListener('pointerleave',stopTension);
+tensionBtn.addEventListener('pointercancel',stopTension);
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='t'||e.key==='T'){ if(!e.repeat){startTension();} e.preventDefault(); }
+});
+document.addEventListener('keyup',e=>{
+  if(e.key==='t'||e.key==='T'){stopTension();}
+});
+
+canvas.addEventListener('click',e=>{
+  if(!gameActive||locked)return;
+  const rect=canvas.getBoundingClientRect();
+  const scaleX=canvas.width/rect.width;
+  const x=(e.clientX-rect.left)*scaleX;
+  let best_i=0,best_d=Infinity;
+  for(let i=0;i<pinCount;i++){
+    const d=Math.abs(pinX(i)-x);
+    if(d<best_d){best_d=d;best_i=i;}
+  }
+  if(best_d<30)pickPin(best_i);
+});
+
+newLockBtn.addEventListener('click',()=>{
+  round++;
+  newLock();
+});
+
+updateScoreLabel();
+newLock();
+</script></body></html>

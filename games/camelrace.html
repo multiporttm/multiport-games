@@ -1,0 +1,257 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Camel Race</title><meta name="description" content="Play Camel Race free online — Alternate Left/Right Arrow keys (or A/D), or tap the two side buttons on mobile, to urge your camel forward. Watch its stamina and temperament — push too hard and it refuses to run! Jump dunes and beat the pack across 3 races."><link rel="canonical" href="https://games.multiportllc.com/games/camelrace"><meta property="og:title" content="Camel Race - Multiport Games"><meta property="og:description" content="Play Camel Race free online — Alternate Left/Right Arrow keys (or A/D), or tap the two side buttons on mobile, to urge your camel forward. Watch its stamina and temperament — push too hard and it refuses to run! Jump dunes and beat the pack across 3 races."><meta property="og:url" content="https://games.multiportllc.com/games/camelrace"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Camel Race","description":"Play Camel Race free online instantly. Alternate Left/Right Arrow keys (or A/D), or tap the two side buttons on mobile, to urge your camel forward. Watch its stamina and temperament meter carefully — push too hard and it refuses to run! Jump the sand dunes and beat the pack across 3 races. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/camelrace","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#f4d9a0;display:block;border-radius:8px;touch-action:none}
+#hud{color:#fff;font-size:1rem;font-weight:700;text-align:center;padding:6px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+#meters{display:flex;justify-content:center;gap:14px;padding:0 0 8px;flex-wrap:wrap}
+.meter{width:140px}
+.meter label{color:#ddd;font-size:.75rem;display:block;text-align:center;margin-bottom:2px}
+.meterbar{height:10px;border-radius:6px;background:rgba(255,255,255,.15);overflow:hidden}
+.meterfill{height:100%;border-radius:6px;transition:width .1s}
+#touchRow{display:flex;justify-content:center;gap:16px;padding:10px 0}
+#touchRow button{width:110px;height:56px;font-size:1.4rem;border-radius:12px;border:none;background:#e94560;color:#fff;font-weight:800;touch-action:manipulation}
+@media(min-width:701px){#touchRow{display:none}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Camel Race</div>
+  <div class="game-frame">
+    <div id="hud">Race <span id="raceNum">1</span>/3 | Pos: <span id="posLabel">-</span> | Time: <span id="timeLabel">0.0</span>s | Best: <span id="bestLabel">-</span>s</div>
+    <div id="meters">
+      <div class="meter"><label data-i18n="stamina_label">Stamina</label><div class="meterbar"><div class="meterfill" id="staminaFill" style="width:100%;background:#4caf50"></div></div></div>
+      <div class="meter"><label data-i18n="temper_label">Temperament</label><div class="meterbar"><div class="meterfill" id="temperFill" style="width:50%;background:#ffd54f"></div></div></div>
+    </div>
+    <canvas id="c" width="800" height="260"></canvas>
+    <div id="touchRow">
+      <button id="btnL">◀ LEFT</button>
+      <button id="btnR">RIGHT ▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Alternate <b>Left</b>/<b>Right Arrow</b> keys (or <b>A</b>/<b>D</b>), or tap the two buttons on mobile, to urge your camel forward. Watch the stamina and temperament meters — go too hard and your camel gets stubborn and refuses to run! Jump sand dunes and beat the pack across 3 races.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=260;
+const COURSE=5000;
+const TOTAL_RACES=3;
+let raceNum=1,best=parseFloat(localStorage.getItem('camelrace_best')||'0')||0;
+document.getElementById('bestLabel').textContent=best?best.toFixed(1):'-';
+
+const ground=200;
+let player,ais,dunes,camX,raceTime,state,lastKey,stamina,temper,refusing,refuseTimer,jumpVy,jumpY,speed;
+
+function resetRace(){
+  player={progress:0};
+  speed=0;
+  stamina=100;temper=50;refusing=false;refuseTimer=0;
+  jumpY=0;jumpVy=0;
+  lastKey=null;
+  const names=['#5c4a3a','#8d6e63','#a1887f'];
+  ais=names.map((col,i)=>({progress:0,col,skill:0.55+Math.random()*0.35,phase:Math.random()*10,jumpY:0}));
+  dunes=[];
+  for(let i=0;i<10;i++)dunes.push({x:700+i*480+Math.random()*150,w:60,cleared:false});
+  camX=0;raceTime=0;state='countdown';
+  document.getElementById('raceNum').textContent=raceNum;
+  document.getElementById('posLabel').textContent='-';
+  document.getElementById('timeLabel').textContent='0.0';
+}
+resetRace();
+
+function press(side){
+  if(state==='over'){advance();return;}
+  if(state!=='racing')return;
+  if(refusing)return;
+  if(lastKey!==side){
+    lastKey=side;
+    speed=Math.min(speed+2.6,14);
+    stamina=Math.max(0,stamina-1.1);
+    temper=Math.min(100,temper+2.2);
+    SFX.click();
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','KeyA','KeyD','Space'].includes(e.code))e.preventDefault();
+  if(e.code==='ArrowLeft'||e.code==='KeyA')press('L');
+  if(e.code==='ArrowRight'||e.code==='KeyD')press('R');
+  if(e.code==='Space')doJump();
+  if(state==='over'&&!['ArrowLeft','ArrowRight','KeyA','KeyD','Space'].includes(e.code))advance();
+});
+document.getElementById('btnL').addEventListener('pointerdown',e=>{e.preventDefault();press('L');});
+document.getElementById('btnR').addEventListener('pointerdown',e=>{e.preventDefault();press('R');});
+c.addEventListener('pointerdown',()=>{ if(state==='over')advance(); else doJump(); });
+
+function doJump(){
+  if(state!=='racing'||refusing)return;
+  if(jumpY===0)jumpVy=-9;
+}
+
+function advance(){
+  raceNum++;
+  if(raceNum>TOTAL_RACES)raceNum=1;
+  resetRace();
+}
+
+function update(dt){
+  if(state==='countdown'){
+    raceTime+=dt;
+    if(raceTime>1.4){state='racing';raceTime=0;}
+    return;
+  }
+  if(state!=='racing')return;
+  raceTime+=dt;
+
+  // temperament: too high triggers a refusal
+  if(!refusing&&temper>85&&Math.random()<0.02){
+    refusing=true;refuseTimer=1+Math.random()*1.2;
+    SFX.error();
+  }
+  if(refusing){
+    refuseTimer-=dt;
+    speed=Math.max(0,speed-8*dt);
+    if(refuseTimer<=0){refusing=false;temper=40;}
+  } else {
+    speed=Math.max(0,speed-3.2*dt);
+    temper=Math.max(0,temper-6*dt);
+  }
+  if(stamina<=0)speed=Math.min(speed,3);
+  stamina=Math.min(100,stamina+3*dt);
+
+  // dune jump physics
+  if(jumpY!==0||jumpVy!==0){
+    jumpVy+=28*dt;
+    jumpY+=jumpVy*dt*20;
+    if(jumpY>0){jumpY=0;jumpVy=0;}
+  }
+
+  player.progress+=speed*dt*20;
+  camX=player.progress;
+
+  // dune collision (must be jumping over it)
+  dunes.forEach(d=>{
+    const sx=d.x-camX;
+    if(!d.cleared&&sx>-30&&sx<40){
+      if(jumpY>-14){
+        d.cleared=true;
+        speed=Math.max(0,speed-5);
+        stamina=Math.max(0,stamina-8);
+        SFX.hit();
+      } else {
+        d.cleared=true;
+      }
+    }
+  });
+
+  ais.forEach(a=>{
+    const wobble=0.7+0.3*Math.sin(raceTime*2+a.phase);
+    let sp=6*a.skill*wobble;
+    if(Math.random()<0.01*dt*60)sp*=0.3; // occasional AI stumble
+    a.progress+=sp*dt*20;
+  });
+
+  if(player.progress>=COURSE)finishRace();
+
+  document.getElementById('staminaFill').style.width=stamina+'%';
+  document.getElementById('staminaFill').style.background=stamina<30?'#e53935':'#4caf50';
+  document.getElementById('temperFill').style.width=temper+'%';
+  document.getElementById('temperFill').style.background=temper>75?'#e53935':'#ffd54f';
+}
+
+function finishRace(){
+  state='over';
+  const ranks=[{who:'you',p:player.progress}].concat(ais.map((a,i)=>({who:'ai'+i,p:a.progress})));
+  ranks.sort((x,y)=>y.p-x.p);
+  const pos=ranks.findIndex(r=>r.who==='you')+1;
+  document.getElementById('posLabel').textContent=pos+'/'+(ais.length+1);
+  document.getElementById('timeLabel').textContent=raceTime.toFixed(1);
+  if(pos===1){
+    SFX.win();
+    if(!best||raceTime<best){best=raceTime;localStorage.setItem('camelrace_best',best.toFixed(2));document.getElementById('bestLabel').textContent=best.toFixed(1);}
+  }else{
+    SFX.lose();
+  }
+}
+
+function drawCamel(x,y,col,jy,legPhase,label){
+  ctx.save();ctx.translate(x,y+jy);
+  ctx.fillStyle=col;
+  ctx.beginPath();ctx.ellipse(0,0,26,14,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(-6,-14,10,10,0,0,Math.PI*2);ctx.fill(); // hump
+  ctx.fillRect(20,-16,8,18); // neck
+  ctx.beginPath();ctx.ellipse(30,-18,8,7,0,0,Math.PI*2);ctx.fill(); // head
+  const lf=Math.sin(legPhase)*6;
+  ctx.strokeStyle=col;ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(-14,10);ctx.lineTo(-14+lf,22);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(10,10);ctx.lineTo(10-lf,22);ctx.stroke();
+  if(label){ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';ctx.fillText(label,0,-32);}
+  ctx.restore();
+}
+
+function drawDune(d){
+  const sx=d.x-camX;
+  if(sx<-80||sx>W+80)return;
+  ctx.fillStyle='#e0b878';
+  ctx.beginPath();
+  ctx.moveTo(sx-40,ground+10);
+  ctx.quadraticCurveTo(sx,ground-45,sx+40,ground+10);
+  ctx.fill();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#ffd699');sky.addColorStop(1,'#f4d9a0');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // sun
+  ctx.fillStyle='#fff59d';ctx.beginPath();ctx.arc(680,50,36,0,Math.PI*2);ctx.fill();
+  // ground
+  ctx.fillStyle='#e8c48a';ctx.fillRect(0,ground+10,W,H-ground-10);
+  dunes.forEach(drawDune);
+  // finish line
+  const finSx=COURSE-camX;
+  if(finSx<W+30)  {
+    ctx.fillStyle='#fff';ctx.fillRect(finSx,ground-60,4,70);
+    ctx.font='24px Arial';ctx.fillText('🏁',finSx-10,ground-60);
+  }
+  ais.forEach((a,i)=>{
+    drawCamel(a.progress-camX,ground-4,a.col,a.jumpY,raceTime*4+a.phase,null);
+  });
+  drawCamel(player.progress-camX,ground-4+jumpY,'#4a3728',0,raceTime*4,'YOU');
+
+  if(state==='countdown'){
+    ctx.fillStyle='#333';ctx.font='bold 48px Arial';ctx.textAlign='center';
+    const n=Math.max(1,3-Math.floor(raceTime/0.45));
+    ctx.fillText(I18N.t('get_ready',n>0?String(n):'GO!'),W/2,H/2);
+  }
+  if(refusing){
+    ctx.fillStyle='#e53935';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('camel_refuses','Your camel refuses to move!'),W/2,40);
+  }
+  if(state==='over'){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('race_finished','Race Finished!'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('tap_next','Tap / press any key for next race'),W/2,H/2+20);
+  }
+  document.getElementById('timeLabel').textContent=raceTime.toFixed(1);
+}
+
+let last=null;
+function loop(t){
+  if(last===null)last=t;
+  const dt=Math.min((t-last)/1000,0.05);
+  last=t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

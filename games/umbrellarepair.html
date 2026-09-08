@@ -1,0 +1,247 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Umbrella Repair</title><meta name="description" content="Play Umbrella Repair free online — Drag each bent rib back onto its target angle, pump the spring to the right tension, then test the umbrella by clicking to open and close it."><link rel="canonical" href="https://games.multiportllc.com/games/umbrellarepair"><meta property="og:title" content="Umbrella Repair - Multiport Games"><meta property="og:description" content="Play Umbrella Repair free online — Drag each bent rib back onto its target angle, pump the spring to the right tension, then test the umbrella by clicking to open and close it."><meta property="og:url" content="https://games.multiportllc.com/games/umbrellarepair"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Umbrella Repair","description":"Play Umbrella Repair free online instantly. Drag each bent rib back onto its target angle, pump the spring to the right tension, then test the umbrella by clicking to open and close it. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/umbrellarepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:18px;text-align:center;color:#fff}
+#hud{display:flex;justify-content:space-between;max-width:640px;margin:0 auto 10px;font-weight:700;color:#ffd54f;flex-wrap:wrap;gap:6px}
+canvas{display:block;margin:0 auto;background:#0d0d18;border-radius:10px;touch-action:none}
+#status{font-size:1.05rem;font-weight:800;min-height:1.6em;margin:10px 0}
+#pumpWrap{max-width:420px;margin:8px auto;display:none}
+#pumpBar{height:22px;background:#222;border-radius:11px;overflow:hidden;position:relative;border:1px solid #444}
+#pumpFill{height:100%;background:linear-gradient(90deg,#3a7bd5,#4caf50);width:0%}
+#pumpTarget{position:absolute;top:0;bottom:0;width:6%;background:rgba(255,213,79,.85)}
+#pumpBtn,#testBtn,#nextBtn{padding:12px 26px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:6px;font-weight:700}
+#pumpBtn:disabled,#testBtn:disabled,#nextBtn:disabled{opacity:.35;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Umbrella Repair</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span id="roundLabel">Umbrella 1</span><span id="scoreLabel">Score: 0 | Best: 0</span></div>
+      <canvas id="ribCanvas" width="600" height="260"></canvas>
+      <div id="status">Drag each bent rib (orange) onto its target angle (dashed green line).</div>
+      <div id="pumpWrap">
+        <div>Pump the spring! Click <b>Pump</b> when the moving bar lands in the yellow zone.</div>
+        <div id="pumpBar"><div id="pumpTarget"></div><div id="pumpFill"></div></div>
+        <button id="pumpBtn">Pump</button>
+      </div>
+      <div>
+        <button id="testBtn" disabled>Test Umbrella</button>
+        <button id="nextBtn" disabled>Next Umbrella</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Each bent <b>rib</b> (orange line) needs to be dragged back to match its <b>target angle</b> (dashed green guide) — click and drag the tip of a rib around the hub until it lines up, then release. Once all ribs are aligned, the <b>spring pump</b> appears: click <b>Pump</b> each time the moving bar lands inside the yellow zone to build tension — do it enough times to fully tension the spring. Finally click <b>Test Umbrella</b> to open and close it. Any rib that's still misaligned will make it fail the test. Each round adds more bent ribs to fix!</div>
+</div>
+<script>
+let round=1,score=0,best=parseInt(localStorage.getItem('umbrellarepair_best')||'0',10);
+let ribCount,ribAngles,targetAngles,fixedMask,dragIdx=null;
+let pumpActive=false,pumpProgress=0,pumpsNeeded=0,pumpsDone=0,pumpX=0,pumpDir=1,pumpTargetCenter=0,pumpRaf=null;
+let phase='ribs'; // ribs -> pump -> test -> done
+
+const canvas=document.getElementById('ribCanvas'),ctx=canvas.getContext('2d');
+const statusEl=document.getElementById('status');
+const scoreLabel=document.getElementById('scoreLabel');
+const roundLabel=document.getElementById('roundLabel');
+const testBtn=document.getElementById('testBtn');
+const nextBtn=document.getElementById('nextBtn');
+const pumpWrap=document.getElementById('pumpWrap');
+const pumpBtn=document.getElementById('pumpBtn');
+const pumpFill=document.getElementById('pumpFill');
+const pumpTargetEl=document.getElementById('pumpTarget');
+
+const CX=300,CY=230,LEN=170;
+const TOL=0.09; // radians tolerance ~5deg
+
+function updateScoreLabel(){
+  scoreLabel.textContent=I18N.t('score_best_label','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+}
+
+function newUmbrella(){
+  ribCount=Math.min(4+Math.floor((round-1)/2),9);
+  targetAngles=[];
+  ribAngles=[];
+  fixedMask=new Array(ribCount).fill(false);
+  const spread=Math.PI*0.85;
+  for(let i=0;i<ribCount;i++){
+    const t=-Math.PI/2 - spread/2 + spread*(i/(ribCount-1||1));
+    targetAngles.push(t);
+    const bend=(Math.random()>0.5?1:-1)*(0.25+Math.random()*0.5);
+    ribAngles.push(t+bend);
+  }
+  dragIdx=null;
+  phase='ribs';
+  pumpsNeeded=6+Math.floor(round/2);
+  pumpsDone=0;
+  pumpActive=false;
+  roundLabel.textContent=I18N.t('round_label','Umbrella {r}').replace('{r}',round);
+  statusEl.textContent=I18N.t('align_ribs_hint','Drag each bent rib onto its dashed target angle.');
+  testBtn.disabled=true;
+  nextBtn.disabled=true;
+  pumpWrap.style.display='none';
+  if(pumpRaf)cancelAnimationFrame(pumpRaf);
+  draw();
+}
+
+function draw(){
+  const w=canvas.width,h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+  // hub
+  ctx.fillStyle='#555';
+  ctx.beginPath();ctx.arc(CX,CY,12,0,Math.PI*2);ctx.fill();
+  for(let i=0;i<ribCount;i++){
+    // target guide
+    const tx=CX+LEN*Math.cos(targetAngles[i]),ty=CY+LEN*Math.sin(targetAngles[i]);
+    ctx.setLineDash([6,6]);
+    ctx.strokeStyle='rgba(76,175,80,.8)';
+    ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(CX,CY);ctx.lineTo(tx,ty);ctx.stroke();
+    ctx.setLineDash([]);
+    // rib
+    const a=ribAngles[i];
+    const rx=CX+LEN*Math.cos(a),ry=CY+LEN*Math.sin(a);
+    const good=fixedMask[i];
+    ctx.strokeStyle=good?'#4caf50':'#ff9800';
+    ctx.lineWidth=5;
+    ctx.beginPath();ctx.moveTo(CX,CY);ctx.lineTo(rx,ry);ctx.stroke();
+    ctx.fillStyle=good?'#4caf50':'#ff9800';
+    ctx.beginPath();ctx.arc(rx,ry,8,0,Math.PI*2);ctx.fill();
+  }
+}
+
+function angleOf(x,y){ return Math.atan2(y-CY,x-CX); }
+function angDiff(a,b){
+  let d=a-b;
+  while(d>Math.PI)d-=2*Math.PI;
+  while(d<-Math.PI)d+=2*Math.PI;
+  return Math.abs(d);
+}
+
+function pointerPos(e){
+  const rect=canvas.getBoundingClientRect();
+  const scaleX=canvas.width/rect.width,scaleY=canvas.height/rect.height;
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*scaleX,y:(cy-rect.top)*scaleY};
+}
+
+function findNearestRib(x,y){
+  let bi=-1,bd=Infinity;
+  for(let i=0;i<ribCount;i++){
+    const a=ribAngles[i];
+    const rx=CX+LEN*Math.cos(a),ry=CY+LEN*Math.sin(a);
+    const d=Math.hypot(rx-x,ry-y);
+    if(d<bd){bd=d;bi=i;}
+  }
+  return bd<50?bi:-1;
+}
+
+function startDrag(e){
+  if(phase!=='ribs')return;
+  const p=pointerPos(e);
+  const i=findNearestRib(p.x,p.y);
+  if(i>=0){dragIdx=i;e.preventDefault();}
+}
+function moveDrag(e){
+  if(dragIdx===null)return;
+  const p=pointerPos(e);
+  ribAngles[dragIdx]=angleOf(p.x,p.y);
+  e.preventDefault();
+  draw();
+}
+function endDrag(){
+  if(dragIdx===null)return;
+  const i=dragIdx;
+  if(angDiff(ribAngles[i],targetAngles[i])<TOL){
+    ribAngles[i]=targetAngles[i];
+    fixedMask[i]=true;
+    SFX.click();
+  } else {
+    SFX.tick();
+  }
+  dragIdx=null;
+  draw();
+  if(fixedMask.every(Boolean)){
+    statusEl.textContent=I18N.t('ribs_done_hint','All ribs aligned! Now tension the spring.');
+    startPump();
+  } else {
+    statusEl.textContent=I18N.t('ribs_progress_hint','Rib aligned! Fix the remaining bent ribs.');
+  }
+}
+
+canvas.addEventListener('mousedown',startDrag);
+canvas.addEventListener('mousemove',moveDrag);
+window.addEventListener('mouseup',endDrag);
+canvas.addEventListener('touchstart',startDrag,{passive:false});
+canvas.addEventListener('touchmove',moveDrag,{passive:false});
+canvas.addEventListener('touchend',endDrag);
+
+function startPump(){
+  phase='pump';
+  pumpWrap.style.display='block';
+  pumpX=0;pumpDir=1;
+  pumpTargetCenter=20+Math.random()*60;
+  pumpTargetEl.style.left=(pumpTargetCenter-3)+'%';
+  pumpAnim();
+}
+function pumpAnim(){
+  pumpX+=pumpDir*1.6;
+  if(pumpX>=100){pumpX=100;pumpDir=-1;}
+  if(pumpX<=0){pumpX=0;pumpDir=1;}
+  pumpFill.style.width=pumpX+'%';
+  pumpRaf=requestAnimationFrame(pumpAnim);
+}
+pumpBtn.addEventListener('click',()=>{
+  if(phase!=='pump')return;
+  if(Math.abs(pumpX-pumpTargetCenter)<8){
+    pumpsDone++;
+    SFX.coin();
+    pumpTargetCenter=15+Math.random()*70;
+    pumpTargetEl.style.left=(pumpTargetCenter-3)+'%';
+    if(pumpsDone>=pumpsNeeded){
+      cancelAnimationFrame(pumpRaf);
+      pumpWrap.style.display='none';
+      phase='test';
+      testBtn.disabled=false;
+      statusEl.textContent=I18N.t('spring_ready_hint','Spring fully tensioned! Click Test Umbrella.');
+    } else {
+      statusEl.textContent=I18N.t('pump_progress','Good pump! {n}/{m} tensioned.').replace('{n}',pumpsDone).replace('{m}',pumpsNeeded);
+    }
+  } else {
+    SFX.error();
+    statusEl.textContent=I18N.t('pump_miss','Missed the zone — try to time the next pump!');
+  }
+});
+
+testBtn.addEventListener('click',()=>{
+  if(phase!=='test')return;
+  const ok=fixedMask.every(Boolean);
+  phase='done';
+  testBtn.disabled=true;
+  if(ok){
+    score++;
+    if(score>best){best=score;localStorage.setItem('umbrellarepair_best',String(best));}
+    statusEl.textContent=I18N.t('umbrella_success','☂️ It opens and closes smoothly — repaired!');
+    SFX.success();
+  } else {
+    statusEl.textContent=I18N.t('umbrella_fail','❌ It snags and won\'t open right — repair failed.');
+    SFX.fail();
+  }
+  updateScoreLabel();
+  nextBtn.disabled=false;
+});
+
+nextBtn.addEventListener('click',()=>{
+  round++;
+  newUmbrella();
+});
+
+updateScoreLabel();
+newUmbrella();
+</script></body></html>

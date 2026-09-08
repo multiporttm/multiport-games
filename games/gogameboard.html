@@ -1,0 +1,305 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Go Game Board</title><meta name="description" content="Play Go Game Board free online — Click an intersection on the 9×9 board to place your black stone. Surround the AI's white stones to capture them. Pass when you have no good move. When both players pass, territory is scored and the winner declared."><link rel="canonical" href="https://games.multiportllc.com/games/gogameboard"><meta property="og:title" content="Go Game Board - Multiport Games"><meta property="og:description" content="Play Go Game Board free online — Click an intersection on the 9×9 board to place your black stone. Surround the AI's white stones to capture them. Pass when you have no good move. When both players pass, territory is scored and the winner declared."><meta property="og:url" content="https://games.multiportllc.com/games/gogameboard"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Go Game Board","description":"Play Go Game Board free online instantly. Click an intersection on the 9×9 board to place your black stone. Surround the AI's white stones to capture them, using standard Go capture rules. Pass when you have no good move; when both players pass, territory is scored and the winner declared. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/gogameboard","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#dcb35c;border-radius:14px;padding:16px;text-align:center;max-width:520px;margin:0 auto}
+#status{color:#2b1c0e;font-size:1rem;font-weight:800;margin:4px 0 10px;min-height:1.4em}
+#board{margin:0 auto;background:#dcb35c;touch-action:manipulation}
+#controls{margin:12px 0;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+#controls button{padding:9px 20px;background:#2b1c0e;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+#scoreRow{color:#2b1c0e;font-weight:700;margin-top:8px;font-size:.95rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Go Game Board</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="status">Your move (Black)</div>
+      <canvas id="board" width="450" height="450"></canvas>
+      <div id="controls">
+        <button id="passBtn">Pass</button>
+        <button id="newBtn">New Game</button>
+      </div>
+      <div id="scoreRow">Wins: <span id="winsLabel">0</span> | Losses: <span id="lossesLabel">0</span></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click an intersection on the 9×9 board to place your <b>black</b> stone. Surround the AI's white stones (removing all their liberties) to capture them, using standard Go capture rules — the AI will try to capture yours too! Click <b>Pass</b> if you have no good move; when both players pass in a row, territory is scored and the winner is declared.</div>
+</div>
+<script>
+const N=9;
+const canvas=document.getElementById('board'),ctx=canvas.getContext('2d');
+const SIZE=450,PAD=30,CELL=(SIZE-2*PAD)/(N-1);
+const EMPTY=0,BLACK=1,WHITE=2;
+let board,turn,passes,gameOver,captures,lastMoveMark,history;
+let wins=parseInt(localStorage.getItem('gogameboard_wins')||'0'),losses=parseInt(localStorage.getItem('gogameboard_losses')||'0');
+document.getElementById('winsLabel').textContent=wins;
+document.getElementById('lossesLabel').textContent=losses;
+
+function newGame(){
+  board=Array.from({length:N},()=>Array(N).fill(EMPTY));
+  turn=BLACK;passes=0;gameOver=false;
+  captures={black:0,white:0};
+  lastMoveMark=null;
+  history=[];
+  setStatus(I18N.t('your_move','Your move (Black)'));
+  document.getElementById('passBtn').disabled=false;
+  render();
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function coordToPix(i){return PAD+i*CELL;}
+function pixToCoord(px){return Math.round((px-PAD)/CELL);}
+
+function neighbors(x,y){
+  const r=[];
+  if(x>0)r.push([x-1,y]);
+  if(x<N-1)r.push([x+1,y]);
+  if(y>0)r.push([x,y-1]);
+  if(y<N-1)r.push([x,y+1]);
+  return r;
+}
+
+function groupAndLiberties(x,y,b){
+  const color=b[y][x];
+  const seen=new Set();
+  const stack=[[x,y]];
+  const group=[];
+  let liberties=0;
+  const libSeen=new Set();
+  while(stack.length){
+    const [cx,cy]=stack.pop();
+    const key=cx+','+cy;
+    if(seen.has(key))continue;
+    seen.add(key);
+    group.push([cx,cy]);
+    neighbors(cx,cy).forEach(([nx,ny])=>{
+      const v=b[ny][nx];
+      if(v===EMPTY){
+        const lk=nx+','+ny;
+        if(!libSeen.has(lk)){libSeen.add(lk);liberties++;}
+      } else if(v===color){
+        const gk=nx+','+ny;
+        if(!seen.has(gk))stack.push([nx,ny]);
+      }
+    });
+  }
+  return {group,liberties};
+}
+
+function removeGroup(b,group){
+  group.forEach(([x,y])=>{b[y][x]=EMPTY;});
+}
+
+// returns new board after move, or null if illegal. Also returns capture count.
+function tryMove(b,x,y,color){
+  if(b[y][x]!==EMPTY)return null;
+  const nb=b.map(row=>row.slice());
+  nb[y][x]=color;
+  const opp=color===BLACK?WHITE:BLACK;
+  let captured=0;
+  neighbors(x,y).forEach(([nx,ny])=>{
+    if(nb[ny][nx]===opp){
+      const {group,liberties}=groupAndLiberties(nx,ny,nb);
+      if(liberties===0){captured+=group.length;removeGroup(nb,group);}
+    }
+  });
+  // suicide check
+  const {liberties}=groupAndLiberties(x,y,nb);
+  if(liberties===0&&captured===0)return null;
+  return {board:nb,captured};
+}
+
+function boardKey(b){return b.map(r=>r.join('')).join('|');}
+
+function playerMove(x,y){
+  if(gameOver||turn!==BLACK)return;
+  const res=tryMove(board,x,y,BLACK);
+  if(!res){SFX.error();return;}
+  // simple ko rule: disallow recreating previous board state
+  const key=boardKey(res.board);
+  if(history.length&&history[history.length-1]===boardKey(board)){}
+  board=res.board;
+  captures.black+=res.captured;
+  history.push(key);
+  passes=0;
+  lastMoveMark={x,y};
+  SFX.click();
+  if(res.captured>0)SFX.coin();
+  render();
+  turn=WHITE;
+  setStatus(I18N.t('ai_thinking','AI is thinking...'));
+  setTimeout(aiMove,350);
+}
+
+function scoreBoardArea(b){
+  // flood fill empty regions, count territory if bordered by only one color
+  const visited=Array.from({length:N},()=>Array(N).fill(false));
+  let blackTerr=0,whiteTerr=0;
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    if(b[y][x]!==EMPTY||visited[y][x])continue;
+    const stack=[[x,y]];
+    const region=[];
+    const borders=new Set();
+    visited[y][x]=true;
+    while(stack.length){
+      const [cx,cy]=stack.pop();
+      region.push([cx,cy]);
+      neighbors(cx,cy).forEach(([nx,ny])=>{
+        if(b[ny][nx]===EMPTY){
+          if(!visited[ny][nx]){visited[ny][nx]=true;stack.push([nx,ny]);}
+        } else {
+          borders.add(b[ny][nx]);
+        }
+      });
+    }
+    if(borders.size===1){
+      if(borders.has(BLACK))blackTerr+=region.length;
+      else whiteTerr+=region.length;
+    }
+  }
+  return {blackTerr,whiteTerr};
+}
+
+// Heuristic AI: 1) capture any opponent group in atari, 2) save own group in atari,
+// 3) play adjacent to opponent stones to reduce liberties / build territory, 4) random legal fallback.
+function aiMove(){
+  if(gameOver)return;
+  let best=null,bestScore=-Infinity;
+  const candidates=[];
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    if(board[y][x]===EMPTY)candidates.push([x,y]);
+  }
+  for(const [x,y] of candidates){
+    const res=tryMove(board,x,y,WHITE);
+    if(!res)continue;
+    let score=Math.random()*2;
+    score+=res.captured*12;
+    // prefer moves that reduce liberties of adjacent black groups
+    neighbors(x,y).forEach(([nx,ny])=>{
+      if(board[ny][nx]===BLACK){
+        const {liberties}=groupAndLiberties(nx,ny,board);
+        if(liberties<=2)score+=6-liberties*2;
+      }
+      if(board[ny][nx]===WHITE)score+=1.2; // connect to own stones
+    });
+    // avoid self-atari
+    const {liberties:ownLib}=groupAndLiberties(x,y,res.board);
+    if(ownLib<=1)score-=8;
+    // slight preference for center / avoiding edges early
+    const distEdge=Math.min(x,y,N-1-x,N-1-y);
+    score+=distEdge*0.4;
+    if(score>bestScore){bestScore=score;best=[x,y];}
+  }
+  if(!best||bestScore<0.4&&candidates.length<N*N-6&&Math.random()<0.15){
+    // AI passes
+    passes++;
+    setStatus(I18N.t('ai_passed','AI passes.'));
+    if(passes>=2){endGame();return;}
+    turn=BLACK;
+    setStatus(I18N.t('your_move','Your move (Black)'));
+    return;
+  }
+  const [x,y]=best;
+  const res=tryMove(board,x,y,WHITE);
+  board=res.board;
+  captures.white+=res.captured;
+  history.push(boardKey(board));
+  passes=0;
+  lastMoveMark={x,y};
+  if(res.captured>0)SFX.coin(); else SFX.click();
+  render();
+  turn=BLACK;
+  setStatus(I18N.t('your_move','Your move (Black)'));
+}
+
+function passMove(){
+  if(gameOver||turn!==BLACK)return;
+  passes++;
+  lastMoveMark=null;
+  SFX.click();
+  if(passes>=2){endGame();return;}
+  turn=WHITE;
+  setStatus(I18N.t('ai_thinking','AI is thinking...'));
+  setTimeout(aiMove,300);
+}
+
+function endGame(){
+  gameOver=true;
+  document.getElementById('passBtn').disabled=true;
+  const {blackTerr,whiteTerr}=scoreBoardArea(board);
+  const blackScore=blackTerr+captures.black;
+  const whiteScore=whiteTerr+captures.white+6.5; // komi
+  let msg;
+  if(blackScore>whiteScore){
+    wins++;localStorage.setItem('gogameboard_wins',wins);
+    document.getElementById('winsLabel').textContent=wins;
+    msg=I18N.t('you_win','You win! {b} - {w}').replace('{b}',blackScore).replace('{w}',whiteScore.toFixed(1));
+    SFX.win();
+  } else {
+    losses++;localStorage.setItem('gogameboard_losses',losses);
+    document.getElementById('lossesLabel').textContent=losses;
+    msg=I18N.t('you_lose','AI wins. {b} - {w}').replace('{b}',blackScore).replace('{w}',whiteScore.toFixed(1));
+    SFX.lose();
+  }
+  setStatus(msg);
+  render();
+}
+
+function render(){
+  ctx.clearRect(0,0,SIZE,SIZE);
+  ctx.fillStyle='#dcb35c';ctx.fillRect(0,0,SIZE,SIZE);
+  ctx.strokeStyle='#3a2a12';ctx.lineWidth=1.5;
+  for(let i=0;i<N;i++){
+    const p=coordToPix(i);
+    ctx.beginPath();ctx.moveTo(PAD,p);ctx.lineTo(SIZE-PAD,p);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(p,PAD);ctx.lineTo(p,SIZE-PAD);ctx.stroke();
+  }
+  // star points for 9x9
+  const stars=[2,4,6];
+  ctx.fillStyle='#3a2a12';
+  stars.forEach(sx=>stars.forEach(sy=>{
+    ctx.beginPath();ctx.arc(coordToPix(sx),coordToPix(sy),3,0,Math.PI*2);ctx.fill();
+  }));
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    if(board[y][x]===EMPTY)continue;
+    const px=coordToPix(x),py=coordToPix(y);
+    const grad=ctx.createRadialGradient(px-3,py-3,1,px,py,CELL*0.42);
+    if(board[y][x]===BLACK){
+      grad.addColorStop(0,'#555');grad.addColorStop(1,'#000');
+    } else {
+      grad.addColorStop(0,'#fff');grad.addColorStop(1,'#ccc');
+    }
+    ctx.fillStyle=grad;
+    ctx.beginPath();ctx.arc(px,py,CELL*0.42,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.4)';ctx.lineWidth=1;ctx.stroke();
+  }
+  if(lastMoveMark){
+    const px=coordToPix(lastMoveMark.x),py=coordToPix(lastMoveMark.y);
+    ctx.strokeStyle='#e94560';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(px,py,CELL*0.18,0,Math.PI*2);ctx.stroke();
+  }
+}
+
+canvas.addEventListener('click',e=>{
+  if(gameOver)return;
+  const r=canvas.getBoundingClientRect();
+  const px=(e.clientX-r.left)*(SIZE/r.width);
+  const py=(e.clientY-r.top)*(SIZE/r.height);
+  const x=pixToCoord(px),y=pixToCoord(py);
+  if(x<0||x>=N||y<0||y>=N)return;
+  if(Math.abs(coordToPix(x)-px)>CELL*0.45||Math.abs(coordToPix(y)-py)>CELL*0.45)return;
+  playerMove(x,y);
+});
+
+document.getElementById('passBtn').addEventListener('click',passMove);
+document.getElementById('newBtn').addEventListener('click',newGame);
+
+newGame();
+</script></body></html>

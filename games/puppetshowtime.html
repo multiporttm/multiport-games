@@ -1,0 +1,210 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Puppet Show Time</title><meta name="description" content="Play Puppet Show Time free online — Control the Red puppet with Arrow Keys and the Blue puppet with W A S D (or drag both on touch). Get both puppets into their marked positions exactly when the cue line reaches them to score the cue."><link rel="canonical" href="https://games.multiportllc.com/games/puppetshowtime"><meta property="og:title" content="Puppet Show Time - Multiport Games"><meta property="og:description" content="Play Puppet Show Time free online — Control the Red puppet with Arrow Keys and the Blue puppet with W A S D (or drag both on touch). Get both puppets into their marked positions exactly when the cue line reaches them to score the cue."><meta property="og:url" content="https://games.multiportllc.com/games/puppetshowtime"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Puppet Show Time","description":"Play Puppet Show Time free online instantly. Control two puppets at once — Arrow Keys for Red, WASD for Blue (or drag on touch) — and land both on their marked spots exactly as the cue line arrives. More cues and faster timing each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/puppetshowtime","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#stage{background:#241638;border-radius:14px;padding:14px;max-width:720px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#e0c3fc;font-size:.95rem;font-weight:700;max-width:720px;margin:0 auto 8px}
+#timeline{position:relative;height:34px;background:#150c22;border-radius:8px;margin-bottom:10px;overflow:hidden;border:2px solid #3a2255}
+#timelineFill{position:absolute;top:0;left:0;height:100%;background:linear-gradient(90deg,#56347c,#e94560);width:0%}
+.cueMark{position:absolute;top:2px;width:4px;height:30px;background:#ffd54f}
+.cueMark.hit{background:#4caf50}
+.cueMark.miss{background:#e94560}
+#c{background:#150c22;border-radius:10px;display:block;margin:0 auto;touch-action:none}
+#legend{display:flex;justify-content:center;gap:22px;color:#e0c3fc;font-size:.85rem;margin-top:8px;font-weight:700}
+#legend .r{color:#ff6b6b}#legend .b{color:#5aa9ff}
+#roundMsg{color:#ffd54f;font-weight:800;text-align:center;min-height:1.4em;margin-top:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Puppet Show Time</div>
+  <div class="game-frame">
+    <div id="hud"><span id="roundLabel">Round 1</span><span id="scoreLabel">Cues Hit: 0/0 | Best: 0</span></div>
+    <div id="stage">
+      <div id="timeline"><div id="timelineFill"></div></div>
+      <canvas id="c" width="680" height="300"></canvas>
+      <div id="legend"><span class="r">● Red puppet — Arrow Keys</span><span class="b">● Blue puppet — W A S D</span></div>
+      <div id="roundMsg"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move the <b>Red</b> puppet with <b>Arrow Keys</b> and the <b>Blue</b> puppet with <b>W A S D</b> (on touch, drag each puppet directly). Yellow marks on the timeline show upcoming cues — get both puppets inside their glowing target circles exactly as the cue line reaches them to score it. More cues and faster pacing each round.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=680,H=300;
+let round=0,hits=0,total=0,best=parseInt(localStorage.getItem('puppetshowtime_best')||'0',10);
+let red={x:170,y:220,r:22,col:'#ff6b6b'};
+let blue={x:510,y:220,r:22,col:'#5aa9ff'};
+let cues=[],cueIdx=0,duration=14000,startTime=null,running=false,roundActive=false;
+const keys={};
+
+function rnd(a,b){return a+Math.random()*(b-a);}
+
+function genCues(n){
+  const arr=[];
+  for(let i=0;i<n;i++){
+    const t=(i+1)/(n+1)*duration + rnd(-400,400);
+    arr.push({
+      t:Math.max(600,t),
+      rx:rnd(80,W-80),ry:rnd(90,H-40),
+      bx:rnd(80,W-80),by:rnd(90,H-40),
+      done:false,result:null
+    });
+  }
+  arr.sort((a,b)=>a.t-b.t);
+  return arr;
+}
+
+function startRound(){
+  const n=3+round;
+  duration=Math.max(7000,14000-round*700);
+  cues=genCues(n);
+  cueIdx=0;hits=0;total=n;
+  red.x=170;red.y=220;blue.x=510;blue.y=220;
+  startTime=null;running=true;roundActive=true;
+  document.getElementById('roundMsg').textContent='';
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('roundLabel').textContent=I18N.t('round_label','Round {r}').replace('{r}',round+1);
+  document.getElementById('scoreLabel').textContent=I18N.t('cues_best_label','Cues Hit: {h}/{t} | Best: {b}').replace('{h}',hits).replace('{t}',total).replace('{b}',best);
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+// Touch drag: whichever puppet is closer to the touch point gets dragged
+let dragTouches={};
+function pos(e){
+  const rect=c.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  return {x:(t.clientX-rect.left)*(W/rect.width),y:(t.clientY-rect.top)*(H/rect.height)};
+}
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const rect=c.getBoundingClientRect();
+    const p={x:(t.clientX-rect.left)*(W/rect.width),y:(t.clientY-rect.top)*(H/rect.height)};
+    const dr=Math.hypot(p.x-red.x,p.y-red.y), db=Math.hypot(p.x-blue.x,p.y-blue.y);
+    dragTouches[t.identifier]=dr<db?'red':'blue';
+  }
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  const rect=c.getBoundingClientRect();
+  for(const t of e.changedTouches){
+    const which=dragTouches[t.identifier];
+    if(!which)continue;
+    const p={x:(t.clientX-rect.left)*(W/rect.width),y:(t.clientY-rect.top)*(H/rect.height)};
+    const target=which==='red'?red:blue;
+    target.x=Math.max(target.r,Math.min(W-target.r,p.x));
+    target.y=Math.max(target.r,Math.min(H-target.r,p.y));
+  }
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  for(const t of e.changedTouches)delete dragTouches[t.identifier];
+});
+
+function moveP(p,up,down,left,right,dt){
+  const spd=0.24*dt;
+  if(keys[up])p.y-=spd;
+  if(keys[down])p.y+=spd;
+  if(keys[left])p.x-=spd;
+  if(keys[right])p.x+=spd;
+  p.x=Math.max(p.r,Math.min(W-p.r,p.x));
+  p.y=Math.max(p.r,Math.min(H-p.r,p.y));
+}
+
+function drawPuppet(p,label){
+  ctx.save();
+  ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,7);ctx.fillStyle=p.col;ctx.fill();
+  ctx.fillStyle='#1a1a2e';
+  ctx.beginPath();ctx.arc(p.x-7,p.y-4,3,0,7);ctx.arc(p.x+7,p.y-4,3,0,7);ctx.fill();
+  ctx.strokeStyle='#1a1a2e';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(p.x,p.y+4,7,0,Math.PI);ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText(label,p.x,p.y+p.r+14);
+  ctx.restore();
+}
+
+function drawTarget(x,y,col,active){
+  ctx.save();
+  ctx.strokeStyle=col;ctx.lineWidth=active?4:2;
+  ctx.globalAlpha=active?0.9:0.35;
+  ctx.beginPath();ctx.arc(x,y,26,0,7);ctx.stroke();
+  ctx.restore();
+}
+
+let lastT=null;
+function loop(ts){
+  if(lastT===null)lastT=ts;
+  const dt=Math.min(ts-lastT,40);
+  lastT=ts;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#1c1130';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#3a2255';ctx.fillRect(0,H-20,W,20);
+
+  if(roundActive){
+    if(startTime===null)startTime=ts;
+    const elapsed=ts-startTime;
+    document.getElementById('timelineFill').style.width=Math.min(100,elapsed/duration*100)+'%';
+
+    moveP(red,'ArrowUp','ArrowDown','ArrowLeft','ArrowRight',dt);
+    moveP(blue,'KeyW','KeyS','KeyA','KeyD',dt);
+
+    // draw upcoming/active target windows (within +-900ms of now, not yet resolved)
+    cues.forEach(cue=>{
+      if(cue.done)return;
+      const diff=cue.t-elapsed;
+      if(diff<900&&diff>-500){
+        drawTarget(cue.rx,cue.ry,'#ff6b6b',diff<400&&diff>-400);
+        drawTarget(cue.bx,cue.by,'#5aa9ff',diff<400&&diff>-400);
+      }
+      if(diff<-400&&!cue.done){
+        // missed
+        cue.done=true;cue.result='miss';
+        SFX.error();
+        updateHud();
+      }
+      if(Math.abs(diff)<400&&!cue.done){
+        const rOk=Math.hypot(red.x-cue.rx,red.y-cue.ry)<28;
+        const bOk=Math.hypot(blue.x-cue.bx,blue.y-cue.by)<28;
+        if(rOk&&bOk){
+          cue.done=true;cue.result='hit';hits++;
+          SFX.point();
+          updateHud();
+        }
+      }
+    });
+
+    drawPuppet(red,'RED');
+    drawPuppet(blue,'BLUE');
+
+    if(elapsed>=duration+800){
+      roundActive=false;
+      finishRound();
+    }
+  }
+  requestAnimationFrame(loop);
+}
+
+function finishRound(){
+  const pct=total?Math.round(hits/total*100):0;
+  if(hits>best){best=hits;localStorage.setItem('puppetshowtime_best',String(best));}
+  document.getElementById('roundMsg').textContent=I18N.t('round_result','Scene done! {h}/{t} cues hit ({p}%). Next scene...').replace('{h}',hits).replace('{t}',total).replace('{p}',pct);
+  if(hits===total&&total>0)SFX.win();else if(hits>0)SFX.success();else SFX.lose();
+  updateHud();
+  setTimeout(()=>{round++;startRound();},2200);
+}
+
+startRound();
+requestAnimationFrame(loop);
+</script></body></html>
