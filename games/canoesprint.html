@@ -1,0 +1,187 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Canoe Sprint</title><meta name="description" content="Play Canoe Sprint free online — Alternate LEFT/RIGHT paddle strokes (keys, taps, or buttons) as fast and evenly as possible to sprint down a straight flat-water lane. Manage your stamina and beat the AI racers across three sprint distances!"><link rel="canonical" href="https://games.multiportllc.com/games/canoesprint"><meta property="og:title" content="Canoe Sprint - Multiport Games"><meta property="og:description" content="Play Canoe Sprint free online — Alternate LEFT/RIGHT paddle strokes (keys, taps, or buttons) as fast and evenly as possible to sprint down a straight flat-water lane. Manage your stamina and beat the AI racers across three sprint distances!"><meta property="og:url" content="https://games.multiportllc.com/games/canoesprint"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Canoe Sprint","description":"Play Canoe Sprint free online instantly. Alternate left/right paddle strokes as fast and evenly as possible to sprint down a straight flat-water lane, managing stamina against AI racers across three sprint distances. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/canoesprint","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{color:#fff;text-align:center;font-weight:700;padding:8px 10px 0;font-size:.9rem;display:flex;justify-content:space-between;max-width:800px;margin:0 auto;flex-wrap:wrap;gap:4px}
+#hud span{color:#ffd54f}
+#c{background:#0d3b52;display:block;border-radius:8px;margin:8px auto 0}
+#staminaWrap{max-width:760px;margin:10px auto 0;padding:0 10px}
+#staminaLabel{color:#ccc;font-size:.78rem;font-weight:700;margin-bottom:3px;text-align:center}
+#staminaBar{position:relative;height:16px;border-radius:8px;overflow:hidden;background:#222}
+#staminaFill{height:100%;width:100%;background:linear-gradient(90deg,#43a047,#a5d6a7);transition:width .1s linear}
+#controls{display:flex;gap:14px;justify-content:center;margin:12px 0 4px;padding:0 10px}
+#controls button{flex:1;max-width:260px;padding:16px 10px;border:none;border-radius:14px;font-size:1.05rem;font-weight:800;color:#fff;cursor:pointer;background:#01579b;box-shadow:0 4px 0 #01324f;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+#controls button:active{transform:translateY(3px);box-shadow:0 1px 0 #01324f}
+#controls button.r{background:#e65100;box-shadow:0 4px 0 #8a3800}
+#controls button.r:active{box-shadow:0 1px 0 #8a3800}
+#overlay{position:relative}
+#msgBox{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+#msgBox div{background:rgba(0,0,0,.72);color:#fff;padding:18px 26px;border-radius:14px;text-align:center;font-weight:700;max-width:80%}
+#msgBox button{pointer-events:auto;margin-top:10px;padding:9px 20px;border:none;border-radius:20px;background:#ffd54f;color:#222;font-weight:800;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Canoe Sprint</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud"><span id="raceLbl">Race 1/3</span><span id="distLbl">200m</span><span id="pointsLbl">Points: 0</span></div>
+    <div id="overlay">
+      <canvas id="c" width="800" height="260"></canvas>
+      <div id="msgBox"></div>
+    </div>
+    <div id="staminaWrap"><div id="staminaLabel">STAMINA</div><div id="staminaBar"><div id="staminaFill"></div></div></div>
+    <div id="controls">
+      <button id="btnL">◀ LEFT PADDLE</button>
+      <button id="btnR" class="r">RIGHT PADDLE ▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Alternate <b>LEFT</b> / <b>RIGHT</b> paddle strokes (Arrow keys, <b>A</b>/<b>D</b>, or the on-screen buttons) as fast and evenly as you can to sprint down the lane. Even, alternating strokes build the most speed — but paddling drains your <b>stamina</b>, and running dry slows you way down, so pace yourself! Beat the AI racers over three sprint distances to rack up the most points.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=260,NUM_RACES=3;
+const DISTS=[200,350,500];
+const LANES=[{y:50,color:'#ffd54f',name:()=>I18N.t('cs_you','YOU'),isPlayer:true},
+             {y:100,color:'#ef5350',name:()=>I18N.t('cs_ai1','Team Havik')},
+             {y:150,color:'#66bb6a',name:()=>I18N.t('cs_ai2','Team Solheim')},
+             {y:200,color:'#ab47bc',name:()=>I18N.t('cs_ai3','Team Osei')}];
+
+let raceNum=1,totalPoints=0,best=parseInt(localStorage.getItem('canoesprint_best')||'0',10);
+let racers,lastPaddle,stamina,raceActive,raceOver,startTime,results,finishDist;
+
+function newRace(){
+  finishDist=DISTS[raceNum-1];
+  const aiBase=1.7+raceNum*0.12;
+  racers=LANES.map((l,i)=>({pos:0,speed:0,finished:false,time:0,
+    aiSpeed: i===0?0:aiBase+(Math.random()*0.35-0.17)+i*0.02,
+    aiPhase:Math.random()*10}));
+  lastPaddle=null;stamina=100;raceActive=true;raceOver=false;
+  startTime=performance.now();results=[];
+  document.getElementById('msgBox').innerHTML='';
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('raceLbl').textContent=I18N.t('cs_race_label','Race {n}/{t}').replace('{n}',raceNum).replace('{t}',NUM_RACES);
+  document.getElementById('distLbl').textContent=finishDist+'m';
+  document.getElementById('pointsLbl').textContent=I18N.t('cs_points_label','Points: {p}').replace('{p}',totalPoints);
+}
+
+function stroke(side){
+  if(!raceActive)return;
+  if(stamina<=1){SFX.error();return;}
+  const even = side!==lastPaddle;
+  lastPaddle=side;
+  const cost = even?3.2:4.4;
+  stamina=Math.max(0,stamina-cost);
+  const eff=(stamina/100)*0.6+0.4;
+  const power = (even?2.6:1.3)*eff;
+  racers[0].speed=racers[0].speed*0.4+power*0.6;
+  SFX.click();
+}
+
+document.getElementById('btnL').addEventListener('pointerdown',e=>{e.preventDefault();stroke('L');});
+document.getElementById('btnR').addEventListener('pointerdown',e=>{e.preventDefault();stroke('R');});
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(k==='arrowleft'||k==='a'){e.preventDefault();stroke('L');}
+  else if(k==='arrowright'||k==='d'){e.preventDefault();stroke('R');}
+});
+
+function endRace(){
+  raceActive=false;raceOver=true;
+  results.sort((a,b)=>a.finishOrder-b.finishOrder);
+  const playerResult=results.find(r=>r.isPlayer);
+  const pts=[10,7,5,3][playerResult?playerResult.finishOrder-1:3]||1;
+  totalPoints+=pts;
+  updateHud();
+  showRaceSummary(pts);
+}
+
+function showRaceSummary(pts){
+  const box=document.getElementById('msgBox');
+  const lines=results.map(r=>`${r.finishOrder}. ${r.name}${r.isPlayer?' — <b>'+I18N.t('cs_you2','YOU')+'</b>':''} — ${r.time.toFixed(2)}s`).join('<br>');
+  const btnLabel= raceNum<NUM_RACES ? I18N.t('cs_next_race','Next Race ▶') : I18N.t('cs_see_final','See Final Result');
+  box.innerHTML=`<div><div style="font-size:1.3rem;margin-bottom:6px">${I18N.t('cs_finish_title','Race Finished!')}</div><div style="font-size:.85rem;text-align:left;margin:0 auto;max-width:270px">${lines}</div><div style="margin-top:8px">+${pts} ${I18N.t('cs_pts','pts')}</div><button id="nextBtn">${btnLabel}</button></div>`;
+  document.getElementById('nextBtn').onclick=()=>{
+    if(raceNum<NUM_RACES){raceNum++;newRace();}
+    else showFinalSummary();
+  };
+  SFX.win();
+}
+
+function showFinalSummary(){
+  if(totalPoints>best){best=totalPoints;localStorage.setItem('canoesprint_best',String(best));}
+  const box=document.getElementById('msgBox');
+  box.innerHTML=`<div><div style="font-size:1.4rem;margin-bottom:6px">${I18N.t('cs_all_done','All Races Complete!')}</div>
+    <div>${I18N.t('cs_total_pts','Total Points: {p}').replace('{p}',totalPoints)}</div>
+    <div>${I18N.t('cs_best_pts','Personal Best: {b}').replace('{b}',best)}</div>
+    <button id="againBtn">${I18N.t('cs_play_again','Play Again')}</button></div>`;
+  document.getElementById('againBtn').onclick=()=>{raceNum=1;totalPoints=0;newRace();};
+}
+
+function drawTrack(){
+  ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#0b2b40');g.addColorStop(1,'#12506e');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  const trackX0=70,trackX1=W-40;
+  for(let i=0;i<4;i++){
+    const y=LANES[i].y;
+    ctx.strokeStyle='rgba(255,255,255,.15)';ctx.lineWidth=1;
+    ctx.setLineDash([6,6]);
+    ctx.beginPath();ctx.moveTo(trackX0,y+22);ctx.lineTo(trackX1,y+22);ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.strokeStyle='#fff';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(trackX1,20);ctx.lineTo(trackX1,240);ctx.stroke();
+
+  racers.forEach((r,i)=>{
+    const lane=LANES[i];
+    const x=trackX0+Math.min(1,r.pos/finishDist)*(trackX1-trackX0-20);
+    ctx.fillStyle=lane.color;
+    ctx.beginPath();
+    ctx.ellipse(x+10,lane.y+14,16,7,0,0,Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle='#dcdcdc';ctx.font='bold 11px Arial';ctx.textAlign='left';
+    ctx.fillText(lane.name(),4,lane.y+5);
+  });
+
+  ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='right';
+  ctx.fillText(Math.floor(Math.min(finishDist,racers[0].pos))+'m / '+finishDist+'m',W-8,20);
+}
+
+function loop(){
+  if(raceActive){
+    racers[0].speed*=0.965;
+    racers[0].pos+=racers[0].speed*(0.35+finishDist/700);
+    if(stamina<100)stamina=Math.min(100,stamina+0.10);
+    for(let i=1;i<racers.length;i++){
+      const r=racers[i];
+      r.aiPhase+=0.035;
+      r.pos+=r.aiSpeed*(1+Math.sin(r.aiPhase)*0.12)*(0.35+finishDist/700);
+    }
+    racers.forEach((r,i)=>{
+      if(!r.finished&&r.pos>=finishDist){
+        r.finished=true;
+        r.time=(performance.now()-startTime)/1000;
+        results.push({finishOrder:results.length+1,name:LANES[i].name(),isPlayer:i===0,time:r.time});
+        if(i===0)SFX.success();
+      }
+    });
+    if(racers.every(r=>r.finished)&&!raceOver){
+      endRace();
+    }
+  }
+  document.getElementById('staminaFill').style.width=Math.max(0,Math.min(100,stamina))+'%';
+  drawTrack();
+  requestAnimationFrame(loop);
+}
+
+newRace();
+loop();
+</script></body></html>

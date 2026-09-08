@@ -1,0 +1,260 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Lightning Photography</title><meta name="description" content="Play Lightning Photography free online — Watch the storm and click SHOOT the instant lightning flashes to capture the photo. Too early or too late and you miss. Capture as many bolts as you can before you run out of attempts!"><link rel="canonical" href="https://games.multiportllc.com/games/lightningphotography"><meta property="og:title" content="Lightning Photography - Multiport Games"><meta property="og:description" content="Play Lightning Photography free online — Watch the storm and click SHOOT the instant lightning flashes to capture the photo. Too early or too late and you miss. Capture as many bolts as you can before you run out of attempts!"><meta property="og:url" content="https://games.multiportllc.com/games/lightningphotography"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Lightning Photography","description":"Play Lightning Photography free online instantly. Watch the storm and click SHOOT the instant lightning flashes to capture the photo. Too early or too late and you miss. Capture as many bolts as you can before you run out of attempts! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/lightningphotography","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#050510}
+#sky{background:linear-gradient(#0a0a1e,#1a1a3a);display:block;border-radius:8px;width:100%;max-width:700px;height:auto;touch-action:manipulation;cursor:crosshair}
+#hud{display:flex;justify-content:space-between;max-width:700px;margin:0 auto 8px;color:#cdd6ff;font-weight:700;font-size:1rem;padding:0 6px}
+#hud span{color:#ffe066}
+#msg{text-align:center;color:#fff;font-weight:800;font-size:1.3rem;min-height:1.8em;margin:8px 0}
+#shootBtn{display:block;margin:10px auto 0;padding:14px 40px;font-size:1.1rem;font-weight:800;background:linear-gradient(135deg,#ffe066,#ff8c42);border:none;border-radius:30px;color:#1a1a2e;cursor:pointer;box-shadow:0 6px 20px rgba(255,180,60,.35);user-select:none;-webkit-user-select:none;touch-action:manipulation}
+#shootBtn:active{transform:scale(.95)}
+#restartBtn{display:none;margin:10px auto 0;padding:10px 28px;font-size:1rem;font-weight:700;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:20px;color:#fff;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Lightning Photography</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="hud"><div>Round: <span id="roundLbl">1</span></div><div>Captured: <span id="scoreLbl">0</span></div><div>Best: <span id="bestLbl">0</span></div></div>
+    <canvas id="sky" width="700" height="360"></canvas>
+    <div id="msg">Get ready…</div>
+    <button id="shootBtn">📸 SHOOT</button>
+    <button id="restartBtn">Play Again</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch the storm and click <b>SHOOT</b> (or press <b>Space</b>) the instant lightning flashes to capture the photo. Too early or too late and you miss the shot. Each round gives you a limited number of attempts — capture as many bolts as you can! Flashes get quicker and rarer as rounds go on.</div>
+</div>
+<script>
+const cv=document.getElementById('sky'),ctx=cv.getContext('2d');
+const W=cv.width,H=cv.height;
+const roundLbl=document.getElementById('roundLbl'),scoreLbl=document.getElementById('scoreLbl'),bestLbl=document.getElementById('bestLbl');
+const msg=document.getElementById('msg'),shootBtn=document.getElementById('shootBtn'),restartBtn=document.getElementById('restartBtn');
+
+let best=parseInt(localStorage.getItem('lightningphotography_best')||'0',10);
+bestLbl.textContent=best;
+
+let round=1, attemptsLeft=5, captured=0, state='idle'; // idle, waiting, flash, fading, result
+let flashTimer=null, flashStart=0, flashDuration=0, bolt=null, fadeStart=0;
+let gameOver=false;
+let stars=[];
+for(let i=0;i<80;i++)stars.push({x:Math.random()*W,y:Math.random()*H*0.7,r:Math.random()*1.5+0.3,a:Math.random()});
+
+function attemptsForRound(r){ return 5; }
+function flashWaitRange(r){
+  // gets shorter/less predictable as round increases
+  const base=Math.max(900,3200-r*280);
+  return [base, base+1800];
+}
+function flashLifeMs(r){
+  // shorter flash window each round (harder)
+  return Math.max(140,420-r*28);
+}
+
+function randomBolt(){
+  const x0=60+Math.random()*(W-120);
+  const pts=[[x0,0]];
+  let x=x0,y=0;
+  while(y<H*0.75){
+    y+=25+Math.random()*35;
+    x+=(Math.random()-0.5)*60;
+    pts.push([x,y]);
+  }
+  return pts;
+}
+
+function drawScene(flashAlpha){
+  ctx.clearRect(0,0,W,H);
+  const skyGrad=ctx.createLinearGradient(0,0,0,H);
+  if(flashAlpha>0){
+    skyGrad.addColorStop(0,`rgba(230,235,255,${0.85*flashAlpha+0.05})`);
+    skyGrad.addColorStop(1,`rgba(180,190,230,${0.6*flashAlpha+0.05})`);
+  } else {
+    skyGrad.addColorStop(0,'#0a0a1e');
+    skyGrad.addColorStop(1,'#1a1a3a');
+  }
+  ctx.fillStyle=skyGrad;
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=`rgba(255,255,255,${0.6})`;
+  stars.forEach(s=>{
+    ctx.globalAlpha=Math.max(0,s.a-flashAlpha*0.8);
+    ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,7);ctx.fill();
+  });
+  ctx.globalAlpha=1;
+  // clouds silhouette
+  ctx.fillStyle=flashAlpha>0?`rgba(60,60,90,${0.5})`:'rgba(20,20,45,0.9)';
+  ctx.beginPath();
+  ctx.ellipse(W*0.25,H*0.62,140,40,0,0,7);
+  ctx.ellipse(W*0.65,H*0.68,180,50,0,0,7);
+  ctx.fill();
+  // ground
+  ctx.fillStyle='#0d0d18';
+  ctx.fillRect(0,H*0.78,W,H*0.22);
+  const skyline=[0.78,0.72,0.8,0.7,0.82,0.75,0.79];
+  ctx.fillStyle='#05050a';
+  const segW=W/(skyline.length-1);
+  ctx.beginPath();ctx.moveTo(0,H);
+  skyline.forEach((f,i)=>ctx.lineTo(i*segW,H*f));
+  ctx.lineTo(W,H);ctx.closePath();ctx.fill();
+
+  if(bolt&&flashAlpha>0){
+    ctx.save();
+    ctx.strokeStyle=`rgba(255,255,255,${Math.min(1,flashAlpha+0.3)})`;
+    ctx.lineWidth=4;
+    ctx.shadowColor='#cfe0ff';
+    ctx.shadowBlur=25;
+    ctx.beginPath();
+    bolt.forEach(([x,y],i)=>{ if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function setMsg(t){ msg.textContent=t; }
+
+function scheduleNextFlash(){
+  if(gameOver)return;
+  state='waiting';
+  drawScene(0);
+  const [lo,hi]=flashWaitRange(round);
+  const delay=lo+Math.random()*(hi-lo);
+  clearTimeout(flashTimer);
+  flashTimer=setTimeout(triggerFlash,delay);
+}
+
+function triggerFlash(){
+  if(gameOver)return;
+  state='flash';
+  bolt=randomBolt();
+  flashStart=performance.now();
+  flashDuration=flashLifeMs(round);
+  SFX.swoosh();
+  requestAnimationFrame(flashLoop);
+}
+
+function flashLoop(now){
+  if(state!=='flash'&&state!=='fading')return;
+  const elapsed=now-flashStart;
+  if(state==='flash'){
+    if(elapsed>flashDuration){
+      state='fading';
+      fadeStart=now;
+    }
+    const alpha=1-Math.min(1,elapsed/flashDuration)*0.15;
+    drawScene(Math.max(0.15,alpha));
+    requestAnimationFrame(flashLoop);
+    return;
+  }
+  // fading — quick fade out, missed if not shot
+  const fadeElapsed=now-fadeStart;
+  const fadeDur=180;
+  if(fadeElapsed>fadeDur){
+    // fully missed
+    if(state==='fading'){
+      missShot('late');
+    }
+    return;
+  }
+  const alpha=1-fadeElapsed/fadeDur;
+  drawScene(alpha*0.5);
+  requestAnimationFrame(flashLoop);
+}
+
+function endRoundCheck(){
+  if(attemptsLeft<=0){
+    finishRound();
+  } else {
+    scheduleNextFlash();
+  }
+}
+
+function finishRound(){
+  state='idle';
+  const need=Math.min(4,2+Math.floor(round/2));
+  if(captured>=need){
+    setMsg(I18N.t('lp_round_clear','Round {r} clear! 📷 {c} captured').replace('{r}',round).replace('{c}',captured));
+    SFX.win();
+    round++;
+    attemptsLeft=attemptsForRound(round);
+    captured=0;
+    roundLbl.textContent=round;
+    setTimeout(()=>{ if(!gameOver) scheduleNextFlash(); },1600);
+  } else {
+    endGame();
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  clearTimeout(flashTimer);
+  state='idle';
+  const totalScore=(round-1)*10+captured;
+  if(totalScore>best){ best=totalScore; localStorage.setItem('lightningphotography_best',String(best)); }
+  bestLbl.textContent=best;
+  setMsg(I18N.t('lp_game_over','Game Over! Reached round {r}').replace('{r}',round));
+  shootBtn.style.display='none';
+  restartBtn.style.display='block';
+  SFX.lose();
+  drawScene(0);
+}
+
+function missShot(reason){
+  attemptsLeft--;
+  scoreLbl.textContent=captured;
+  state='idle';
+  bolt=null;
+  drawScene(0);
+  if(reason==='early') setMsg(I18N.t('lp_too_early','Too early! No photo.'));
+  else setMsg(I18N.t('lp_too_late','Missed it — too late!'));
+  SFX.error();
+  setTimeout(()=>{ if(!gameOver) endRoundCheck(); },900);
+}
+
+function hitShot(){
+  captured++;
+  attemptsLeft--;
+  scoreLbl.textContent=captured;
+  state='idle';
+  bolt=null;
+  drawScene(0);
+  SFX.success();
+  setMsg(I18N.t('lp_captured','⚡ Captured! Great shot!'));
+  setTimeout(()=>{ if(!gameOver) endRoundCheck(); },800);
+}
+
+function shoot(){
+  if(gameOver)return;
+  if(state==='waiting'){
+    clearTimeout(flashTimer);
+    missShot('early');
+  } else if(state==='flash'){
+    hitShot();
+  } else if(state==='fading'){
+    missShot('late');
+  }
+  // state==='idle' -> ignore (between rounds/waiting for setup)
+}
+
+function restart(){
+  gameOver=false;
+  round=1;captured=0;attemptsLeft=attemptsForRound(round);
+  roundLbl.textContent=round;scoreLbl.textContent=captured;
+  shootBtn.style.display='block';
+  restartBtn.style.display='none';
+  setMsg(I18N.t('lp_get_ready','Get ready…'));
+  scheduleNextFlash();
+}
+
+shootBtn.addEventListener('click',e=>{e.preventDefault();shoot();});
+shootBtn.addEventListener('touchstart',e=>{e.preventDefault();shoot();},{passive:false});
+cv.addEventListener('click',shoot);
+restartBtn.addEventListener('click',restart);
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){ e.preventDefault(); if(gameOver)restart(); else shoot(); }
+});
+
+drawScene(0);
+setTimeout(scheduleNextFlash,900);
+</script></body></html>

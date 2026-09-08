@@ -1,0 +1,238 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Snowflake Catching</title><meta name="description" content="Play Snowflake Catching free online — Move your tray with arrow keys, WASD, or touch-drag to catch the target snowflake pattern shown at the top, among falling decoys. Score before time runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/snowflakecatching"><meta property="og:title" content="Snowflake Catching - Multiport Games"><meta property="og:description" content="Play Snowflake Catching free online — Move your tray with arrow keys, WASD, or touch-drag to catch the target snowflake pattern shown at the top, among falling decoys. Score before time runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/snowflakecatching"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Snowflake Catching","description":"Play Snowflake Catching free online instantly. Move your tray with arrow keys, WASD, or touch-drag to catch the target snowflake pattern shown at the top, among falling decoys. Score before time runs out! No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/snowflakecatching","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d2440;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:1rem;font-weight:700;padding:6px 4px;max-width:800px;margin:0 auto}
+#target-label{display:flex;align-items:center;gap:6px}
+#target-canvas{background:#16334f;border-radius:6px;vertical-align:middle}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Snowflake Catching</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="target-label">Catch: <canvas id="target-canvas" width="44" height="44"></canvas></span>
+      <span id="score">Score: 0 | Hi: 0</span>
+      <span id="time">Time: 60</span>
+    </div>
+    <canvas id="c" width="800" height="380"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">A unique target snowflake pattern is shown at the top. Move your tray with <b>Arrow Keys</b>, <b>WASD</b>, or <b>touch-drag</b> to catch falling snowflakes that match the target shape — avoid the decoys! Catching the right shape scores points, catching a wrong one costs points. Fall speed and snowflake variety increase over time. Score as much as you can before time runs out!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=380;
+const tc=document.getElementById('target-canvas'),tctx=tc.getContext('2d');
+const BEST_KEY='snowflakecatching_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+
+const tray={x:400,w:90,h:16,y:H-30};
+let flakes=[];
+let score=0,timeLeft=60,running=true;
+let spawnTimer=0,elapsed=0;
+let targetShape=0;
+let keys={};
+let dragging=false,dragX=null;
+
+const NUM_SHAPES=6;
+
+function drawSnowflake(g,cx,cy,r,shape,color){
+  g.save();
+  g.translate(cx,cy);
+  g.strokeStyle=color;
+  g.fillStyle=color;
+  g.lineWidth=Math.max(1.5,r*0.12);
+  g.lineCap='round';
+  const arms=shape===0?6:shape===1?6:shape===2?8:shape===3?6:shape===4?5:6;
+  for(let i=0;i<arms;i++){
+    g.save();
+    g.rotate((Math.PI*2/arms)*i);
+    g.beginPath();
+    g.moveTo(0,0);
+    g.lineTo(0,-r);
+    g.stroke();
+    // branch style varies by shape id to make each visually distinct
+    if(shape===0){
+      g.beginPath();g.moveTo(0,-r*0.5);g.lineTo(r*0.25,-r*0.65);g.moveTo(0,-r*0.5);g.lineTo(-r*0.25,-r*0.65);g.stroke();
+    } else if(shape===1){
+      g.beginPath();g.moveTo(0,-r*0.4);g.lineTo(r*0.3,-r*0.55);g.moveTo(0,-r*0.4);g.lineTo(-r*0.3,-r*0.55);
+      g.moveTo(0,-r*0.75);g.lineTo(r*0.2,-r*0.88);g.moveTo(0,-r*0.75);g.lineTo(-r*0.2,-r*0.88);
+      g.stroke();
+    } else if(shape===2){
+      g.beginPath();g.arc(0,-r,r*0.14,0,Math.PI*2);g.fill();
+    } else if(shape===3){
+      g.beginPath();g.moveTo(0,-r*0.3);g.lineTo(r*0.35,-r*0.3);g.moveTo(0,-r*0.6);g.lineTo(-r*0.35,-r*0.6);g.stroke();
+    } else if(shape===4){
+      g.beginPath();g.moveTo(0,-r*0.55);g.lineTo(r*0.28,-r*0.75);g.moveTo(0,-r*0.55);g.lineTo(-r*0.28,-r*0.75);
+      g.moveTo(0,-r*0.3);g.lineTo(r*0.2,-r*0.42);g.moveTo(0,-r*0.3);g.lineTo(-r*0.2,-r*0.42);
+      g.stroke();
+    } else {
+      g.beginPath();g.rect(-r*0.06,-r*0.7,r*0.12,r*0.12);g.fill();
+    }
+    g.restore();
+  }
+  g.beginPath();g.arc(0,0,r*0.12,0,Math.PI*2);g.fill();
+  g.restore();
+}
+
+function drawTarget(){
+  tctx.clearRect(0,0,44,44);
+  drawSnowflake(tctx,22,22,18,targetShape,'#ffffff');
+}
+
+function pickTargetShape(){
+  targetShape=Math.floor(Math.random()*Math.min(NUM_SHAPES,3+Math.floor(elapsed/20)));
+  drawTarget();
+}
+
+function spawnFlake(){
+  const maxShape=Math.min(NUM_SHAPES,3+Math.floor(elapsed/20));
+  const shape=Math.floor(Math.random()*maxShape);
+  const r=14+Math.random()*8;
+  const speedBase=1.2+elapsed/25;
+  flakes.push({
+    x:20+Math.random()*(W-40),
+    y:-20,
+    r,
+    shape,
+    vy:speedBase+Math.random()*1.2,
+    drift:(Math.random()-0.5)*0.6,
+    color:'#e8f4ff'
+  });
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','KeyA','KeyD'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+c.addEventListener('pointerdown',e=>{dragging=true;dragX=getPointerX(e);});
+c.addEventListener('pointermove',e=>{ if(dragging)dragX=getPointerX(e); });
+window.addEventListener('pointerup',()=>{dragging=false;});
+function getPointerX(e){
+  const r=c.getBoundingClientRect();
+  return (e.clientX-r.left)*(W/r.width);
+}
+
+function updateHud(){
+  document.getElementById('score').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',best);
+  document.getElementById('time').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+}
+
+function rectCircle(rx,ry,rw,rh,cx,cy,cr){
+  const nx=Math.max(rx,Math.min(cx,rx+rw));
+  const ny=Math.max(ry,Math.min(cy,ry+rh));
+  const dx=cx-nx,dy=cy-ny;
+  return dx*dx+dy*dy<cr*cr;
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0a1c33');sky.addColorStop(1,'#1c3f63');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  if(running){
+    elapsed+=dt/60;
+    timeLeft-=dt/60;
+    if(timeLeft<=0){timeLeft=0;endGame();}
+
+    // tray movement
+    let dir=0;
+    if(keys['ArrowLeft']||keys['KeyA'])dir=-1;
+    if(keys['ArrowRight']||keys['KeyD'])dir=1;
+    if(dragging&&dragX!=null){
+      const diff=dragX-tray.x;
+      dir=Math.abs(diff)>6?Math.sign(diff):0;
+    }
+    tray.x+=dir*7*dt;
+    tray.x=Math.max(tray.w/2,Math.min(W-tray.w/2,tray.x));
+
+    spawnTimer+=dt;
+    const spawnInterval=Math.max(18,45-elapsed*0.6);
+    if(spawnTimer>=spawnInterval){spawnTimer=0;spawnFlake();}
+
+    flakes.forEach(f=>{
+      f.y+=f.vy*dt;
+      f.x+=f.drift*dt;
+    });
+
+    flakes=flakes.filter(f=>{
+      if(f.y-f.r>H)return false;
+      const trayTop=tray.y-tray.h/2;
+      if(f.y+f.r>=trayTop&&f.y-f.r<=tray.y+tray.h/2){
+        if(rectCircle(tray.x-tray.w/2,trayTop,tray.w,tray.h,f.x,f.y,f.r)){
+          if(f.shape===targetShape){
+            score+=10;
+            SFX.catch();
+            pickTargetShape();
+          }else{
+            score=Math.max(0,score-5);
+            SFX.error();
+          }
+          if(score>best){best=score;localStorage.setItem(BEST_KEY,String(best));}
+          updateHud();
+          return false;
+        }
+      }
+      return true;
+    });
+
+    flakes.forEach(f=>drawSnowflake(ctx,f.x,f.y,f.r,f.shape,f.shape===targetShape?'#fff8d0':'#dceeff'));
+
+    // tray
+    ctx.fillStyle='#c98b4a';
+    ctx.fillRect(tray.x-tray.w/2,tray.y-tray.h/2,tray.w,tray.h);
+    ctx.fillStyle='#8a5a2a';
+    ctx.fillRect(tray.x-tray.w/2,tray.y+tray.h/2-3,tray.w,3);
+
+    updateHud();
+  } else {
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','TIME UP!'),W/2,150);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('final_score','Score: {s} (Best: {b})').replace('{s}',score).replace('{b}',best),W/2,190);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space to play again'),W/2,224);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+function endGame(){
+  if(!running)return;
+  running=false;
+  SFX.lose();
+}
+
+function restart(){
+  score=0;timeLeft=60;elapsed=0;flakes=[];spawnTimer=0;
+  pickTargetShape();
+  running=true;
+  lastTime=null;
+  updateHud();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&!running){e.preventDefault();restart();}
+});
+c.addEventListener('click',()=>{ if(!running)restart(); });
+c.addEventListener('touchstart',e=>{ if(!running){e.preventDefault();restart();} },{passive:false});
+
+pickTargetShape();
+updateHud();
+requestAnimationFrame(loop);
+</script></body></html>

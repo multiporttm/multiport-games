@@ -1,0 +1,224 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Race Walking</title><meta name="description" content="Play Race Walking free online — Alternate LEFT/RIGHT (Arrow keys, A/D, or the on-screen buttons) in a steady rhythm to walk as fast as possible without breaking into a run. Keep the technique meter out of the red zone — 3 violations means disqualification!"><link rel="canonical" href="https://games.multiportllc.com/games/racewalking"><meta property="og:title" content="Race Walking - Multiport Games"><meta property="og:description" content="Play Race Walking free online — Alternate LEFT/RIGHT (Arrow keys, A/D, or the on-screen buttons) in a steady rhythm to walk as fast as possible without breaking into a run. Keep the technique meter out of the red zone — 3 violations means disqualification!"><meta property="og:url" content="https://games.multiportllc.com/games/racewalking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Race Walking","description":"Play Race Walking free online instantly. Alternate LEFT/RIGHT in a steady rhythm to walk as fast as possible without breaking into a run. Keep the technique meter out of the red zone across three races against AI walkers. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/racewalking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{color:#fff;text-align:center;font-weight:700;padding:8px 10px 0;font-size:.95rem;display:flex;justify-content:space-between;max-width:800px;margin:0 auto}
+#hud span{color:#ffd54f}
+#c{background:#274a2e;display:block;border-radius:8px;margin:8px auto 0}
+#meterWrap{max-width:760px;margin:10px auto 0;padding:0 10px}
+#meterLabel{color:#ccc;font-size:.78rem;font-weight:700;margin-bottom:3px;text-align:center}
+#meterBar{position:relative;height:20px;border-radius:10px;overflow:hidden;background:linear-gradient(90deg,#2e7d32 0 34%,#66bb6a 34% 62%,#ffca28 62% 80%,#e53935 80% 100%);box-shadow:inset 0 0 0 2px rgba(0,0,0,.4)}
+#meterNeedle{position:absolute;top:-3px;width:4px;height:26px;background:#fff;border-radius:2px;left:0%;transform:translateX(-2px);box-shadow:0 0 6px rgba(0,0,0,.6);transition:left .08s linear}
+#controls{display:flex;gap:14px;justify-content:center;margin:12px 0 4px;padding:0 10px}
+#controls button{flex:1;max-width:260px;padding:16px 10px;border:none;border-radius:14px;font-size:1.05rem;font-weight:800;color:#fff;cursor:pointer;background:#1b5e20;box-shadow:0 4px 0 #0d3b12;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+#controls button:active{transform:translateY(3px);box-shadow:0 1px 0 #0d3b12}
+#controls button.r{background:#0d47a1;box-shadow:0 4px 0 #062a63}
+#controls button.r:active{box-shadow:0 1px 0 #062a63}
+#overlay{position:relative}
+#msgBox{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+#msgBox div{background:rgba(0,0,0,.72);color:#fff;padding:18px 26px;border-radius:14px;text-align:center;font-weight:700;max-width:80%}
+#msgBox button{pointer-events:auto;margin-top:10px;padding:9px 20px;border:none;border-radius:20px;background:#ffd54f;color:#222;font-weight:800;cursor:pointer}
+[hidden]{display:none!important}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Race Walking</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud"><span id="raceLbl">Race 1/3</span><span id="pointsLbl">Points: 0</span><span id="violLbl">Violations: 0/3</span></div>
+    <div id="overlay">
+      <canvas id="c" width="800" height="260"></canvas>
+      <div id="msgBox"></div>
+    </div>
+    <div id="meterWrap"><div id="meterLabel">TECHNIQUE — stay out of the red!</div><div id="meterBar"><div id="meterNeedle"></div></div></div>
+    <div id="controls">
+      <button id="btnL">◀ LEFT FOOT</button>
+      <button id="btnR" class="r">RIGHT FOOT ▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Alternate <b>LEFT</b> / <b>RIGHT</b> (Arrow keys, <b>A</b>/<b>D</b>, or the on-screen buttons) in a steady rhythm to walk as fast as possible — but don't break into a run! Watch the technique meter: staying in the green/yellow keeps you legal, but lingering in the red means a judge's warning. <b>3 violations = disqualified.</b> Race 3 walkers over 3 races and rack up the most points.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=260,FINISH=1000,NUM_RACES=3;
+const LANES=[{y:60,color:'#ffd54f',name:()=>I18N.t('rw_you','YOU'),isPlayer:true},
+             {y:110,color:'#ef5350',name:()=>I18N.t('rw_ai1','Ana K.')},
+             {y:160,color:'#42a5f5',name:()=>I18N.t('rw_ai2','Kenji T.')},
+             {y:210,color:'#ab47bc',name:()=>I18N.t('rw_ai3','Wanjiru M.')}];
+
+let raceNum=1,totalPoints=0,best=parseInt(localStorage.getItem('racewalking_best')||'0',10);
+let racers,meter,lastFoot,lastStepTime,cadenceInterval,violations,redTimer,violCooldown,raceActive,raceOver,startTime,results,dqFlag,resultsShown;
+
+function newRace(){
+  const aiBase=2.1+raceNum*0.18;
+  racers=LANES.map((l,i)=>({pos:0,speed:0,finished:false,time:0,
+    aiSpeed: i===0?0:aiBase+ (Math.random()*0.3-0.15) + i*0.03,
+    aiPhase: Math.random()*10}));
+  meter=45;lastFoot=null;lastStepTime=null;cadenceInterval=null;
+  violations=0;redTimer=0;violCooldown=0;raceActive=true;raceOver=false;dqFlag=false;resultsShown=false;
+  startTime=performance.now();results=[];
+  document.getElementById('msgBox').innerHTML='';
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('raceLbl').textContent=I18N.t('rw_race_label','Race {n}/{t}').replace('{n}',raceNum).replace('{t}',NUM_RACES);
+  document.getElementById('pointsLbl').textContent=I18N.t('rw_points_label','Points: {p}').replace('{p}',totalPoints);
+  document.getElementById('violLbl').textContent=I18N.t('rw_viol_label','Violations: {v}/3').replace('{v}',violations);
+}
+
+function step(foot){
+  if(!raceActive||dqFlag)return;
+  const now=performance.now();
+  if(foot===lastFoot){
+    meter=Math.min(100,meter+16);
+    SFX.tick();
+  } else {
+    if(lastStepTime!=null){
+      const interval=now-lastStepTime;
+      cadenceInterval=cadenceInterval?cadenceInterval*0.65+interval*0.35:interval;
+      const target=Math.max(0,Math.min(100,100-((cadenceInterval-160)/(520-160))*100));
+      meter=meter*0.45+target*0.55;
+      const boost=Math.max(0.35,Math.min(2.0,320/cadenceInterval));
+      racers[0].speed=racers[0].speed*0.45+boost*2.4*0.55;
+    } else {
+      racers[0].speed=1.4;
+    }
+    lastStepTime=now;lastFoot=foot;
+    SFX.click();
+  }
+}
+
+document.getElementById('btnL').addEventListener('pointerdown',e=>{e.preventDefault();step('L');});
+document.getElementById('btnR').addEventListener('pointerdown',e=>{e.preventDefault();step('R');});
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(k==='arrowleft'||k==='a'){e.preventDefault();step('L');}
+  else if(k==='arrowright'||k==='d'){e.preventDefault();step('R');}
+});
+
+function endRace(){
+  raceActive=false;raceOver=true;
+  results.sort((a,b)=>a.finishOrder-b.finishOrder);
+  const playerResult=results.find(r=>r.isPlayer);
+  const pts= dqFlag?0:[10,7,5,3][playerResult?playerResult.finishOrder-1:3]||1;
+  totalPoints+=pts;
+  updateHud();
+  showRaceSummary(pts);
+}
+
+function showRaceSummary(pts){
+  const box=document.getElementById('msgBox');
+  const lines=results.map(r=>`${r.finishOrder}. ${r.name}${r.isPlayer?' — <b>'+I18N.t('rw_you2','YOU')+'</b>':''} — ${r.time.toFixed(2)}s`).join('<br>');
+  const title=dqFlag?I18N.t('rw_dq_title','DISQUALIFIED'):I18N.t('rw_finish_title','Race Finished!');
+  const btnLabel= raceNum<NUM_RACES ? I18N.t('rw_next_race','Next Race ▶') : I18N.t('rw_see_final','See Final Result');
+  box.innerHTML=`<div><div style="font-size:1.3rem;margin-bottom:6px">${title}</div><div style="font-size:.85rem;text-align:left;margin:0 auto;max-width:260px">${lines}</div><div style="margin-top:8px">+${pts} ${I18N.t('rw_pts','pts')}</div><button id="nextBtn">${btnLabel}</button></div>`;
+  document.getElementById('nextBtn').onclick=()=>{
+    if(raceNum<NUM_RACES){raceNum++;newRace();}
+    else showFinalSummary();
+  };
+  SFX[dqFlag?'fail':'win']();
+}
+
+function showFinalSummary(){
+  if(totalPoints>best){best=totalPoints;localStorage.setItem('racewalking_best',String(best));}
+  const box=document.getElementById('msgBox');
+  box.innerHTML=`<div><div style="font-size:1.4rem;margin-bottom:6px">${I18N.t('rw_all_done','All Races Complete!')}</div>
+    <div>${I18N.t('rw_total_pts','Total Points: {p}').replace('{p}',totalPoints)}</div>
+    <div>${I18N.t('rw_best_pts','Personal Best: {b}').replace('{b}',best)}</div>
+    <button id="againBtn">${I18N.t('rw_play_again','Play Again')}</button></div>`;
+  document.getElementById('againBtn').onclick=()=>{raceNum=1;totalPoints=0;newRace();};
+}
+
+function drawTrack(){
+  ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#1d3d24');g.addColorStop(1,'#2c5333');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  const trackX0=60,trackX1=W-40;
+  for(let i=0;i<4;i++){
+    const y=LANES[i].y;
+    ctx.strokeStyle='rgba(255,255,255,.15)';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(trackX0,y+22);ctx.lineTo(trackX1,y+22);ctx.stroke();
+  }
+  ctx.strokeStyle='#fff';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(trackX1,20);ctx.lineTo(trackX1,240);ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.save();ctx.translate(trackX1+14,130);ctx.rotate(Math.PI/2);ctx.fillText(I18N.t('rw_finish','FINISH'),0,0);ctx.restore();
+
+  racers.forEach((r,i)=>{
+    const lane=LANES[i];
+    const x=trackX0+Math.min(1,r.pos/FINISH)*(trackX1-trackX0-14);
+    ctx.fillStyle=lane.color;
+    ctx.beginPath();ctx.arc(x+7,lane.y+14,10,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#dcdcdc';ctx.font='bold 11px Arial';ctx.textAlign='left';
+    ctx.fillText(lane.name(),4,lane.y+5);
+  });
+
+  if(dqFlag){
+    ctx.fillStyle='rgba(200,0,0,.25)';ctx.fillRect(0,0,W,H);
+  }
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=1;
+  if(raceActive&&!dqFlag){
+    // decay
+    racers[0].speed*=0.985;
+    racers[0].pos+=racers[0].speed;
+    for(let i=1;i<racers.length;i++){
+      const r=racers[i];
+      r.aiPhase+=0.03;
+      r.pos+=r.aiSpeed*(1+Math.sin(r.aiPhase)*0.12);
+    }
+    // meter natural drift toward center when idle
+    if(lastStepTime!=null&&performance.now()-lastStepTime>700){
+      meter+=(45-meter)*0.02;
+    }
+    // violation check
+    if(meter>=86){
+      redTimer+=16.7;
+      if(redTimer>900&&violCooldown<=0){
+        violations++;
+        SFX.error();
+        redTimer=0;violCooldown=90;
+        racers[0].speed*=0.35;
+        meter=55;
+        updateHud();
+        if(violations>=3){
+          dqFlag=true;
+          racers[0].finished=true;
+          endRace();
+        }
+      }
+    } else {
+      redTimer=Math.max(0,redTimer-10);
+    }
+    if(violCooldown>0)violCooldown--;
+
+    // finish detection
+    racers.forEach((r,i)=>{
+      if(!r.finished&&r.pos>=FINISH){
+        r.finished=true;
+        r.time=(performance.now()-startTime)/1000;
+        results.push({finishOrder:results.length+1,name:LANES[i].name(),isPlayer:i===0,time:r.time});
+        if(i===0)SFX.success();
+      }
+    });
+    if(racers.every(r=>r.finished)&&!raceOver){
+      endRace();
+    }
+  }
+  document.getElementById('meterNeedle').style.left=Math.max(0,Math.min(100,meter))+'%';
+  drawTrack();
+  requestAnimationFrame(loop);
+}
+
+newRace();
+loop();
+</script></body></html>

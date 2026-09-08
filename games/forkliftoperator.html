@@ -1,0 +1,340 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Forklift Operator</title><meta name="description" content="Play Forklift Operator free online — Move with Arrow Keys / WASD or drag on touch. Press Up/Down or the on-screen buttons to raise or lower your forks. Pick up pallets and stack them on the shelf shown by the delivery manifest before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/forkliftoperator"><meta property="og:title" content="Forklift Operator - Multiport Games"><meta property="og:description" content="Play Forklift Operator free online — Move with Arrow Keys / WASD or drag on touch. Press Up/Down or the on-screen buttons to raise or lower your forks. Pick up pallets and stack them on the shelf shown by the delivery manifest before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/forkliftoperator"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Forklift Operator","description":"Play Forklift Operator free online instantly. Drive a forklift through a busy warehouse, pick up color-coded pallets, and stack them in the correct shelf slots shown on the delivery manifest before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/forkliftoperator","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#8a8f98;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#hud{display:flex;justify-content:space-between;gap:8px;color:#fff;font-weight:700;font-size:.95rem;padding:6px 10px;flex-wrap:wrap}
+#hud span{background:rgba(0,0,0,.35);padding:4px 10px;border-radius:8px}
+#manifest{color:#ffd54f;font-weight:800;text-align:center;padding:2px 10px 8px;font-size:.95rem}
+#touchpad{display:flex;justify-content:center;gap:10px;padding:8px;flex-wrap:wrap}
+#touchpad button{width:56px;height:44px;font-size:1.1rem;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.12);color:#fff;font-weight:800}
+#touchpad button:active{background:rgba(255,255,255,.3)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Forklift Operator</div>
+  <div class="game-frame">
+    <div id="hud"><span id="score-display">Placed: 0 | Best: 0</span><span id="timer-display">Time: 60</span></div>
+    <div id="manifest">Manifest: deliver the RED pallet to shelf A1</div>
+    <canvas id="c" width="800" height="440"></canvas>
+    <div id="touchpad">
+      <button id="btnUp">▲ Fork</button>
+      <button id="btnDown">▼ Fork</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move with <b>Arrow Keys</b> / <b>WASD</b> or drag on touch. Press <b>Up/Down</b> arrows (or the on-screen Fork buttons) to raise or lower your forks. Drive onto a pallet with forks lowered to pick it up, then deliver it to the exact shelf slot shown on the manifest — matching color and location. Avoid crashing into racks. Place as many pallets correctly as you can before time runs out; each round gets busier!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+const BEST_KEY='forkliftoperator_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+
+const COLORS=['#e74c3c','#3498db','#2ecc71','#f1c40f','#9b59b6'];
+const COLOR_NAMES=['RED','BLUE','GREEN','YELLOW','PURPLE'];
+
+let truck,keys={},dragTarget=null,forkUp=false;
+let pallets=[],shelves=[],racks=[];
+let score=0,best2=best,timeLeft=60,started=false,gameOver=false,round=1;
+let carrying=null;
+let manifestTarget=null;
+let lastTime=null;
+
+function makeShelfGrid(){
+  shelves=[];
+  const cols=5,rows=2;
+  const startX=520,startY=80,gapX=52,gapY=180;
+  const labels='ABCDEFGHIJ';
+  let idx=0;
+  for(let r=0;r<rows;r++){
+    for(let col=0;col<cols;col++){
+      shelves.push({x:startX+col*gapX,y:startY+r*gapY,label:labels[col]+(r+1),occupied:null});
+      idx++;
+    }
+  }
+}
+
+function makeRacks(){
+  // static rack obstacles between shelf rows for visual + collision
+  racks=[
+    {x:500,y:150,w:280,h:14},
+    {x:500,y:330,w:280,h:14},
+  ];
+}
+
+function spawnPallet(){
+  const colorIdx=Math.floor(Math.random()*COLORS.length);
+  const x=40+Math.random()*300;
+  const y=60+Math.random()*320;
+  pallets.push({x,y,colorIdx,carried:false,id:Math.random()});
+}
+
+function pickManifest(){
+  const openShelves=shelves.filter(s=>!s.occupied);
+  if(openShelves.length===0){
+    // all full: free one randomly to keep game going
+    shelves[Math.floor(Math.random()*shelves.length)].occupied=null;
+  }
+  const target=shelves.filter(s=>!s.occupied)[Math.floor(Math.random()*shelves.filter(s=>!s.occupied).length)];
+  const colorIdx=Math.floor(Math.random()*COLORS.length);
+  manifestTarget={shelf:target,colorIdx};
+  document.getElementById('manifest').textContent=I18N.t('manifest_label','Manifest: deliver the {c} pallet to shelf {s}').replace('{c}',COLOR_NAMES[colorIdx]).replace('{s}',target.label);
+}
+
+function reset(){
+  truck={x:120,y:220,angle:0};
+  score=0;timeLeft=60+((round-1)*5>30?30:(round-1)*5);
+  timeLeft=Math.min(75,60+(round-1)*3);
+  started=false;gameOver=false;
+  pallets=[];carrying=null;forkUp=false;
+  makeShelfGrid();
+  makeRacks();
+  const count=Math.min(3+round,8);
+  for(let i=0;i<count;i++)spawnPallet();
+  pickManifest();
+  lastTime=null;
+}
+reset();
+
+function startGame(){if(!started)started=true;}
+function restartIfOver(){if(gameOver){round=1;reset();}}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  startGame();
+  if(gameOver&&(e.key===' '||e.code==='Space')){restartIfOver();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const scaleX=W/r.width,scaleY=H/r.height;
+  return {x:(e.clientX-r.left)*scaleX,y:(e.clientY-r.top)*scaleY};
+}
+c.addEventListener('mousedown',e=>{startGame();if(gameOver){restartIfOver();return;}dragTarget=getPos(e);});
+window.addEventListener('mouseup',()=>{dragTarget=null;});
+c.addEventListener('mousemove',e=>{if(dragTarget)dragTarget=getPos(e);});
+c.addEventListener('touchstart',e=>{e.preventDefault();startGame();if(gameOver){restartIfOver();return;}dragTarget=getPos(e.touches[0]);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();dragTarget=getPos(e.touches[0]);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragTarget=null;},{passive:false});
+
+document.getElementById('btnUp').addEventListener('pointerdown',()=>{startGame();forkUp=true;});
+document.getElementById('btnDown').addEventListener('pointerdown',()=>{startGame();forkUp=false;});
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function drawFloor(){
+  ctx.fillStyle='#8a8f98';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,0.15)';ctx.lineWidth=1;
+  for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+}
+
+function drawRacks(){
+  racks.forEach(r=>{
+    ctx.fillStyle='#37474f';
+    ctx.fillRect(r.x,r.y,r.w,r.h);
+    ctx.fillStyle='#546e7a';
+    ctx.fillRect(r.x,r.y+r.h-4,r.w,4);
+  });
+}
+
+function drawShelves(){
+  shelves.forEach(s=>{
+    const isTarget=manifestTarget&&manifestTarget.shelf===s;
+    ctx.strokeStyle=isTarget?'#ffd54f':'rgba(255,255,255,0.5)';
+    ctx.lineWidth=isTarget?3:1.5;
+    ctx.strokeRect(s.x-18,s.y-18,36,36);
+    ctx.fillStyle='rgba(255,255,255,0.65)';
+    ctx.font='10px Arial';ctx.textAlign='center';
+    ctx.fillText(s.label,s.x,s.y-22);
+    if(s.occupied!==null){
+      ctx.fillStyle=COLORS[s.occupied];
+      ctx.fillRect(s.x-14,s.y-14,28,28);
+    }
+  });
+}
+
+function drawPallet(p){
+  ctx.save();
+  ctx.fillStyle='#8d6e63';
+  ctx.fillRect(p.x-16,p.y-16,32,32);
+  ctx.fillStyle=COLORS[p.colorIdx];
+  ctx.fillRect(p.x-11,p.y-11,22,22);
+  ctx.restore();
+}
+
+function drawTruck(){
+  ctx.save();
+  ctx.translate(truck.x,truck.y);
+  ctx.rotate(truck.angle);
+  // body
+  ctx.fillStyle='#f39c12';
+  ctx.fillRect(-18,-14,36,28);
+  ctx.fillStyle='#e67e22';
+  ctx.fillRect(-18,-14,14,28);
+  // cage
+  ctx.strokeStyle='#333';ctx.lineWidth=2;
+  ctx.strokeRect(-16,-12,10,24);
+  // forks
+  ctx.fillStyle=forkUp?'#4caf50':'#555';
+  ctx.fillRect(16,-10,14,4);
+  ctx.fillRect(16,6,14,4);
+  // wheels
+  ctx.fillStyle='#222';
+  ctx.fillRect(-14,-16,8,4);
+  ctx.fillRect(-14,12,8,4);
+  ctx.fillRect(6,-16,8,4);
+  ctx.fillRect(6,12,8,4);
+  ctx.restore();
+  if(carrying){
+    const fx=truck.x+Math.cos(truck.angle)*26;
+    const fy=truck.y+Math.sin(truck.angle)*26;
+    ctx.fillStyle='#8d6e63';
+    ctx.fillRect(fx-16,fy-16,32,32);
+    ctx.fillStyle=COLORS[carrying.colorIdx];
+    ctx.fillRect(fx-11,fy-11,22,22);
+  }
+}
+
+function updateHUD(){
+  document.getElementById('score-display').textContent=I18N.t('placed_best_label','Placed: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+  document.getElementById('timer-display').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+}
+
+function loop(){
+  drawFloor();
+  drawShelves();
+  drawRacks();
+
+  if(!started){
+    pallets.forEach(drawPallet);
+    drawTruck();
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('fork_start_hint','Arrow Keys/Drag to drive, Up/Down to raise/lower forks'),W/2,H/2-10);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('start_hint2','Move to begin'),W/2,H/2+18);
+    updateHUD();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    pallets.forEach(drawPallet);
+    drawTruck();
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('time_up_title',"TIME'S UP"),W/2,H/2-14);
+    ctx.font='19px Arial';
+    ctx.fillText(I18N.t('fork_final','Pallets placed: {s}').replace('{s}',score),W/2,H/2+20);
+    ctx.fillText(I18N.t('restart_hint2','Tap, click, or press Space to try again'),W/2,H/2+50);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  timeLeft-=dt/60;
+  if(timeLeft<=0){
+    timeLeft=0;
+    gameOver=true;
+    SFX.lose();
+    if(score>best){best=score;localStorage.setItem(BEST_KEY,best);}
+  }
+
+  // movement
+  const speed=2.6;
+  let moved=false;
+  let dx=0,dy=0;
+  if(dragTarget){
+    dx=dragTarget.x-truck.x;dy=dragTarget.y-truck.y;
+    const dist=Math.hypot(dx,dy);
+    if(dist>4){
+      truck.angle=Math.atan2(dy,dx);
+      truck.x+=Math.cos(truck.angle)*Math.min(speed,dist)*dt;
+      truck.y+=Math.sin(truck.angle)*Math.min(speed,dist)*dt;
+      moved=true;
+    }
+  } else {
+    if(keys['arrowleft']||keys['a']){dx-=1;}
+    if(keys['arrowright']||keys['d']){dx+=1;}
+    if(keys['arrowup']||keys['w']){dy-=1;}
+    if(keys['arrowdown']||keys['s']){dy+=1;}
+    if(keys['q'])forkUp=true;
+    if(keys['e'])forkUp=false;
+    if(dx||dy){
+      const len=Math.hypot(dx,dy);
+      truck.angle=Math.atan2(dy,dx);
+      truck.x+=(dx/len)*speed*dt;
+      truck.y+=(dy/len)*speed*dt;
+      moved=true;
+    }
+  }
+  truck.x=Math.max(24,Math.min(W-24,truck.x));
+  truck.y=Math.max(24,Math.min(H-24,truck.y));
+
+  // rack collision (push back)
+  const truckHit={x:truck.x-18,y:truck.y-14,w:36,h:28};
+  racks.forEach(r=>{
+    if(rectsOverlap(truckHit,r)){
+      // push truck away from rack based on overlap direction
+      if(truck.y<r.y)truck.y=r.y-16;else truck.y=r.y+r.h+16;
+    }
+  });
+
+  const forkX=truck.x+Math.cos(truck.angle)*26;
+  const forkY=truck.y+Math.sin(truck.angle)*26;
+
+  // pickup
+  if(!carrying&&forkUp===false){
+    pallets.forEach(p=>{
+      if(!p.carried&&Math.abs(p.x-forkX)<20&&Math.abs(p.y-forkY)<20){
+        // need fork lowered to slide under, then lift
+      }
+    });
+  }
+  if(!carrying){
+    pallets.forEach(p=>{
+      if(!p.carried&&Math.abs(p.x-forkX)<18&&Math.abs(p.y-forkY)<18){
+        p.carried=true;
+        carrying=p;
+        pallets=pallets.filter(pp=>pp!==p);
+        SFX.click();
+      }
+    });
+  } else if(forkUp){
+    // check drop at any shelf near fork position
+    shelves.forEach(s=>{
+      if(!s.occupied&&Math.abs(s.x-forkX)<24&&Math.abs(s.y-forkY)<24){
+        s.occupied=carrying.colorIdx;
+        const correct=(s===manifestTarget.shelf&&carrying.colorIdx===manifestTarget.colorIdx);
+        if(correct){
+          score++;
+          SFX.success();
+          if(score>best){best=score;localStorage.setItem(BEST_KEY,best);}
+        } else {
+          SFX.error();
+        }
+        carrying=null;
+        pickManifest();
+        if(pallets.length<3)spawnPallet();
+        if(score>0&&score%5===0){round++;}
+      }
+    });
+  }
+
+  pallets.forEach(drawPallet);
+  drawTruck();
+  updateHUD();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

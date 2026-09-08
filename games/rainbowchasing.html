@@ -1,0 +1,249 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rainbow Chasing</title><meta name="description" content="Play Rainbow Chasing free online — Drive your photographer toward the rainbow using arrow keys, WASD, or touch-drag before it fades. Reach the vantage point in time to snap the photo!"><link rel="canonical" href="https://games.multiportllc.com/games/rainbowchasing"><meta property="og:title" content="Rainbow Chasing - Multiport Games"><meta property="og:description" content="Play Rainbow Chasing free online — Drive your photographer toward the rainbow using arrow keys, WASD, or touch-drag before it fades. Reach the vantage point in time to snap the photo!"><meta property="og:url" content="https://games.multiportllc.com/games/rainbowchasing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rainbow Chasing","description":"Play Rainbow Chasing free online instantly. Drive your photographer toward the rainbow using arrow keys, WASD, or touch-drag before it fades. Reach the vantage point in time to snap the photo! No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/rainbowchasing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#87ceeb;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#fff;font-size:1rem;font-weight:700;padding:6px 4px;max-width:800px;margin:0 auto}
+#fadeBar{height:8px;background:#00000033;border-radius:6px;overflow:hidden;max-width:800px;margin:0 auto 8px}
+#fadeFill{height:100%;background:linear-gradient(90deg,#ff5252,#ffeb3b,#4caf50,#42a5f5,#ab47bc);width:100%;transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rainbow Chasing</div>
+  <div class="game-frame">
+    <div id="hud"><span id="score">📸 0 | Attempts left: 3</span><span id="weather">☀️ Sunny</span></div>
+    <div id="fadeBar"><div id="fadeFill"></div></div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drive your photographer toward the rainbow using <b>Arrow Keys</b>, <b>WASD</b>, or <b>touch-drag</b>. The rainbow shifts position as weather conditions change — watch the weather indicator! Reach the vantage point (the golden marker) and stop there before the fade timer runs out to snap the photo. You get a limited number of attempts, and each round the rainbow fades faster.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320,groundY=270;
+const BEST_KEY='rainbowchasing_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+
+let photographer={x:60,y:groundY,w:34,h:46,vx:0};
+let vantage={x:400};
+let attempts=3,photosTaken=0,round=1;
+let fadeTime=10,fadeLeft=10;
+let weather='sunny';
+let weatherTimer=0;
+let gameState='playing'; // playing, success, fail, over
+let stateTimer=0;
+let keys={};
+let dragging=false,dragX=0;
+
+const scoreEl=document.getElementById('score');
+const weatherEl=document.getElementById('weather');
+const fadeFill=document.getElementById('fadeFill');
+
+function updateHud(){
+  scoreEl.textContent=I18N.t('score_attempts','📸 {s} | Attempts left: {a}').replace('{s}',photosTaken).replace('{a}',attempts);
+  const wtxt=weather==='sunny'?I18N.t('weather_sunny','☀️ Sunny'):weather==='rain'?I18N.t('weather_rain','🌧️ Rain'):I18N.t('weather_mixed','🌦️ Sun & Rain');
+  weatherEl.textContent=wtxt;
+}
+
+function newVantage(){
+  vantage.x=120+Math.random()*(W-240);
+}
+
+function newRound(){
+  newVantage();
+  fadeTime=Math.max(4,10-round*0.5);
+  fadeLeft=fadeTime;
+  weather=['sunny','rain','mixed'][Math.floor(Math.random()*3)];
+  weatherTimer=0;
+  gameState='playing';
+  updateHud();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+c.addEventListener('pointerdown',e=>{dragging=true;dragX=getPointerX(e);});
+c.addEventListener('pointermove',e=>{ if(dragging)dragX=getPointerX(e); });
+window.addEventListener('pointerup',()=>{dragging=false;});
+function getPointerX(e){
+  const r=c.getBoundingClientRect();
+  return (e.clientX-r.left)*(W/r.width);
+}
+
+function restart(){
+  attempts=3;photosTaken=0;round=1;
+  photographer.x=60;
+  newRound();
+}
+
+function loseAttempt(){
+  attempts--;
+  updateHud();
+  if(attempts<=0){
+    gameState='over';
+    stateTimer=0;
+    SFX.lose();
+    if(photosTaken>best){best=photosTaken;localStorage.setItem(BEST_KEY,String(best));}
+  }else{
+    gameState='fail';
+    stateTimer=0;
+    SFX.fail();
+  }
+}
+
+function takePhoto(){
+  photosTaken++;
+  round++;
+  gameState='success';
+  stateTimer=0;
+  SFX.success();
+  updateHud();
+}
+
+let lastTime=null;
+function loop(t){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+
+  // sky
+  const sky=ctx.createLinearGradient(0,0,0,groundY);
+  if(weather==='rain'){sky.addColorStop(0,'#4a5568');sky.addColorStop(1,'#718096');}
+  else if(weather==='mixed'){sky.addColorStop(0,'#6b8cae');sky.addColorStop(1,'#a0c4e0');}
+  else {sky.addColorStop(0,'#4fa8e0');sky.addColorStop(1,'#a8d8f0');}
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,groundY);
+
+  // sun
+  if(weather!=='rain'){
+    ctx.fillStyle='#ffe066';
+    ctx.beginPath();ctx.arc(W-80,60,30,0,Math.PI*2);ctx.fill();
+  }
+  // rain drops
+  if(weather==='rain'||weather==='mixed'){
+    ctx.strokeStyle='rgba(200,220,255,0.6)';
+    ctx.lineWidth=2;
+    for(let i=0;i<30;i++){
+      const rx=(i*47+ (t/30||0))%W;
+      const ry=(i*29+(t/8||0))%groundY;
+      ctx.beginPath();ctx.moveTo(rx,ry);ctx.lineTo(rx-4,ry+10);ctx.stroke();
+    }
+  }
+
+  // road/ground
+  ctx.fillStyle='#5d4037';ctx.fillRect(0,groundY,W,H-groundY);
+  ctx.fillStyle='#4a332c';
+  for(let i=0;i<20;i++){
+    const dx=(i*44 - (photographer.dashOffset||0))%(W+44);
+    ctx.fillRect(dx,groundY+20,24,4);
+  }
+
+  // vantage marker
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();
+  ctx.moveTo(vantage.x,groundY-4);
+  ctx.lineTo(vantage.x-14,groundY+24);
+  ctx.lineTo(vantage.x+14,groundY+24);
+  ctx.closePath();ctx.fill();
+  ctx.fillStyle='#8a6d1a';
+  ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText('📍',vantage.x,groundY-8);
+
+  // rainbow arc above vantage
+  const fadePct=Math.max(0,fadeLeft/fadeTime);
+  const colors=['#ff5252','#ff9800','#ffeb3b','#4caf50','#42a5f5','#3f51b5','#ab47bc'];
+  ctx.save();
+  ctx.globalAlpha=0.35+0.5*fadePct;
+  colors.forEach((col,i)=>{
+    ctx.strokeStyle=col;
+    ctx.lineWidth=8;
+    ctx.beginPath();
+    ctx.arc(vantage.x,groundY+10,120-i*9,Math.PI,2*Math.PI);
+    ctx.stroke();
+  });
+  ctx.restore();
+
+  if(gameState==='playing'){
+    // movement
+    let dir=0;
+    if(keys['ArrowLeft']||keys['KeyA'])dir=-1;
+    if(keys['ArrowRight']||keys['KeyD'])dir=1;
+    if(dragging){
+      const diff=dragX-photographer.x;
+      dir=Math.abs(diff)>6?Math.sign(diff):0;
+    }
+    const speed=5;
+    photographer.x+=dir*speed*dt;
+    photographer.x=Math.max(20,Math.min(W-20,photographer.x));
+    photographer.dashOffset=(photographer.dashOffset||0)+dir*speed*dt;
+
+    fadeLeft-=dt/60;
+    const pct=Math.max(0,fadeLeft/fadeTime)*100;
+    fadeFill.style.width=pct+'%';
+
+    if(Math.abs(photographer.x-vantage.x)<26){
+      takePhoto();
+    } else if(fadeLeft<=0){
+      loseAttempt();
+    }
+  } else {
+    stateTimer+=dt;
+    if(gameState==='success'&&stateTimer>50){newRound();}
+    else if(gameState==='fail'&&stateTimer>50){newRound();}
+  }
+
+  // photographer sprite
+  drawPhotographer();
+
+  // messages
+  if(gameState==='success'){
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('photo_taken','📸 Rainbow captured!'),W/2,100);
+  } else if(gameState==='fail'){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('rainbow_faded','The rainbow faded away...'),W/2,100);
+  } else if(gameState==='over'){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,120);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('final_score','Photos taken: {s} (Best: {b})').replace('{s}',photosTaken).replace('{b}',best),W/2,160);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space to try again'),W/2,196);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+function drawPhotographer(){
+  const x=photographer.x,y=photographer.y;
+  ctx.save();
+  ctx.fillStyle='#ff6b35';
+  ctx.fillRect(x-15,y-24,30,24);
+  ctx.fillStyle='#2d2d3a';
+  ctx.beginPath();ctx.arc(x-9,y,7,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x+9,y,7,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffe0bd';
+  ctx.beginPath();ctx.arc(x,y-30,8,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#333';
+  ctx.fillRect(x-6,y-16,12,8);
+  ctx.restore();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&gameState==='over'){e.preventDefault();restart();}
+});
+c.addEventListener('click',()=>{ if(gameState==='over')restart(); });
+c.addEventListener('touchstart',e=>{ if(gameState==='over'){e.preventDefault();restart();} },{passive:false});
+
+newRound();
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,269 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Wheelchair Basketball</title><meta name="description" content="Play Wheelchair Basketball free online — Drag/swipe or use WASD/arrows to push your chair (momentum makes turns take a moment), tap or click to pass or shoot. Beat the shot-clock past tougher defense each round."><link rel="canonical" href="https://games.multiportllc.com/games/wheelchairbasketball"><meta property="og:title" content="Wheelchair Basketball - Multiport Games"><meta property="og:description" content="Play Wheelchair Basketball free online — Drag/swipe or use WASD/arrows to push your chair (momentum makes turns take a moment), tap or click to pass or shoot. Beat the shot-clock past tougher defense each round."><meta property="og:url" content="https://games.multiportllc.com/games/wheelchairbasketball"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Wheelchair Basketball","description":"Play Wheelchair Basketball free online instantly. Drag/swipe or WASD/arrows to push your chair with realistic momentum, tap or click to pass or shoot, and beat the shot-clock past ever-tougher AI defense. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/wheelchairbasketball","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#160a04}
+#c{background:#c98a4b;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;align-items:center;padding:8px 14px;color:#fff;font-weight:700;font-size:.95rem;flex-wrap:wrap;gap:6px}
+#hud .grp{display:flex;align-items:center;gap:8px}
+#clockWrap{width:110px;height:12px;background:rgba(0,0,0,.35);border-radius:6px;overflow:hidden;border:1px solid rgba(255,255,255,.25)}
+#clockBar{height:100%;width:100%;background:linear-gradient(90deg,#7ee787,#ffd54f,#ff6b6b);transition:width .1s linear}
+#msg{position:relative;text-align:center;color:#fff;font-weight:800;min-height:1.4em;font-size:.95rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Wheelchair Basketball</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div class="grp"><span id="scoreLbl">You 0 — 0 Opp</span></div>
+      <div class="grp"><span id="hiLbl">Best: 0</span></div>
+      <div class="grp"><span id="timeLbl">1:00</span></div>
+      <div class="grp">⏱️<div id="clockWrap"><div id="clockBar"></div></div></div>
+    </div>
+    <div id="msg">&nbsp;</div>
+    <canvas id="c" width="800" height="460"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag/swipe (or <b>WASD</b>/<b>arrows</b>) to push your chair — momentum means turns and direction changes take a moment to catch up, so plan your pushes ahead. <b>Tap or click</b> a spot to shoot there (closer shots are worth 2, beyond the arc worth 3), or press <b>Space</b> to auto-aim. Beat the shot-clock and find gaps past tougher defense each round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=460;
+const GOAL_X=770,GOAL_TOP=H/2-45,GOAL_BOT=H/2+45;
+const ARC_R=210;
+const best=()=>parseInt(localStorage.getItem('wheelchairbasketball_best')||'0');
+let hi=best();
+
+let player,ball,defenders,score,oppScore,timeLeft,shotClock,running,gameOver,elapsed,turnoverLock;
+let drag=null;
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+function arcDist(x,y){return Math.hypot(x-(GOAL_X+10),y-H/2);}
+
+function reset(){
+  player={x:150,y:H/2,r:16,vx:0,vy:0};
+  ball={x:player.x+18,y:player.y,held:true,flying:false,tx:0,ty:0,t:0,dur:0,fx:0,fy:0,points:2};
+  defenders=[];
+  score=0;oppScore=0;timeLeft=60;shotClock=12;running=false;gameOver=false;elapsed=0;turnoverLock=0;
+  spawnDefenders();
+  updateHud();
+}
+
+function difficulty(){return 1+Math.min(elapsed/20,4);}
+
+function spawnDefenders(){
+  const n=Math.min(2+Math.floor(difficulty()/2),4);
+  defenders=[];
+  for(let i=0;i<n;i++){
+    defenders.push({x:420+i*35,y:100+i*90,r:15,speed:1.0+difficulty()*0.16+Math.random()*0.25});
+  }
+}
+
+function updateHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('wb_score','You {s} — {o} Opp').replace('{s}',score).replace('{o}',oppScore);
+  document.getElementById('hiLbl').textContent=I18N.t('wb_best','Best: {h}').replace('{h}',hi);
+  const m=Math.floor(Math.max(0,timeLeft)/60),s=Math.floor(Math.max(0,timeLeft)%60);
+  document.getElementById('timeLbl').textContent=(m+':'+String(s).padStart(2,'0'));
+  document.getElementById('clockBar').style.width=clamp(shotClock/12*100,0,100)+'%';
+}
+function flash(text){document.getElementById('msg').textContent=text;}
+function startIfNeeded(){ if(!running&&!gameOver){running=true;} }
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  if(e.code==='Space'){startIfNeeded();autoShoot();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function keyVec(){
+  let x=0,y=0;
+  if(keys['arrowleft']||keys['a'])x-=1;
+  if(keys['arrowright']||keys['d'])x+=1;
+  if(keys['arrowup']||keys['w'])y-=1;
+  if(keys['arrowdown']||keys['s'])y+=1;
+  const len=Math.hypot(x,y);
+  return len>0?{x:x/len,y:y/len}:null;
+}
+
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width),y=(e.clientY-r.top)*(H/r.height);
+  drag={startX:x,startY:y,curX:x,curY:y,active:false};
+  startIfNeeded();
+});
+c.addEventListener('pointermove',e=>{
+  if(!drag)return;
+  const r=c.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width),y=(e.clientY-r.top)*(H/r.height);
+  drag.curX=x;drag.curY=y;
+  if(Math.hypot(x-drag.startX,y-drag.startY)>10)drag.active=true;
+});
+c.addEventListener('pointerup',()=>{
+  if(!drag)return;
+  if(!drag.active)doAction(drag.startX,drag.startY);
+  drag=null;
+});
+c.addEventListener('pointerleave',()=>{drag=null;});
+
+function doAction(tx,ty){
+  if(gameOver){reset();return;}
+  if(!ball.held||ball.flying||turnoverLock>0)return;
+  shootAt(tx,ty);
+}
+function autoShoot(){
+  if(gameOver){reset();return;}
+  if(!ball.held||ball.flying||turnoverLock>0)return;
+  shootAt(GOAL_X,H/2+(Math.random()*50-25));
+}
+function shootAt(tx,ty){
+  ty=clamp(ty,10,H-10);
+  const pts=arcDist(player.x,player.y)>ARC_R?3:2;
+  ball.held=false;ball.flying=true;
+  ball.fx=ball.x;ball.fy=ball.y;
+  ball.tx=Math.max(tx,player.x+30);ball.ty=ty;
+  ball.points=pts;
+  // accuracy drops the farther/wider the shot
+  const distToHoop=dist({x:player.x,y:player.y},{x:GOAL_X+10,y:H/2});
+  ball.accuracy=clamp(1-distToHoop/650,0.15,0.95);
+  const d=Math.hypot(ball.tx-ball.fx,ball.ty-ball.fy);
+  ball.dur=Math.max(0.3,d/640);
+  ball.t=0;
+  SFX.jump();
+}
+function resolveShot(){
+  ball.flying=false;
+  const diff=difficulty();
+  const made=Math.random()<ball.accuracy*(1-diff*0.045);
+  if(made){
+    score+=ball.points;
+    flash(I18N.t('wb_score_pts','🏀 Nothing but net! +{p}').replace('{p}',ball.points));
+    SFX.coin();
+  }else{
+    flash(I18N.t('wb_miss','Rim out — no good.'));
+    SFX.error();
+  }
+  giveBallBack();
+  updateHud();
+}
+function giveBallBack(){
+  turnoverLock=45;
+  shotClock=12;
+  player.x=150+Math.random()*40;player.y=H/2+(Math.random()*120-60);
+  player.vx=0;player.vy=0;
+  ball.held=true;ball.x=player.x+18;ball.y=player.y;
+  spawnDefenders();
+}
+function turnoverEvent(fallback){
+  turnoverLock=50;
+  const diff=difficulty();
+  const counter=Math.random()<0.2+diff*0.05;
+  if(counter){oppScore+=2;flash(I18N.t('wb_counter','🚨 Opponent fast break scores!'));SFX.hit();}
+  else{flash(fallback);SFX.hurt();}
+  giveBallBack();
+  updateHud();
+}
+function endGame(){
+  gameOver=true;running=false;
+  if(score>hi){hi=score;localStorage.setItem('wheelchairbasketball_best',hi);}
+  if(score>oppScore){SFX.win();flash(I18N.t('wb_win','🏆 You win {s}-{o}! Tap to play again').replace('{s}',score).replace('{o}',oppScore));}
+  else if(score<oppScore){SFX.lose();flash(I18N.t('wb_lose','Final: {s}-{o}. Tap to try again').replace('{s}',score).replace('{o}',oppScore));}
+  else{SFX.click();flash(I18N.t('wb_tie','Tied {s}-{o}! Tap to play again').replace('{s}',score).replace('{o}',oppScore));}
+}
+
+function drawEmoji(emoji,x,y,size){
+  ctx.font=size+'px serif';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(emoji,x,y);
+}
+function drawCourt(){
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#d69a55');g.addColorStop(1,'#a06a28');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,.55)';ctx.lineWidth=3;
+  ctx.beginPath();ctx.arc(GOAL_X+10,H/2,ARC_R,Math.PI/2+0.2,-Math.PI/2-0.2,true);ctx.stroke();
+  ctx.strokeStyle='#fff';ctx.lineWidth=4;
+  ctx.strokeRect(GOAL_X,GOAL_TOP,20,GOAL_BOT-GOAL_TOP);
+  ctx.strokeStyle='rgba(255,255,255,.3)';ctx.lineWidth=2;
+  ctx.strokeRect(20,20,W-40,H-40);
+}
+
+function update(dt){
+  if(!running||gameOver)return;
+  elapsed+=dt;
+  timeLeft-=dt;
+  if(turnoverLock>0)turnoverLock-=1;
+  if(timeLeft<=0){timeLeft=0;endGame();updateHud();return;}
+
+  if(ball.held&&turnoverLock<=0){
+    shotClock-=dt;
+    if(shotClock<=0){turnoverEvent(I18N.t('wb_violation','⏱️ Shot-clock violation! Turnover.'));return;}
+  }
+
+  const kv=keyVec();
+  let mv={x:0,y:0};
+  if(kv)mv=kv;
+  else if(drag&&drag.active){
+    const dx=drag.curX-drag.startX,dy=drag.curY-drag.startY;
+    const len=Math.hypot(dx,dy);
+    const cap=60;const mag=Math.min(len,cap)/cap;
+    if(len>0)mv={x:dx/len*mag,y:dy/len*mag};
+  }
+  // momentum: chair accelerates toward desired direction, doesn't snap instantly
+  const accel=0.35,maxV=3.4,friction=0.90;
+  player.vx+=mv.x*accel*dt*60;
+  player.vy+=mv.y*accel*dt*60;
+  player.vx*=Math.pow(friction,dt*60);
+  player.vy*=Math.pow(friction,dt*60);
+  const spd=Math.hypot(player.vx,player.vy);
+  if(spd>maxV){player.vx=player.vx/spd*maxV;player.vy=player.vy/spd*maxV;}
+  player.x=clamp(player.x+player.vx*dt*60,25,GOAL_X-40);
+  player.y=clamp(player.y+player.vy*dt*60,25,H-25);
+
+  if(ball.held){ball.x=player.x+16;ball.y=player.y;}
+  if(ball.flying){
+    ball.t+=dt;
+    const p=clamp(ball.t/ball.dur,0,1);
+    ball.x=ball.fx+(ball.tx-ball.fx)*p;
+    ball.y=ball.fy+(ball.ty-ball.fy)*p;
+    if(p>=1)resolveShot();
+  }
+
+  if(turnoverLock<=0){
+    defenders.forEach(d=>{
+      const tx=player.x+(GOAL_X-player.x)*0.3,ty=player.y;
+      d.x+=clamp(tx-d.x,-d.speed,d.speed);
+      d.y+=clamp(ty-d.y,-d.speed,d.speed);
+      if(ball.held&&dist(d,player)<d.r+player.r+4){
+        turnoverEvent(I18N.t('wb_steal','Ball poked away! Turnover.'));
+      }
+    });
+  }
+  updateHud();
+}
+
+let last=null;
+function loop(ts){
+  if(last===null)last=ts;
+  const dt=Math.min((ts-last)/1000,0.05);
+  last=ts;
+  update(dt);
+  ctx.clearRect(0,0,W,H);
+  drawCourt();
+  defenders.forEach(d=>{drawEmoji('🧑‍🦽',d.x,d.y,28);});
+  if(!ball.held||ball.flying){drawEmoji('🏀',ball.x,ball.y,16);}
+  drawEmoji('🧑‍🦽',player.x,player.y,32);
+  if(ball.held){drawEmoji('🏀',ball.x,ball.y,14);}
+  if(!running&&!gameOver){
+    ctx.fillStyle='rgba(255,255,255,.9)';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('wb_start','Drag / WASD to push — tap or Space to shoot'),W/2,H/2-100);
+  }
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

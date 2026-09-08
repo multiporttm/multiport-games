@@ -1,0 +1,257 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Blimp Ride</title><meta name="description" content="Play Blimp Ride free online — Steer with Arrow Keys / WASD or drag on touch. Drift over the city skyline, dodge buildings and aircraft, and click or tap when a landmark is centered to snap a scenic photo."><link rel="canonical" href="https://games.multiportllc.com/games/blimpride"><meta property="og:title" content="Blimp Ride - Multiport Games"><meta property="og:description" content="Play Blimp Ride free online — Steer with Arrow Keys / WASD or drag on touch. Drift over the city skyline, dodge buildings and aircraft, and click or tap when a landmark is centered to snap a scenic photo."><meta property="og:url" content="https://games.multiportllc.com/games/blimpride"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Blimp Ride","description":"Play Blimp Ride free online instantly. Pilot a blimp drifting over a city skyline, adjust altitude to avoid buildings and other aircraft, and snap scenic photos of landmarks as they pass. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/blimpride","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#87ceeb;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#hud{display:flex;justify-content:space-between;gap:8px;color:#fff;font-weight:700;font-size:.95rem;padding:6px 10px;flex-wrap:wrap}
+#hud span{background:rgba(0,0,0,.35);padding:4px 10px;border-radius:8px}
+#flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none}
+.game-frame{position:relative}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Blimp Ride</div>
+  <div class="game-frame">
+    <div id="hud"><span id="score-display">Photos: 0 | Distance: 0m</span><span id="best-display">Best: 0</span></div>
+    <canvas id="c" width="800" height="400"></canvas>
+    <div id="flash"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Steer with <b>Arrow Keys</b> / <b>WASD</b> or drag on touch to adjust altitude and drift. Avoid buildings and other aircraft. When a golden landmark 📷 icon lines up in the center of your view, <b>click or tap</b> to snap a photo. Score points for photos and distance traveled before you crash!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+const BEST_KEY='blimpride_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+
+let blimp,started,gameOver,frame,distance,photos,keys={},dragTarget=null;
+let buildings=[],aircraft=[],landmarks=[],clouds=[];
+let buildingTimer,aircraftTimer,landmarkTimer;
+
+function reset(){
+  blimp={x:180,y:180,vy:0};
+  started=false;gameOver=false;frame=0;distance=0;photos=0;
+  buildings=[];aircraft=[];landmarks=[];
+  buildingTimer=0;aircraftTimer=140;landmarkTimer=260;
+  clouds=[];
+  for(let i=0;i<5;i++)clouds.push({x:Math.random()*W,y:30+Math.random()*100,s:20+Math.random()*20});
+  // seed initial skyline so it's not empty
+  for(let i=0;i<6;i++){
+    buildings.push({x:i*140,w:60+Math.random()*40,h:80+Math.random()*140});
+  }
+}
+reset();
+
+function spawnBuilding(){
+  buildings.push({x:W+20,w:60+Math.random()*50,h:80+Math.random()*160});
+}
+function spawnAircraft(){
+  const y=60+Math.random()*260;
+  aircraft.push({x:W+40,y,w:36,h:14,dir:-1});
+}
+function spawnLandmark(){
+  const y=60+Math.random()*180;
+  landmarks.push({x:W+40,y,r:16,captured:false,life:0});
+}
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function startGame(){if(!started)started=true;}
+function restartIfOver(){if(gameOver)reset();}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  if(e.code==='Space'){e.preventDefault();startGame();restartIfOver();tryPhoto();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const scaleX=W/r.width,scaleY=H/r.height;
+  return {x:(e.clientX-r.left)*scaleX,y:(e.clientY-r.top)*scaleY};
+}
+
+c.addEventListener('mousedown',e=>{startGame();if(gameOver){restartIfOver();return;}dragTarget=getPos(e);tryPhoto();});
+window.addEventListener('mouseup',()=>{dragTarget=null;});
+c.addEventListener('mousemove',e=>{if(dragTarget)dragTarget=getPos(e);});
+c.addEventListener('touchstart',e=>{e.preventDefault();startGame();if(gameOver){restartIfOver();return;}dragTarget=getPos(e.touches[0]);tryPhoto();},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();dragTarget=getPos(e.touches[0]);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragTarget=null;},{passive:false});
+
+function tryPhoto(){
+  if(!started||gameOver)return;
+  let got=false;
+  landmarks.forEach(l=>{
+    if(!l.captured&&Math.abs(l.x-blimp.x)<26&&Math.abs(l.y-blimp.y)<26){
+      l.captured=true;got=true;
+    }
+  });
+  if(got){
+    photos++;
+    SFX.coin();
+    const flash=document.getElementById('flash');
+    flash.style.transition='none';flash.style.opacity='0.8';
+    requestAnimationFrame(()=>{flash.style.transition='opacity .4s';flash.style.opacity='0';});
+  } else {
+    SFX.click();
+  }
+}
+
+function drawBlimp(){
+  ctx.save();
+  ctx.translate(blimp.x,blimp.y);
+  ctx.fillStyle='#d64545';
+  ctx.beginPath();ctx.ellipse(0,0,50,22,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#b83a3a';
+  ctx.beginPath();ctx.ellipse(0,6,46,12,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#333';
+  ctx.fillRect(-14,18,28,12);
+  ctx.strokeStyle='#222';ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.moveTo(-10,20);ctx.lineTo(-20,10);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(10,20);ctx.lineTo(20,10);ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText('MULTIPORT',0,4);
+  ctx.restore();
+}
+
+function drawCloud(cl){
+  ctx.fillStyle='rgba(255,255,255,0.7)';
+  ctx.beginPath();ctx.ellipse(cl.x,cl.y,cl.s,cl.s*0.5,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(cl.x+cl.s*0.6,cl.y+4,cl.s*0.7,cl.s*0.4,0,0,Math.PI*2);ctx.fill();
+}
+
+function drawBuilding(b){
+  ctx.fillStyle='#4a5568';
+  ctx.fillRect(b.x,H-b.h,b.w,b.h);
+  ctx.fillStyle='#ffd54f';
+  for(let wy=H-b.h+10;wy<H-8;wy+=18){
+    for(let wx=b.x+8;wx<b.x+b.w-8;wx+=16){
+      if((Math.floor(wx+wy)%3)!==0)ctx.fillRect(wx,wy,6,8);
+    }
+  }
+}
+
+function drawAircraft(a){
+  ctx.save();
+  ctx.translate(a.x,a.y);
+  ctx.fillStyle='#eee';
+  ctx.beginPath();ctx.moveTo(-18,0);ctx.lineTo(18,-4);ctx.lineTo(18,4);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#c0392b';ctx.fillRect(-4,-8,4,16);
+  ctx.restore();
+}
+
+function drawLandmark(l){
+  if(l.captured)return;
+  const pulse=2+Math.sin(frame*0.15)*2;
+  ctx.save();
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(l.x,l.y,l.r+pulse,0,Math.PI*2);ctx.globalAlpha=0.3;ctx.fill();
+  ctx.globalAlpha=1;
+  ctx.font='22px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('📷',l.x,l.y);
+  ctx.restore();
+}
+
+function updateHUD(){
+  document.getElementById('score-display').textContent=I18N.t('blimp_score_label','Photos: {p} | Distance: {d}m').replace('{p}',photos).replace('{d}',Math.floor(distance));
+  document.getElementById('best-display').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+}
+
+function loop(){
+  frame++;
+  // sky
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#5fa8d3');sky.addColorStop(1,'#bde0f7');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  clouds.forEach(cl=>{drawCloud(cl);});
+
+  if(!started){
+    buildings.forEach(drawBuilding);
+    drawBlimp();
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('blimp_start_hint','Arrow Keys/Drag to steer, Click/Tap to snap photos'),W/2,H/2-20);
+    ctx.font='17px Arial';
+    ctx.fillText(I18N.t('start_hint2','Move or click to begin'),W/2,H/2+12);
+    updateHUD();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    buildings.forEach(drawBuilding);
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-14);
+    ctx.font='19px Arial';
+    ctx.fillText(I18N.t('blimp_final','Photos: {p} | Distance: {d}m').replace('{p}',photos).replace('{d}',Math.floor(distance)),W/2,H/2+20);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+50);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // move clouds slow
+  clouds.forEach(cl=>{cl.x-=0.3;if(cl.x<-40){cl.x=W+40;cl.y=30+Math.random()*100;}});
+
+  // control
+  const speed=2.4;
+  if(dragTarget){
+    blimp.y+=(dragTarget.y-blimp.y)*0.08;
+  } else {
+    if(keys['arrowup']||keys['w'])blimp.y-=speed;
+    if(keys['arrowdown']||keys['s'])blimp.y+=speed;
+  }
+  let hSpeed=0;
+  if(keys['arrowleft']||keys['a'])hSpeed=-1.2;
+  if(keys['arrowright']||keys['d'])hSpeed=1.2;
+  blimp.x=Math.max(60,Math.min(W-60,blimp.x+hSpeed));
+  blimp.y=Math.max(40,Math.min(H-60,blimp.y));
+
+  distance+=0.6;
+  const worldSpeed=1.6;
+
+  buildings=buildings.filter(b=>b.x>-100);
+  buildings.forEach(b=>{b.x-=worldSpeed;drawBuilding(b);});
+  if(buildings.length===0||buildings[buildings.length-1].x<W-150){spawnBuilding();}
+
+  aircraftTimer++;
+  if(aircraftTimer>220){aircraftTimer=0;spawnAircraft();}
+  aircraft=aircraft.filter(a=>a.x>-60);
+  aircraft.forEach(a=>{a.x-=worldSpeed+2.4;drawAircraft(a);});
+
+  landmarkTimer++;
+  if(landmarkTimer>240){landmarkTimer=0;spawnLandmark();}
+  landmarks=landmarks.filter(l=>l.x>-60&&(!l.captured||l.x>-60));
+  landmarks.forEach(l=>{l.x-=worldSpeed;drawLandmark(l);});
+
+  // collisions: buildings
+  const blimpHit={x:blimp.x-46,y:blimp.y-20,w:92,h:40};
+  let crashed=false;
+  buildings.forEach(b=>{
+    const bh={x:b.x,y:H-b.h,w:b.w,h:b.h};
+    if(rectsOverlap(blimpHit,bh))crashed=true;
+  });
+  aircraft.forEach(a=>{
+    const ah={x:a.x-18,y:a.y-8,w:36,h:16};
+    if(rectsOverlap(blimpHit,ah))crashed=true;
+  });
+  if(blimp.y<=40||blimp.y>=H-60)crashed=false; // clamped, not a crash
+
+  if(crashed&&!gameOver){
+    gameOver=true;
+    SFX.lose();
+    const total=photos*10+Math.floor(distance);
+    if(total>best){best=total;localStorage.setItem(BEST_KEY,best);}
+  }
+
+  drawBlimp();
+  updateHUD();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

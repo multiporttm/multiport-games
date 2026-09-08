@@ -1,0 +1,334 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Helicopter Rescue</title><meta name="description" content="Play Helicopter Rescue free online — Fly with Arrow Keys / WASD or drag on touch. Hold Space, click, or hold your finger to lower the rescue line onto stranded people. Avoid power lines and debris, and watch your fuel!"><link rel="canonical" href="https://games.multiportllc.com/games/helicopterrescue"><meta property="og:title" content="Helicopter Rescue - Multiport Games"><meta property="og:description" content="Play Helicopter Rescue free online — Fly with Arrow Keys / WASD or drag on touch. Hold Space, click, or hold your finger to lower the rescue line onto stranded people. Avoid power lines and debris, and watch your fuel!"><meta property="og:url" content="https://games.multiportllc.com/games/helicopterrescue"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Helicopter Rescue","description":"Play Helicopter Rescue free online instantly. Fly a rescue helicopter over disaster terrain, lower the winch line to pick up stranded people from rooftops and water, avoid power lines and debris, and manage your fuel. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/helicopterrescue","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#4a90c2;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#hud{display:flex;justify-content:space-between;gap:8px;color:#fff;font-weight:700;font-size:.95rem;padding:6px 10px;flex-wrap:wrap}
+#hud span{background:rgba(0,0,0,.35);padding:4px 10px;border-radius:8px}
+#fuelbar{width:100%;height:8px;background:rgba(0,0,0,.4);border-radius:4px;overflow:hidden;margin:0 10px 6px}
+#fuelfill{height:100%;background:linear-gradient(90deg,#ffb300,#ff5252);width:100%;transition:width .2s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Helicopter Rescue</div>
+  <div class="game-frame">
+    <div id="hud"><span id="score-display">Rescued: 0 | Best: 0</span><span id="lives-display">❤️ x3</span></div>
+    <div id="fuelbar"><div id="fuelfill"></div></div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Fly with <b>Arrow Keys</b> / <b>WASD</b> or drag on touch. Hold <b>Space</b>, click, or hold your finger to lower the rescue line onto stranded people below. Avoid power lines and flying debris, and watch your fuel gauge — land on the helipad to refuel!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400,GROUND=H-40;
+const BEST_KEY='helicopterrescue_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+
+let heli,winch,fuel,lives,score,started,gameOver,frame,camX,scroll;
+let survivors=[],obstacles=[],particles=[];
+let keys={};
+let dragTarget=null;
+let pointerDown=false;
+let spawnTimer=0,obsTimer=0,helipadTimer=0,helipad=null;
+let carrying=null;
+
+function reset(){
+  heli={x:150,y:150,vy:0,vx:0,carrying:null};
+  winch={active:false,len:0,maxLen:0};
+  fuel=100;lives=3;score=0;started=false;gameOver=false;frame=0;
+  survivors=[];obstacles=[];particles=[];
+  spawnTimer=0;obsTimer=40;helipadTimer=500;helipad=null;
+  scroll=0;
+}
+reset();
+
+function spawnSurvivor(){
+  const onWater=Math.random()<0.5;
+  survivors.push({x:W+40+Math.random()*80,y:GROUND-10,rescued:false,onWater,bob:Math.random()*10});
+}
+function spawnObstacle(){
+  const type=Math.random()<0.5?'pole':'debris';
+  if(type==='pole'){
+    obstacles.push({type,x:W+60,y:GROUND-120,w:8,h:120,wireY:GROUND-118});
+  } else {
+    obstacles.push({type,x:W+60,y:80+Math.random()*180,w:26,h:16,vy:(Math.random()-0.5)*1.5});
+  }
+}
+function spawnHelipad(){
+  helipad={x:W+80,y:GROUND-14,w:70,h:14};
+}
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function startGame(){
+  if(!started){started=true;}
+}
+function restartIfOver(){
+  if(gameOver){reset();}
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','Space'].includes(e.key)||e.code==='Space')e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  if(e.code==='Space'){pointerDown=true;startGame();restartIfOver();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;if(e.code==='Space')pointerDown=false;});
+
+c.addEventListener('mousedown',e=>{pointerDown=true;startGame();restartIfOver();dragTarget=getPos(e);});
+window.addEventListener('mouseup',()=>{pointerDown=false;dragTarget=null;});
+c.addEventListener('mousemove',e=>{if(dragTarget)dragTarget=getPos(e);});
+c.addEventListener('touchstart',e=>{e.preventDefault();pointerDown=true;startGame();restartIfOver();dragTarget=getPos(e.touches[0]);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();dragTarget=getPos(e.touches[0]);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerDown=false;dragTarget=null;},{passive:false});
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const scaleX=W/r.width,scaleY=H/r.height;
+  return {x:(e.clientX-r.left)*scaleX,y:(e.clientY-r.top)*scaleY};
+}
+
+function drawHeli(){
+  ctx.save();
+  ctx.translate(heli.x,heli.y);
+  // rotor blur
+  const spin=Math.floor(frame/2)%2===0?1:-1;
+  ctx.fillStyle='rgba(30,30,30,0.5)';
+  ctx.fillRect(-32,-16,64,4*spin===spin?4:4);
+  // body
+  ctx.fillStyle='#e74c3c';
+  ctx.beginPath();
+  ctx.ellipse(0,0,26,12,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#c0392b';
+  ctx.beginPath();ctx.ellipse(20,-2,10,7,0,0,Math.PI*2);ctx.fill();
+  // tail
+  ctx.fillStyle='#e74c3c';
+  ctx.fillRect(-40,-3,18,6);
+  ctx.fillStyle='#c0392b';
+  ctx.fillRect(-42,-10,4,14);
+  // skids
+  ctx.strokeStyle='#333';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(-16,14);ctx.lineTo(16,14);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-12,10);ctx.lineTo(-16,16);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(12,10);ctx.lineTo(16,16);ctx.stroke();
+  // main rotor
+  ctx.strokeStyle='rgba(20,20,20,0.7)';ctx.lineWidth=3;
+  ctx.save();ctx.translate(0,-14);ctx.rotate(frame*0.9);
+  ctx.beginPath();ctx.moveTo(-34,0);ctx.lineTo(34,0);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-34);ctx.lineTo(0,34);ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle='#333';ctx.beginPath();ctx.arc(0,-14,4,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawWinch(){
+  if(!winch.active)return;
+  ctx.strokeStyle='#888';ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(heli.x,heli.y+10);
+  ctx.lineTo(heli.x,heli.y+10+winch.len);
+  ctx.stroke();
+  ctx.fillStyle='#555';
+  ctx.beginPath();ctx.arc(heli.x,heli.y+10+winch.len,5,0,Math.PI*2);ctx.fill();
+  if(heli.carrying){
+    drawPerson(heli.x,heli.y+10+winch.len+10,true);
+  }
+}
+
+function drawPerson(x,y,rescued){
+  ctx.fillStyle=rescued?'#ffd54f':'#2ecc71';
+  ctx.beginPath();ctx.arc(x,y-8,5,0,Math.PI*2);ctx.fill();
+  ctx.fillRect(x-4,y-4,8,12);
+}
+
+function drawTerrain(){
+  const sky=ctx.createLinearGradient(0,0,0,GROUND);
+  sky.addColorStop(0,'#3a7bd5');sky.addColorStop(1,'#8fc9e8');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,GROUND);
+  // water/ground band
+  ctx.fillStyle='#1a5276';
+  ctx.fillRect(0,GROUND,W,H-GROUND);
+  ctx.fillStyle='#2e86c1';
+  for(let i=0;i<W;i+=20){
+    const wy=GROUND+Math.sin((i+frame*3)*0.05)*3;
+    ctx.fillRect(i,wy,20,4);
+  }
+  // clouds
+  ctx.fillStyle='rgba(255,255,255,0.5)';
+  for(let i=0;i<4;i++){
+    const cx=((i*260)-((frame*0.4)%1040))%1040;
+    ctx.beginPath();ctx.ellipse(cx,60+i*20,30,14,0,0,Math.PI*2);ctx.fill();
+  }
+}
+
+function drawObstacle(o){
+  if(o.type==='pole'){
+    ctx.fillStyle='#4a3b2a';
+    ctx.fillRect(o.x,o.y,o.w,o.h);
+    ctx.strokeStyle='#222';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(o.x-40,o.wireY);ctx.lineTo(o.x+40,o.wireY);ctx.stroke();
+  } else {
+    ctx.save();
+    ctx.translate(o.x+o.w/2,o.y+o.h/2);
+    ctx.rotate(frame*0.1);
+    ctx.fillStyle='#8d6e63';
+    ctx.fillRect(-o.w/2,-o.h/2,o.w,o.h);
+    ctx.restore();
+  }
+}
+
+function drawHelipad(h){
+  ctx.fillStyle='#555';ctx.fillRect(h.x,h.y,h.w,h.h);
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText('H',h.x+h.w/2,h.y+12);
+}
+
+function updateHUD(){
+  document.getElementById('score-display').textContent=I18N.t('rescued_best_label','Rescued: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+  document.getElementById('lives-display').textContent='❤️'.repeat(Math.max(0,lives));
+  document.getElementById('fuelfill').style.width=Math.max(0,fuel)+'%';
+}
+
+function loop(){
+  frame++;
+  drawTerrain();
+
+  if(!started){
+    ctx.fillStyle='rgba(255,255,255,0.9)';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('heli_start_hint','Arrow Keys/Drag to fly, Space/Click+Hold to lower line'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('start_hint2','Tap or press a key to begin'),W/2,H/2+14);
+    drawHeli();
+    updateHUD();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('rescued_final','Rescued: {s}').replace('{s}',score),W/2,H/2+24);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+54);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // movement
+  const speed=3.2;
+  if(dragTarget){
+    heli.x+=(dragTarget.x-heli.x)*0.12;
+    heli.y+=(dragTarget.y-heli.y)*0.12;
+  } else {
+    if(keys['arrowleft']||keys['a'])heli.x-=speed;
+    if(keys['arrowright']||keys['d'])heli.x+=speed;
+    if(keys['arrowup']||keys['w'])heli.y-=speed;
+    if(keys['arrowdown']||keys['s'])heli.y+=speed;
+  }
+  heli.x=Math.max(30,Math.min(W-30,heli.x));
+  heli.y=Math.max(30,Math.min(GROUND-10,heli.y));
+
+  // fuel drain
+  fuel-=0.045;
+  if(fuel<=0){
+    fuel=0;
+    if(!gameOver){gameOver=true;SFX.lose();}
+  }
+
+  // winch
+  const overLandable=(heli.y>GROUND-160);
+  if(pointerDown&&!heli.carrying){
+    winch.active=true;
+    winch.len=Math.min(winch.len+4,GROUND-heli.y-10);
+  } else if(!heli.carrying){
+    winch.len=Math.max(winch.len-4,0);
+    if(winch.len<=0)winch.active=false;
+  } else {
+    // reel up carried survivor
+    winch.len=Math.max(winch.len-4,0);
+    if(winch.len<=0)winch.active=false;
+  }
+
+  const hookY=heli.y+10+winch.len;
+  const hookX=heli.x;
+
+  // check pickup
+  if(winch.active&&!heli.carrying){
+    survivors.forEach(s=>{
+      if(!s.rescued&&Math.abs(s.x-hookX)<18&&Math.abs(s.y-hookY)<16){
+        s.rescued=true;
+        heli.carrying=s;
+        SFX.catch();
+      }
+    });
+  }
+  // drop off at helipad
+  if(heli.carrying&&helipad&&Math.abs(heli.x-(helipad.x+helipad.w/2))<40&&heli.y<GROUND-140&&winch.len<10){
+    score++;
+    if(score>best){best=score;localStorage.setItem(BEST_KEY,best);}
+    heli.carrying=null;
+    SFX.success();
+  }
+
+  // spawn logic
+  spawnTimer++;
+  if(spawnTimer>110){spawnTimer=0;spawnSurvivor();}
+  obsTimer++;
+  if(obsTimer>150){obsTimer=0;spawnObstacle();}
+  helipadTimer++;
+  if(!helipad&&helipadTimer>380){helipadTimer=0;spawnHelipad();}
+
+  const worldSpeed=2.2;
+  survivors=survivors.filter(s=>s.x>-40&&!(s.rescued&&s!==heli.carrying));
+  survivors.forEach(s=>{s.x-=worldSpeed;s.bob+=0.1;});
+  obstacles=obstacles.filter(o=>o.x>-80);
+  obstacles.forEach(o=>{o.x-=worldSpeed;});
+  if(helipad){helipad.x-=worldSpeed;if(helipad.x<-100)helipad=null;}
+
+  // draw survivors
+  survivors.forEach(s=>{
+    if(s.rescued)return;
+    const y=s.onWater?GROUND+Math.sin(s.bob)*3:GROUND-10;
+    drawPerson(s.x,y,false);
+  });
+
+  // draw obstacles & collision
+  const heliHit={x:heli.x-22,y:heli.y-12,w:44,h:24};
+  obstacles.forEach(o=>{
+    drawObstacle(o);
+    let ob;
+    if(o.type==='pole'){ob={x:o.x-40,y:o.wireY-3,w:88,h:6};}
+    else{ob={x:o.x,y:o.y,w:o.w,h:o.h};}
+    if(rectsOverlap(heliHit,ob)){
+      hitObstacle();
+    }
+  });
+  if(helipad)drawHelipad(helipad);
+
+  drawWinch();
+  drawHeli();
+
+  document.getElementById('lives-display').textContent='❤️'.repeat(Math.max(0,lives));
+  updateHUD();
+  requestAnimationFrame(loop);
+}
+
+let hitCooldown=0;
+function hitObstacle(){
+  if(hitCooldown>0)return;
+  hitCooldown=60;
+  lives--;
+  SFX.hit();
+  heli.y-=20;
+  if(lives<=0){gameOver=true;SFX.lose();}
+}
+setInterval(()=>{if(hitCooldown>0)hitCooldown--;},16);
+
+loop();
+</script></body></html>
