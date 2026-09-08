@@ -1,0 +1,290 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Volcano Research</title><meta name="description" content="Play Volcano Research free online — Watch the seismic and gas readings, click to place your limited sensors on the volcano, then call an evacuation at exactly the right moment..."><link rel="canonical" href="https://games.multiportllc.com/games/volcanoresearch"><meta property="og:title" content="Volcano Research - Multiport Games"><meta property="og:description" content="Play Volcano Research free online — Watch the seismic and gas readings, click to place your limited sensors on the volcano, then call an evacuation at exactly the right moment..."><meta property="og:url" content="https://games.multiportllc.com/games/volcanoresearch"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Volcano Research","description":"Play Volcano Research free online instantly. Watch the seismic and gas readings, click to place your limited sensors on the volcano, then call an evacuation at exactly the right moment. Calling too early or too late costs points — accurate predictions across multiple volcano scenarios win the game. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/volcanoresearch","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:14px;text-align:center}
+#hud{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin-bottom:8px;color:#fff;font-weight:800;font-size:.95rem}
+.stat{background:rgba(255,255,255,.08);border-radius:10px;padding:6px 14px;min-width:100px}
+.stat .lbl{font-size:.7rem;opacity:.7;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+#c{background:#1a1020;display:block;border-radius:8px;margin:0 auto;max-width:100%;touch-action:manipulation;cursor:crosshair}
+#msg{min-height:1.5em;color:#fff;font-weight:700;margin:6px 0}
+#controls{margin-top:8px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
+#controls button{padding:9px 20px;background:#ff7043;border:none;border-radius:20px;color:#fff;font-weight:700;cursor:pointer;font-size:.95rem}
+#controls button:disabled{opacity:.35;cursor:not-allowed}
+#again{display:none;background:#8e44ad !important}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Volcano Research</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <div class="stat">Scenario: <span id="scenNum">1</span>/<span id="scenTotal">5</span></div>
+        <div class="stat">Sensors left: <span id="sensorsLeft">4</span></div>
+        <div class="stat">Score: <span id="score">0</span></div>
+        <div class="stat">Best: <span id="best">0</span></div>
+      </div>
+      <div id="msg">Click on the volcano to place a sensor, then watch the readings.</div>
+      <canvas id="c" width="760" height="380"></canvas>
+      <div id="controls">
+        <button id="evacBtn">🚨 Call Evacuation</button>
+        <button id="again">Next Scenario ▶</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch the fluctuating <b>seismic activity</b> graph and <b>gas emission</b> level to judge how close the volcano is to erupting. Click on the volcano's slopes to place up to 4 monitoring sensors at good spots (closer to hotspots reads better data, but you only get a few). When you think an eruption is imminent, click <b>Call Evacuation</b>. Call too early and you waste resources; call too late and people are at risk — the closer to the true eruption moment, the higher your score. Do your best across 5 volcano scenarios!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=380;
+const BEST_KEY='volcanoresearch_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+document.getElementById('best').textContent=best;
+
+const TOTAL_SCENARIOS=5;
+const VOLC_CX=W/2, VOLC_BASE_Y=355, VOLC_APEX_Y=175, VOLC_HALF_BASE=190, VOLC_HALF_APEX=38;
+let scenario=1,totalScore=0,gameEnded=false;
+let seismicHistory=[],gasHistoryArr=[],eruptTime,elapsed,sensors,sensorsMax,called,resultShown;
+let hotspot; // {x,y} on volcano where activity concentrates
+let simSpeed=1;
+
+function rnd(a,b){return a+Math.random()*(b-a);}
+
+function newScenario(){
+  seismicHistory=[];gasHistoryArr=[];
+  elapsed=0;
+  // Eruption occurs somewhere between 25s and 55s of simulated time, randomized per scenario
+  eruptTime=rnd(22,50)+scenario*1.5;
+  sensorsMax=4;
+  sensors=[];
+  called=false;resultShown=false;
+  hotspot={x:VOLC_CX+rnd(-30,30),y:VOLC_APEX_Y+rnd(20,60)};
+  document.getElementById('scenNum').textContent=scenario;
+  document.getElementById('scenTotal').textContent=TOTAL_SCENARIOS;
+  document.getElementById('sensorsLeft').textContent=sensorsMax;
+  document.getElementById('evacBtn').disabled=false;
+  document.getElementById('again').style.display='none';
+  document.getElementById('msg').textContent=I18N.t('vr_start','Place sensors on the volcano, then watch the readings closely...');
+}
+
+function seismicBase(t){
+  // ramps up as we approach eruptTime, with noise
+  const proximity=Math.max(0,1-Math.abs(eruptTime-t)/eruptTime);
+  const rampFactor=t<eruptTime? Math.pow(Math.max(0,(t-(eruptTime-18))/18),2) : 1.2;
+  return 15+ rampFactor*70 + Math.sin(t*2.3)*6;
+}
+function gasBase(t){
+  const rampFactor=t<eruptTime? Math.pow(Math.max(0,(t-(eruptTime-14))/14),2) : 1.3;
+  return 10+rampFactor*80+Math.sin(t*1.1+1)*4;
+}
+
+function sensorAccuracyBonus(){
+  // more sensors closer to hotspot -> less noise
+  if(sensors.length===0)return 0;
+  let total=0;
+  sensors.forEach(s=>{
+    const d=Math.hypot(s.x-hotspot.x,s.y-hotspot.y);
+    total+=Math.max(0,1-d/220);
+  });
+  return Math.min(1,total/sensorsMax);
+}
+
+function stepSim(dt){
+  elapsed+=dt;
+  const acc=sensorAccuracyBonus();
+  const noise=(1-acc)*18;
+  const seis=Math.max(0,Math.min(100,seismicBase(elapsed)+rnd(-noise,noise)));
+  const gas=Math.max(0,Math.min(100,gasBase(elapsed)+rnd(-noise,noise)));
+  seismicHistory.push(seis);
+  gasHistoryArr.push(gas);
+  if(seismicHistory.length>200){seismicHistory.shift();gasHistoryArr.shift();}
+  if(elapsed>=eruptTime && !called && !resultShown){
+    // eruption happens uncalled
+    finishScenario(false,true);
+  }
+}
+
+function placeSensor(x,y){
+  if(called||resultShown)return;
+  if(sensors.length>=sensorsMax){
+    document.getElementById('msg').textContent=I18N.t('vr_nosensors','No sensors left to place!');
+    return;
+  }
+  // must click within the volcano cone triangle
+  if(!onVolcanoSlope(x,y)){
+    document.getElementById('msg').textContent=I18N.t('vr_offvolcano','Place sensors on the volcano slopes!');
+    return;
+  }
+  sensors.push({x,y});
+  document.getElementById('sensorsLeft').textContent=sensorsMax-sensors.length;
+  SFX.click();
+  document.getElementById('msg').textContent=I18N.t('vr_placed','Sensor placed! Data accuracy improved.');
+}
+
+function callEvacuation(){
+  if(called||resultShown)return;
+  called=true;
+  document.getElementById('evacBtn').disabled=true;
+  finishScenario(true,false);
+}
+
+function finishScenario(wasCalled,eruptedUncalled){
+  resultShown=true;
+  const diff=Math.abs(elapsed-eruptTime);
+  let scenarioScore;
+  let msg;
+  if(eruptedUncalled){
+    scenarioScore=0;
+    msg=I18N.t('vr_erupted','The volcano erupted before you called evacuation! Score: 0');
+    SFX.lose();
+  } else if(wasCalled && elapsed>eruptTime){
+    // called after actual eruption — too late
+    scenarioScore=Math.max(0,Math.round(30-diff*3));
+    msg=I18N.t('vr_late','Evacuation called too late! Off by {d}s. Score: {s}').replace('{d}',diff.toFixed(1)).replace('{s}',scenarioScore);
+    SFX.fail();
+  } else {
+    // called before eruption - score based on closeness (earlier is safer but loses points for being too early)
+    scenarioScore=Math.max(0,Math.round(100-diff*6));
+    if(diff<3){msg=I18N.t('vr_perfect','Excellent timing! Off by only {d}s. Score: {s}').replace('{d}',diff.toFixed(1)).replace('{s}',scenarioScore);SFX.win();}
+    else{msg=I18N.t('vr_early','Evacuation called. Off by {d}s. Score: {s}').replace('{d}',diff.toFixed(1)).replace('{s}',scenarioScore);SFX.success();}
+  }
+  totalScore+=scenarioScore;
+  document.getElementById('score').textContent=totalScore;
+  document.getElementById('msg').textContent=msg;
+  document.getElementById('evacBtn').disabled=true;
+  document.getElementById('again').style.display='inline-block';
+  document.getElementById('again').textContent= scenario<TOTAL_SCENARIOS ? I18N.t('vr_next','Next Scenario ▶') : I18N.t('vr_finish','See Final Score ▶');
+}
+
+function nextOrFinish(){
+  if(scenario>=TOTAL_SCENARIOS){
+    gameEnded=true;
+    if(totalScore>best){best=totalScore;localStorage.setItem(BEST_KEY,best);document.getElementById('best').textContent=best;}
+    document.getElementById('msg').textContent=I18N.t('vr_gameover','All scenarios complete! Final score: {s}').replace('{s}',totalScore);
+    document.getElementById('again').textContent=I18N.t('vr_restart','Play Again ▶');
+    document.getElementById('again').onclick=restartGame;
+    return;
+  }
+  scenario++;
+  newScenario();
+}
+document.getElementById('again').addEventListener('click',()=>nextOrFinish());
+
+function restartGame(){
+  scenario=1;totalScore=0;gameEnded=false;
+  document.getElementById('score').textContent=0;
+  document.getElementById('again').onclick=()=>nextOrFinish();
+  newScenario();
+}
+
+document.getElementById('evacBtn').addEventListener('click',callEvacuation);
+
+function toCanvasCoords(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  const scaleX=c.width/rect.width,scaleY=c.height/rect.height;
+  return [(clientX-rect.left)*scaleX,(clientY-rect.top)*scaleY];
+}
+c.addEventListener('click',e=>{
+  const [x,y]=toCanvasCoords(e.clientX,e.clientY);
+  placeSensor(x,y);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.changedTouches[0];
+  const [x,y]=toCanvasCoords(t.clientX,t.clientY);
+  placeSensor(x,y);
+},{passive:false});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Enter'){
+    e.preventDefault();
+    if(!called&&!resultShown)callEvacuation();
+    else if(document.getElementById('again').style.display!=='none')document.getElementById('again').click();
+  }
+});
+
+function onVolcanoSlope(x,y){
+  if(y<VOLC_APEX_Y-15||y>VOLC_BASE_Y)return false;
+  const t=(y-VOLC_APEX_Y)/(VOLC_BASE_Y-VOLC_APEX_Y);
+  const halfW=VOLC_HALF_APEX+(VOLC_HALF_BASE-VOLC_HALF_APEX)*Math.max(0,t);
+  return Math.abs(x-VOLC_CX)<=halfW;
+}
+
+function drawVolcano(){
+  // ground
+  ctx.fillStyle='#2c1b12';
+  ctx.fillRect(0,VOLC_BASE_Y,W,H-VOLC_BASE_Y);
+  // cone
+  ctx.beginPath();
+  ctx.moveTo(VOLC_CX-VOLC_HALF_BASE,VOLC_BASE_Y);
+  ctx.lineTo(VOLC_CX-VOLC_HALF_APEX,VOLC_APEX_Y);
+  ctx.lineTo(VOLC_CX+VOLC_HALF_APEX,VOLC_APEX_Y);
+  ctx.lineTo(VOLC_CX+VOLC_HALF_BASE,VOLC_BASE_Y);
+  ctx.closePath();
+  const grad=ctx.createLinearGradient(0,VOLC_APEX_Y,0,VOLC_BASE_Y);
+  grad.addColorStop(0,'#5d4037');grad.addColorStop(1,'#3e2723');
+  ctx.fillStyle=grad;ctx.fill();
+  // crater glow scaled by proximity
+  const proximity=Math.min(1,elapsed/eruptTime);
+  ctx.beginPath();
+  ctx.moveTo(VOLC_CX-VOLC_HALF_APEX,VOLC_APEX_Y);ctx.lineTo(VOLC_CX+VOLC_HALF_APEX,VOLC_APEX_Y);
+  ctx.lineTo(VOLC_CX+VOLC_HALF_APEX*0.5,VOLC_APEX_Y-24);ctx.lineTo(VOLC_CX-VOLC_HALF_APEX*0.5,VOLC_APEX_Y-24);
+  ctx.closePath();
+  ctx.fillStyle=`rgba(255,${Math.round(140-proximity*100)},0,${0.4+proximity*0.5})`;
+  ctx.fill();
+  // smoke puffs
+  for(let i=0;i<3;i++){
+    const t=(elapsed*10+i*40)%160;
+    ctx.beginPath();
+    ctx.arc(VOLC_CX+Math.sin(elapsed+i)*10,VOLC_APEX_Y-24-t*0.6,10+t*0.15,0,7);
+    ctx.fillStyle=`rgba(120,120,120,${Math.max(0,0.35-t/450)})`;
+    ctx.fill();
+  }
+  // sensors
+  sensors.forEach(s=>{
+    ctx.beginPath();ctx.arc(s.x,s.y,7,0,7);
+    ctx.fillStyle='#42a5f5';ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    ctx.font='10px Arial';ctx.fillStyle='#fff';ctx.textAlign='center';
+    ctx.fillText('📡',s.x,s.y-10);
+  });
+}
+
+function drawGraph(label,history,y0,h,color){
+  ctx.strokeStyle='rgba(255,255,255,0.15)';ctx.lineWidth=1;
+  ctx.strokeRect(20,y0,W-40,h);
+  ctx.fillStyle='#ccc';ctx.font='bold 12px Arial';ctx.textAlign='left';
+  ctx.fillText(label,26,y0-4);
+  if(history.length<2)return;
+  ctx.beginPath();
+  history.forEach((v,i)=>{
+    const x=20+(i/199)*(W-40);
+    const y=y0+h-(v/100)*h;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  });
+  ctx.strokeStyle=color;ctx.lineWidth=2;ctx.stroke();
+}
+
+let lastT=null;
+function loop(t){
+  if(lastT===null)lastT=t;
+  const dt=Math.min((t-lastT)/1000,0.1);
+  lastT=t;
+  if(!resultShown){
+    stepSim(dt*simSpeed);
+  }
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#1a1020';ctx.fillRect(0,0,W,H);
+  drawGraph(I18N.t('vr_seismic_label','Seismic Activity'),seismicHistory,26,50,'#ff7043');
+  drawGraph(I18N.t('vr_gas_label','Gas Emissions'),gasHistoryArr,96,50,'#ab47bc');
+  drawVolcano();
+  requestAnimationFrame(loop);
+}
+
+newScenario();
+requestAnimationFrame(loop);
+</script></body></html>

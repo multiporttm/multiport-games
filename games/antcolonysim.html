@@ -1,0 +1,350 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ant Colony Sim</title><meta name="description" content="Play Ant Colony Sim free online — Click a worker ant, then click a food source to send it down the tunnels. Manage multiple ants and deliver as much food as you can before time runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/antcolonysim"><meta property="og:title" content="Ant Colony Sim - Multiport Games"><meta property="og:description" content="Play Ant Colony Sim free online — Click a worker ant, then click a food source to send it down the tunnels. Manage multiple ants and deliver as much food as you can before time runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/antcolonysim"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ant Colony Sim","description":"Play Ant Colony Sim free online instantly. Click a worker ant, then click a food source to route it through the branching tunnel network. Manage multiple ants at once as food sources deplete and new ones appear, delivering as much food to the colony as possible before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/antcolonysim","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:14px;color:#fff;text-align:center}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;max-width:640px;margin:0 auto 10px;font-weight:800;font-size:.9rem}
+#hud b{color:#ffd54f}
+#msg{min-height:1.4em;font-weight:700;color:#ffd54f;margin-bottom:6px}
+#stage{background:#2a1c10;border-radius:14px;max-width:100%;display:block;margin:0 auto;cursor:pointer}
+#legend{font-size:.75rem;color:#bbb;margin:6px 0}
+#btnRow{margin-top:8px}
+#btnRow button{padding:8px 18px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.9rem;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ant Colony Sim</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span>⏱ <b id="timeVal">90</b>s</span>
+        <span>🐜 Ants: <b id="antVal">3</b></span>
+        <span>🌾 Food: <b id="scoreVal">0</b></span>
+        <span>🏆 Best: <b id="bestVal">0</b></span>
+      </div>
+      <div id="msg">Click an idle ant near the nest, then click a food source to send it out!</div>
+      <svg id="stage" width="640" height="320" viewBox="0 0 640 320"></svg>
+      <div id="legend">🏠 Nest &nbsp; 🟤 Junction &nbsp; 🍎 Food (number shown) &nbsp; 🐜 Ant (yellow ring = selected)</div>
+      <div id="btnRow"><button id="restartBtn">New Game</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click an <b>idle ant</b> at the nest to select it (or press <b>1-9</b>), then click a <b>food source</b> (or its letter key) to send the ant along the tunnels to fetch it. Ants automatically carry food back home once they arrive — deliver as much food as possible before time runs out. Food sources deplete and new ones appear, and the colony grows busier with more ants and longer routes each round!</div>
+</div>
+<script>
+const SVGNS='http://www.w3.org/2000/svg';
+const svg=document.getElementById('stage');
+const W=640,H=320;
+let nodes,edges,adj,ants,score,best,timeLeft,timerId,round,gameOver,selectedAnt,nextFoodId;
+
+function el(tag,attrs){
+  const e=document.createElementNS(SVGNS,tag);
+  for(const k in attrs)e.setAttribute(k,attrs[k]);
+  return e;
+}
+
+function buildGraph(round){
+  nodes={}; edges=[]; adj={};
+  let idc=0;
+  const layerCount=Math.min(3+Math.floor((round-1)/1),6);
+  const colony={id:'n'+(idc++),x:50,y:H/2,type:'colony'};
+  nodes[colony.id]=colony;
+  let prevLayer=[colony.id];
+  for(let L=1;L<layerCount;L++){
+    const isLast=(L===layerCount-1);
+    const count=isLast? Math.min(2+round,5) : (1+Math.floor(Math.random()*2)+1);
+    const x=50+(W-120)*(L/(layerCount-1));
+    const curLayer=[];
+    for(let i=0;i<count;i++){
+      const y=30+(H-60)*(count===1?0.5:i/(count-1));
+      const id='n'+(idc++);
+      nodes[id]={id,x,y:y+(Math.random()*16-8),type:isLast?'food':'junction',amount:isLast?(8+round*3+Math.floor(Math.random()*6)):0};
+      curLayer.push(id);
+    }
+    curLayer.forEach(cid=>{
+      const linkCount=1+(Math.random()<0.4?1:0);
+      const picks=shuffle(prevLayer.slice()).slice(0,Math.min(linkCount,prevLayer.length));
+      picks.forEach(pid=>addEdge(pid,cid));
+    });
+    prevLayer.forEach(pid=>{
+      if(!edges.some(e=>e.a===pid||e.b===pid)){
+        const target=curLayer[Math.floor(Math.random()*curLayer.length)];
+        addEdge(pid,target);
+      }
+    });
+    prevLayer=curLayer;
+  }
+  nextFoodId=idc;
+}
+function shuffle(arr){for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}return arr;}
+function addEdge(a,b){
+  if(edges.some(e=>(e.a===a&&e.b===b)||(e.a===b&&e.b===a)))return;
+  edges.push({a,b});
+  (adj[a]=adj[a]||[]).push(b);
+  (adj[b]=adj[b]||[]).push(a);
+}
+function bfsPath(from,to){
+  if(from===to)return [from];
+  const visited={[from]:true};
+  const prev={};
+  const q=[from];
+  while(q.length){
+    const cur=q.shift();
+    for(const nb of (adj[cur]||[])){
+      if(visited[nb])continue;
+      visited[nb]=true;
+      prev[nb]=cur;
+      if(nb===to){
+        const path=[to];
+        let c=to;
+        while(c!==from){c=prev[c];path.unshift(c);}
+        return path;
+      }
+      q.push(nb);
+    }
+  }
+  return null;
+}
+
+function makeAnts(count){
+  ants=[];
+  for(let i=0;i<count;i++){
+    ants.push({id:'a'+i,x:nodes[Object.keys(nodes)[0]].x+(Math.random()*20-10),y:nodes[Object.keys(nodes)[0]].y+(Math.random()*20-10),state:'idle',path:null,segIdx:0,segT:0,carrying:false,targetFood:null});
+  }
+}
+
+function colonyId(){return Object.values(nodes).find(n=>n.type==='colony').id;}
+
+function findFoodLabel(id){
+  const foods=Object.values(nodes).filter(n=>n.type==='food');
+  const idx=foods.findIndex(f=>f.id===id);
+  return idx>=0?String.fromCharCode(65+idx):'';
+}
+
+function respawnFood(oldId){
+  const old=nodes[oldId];
+  const id='f'+(nextFoodId++);
+  nodes[id]={id,x:old.x+(Math.random()*30-15),y:Math.min(H-30,Math.max(30,old.y+(Math.random()*40-20))),type:'food',amount:8+round*3+Math.floor(Math.random()*6)};
+  (adj[id]=adj[id]||[]);
+  const nbs=adj[oldId]||[];
+  nbs.forEach(n=>addEdge(n,id));
+  delete nodes[oldId];
+  delete adj[oldId];
+  edges=edges.filter(e=>e.a!==oldId&&e.b!==oldId);
+  ants.forEach(a=>{ if(a.targetFood===oldId)a.targetFood=id; });
+}
+
+function render(){
+  svg.innerHTML='';
+  edges.forEach(e=>{
+    const a=nodes[e.a],b=nodes[e.b];
+    if(!a||!b)return;
+    svg.appendChild(el('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'#6b4a2b',['stroke-width']:8,['stroke-linecap']:'round',opacity:0.55}));
+  });
+  Object.values(nodes).forEach(n=>{
+    if(n.type==='colony'){
+      svg.appendChild(el('circle',{cx:n.x,cy:n.y,r:26,fill:'#8b5a2b',stroke:'#5a3a1a',['stroke-width']:3}));
+      const t=el('text',{x:n.x,y:n.y+7,['text-anchor']:'middle',['font-size']:22});
+      t.textContent='🏠';
+      svg.appendChild(t);
+    } else if(n.type==='junction'){
+      svg.appendChild(el('circle',{cx:n.x,cy:n.y,r:9,fill:'#6b4a2b',stroke:'#4a3018',['stroke-width']:2}));
+    } else if(n.type==='food'){
+      const g=el('g',{cursor:'pointer','data-node':n.id});
+      g.appendChild(el('circle',{cx:n.x,cy:n.y,r:20,fill:n.amount>0?'#4c8c3c':'#555',stroke:'#2f5a26',['stroke-width']:3}));
+      const t=el('text',{x:n.x,y:n.y-2,['text-anchor']:'middle',['font-size']:18});
+      t.textContent='🍎';
+      g.appendChild(t);
+      const lab=el('text',{x:n.x,y:n.y+15,['text-anchor']:'middle',['font-size']:11,fill:'#fff',['font-weight']:'bold'});
+      lab.textContent=findFoodLabel(n.id)+':'+n.amount;
+      g.appendChild(lab);
+      g.addEventListener('click',()=>onNodeClick(n.id));
+      svg.appendChild(g);
+    }
+  });
+  ants.forEach(a=>{
+    const g=el('g',{cursor:'pointer'});
+    if(a.id===selectedAnt){
+      g.appendChild(el('circle',{cx:a.x,cy:a.y,r:12,fill:'none',stroke:'#ffd54f',['stroke-width']:2.5}));
+    }
+    g.appendChild(el('circle',{cx:a.x,cy:a.y,r:7,fill:a.carrying?'#e94560':'#222',stroke:'#000',['stroke-width']:1}));
+    g.addEventListener('click',(ev)=>{ev.stopPropagation();onAntClick(a.id);});
+    svg.appendChild(g);
+  });
+}
+
+function onAntClick(id){
+  if(gameOver)return;
+  const ant=ants.find(a=>a.id===id);
+  if(!ant||ant.state!=='idle')return;
+  selectedAnt=id;
+  SFX.select();
+  render();
+}
+function onNodeClick(nodeId){
+  if(gameOver||!selectedAnt)return;
+  const ant=ants.find(a=>a.id===selectedAnt);
+  if(!ant||ant.state!=='idle')return;
+  const startId=nearestNode(ant.x,ant.y);
+  const path=bfsPath(startId,nodeId);
+  if(!path){SFX.error();setMsg(I18N.t('ac_nopath','No tunnel path to that food source!'));return;}
+  ant.path=path.map(id=>nodes[id]);
+  ant.segIdx=0;ant.segT=0;ant.state='out';ant.targetFood=nodeId;
+  selectedAnt=null;
+  SFX.click();
+  setMsg(I18N.t('ac_sent','Ant sent to fetch food — it will return automatically!'));
+  render();
+}
+function nearestNode(x,y){
+  let best=null,bd=Infinity;
+  Object.values(nodes).forEach(n=>{
+    const d=(n.x-x)**2+(n.y-y)**2;
+    if(d<bd){bd=d;best=n.id;}
+  });
+  return best;
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+const SPEED=90; // px/sec
+function updateAnts(dt){
+  ants.forEach(ant=>{
+    if(ant.state==='out'||ant.state==='return'){
+      if(!ant.path||ant.path.length<2){
+        // arrived already or single-node path
+        arrive(ant);
+        return;
+      }
+      const a=ant.path[ant.segIdx],b=ant.path[ant.segIdx+1];
+      if(!a||!b){arrive(ant);return;}
+      const distTotal=Math.hypot(b.x-a.x,b.y-a.y)||1;
+      ant.segT+=SPEED*dt/distTotal;
+      if(ant.segT>=1){
+        ant.segIdx++;
+        ant.segT=0;
+        if(ant.segIdx>=ant.path.length-1){
+          ant.x=b.x;ant.y=b.y;
+          arrive(ant);
+          return;
+        }
+      }
+      const na=ant.path[ant.segIdx],nb=ant.path[ant.segIdx+1]||na;
+      ant.x=na.x+(nb.x-na.x)*ant.segT;
+      ant.y=na.y+(nb.y-na.y)*ant.segT;
+    }
+  });
+}
+function arrive(ant){
+  if(ant.state==='out'){
+    const food=nodes[ant.targetFood];
+    if(food&&food.type==='food'&&food.amount>0){
+      food.amount--;
+      ant.carrying=true;
+      SFX.point();
+      if(food.amount<=0){
+        setTimeout(()=>{ if(!gameOver){respawnFood(food.id);render();} },1200);
+      }
+    }
+    const home=colonyId();
+    const backPath=bfsPath(ant.targetFood,home);
+    ant.path=(backPath||[ant.targetFood,home]).map(id=>nodes[id]).filter(Boolean);
+    ant.segIdx=0;ant.segT=0;ant.state='return';
+  } else if(ant.state==='return'){
+    ant.state='idle';
+    ant.path=null;
+    if(ant.carrying){
+      ant.carrying=false;
+      score++;
+      SFX.coin();
+      setMsg(I18N.t('ac_delivered','Delivered! Total food: {s}').replace('{s}',score));
+    }
+  }
+}
+
+function tick(){
+  if(gameOver)return;
+  timeLeft--;
+  if(timeLeft<=0){timeLeft=0;endGame();return;}
+  if(timeLeft>0 && timeLeft%30===0){
+    round++;
+    growColony();
+  }
+  renderHud();
+}
+function growColony(){
+  buildGraph(round);
+  const keepAnts=ants?ants.length:3;
+  makeAnts(Math.min(keepAnts+1,7));
+  selectedAnt=null;
+  setMsg(I18N.t('ac_grow','The colony grows! More tunnels, more ants, round {r}.').replace('{r}',round));
+  SFX.levelup();
+}
+
+function renderHud(){
+  document.getElementById('timeVal').textContent=timeLeft;
+  document.getElementById('antVal').textContent=ants.length;
+  document.getElementById('scoreVal').textContent=score;
+  document.getElementById('bestVal').textContent=best;
+}
+
+function endGame(){
+  gameOver=true;
+  clearInterval(timerId);
+  if(score>best){best=score;localStorage.setItem('antcolonysim_best',String(best));SFX.win();}
+  else SFX.lose();
+  setMsg(I18N.t('ac_over','Time\'s up! Your colony delivered {s} food. Click "New Game" to try again.').replace('{s}',score));
+  renderHud();
+}
+
+let lastFrame=null;
+function frameLoop(ts){
+  if(!gameOver){
+    if(lastFrame!==null){
+      const dt=Math.min((ts-lastFrame)/1000,0.1);
+      updateAnts(dt);
+      render();
+    }
+    lastFrame=ts;
+  }
+  requestAnimationFrame(frameLoop);
+}
+
+function newGame(){
+  clearInterval(timerId);
+  best=parseInt(localStorage.getItem('antcolonysim_best')||'0',10);
+  score=0;timeLeft=90;round=1;gameOver=false;selectedAnt=null;lastFrame=null;
+  buildGraph(round);
+  makeAnts(3);
+  setMsg(I18N.t('ac_start','Click an idle ant near the nest, then click a food source to send it out!'));
+  renderHud();
+  render();
+  timerId=setInterval(tick,1000);
+}
+
+document.getElementById('restartBtn').addEventListener('click',newGame);
+svg.addEventListener('click',()=>{ /* click on empty space deselects */ });
+
+document.addEventListener('keydown',e=>{
+  if(gameOver)return;
+  if(e.key>='1'&&e.key<='9'){
+    const idle=ants.filter(a=>a.state==='idle');
+    const idx=parseInt(e.key,10)-1;
+    if(idx<idle.length){selectedAnt=idle[idx].id;SFX.select();render();}
+    return;
+  }
+  if(selectedAnt && /^[a-zA-Z]$/.test(e.key)){
+    const foods=Object.values(nodes).filter(n=>n.type==='food');
+    const idx=e.key.toUpperCase().charCodeAt(0)-65;
+    if(idx>=0&&idx<foods.length){
+      onNodeClick(foods[idx].id);
+    }
+  }
+});
+
+newGame();
+requestAnimationFrame(frameLoop);
+</script></body></html>

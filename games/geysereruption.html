@@ -1,0 +1,217 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Geyser Eruption</title><meta name="description" content="Play Geyser Eruption free online — Watch the pressure meter rise and click Predict Eruption right before it blows. Score accurate predictions across trickier geysers each round."><link rel="canonical" href="https://games.multiportllc.com/games/geysereruption"><meta property="og:title" content="Geyser Eruption - Multiport Games"><meta property="og:description" content="Play Geyser Eruption free online — Watch the pressure meter rise and click Predict Eruption right before it blows. Score accurate predictions across trickier geysers each round."><meta property="og:url" content="https://games.multiportllc.com/games/geysereruption"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Geyser Eruption","description":"Play Geyser Eruption free online instantly. Watch the pressure meter rise and click Predict Eruption right before it blows. Score accurate predictions across trickier geysers each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/geysereruption","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:18px;text-align:center;max-width:560px;margin:0 auto}
+#status{color:#fff;font-size:1.1rem;font-weight:800;margin:6px 0;min-height:1.6em}
+#hud{display:flex;justify-content:space-between;color:#ddd;font-size:.9rem;padding:0 6px;margin-bottom:8px}
+#hud b{color:#ffd54f}
+canvas#g{background:linear-gradient(#0d2b4e,#1b4a72);border-radius:10px;display:block;margin:0 auto;max-width:100%}
+#predictBtn{margin-top:14px;padding:12px 30px;background:#4fc3f7;border:none;border-radius:24px;color:#08243a;font-weight:900;font-size:1.1rem;cursor:pointer;box-shadow:0 4px 0 #1a7fa8}
+#predictBtn:active{transform:translateY(2px);box-shadow:0 2px 0 #1a7fa8}
+#predictBtn:disabled{opacity:.5;cursor:not-allowed}
+#feedback{min-height:1.6em;font-weight:800;margin-top:8px}
+.fb-perfect{color:#69f0ae}
+.fb-good{color:#ffd54f}
+.fb-miss{color:#ff6b6b}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Geyser Eruption</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span>Round: <b id="round">1</b></span><span>Score: <b id="score">0</b></span><span>Best: <b id="best">0</b></span></div>
+      <div id="status">Watch the pressure build, then predict the eruption!</div>
+      <canvas id="g" width="500" height="260"></canvas>
+      <button id="predictBtn">🔮 Predict Eruption</button>
+      <div id="feedback"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Each geyser's pressure meter rises toward eruption with a bit of random flicker. Click <b>Predict Eruption</b> in the short window just before it actually erupts to score points — too early or too late scores less or nothing. Survive rounds with 3 misses and geysers get trickier and more irregular each round.</div>
+</div>
+<script>
+const canvas=document.getElementById('g'),ctx=canvas.getContext('2d');
+const predictBtn=document.getElementById('predictBtn');
+const statusEl=document.getElementById('status');
+const feedbackEl=document.getElementById('feedback');
+const roundEl=document.getElementById('round');
+const scoreEl=document.getElementById('score');
+const bestEl=document.getElementById('best');
+
+let score=0,round=1,misses=0,best=parseInt(localStorage.getItem('geysereruption_best')||'0',10);
+bestEl.textContent=best;
+
+let pressure=0,eruptTime=0,elapsed=0,noiseAmp=0.04,baseRate=0,erupted=false,waitingNext=false,predicted=false,running=false;
+let steamParticles=[];
+let lastTs=null;
+
+function setupGeyser(){
+  // Each round: harder timing — shorter windows, more noise, more variable eruption time
+  const minT=1400-round*40, maxT=2600-round*60;
+  eruptTime=Math.max(900,minT+Math.random()*Math.max(300,maxT-minT));
+  noiseAmp=0.03+round*0.006+Math.random()*0.02;
+  baseRate=1/eruptTime;
+  pressure=0;elapsed=0;erupted=false;predicted=false;waitingNext=false;
+  steamParticles=[];
+  predictBtn.disabled=false;
+  statusEl.textContent=I18N.t('watch_pressure','Watch the pressure build...');
+  feedbackEl.textContent='';
+  feedbackEl.className='';
+}
+
+function predict(){
+  if(!running||erupted||predicted||waitingNext)return;
+  predicted=true;
+  predictBtn.disabled=true;
+  // window: how close elapsed is to eruptTime, before it erupts
+  const remaining=eruptTime-elapsed;
+  let msg,cls,pts;
+  if(remaining<0){
+    msg=I18N.t('too_late','Too late — it already blew!');cls='fb-miss';pts=0;
+  } else if(remaining<=180){
+    msg=I18N.t('perfect_call','PERFECT CALL!');cls='fb-perfect';pts=100;SFX.win();
+  } else if(remaining<=420){
+    msg=I18N.t('good_call','Good call!');cls='fb-good';pts=50;SFX.success();
+  } else if(remaining<=800){
+    msg=I18N.t('early_call','A little early...');cls='fb-good';pts=20;SFX.point();
+  } else {
+    msg=I18N.t('way_early','Way too early!');cls='fb-miss';pts=0;
+  }
+  if(pts===0){misses++;SFX.fail();}
+  score+=pts;
+  if(score>best){best=score;localStorage.setItem('geysereruption_best',String(best));}
+  scoreEl.textContent=score;bestEl.textContent=best;
+  feedbackEl.textContent=msg+(pts>0?(' +'+pts):'');
+  feedbackEl.className=cls;
+  if(misses>=3){
+    setTimeout(gameOver,700);
+  } else {
+    waitingNext=true;
+    setTimeout(nextRound,1100);
+  }
+}
+
+function nextRound(){
+  round++;
+  roundEl.textContent=round;
+  setupGeyser();
+}
+
+function gameOver(){
+  running=false;
+  predictBtn.disabled=true;
+  statusEl.textContent=I18N.t('game_over_msg','Game Over! Tap Predict to play again.');
+  feedbackEl.textContent=I18N.t('final_score','Final Score: {s}').replace('{s}',score);
+  feedbackEl.className='fb-miss';
+  predictBtn.disabled=false;
+  predictBtn.onclick=startGame;
+}
+
+function startGame(){
+  score=0;round=1;misses=0;running=true;
+  roundEl.textContent=round;scoreEl.textContent=score;
+  predictBtn.onclick=predict;
+  setupGeyser();
+}
+
+predictBtn.addEventListener('click',()=>{if(predictBtn.onclick)return;});
+predictBtn.onclick=predict;
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();predictBtn.onclick&&predictBtn.onclick();}
+});
+
+function drawScene(){
+  ctx.clearRect(0,0,500,260);
+  // background
+  const sky=ctx.createLinearGradient(0,0,0,180);
+  sky.addColorStop(0,'#0d2b4e');sky.addColorStop(1,'#1b4a72');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,500,180);
+  // ground / rock
+  ctx.fillStyle='#5a4632';ctx.fillRect(0,180,500,80);
+  ctx.fillStyle='#443423';ctx.fillRect(0,180,500,10);
+  // vent
+  ctx.fillStyle='#2c2318';
+  ctx.beginPath();ctx.ellipse(250,185,55,14,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#1a140d';
+  ctx.beginPath();ctx.ellipse(250,183,38,9,0,0,Math.PI*2);ctx.fill();
+
+  // steam particles
+  steamParticles.forEach(p=>{
+    ctx.globalAlpha=p.life;
+    ctx.fillStyle='#e0f7ff';
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();
+  });
+  ctx.globalAlpha=1;
+
+  // pressure meter bar
+  const barX=30,barY=205,barW=440,barH=22;
+  ctx.fillStyle='#1a1a2e';ctx.fillRect(barX,barY,barW,barH);
+  const pct=Math.max(0,Math.min(1,pressure));
+  const grad=ctx.createLinearGradient(barX,0,barX+barW,0);
+  grad.addColorStop(0,'#4fc3f7');grad.addColorStop(0.7,'#ffd54f');grad.addColorStop(1,'#ff6b6b');
+  ctx.fillStyle=grad;ctx.fillRect(barX,barY,barW*pct,barH);
+  ctx.strokeStyle='#fff3';ctx.strokeRect(barX,barY,barW,barH);
+  ctx.fillStyle='#fff';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('pressure_label','PRESSURE'),barX+barW/2,barY+15);
+
+  if(erupted){
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText('💥 ERUPTED! 💥',250,100);
+  }
+}
+
+function spawnSteam(x,y,strength){
+  for(let i=0;i<strength;i++){
+    steamParticles.push({x:x+(Math.random()-0.5)*20,y:y,r:3+Math.random()*4,vy:-(1+Math.random()*2)-strength*0.15,vx:(Math.random()-0.5)*1.2,life:1});
+  }
+}
+
+function eruptNow(){
+  erupted=true;
+  predictBtn.disabled=true;
+  SFX.powerup();
+  spawnSteam(250,185,40);
+  if(!predicted){
+    // player never predicted this round
+    misses++;
+    statusEl.textContent=I18N.t('missed_it','You missed the window!');
+    feedbackEl.textContent=I18N.t('no_prediction','No prediction made');
+    feedbackEl.className='fb-miss';
+    if(misses>=3){setTimeout(gameOver,900);return;}
+  }
+  waitingNext=true;
+  setTimeout(nextRound,1300);
+}
+
+function tick(ts){
+  if(lastTs===null)lastTs=ts;
+  const dt=Math.min(ts-lastTs,50);
+  lastTs=ts;
+
+  if(running&&!erupted&&!waitingNext){
+    elapsed+=dt;
+    const noise=(Math.random()-0.5)*noiseAmp;
+    pressure=Math.min(1.02,elapsed*baseRate+noise*Math.min(1,elapsed/eruptTime));
+    if(pressure<0)pressure=0;
+    if(Math.random()<0.15)spawnSteam(250,187,1);
+    if(elapsed>=eruptTime){
+      eruptNow();
+    }
+  }
+
+  steamParticles.forEach(p=>{p.y+=p.vy;p.x+=p.vx;p.life-=0.015;});
+  steamParticles=steamParticles.filter(p=>p.life>0);
+
+  drawScene();
+  requestAnimationFrame(tick);
+}
+
+statusEl.textContent=I18N.t('tap_to_start','Tap Predict Eruption to start!');
+predictBtn.onclick=startGame;
+requestAnimationFrame(tick);
+</script></body></html>

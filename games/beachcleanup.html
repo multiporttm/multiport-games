@@ -1,0 +1,284 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Beach Cleanup</title><meta name="description" content="Play Beach Cleanup free online — Walk the beach with arrow keys/WASD or drag to collect litter and sort it into the right bin before the tide washes more ashore."><link rel="canonical" href="https://games.multiportllc.com/games/beachcleanup"><meta property="og:title" content="Beach Cleanup - Multiport Games"><meta property="og:description" content="Play Beach Cleanup free online — Walk the beach with arrow keys/WASD or drag to collect litter and sort it into the right bin before the tide washes more ashore."><meta property="og:url" content="https://games.multiportllc.com/games/beachcleanup"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Beach Cleanup","description":"Play Beach Cleanup free online instantly. Walk the beach with arrow keys/WASD or drag to collect litter and sort it into the right bin before the tide washes more ashore. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/beachcleanup","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#score-display{color:#0d5a7a;font-size:1.1rem;font-weight:800;text-align:center;padding:6px;background:#eaf6fb;border-radius:8px 8px 0 0}
+#c{background:#f4e2b8;display:block;border-radius:0 0 8px 8px;touch-action:none;max-width:100%}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Beach Cleanup</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Carrying: none | Time: 60s | Best: 0</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>touch-drag</b> to walk the beach. Walk over a litter item to pick it up (one at a time), then walk it to the matching bin — Recyclable, Trash, or Hazardous — to score points. Beware: the tide keeps washing new litter ashore, and time is limited!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const scoreDisplay=document.getElementById('score-display');
+
+let best=parseInt(localStorage.getItem('beachcleanup_best')||'0',10);
+let score=0,timeLeft=60,carrying=null,started=false,gameOver=false;
+const player={x:400,y:250,w:28,h:34,speed:3.2};
+const keys={};
+
+const TYPES=[
+  {type:'recyclable',emoji:'🥤',label:'Recyclable'},
+  {type:'recyclable',emoji:'🍾',label:'Recyclable'},
+  {type:'trash',emoji:'🍫',label:'Trash'},
+  {type:'trash',emoji:'🍟',label:'Trash'},
+  {type:'hazardous',emoji:'🔋',label:'Hazardous'},
+  {type:'hazardous',emoji:'🧴',label:'Hazardous'},
+];
+
+const bins=[
+  {type:'recyclable',x:80,y:80,w:70,h:80,color:'#3fa9f5',label:'Recyclable',emoji:'♻️'},
+  {type:'trash',x:365,y:40,w:70,h:80,color:'#666',label:'Trash',emoji:'🗑️'},
+  {type:'hazardous',x:650,y:80,w:70,h:80,color:'#f5a623',label:'Hazardous',emoji:'☣️'},
+];
+
+let litter=[];
+let tideTimer=0;
+let waterOffset=0;
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function spawnLitter(n){
+  for(let i=0;i<n;i++){
+    const t=TYPES[Math.floor(Math.random()*TYPES.length)];
+    litter.push({
+      x:rand(40,W-40),
+      y:rand(140,H-50),
+      type:t.type,emoji:t.emoji,
+      picked:false,
+      bob:Math.random()*Math.PI*2
+    });
+  }
+}
+
+function resetGame(){
+  score=0;timeLeft=60;carrying=null;gameOver=false;started=true;
+  player.x=400;player.y=250;
+  litter=[];
+  spawnLitter(6);
+  tideTimer=0;
+}
+
+function rectsOverlap(ax,ay,aw,ah,bx,by,bw,bh){
+  return ax<bx+bw&&ax+aw>bx&&ay<by+bh&&ay+ah>by;
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(!started&&!gameOver)resetGame();
+  if(gameOver&&(e.key===' '||e.key==='Enter'))resetGame();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+let dragActive=false,dragTargetX=null,dragTargetY=null;
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started&&!gameOver){resetGame();return;}
+  if(gameOver){resetGame();return;}
+  dragActive=true;
+  handleTouch(e);
+},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();handleTouch(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragActive=false;dragTargetX=null;dragTargetY=null;},{passive:false});
+c.addEventListener('click',()=>{ if(!started&&!gameOver)resetGame(); else if(gameOver)resetGame(); });
+
+function handleTouch(e){
+  const rect=c.getBoundingClientRect();
+  const t=e.touches[0];
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  dragTargetX=(t.clientX-rect.left)*scaleX;
+  dragTargetY=(t.clientY-rect.top)*scaleY;
+}
+
+function updatePlayer(dt){
+  let dx=0,dy=0;
+  if(keys['arrowleft']||keys['a'])dx-=1;
+  if(keys['arrowright']||keys['d'])dx+=1;
+  if(keys['arrowup']||keys['w'])dy-=1;
+  if(keys['arrowdown']||keys['s'])dy+=1;
+
+  if(dragActive&&dragTargetX!==null){
+    const ddx=dragTargetX-player.x,ddy=dragTargetY-player.y;
+    const dist=Math.hypot(ddx,ddy);
+    if(dist>4){dx=ddx/dist;dy=ddy/dist;}
+  }
+
+  const len=Math.hypot(dx,dy);
+  if(len>0){dx/=len;dy/=len;}
+  player.x+=dx*player.speed*dt;
+  player.y+=dy*player.speed*dt;
+  player.x=Math.max(20,Math.min(W-20,player.x));
+  player.y=Math.max(120,Math.min(H-20,player.y));
+}
+
+function checkPickup(){
+  if(carrying)return;
+  for(const item of litter){
+    if(item.picked)continue;
+    const d=Math.hypot(item.x-player.x,item.y-player.y);
+    if(d<26){
+      item.picked=true;
+      carrying=item;
+      SFX.click();
+      break;
+    }
+  }
+}
+
+function checkDropoff(){
+  if(!carrying)return;
+  for(const bin of bins){
+    if(rectsOverlap(player.x-14,player.y-14,28,28,bin.x,bin.y,bin.w,bin.h)){
+      if(bin.type===carrying.type){
+        score+=10;SFX.coin();
+      } else {
+        score=Math.max(0,score-3);SFX.error();
+      }
+      litter=litter.filter(l=>l!==carrying);
+      carrying=null;
+      break;
+    }
+  }
+}
+
+function drawBeach(t){
+  // sky
+  ctx.fillStyle='#bfeaf5';ctx.fillRect(0,0,W,110);
+  // water
+  const wgrad=ctx.createLinearGradient(0,60,0,140);
+  wgrad.addColorStop(0,'#1e8fc4');wgrad.addColorStop(1,'#3fa9f5');
+  ctx.fillStyle=wgrad;ctx.fillRect(0,60,W,60);
+  // waves
+  ctx.strokeStyle='rgba(255,255,255,.6)';ctx.lineWidth=2;
+  for(let i=0;i<3;i++){
+    ctx.beginPath();
+    for(let x=0;x<=W;x+=10){
+      const y=100+Math.sin((x+waterOffset+i*60)*0.03)*4+i*8;
+      if(x===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+  // sand
+  ctx.fillStyle='#f4e2b8';ctx.fillRect(0,110,W,H-110);
+  ctx.fillStyle='#eccf98';
+  for(let i=0;i<30;i++){
+    const sx=(i*97+Math.floor(waterOffset*0.2))%W;
+    ctx.beginPath();ctx.arc(sx,150+(i%5)*50,3,0,Math.PI*2);ctx.fill();
+  }
+}
+
+function drawBins(){
+  bins.forEach(b=>{
+    ctx.fillStyle=b.color;
+    ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.strokeStyle='#00000033';ctx.strokeRect(b.x,b.y,b.w,b.h);
+    ctx.font='28px Arial';ctx.textAlign='center';
+    ctx.fillText(b.emoji,b.x+b.w/2,b.y+38);
+    ctx.fillStyle='#fff';ctx.font='bold 11px Arial';
+    ctx.fillText(b.label,b.x+b.w/2,b.y+b.h-8);
+  });
+}
+
+function drawLitter(){
+  litter.forEach(item=>{
+    if(item.picked)return;
+    item.bob+=0.06;
+    ctx.font='24px Arial';ctx.textAlign='center';
+    ctx.fillText(item.emoji,item.x,item.y+Math.sin(item.bob)*3);
+  });
+}
+
+function drawPlayer(){
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  ctx.fillStyle='#ffdca8';
+  ctx.beginPath();ctx.arc(0,-14,9,0,Math.PI*2);ctx.fill(); // head
+  ctx.fillStyle='#2d7d9a';
+  ctx.fillRect(-9,-6,18,20); // body
+  ctx.fillStyle='#134';
+  ctx.fillRect(-9,14,7,12);
+  ctx.fillRect(2,14,7,12);
+  ctx.restore();
+  if(carrying){
+    ctx.font='18px Arial';ctx.textAlign='center';
+    ctx.fillText(carrying.emoji,player.x,player.y-26);
+  }
+}
+
+let lastTs=null,timerAccum=0;
+function loop(ts){
+  if(lastTs===null)lastTs=ts;
+  const dtMs=Math.min(ts-lastTs,50);
+  lastTs=ts;
+  const dt=dtMs/16.6667;
+  waterOffset+=dtMs*0.02;
+
+  ctx.clearRect(0,0,W,H);
+  drawBeach();
+  drawBins();
+
+  if(!started){
+    drawLitter();drawPlayer();
+    ctx.fillStyle='#0d5a7a';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_beach','Tap / Press any key to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawLitter();drawPlayer();
+    ctx.fillStyle='#00000088';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint_beach','Tap or press a key to play again'),W/2,H/2+20);
+    scoreDisplay.textContent=I18N.t('final_beach_score','Final Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',best);
+    requestAnimationFrame(loop);return;
+  }
+
+  updatePlayer(dt);
+  checkPickup();
+  checkDropoff();
+
+  timerAccum+=dtMs;
+  if(timerAccum>=1000){
+    timerAccum-=1000;
+    timeLeft--;
+    tideTimer++;
+    if(tideTimer>=4){
+      tideTimer=0;
+      spawnLitter(1+Math.floor(score/60));
+      SFX.swoosh();
+    }
+    if(timeLeft<=0){
+      gameOver=true;
+      if(score>best){best=score;localStorage.setItem('beachcleanup_best',String(best));}
+      SFX.lose();
+    }
+  }
+
+  drawLitter();
+  drawPlayer();
+
+  scoreDisplay.textContent=I18N.t('score_carry_time','Score: {s} | Carrying: {c} | Time: {t}s | Best: {b}')
+    .replace('{s}',score)
+    .replace('{c}',carrying?carrying.type:I18N.t('none_label','none'))
+    .replace('{t}',timeLeft)
+    .replace('{b}',best);
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,246 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Gladiator Arena</title><meta name="description" content="Play Gladiator Arena free online — WASD/arrows or drag to move, click/tap to attack, hold Shift or the shield button to block. Dodge telegraphed attacks, counter, and survive tougher waves of opponents."><link rel="canonical" href="https://games.multiportllc.com/games/gladiatorarena"><meta property="og:title" content="Gladiator Arena - Multiport Games"><meta property="og:description" content="Play Gladiator Arena free online — WASD/arrows or drag to move, click/tap to attack, hold Shift or the shield button to block. Dodge telegraphed attacks, counter, and survive tougher waves of opponents."><meta property="og:url" content="https://games.multiportllc.com/games/gladiatorarena"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Gladiator Arena","description":"Play Gladiator Arena free online instantly. WASD/arrows or drag to move, click/tap to attack, hold Shift or the shield button to block. Dodge telegraphed attacks, counter, and survive tougher waves of opponents. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/gladiatorarena","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#160b06}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;color:#ffe0b2;font-weight:700;padding:6px 10px;font-size:.95rem}
+#hud b{color:#ffd54f}
+#healthWrap,#enemyHealthWrap{background:rgba(0,0,0,.4);border-radius:8px;height:12px;overflow:hidden;margin:2px 8px}
+#healthBar{height:100%;width:100%;background:linear-gradient(90deg,#c62828,#ef5350)}
+#enemyHealthBar{height:100%;width:100%;background:linear-gradient(90deg,#4527a0,#7e57c2)}
+#c{background:linear-gradient(#5d4037,#3e2723);display:block;border-radius:8px;touch-action:none}
+#controls{display:flex;justify-content:center;gap:10px;margin-top:8px}
+#controls button{padding:14px 26px;border:none;border-radius:12px;font-weight:900;font-size:1rem;color:#fff;cursor:pointer}
+#atkBtn{background:linear-gradient(135deg,#c62828,#ef5350)}
+#blkBtn{background:linear-gradient(135deg,#37474f,#78909c)}
+#atkBtn.pressed,#blkBtn.pressed{transform:scale(.94)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Gladiator Arena</div>
+  <div class="game-frame">
+    <div id="hud"><span>Wave: <b id="waveVal">1</b></span><span>Foes Defeated: <b id="killsVal">0</b></span><span>Crowd Favor: <b id="favorVal">0</b></span><span>Best: <b id="bestVal">0</b></span></div>
+    <div id="healthWrap"><div id="healthBar"></div></div>
+    <div id="enemyHealthWrap"><div id="enemyHealthBar"></div></div>
+    <canvas id="c" width="800" height="320" style="width:100%;max-width:800px;margin:0 auto"></canvas>
+    <div id="controls">
+      <button id="blkBtn">🛡️ BLOCK (Shift)</button>
+      <button id="atkBtn">⚔️ ATTACK (Click/E)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>WASD / Arrow keys</b> (or drag on the arena) to move. Press <b>E</b> or click/tap the <b>ATTACK</b> button to strike, and hold <b>Shift</b> or the <b>BLOCK</b> button to raise your shield. Enemies telegraph their strikes with a red flash before swinging — dodge away or block right as it lands, then counter-attack while they recover. Defeat opponents to earn crowd favor before your health runs out; tougher foes arrive each wave!</div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const W=800,H=320;
+const GROUND_Y=270;
+
+let wave=1,kills=0,favor=0,best=parseInt(localStorage.getItem('gladiatorarena_best')||'0',10);
+document.getElementById('bestVal').textContent=best;
+
+const player={x:150,y:GROUND_Y,w:34,h:60,hp:100,maxHp:100,blocking:false,attackCd:0,hitFlash:0,vx:0};
+let enemy=null;
+let running=true,gameOver=false;
+let lastTime=null;
+let keys={};
+
+function spawnEnemy(w){
+  const hp=50+w*18;
+  const speed=1.0+w*0.12;
+  const telegraphTime=Math.max(420,900-w*35);
+  enemy={x:650,y:GROUND_Y,w:36,h:62,hp,maxHp:hp,speed,state:'approach',telegraphTime,telegraphTimer:0,cd:0,hitFlash:0,attackRange:70,knockback:0};
+}
+
+function reset(){
+  wave=1;kills=0;favor=0;player.hp=player.maxHp;player.x=150;gameOver=false;running=true;
+  spawnEnemy(wave);
+  updateUI();
+}
+
+function updateUI(){
+  document.getElementById('waveVal').textContent=wave;
+  document.getElementById('killsVal').textContent=kills;
+  document.getElementById('favorVal').textContent=favor;
+  document.getElementById('healthBar').style.width=Math.max(0,player.hp/player.maxHp*100)+'%';
+  if(enemy)document.getElementById('enemyHealthBar').style.width=Math.max(0,enemy.hp/enemy.maxHp*100)+'%';
+}
+
+// Input
+window.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(e.code==='KeyE'||e.code==='Space'){e.preventDefault();doAttack();}
+  if(e.code==='ShiftLeft'||e.code==='ShiftRight'){player.blocking=true;}
+});
+window.addEventListener('keyup',e=>{
+  keys[e.code]=false;
+  if(e.code==='ShiftLeft'||e.code==='ShiftRight'){player.blocking=false;}
+});
+
+document.getElementById('atkBtn').addEventListener('pointerdown',e=>{e.preventDefault();document.getElementById('atkBtn').classList.add('pressed');doAttack();});
+document.getElementById('atkBtn').addEventListener('pointerup',()=>document.getElementById('atkBtn').classList.remove('pressed'));
+document.getElementById('blkBtn').addEventListener('pointerdown',e=>{e.preventDefault();document.getElementById('blkBtn').classList.add('pressed');player.blocking=true;});
+['pointerup','pointerleave','pointercancel'].forEach(evt=>document.getElementById('blkBtn').addEventListener(evt,()=>{document.getElementById('blkBtn').classList.remove('pressed');player.blocking=false;}));
+
+// drag to move on canvas
+let dragging=false,dragStartX=0,playerStartX=0;
+cv.addEventListener('pointerdown',e=>{
+  if(gameOver){reset();return;}
+  dragging=true;
+  const r=cv.getBoundingClientRect();
+  dragStartX=(e.clientX-r.left)*(W/r.width);
+  playerStartX=player.x;
+});
+cv.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const r=cv.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width);
+  player.x=Math.max(30,Math.min(W-30,playerStartX+(x-dragStartX)));
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+function doAttack(){
+  if(gameOver){reset();return;}
+  if(player.attackCd>0)return;
+  player.attackCd=380;
+  player.attacking=14;
+  SFX.hit();
+  if(enemy && Math.abs(player.x-enemy.x)<player.attackRangeCalc()){
+    if(enemy.state==='stagger'||enemy.state==='approach'||enemy.state==='recover'){
+      const dmg=18;
+      enemy.hp-=dmg;
+      enemy.hitFlash=10;
+      enemy.knockback=8;
+      favor+=2;
+      SFX.point();
+      if(enemy.hp<=0){
+        kills++; favor+=15;
+        SFX.success();
+        wave++;
+        spawnEnemy(wave);
+      }
+    }
+  }
+  updateUI();
+}
+player.attackRangeCalc=function(){return 90;};
+
+function playerMoveInput(dt){
+  let dx=0;
+  if(keys['KeyA']||keys['ArrowLeft'])dx-=1;
+  if(keys['KeyD']||keys['ArrowRight'])dx+=1;
+  if(dx!==0 && !dragging){ player.x+=dx*3.2*dt; }
+  player.x=Math.max(30,Math.min(W-30,player.x));
+}
+
+function updateEnemy(dt){
+  if(!enemy)return;
+  enemy.hitFlash=Math.max(0,enemy.hitFlash-dt);
+  enemy.knockback=Math.max(0,enemy.knockback-dt*0.6);
+  const dist=player.x-enemy.x;
+  const absDist=Math.abs(dist);
+  if(enemy.state==='approach'){
+    if(absDist>90){
+      enemy.x += Math.sign(dist)*enemy.speed*dt*0.9 - (enemy.knockback?Math.sign(dist)*enemy.knockback*0.4:0);
+    } else {
+      enemy.state='telegraph'; enemy.telegraphTimer=0;
+    }
+  } else if(enemy.state==='telegraph'){
+    enemy.telegraphTimer+=dt*16.67;
+    if(absDist>110){ enemy.state='approach'; }
+    else if(enemy.telegraphTimer>=enemy.telegraphTime){
+      // swing lands
+      enemy.state='recover'; enemy.recoverTimer=0;
+      if(absDist<100){
+        if(player.blocking){
+          SFX.land();
+          player.hp-=4; // chip damage on block
+          enemy.knockback=5;
+        } else {
+          SFX.hurt();
+          player.hp-=16;
+          player.hitFlash=14;
+        }
+        updateUI();
+        if(player.hp<=0){ endGame(); }
+      }
+    }
+  } else if(enemy.state==='recover'){
+    enemy.recoverTimer+=dt*16.67;
+    if(enemy.recoverTimer>420){ enemy.state='approach'; }
+  }
+}
+
+function endGame(){
+  gameOver=true; running=false;
+  const finalScore=kills*10+favor;
+  if(finalScore>best){best=finalScore;localStorage.setItem('gladiatorarena_best',best);document.getElementById('bestVal').textContent=best;}
+  SFX.lose();
+}
+
+function drawGladiator(g,color,facing){
+  ctx.save();
+  ctx.translate(g.x,g.y);
+  if(g.hitFlash>0){ ctx.fillStyle='#fff'; } else { ctx.fillStyle=color; }
+  ctx.fillRect(-g.w/2,-g.h,g.w,g.h);
+  // head
+  ctx.beginPath();ctx.arc(0,-g.h-10,12,0,Math.PI*2);ctx.fill();
+  // weapon/shield indicator
+  if(g===player&&player.blocking){
+    ctx.fillStyle='#90a4ae';
+    ctx.fillRect(facing>0?g.w/2:-g.w/2-10,-g.h+10,10,40);
+  }
+  if(g===player&&player.attacking>0){
+    ctx.fillStyle='#ffd54f';
+    ctx.fillRect(facing>0?g.w/2:-g.w/2-30,-g.h+15,30,8);
+  }
+  if(g===enemy&&enemy.state==='telegraph'){
+    const pct=enemy.telegraphTimer/enemy.telegraphTime;
+    ctx.fillStyle=`rgba(255,${Math.floor(80-pct*80)},${Math.floor(80-pct*80)},${0.3+0.5*pct})`;
+    ctx.beginPath();ctx.arc(0,-g.h/2,g.w*1.3,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
+}
+
+function loop(ts){
+  requestAnimationFrame(loop);
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,GROUND_Y);
+  sky.addColorStop(0,'#8d6e63');sky.addColorStop(1,'#5d4037');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,GROUND_Y);
+  ctx.fillStyle='#c9a876';ctx.fillRect(0,GROUND_Y,W,H-GROUND_Y);
+  ctx.strokeStyle='rgba(0,0,0,.2)';
+  for(let i=0;i<10;i++){ ctx.beginPath();ctx.moveTo(i*90,GROUND_Y);ctx.lineTo(i*90-30,H);ctx.stroke(); }
+
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+
+  if(running&&!gameOver){
+    playerMoveInput(dt);
+    updateEnemy(dt);
+    if(player.attackCd>0)player.attackCd-=dt*16.67;
+    if(player.attacking>0)player.attacking-=dt;
+    if(player.hitFlash>0)player.hitFlash-=dt;
+  }
+
+  if(enemy)drawGladiator(enemy,'#5e35b1',-1);
+  drawGladiator(player,player.hitFlash>0?'#fff':'#c62828',1);
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,H/2-60,W,120);
+    ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('glad_fallen','YOU HAVE FALLEN'),W/2,H/2-16);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('glad_recap','Wave {w} | Foes: {k} | Favor: {f}').replace('{w}',wave).replace('{k}',kills).replace('{f}',favor),W/2,H/2+16);
+    ctx.font='15px Arial';
+    ctx.fillText(I18N.t('glad_restart','Click/Tap or press E to fight again'),W/2,H/2+42);
+  }
+  updateUI();
+}
+requestAnimationFrame(loop);
+reset();
+</script></body></html>

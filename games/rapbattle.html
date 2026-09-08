@@ -1,0 +1,231 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rap Battle</title><meta name="description" content="Play Rap Battle free online — Spit your bars! Hit the matching lane key (D/F/J/K) as each lyric word crosses the line to land your verse against the AI opponent. Faster tempo each round."><link rel="canonical" href="https://games.multiportllc.com/games/rapbattle"><meta property="og:title" content="Rap Battle - Multiport Games"><meta property="og:description" content="Play Rap Battle free online — Spit your bars! Hit the matching lane key (D/F/J/K) as each lyric word crosses the line to land your verse against the AI opponent. Faster tempo each round."><meta property="og:url" content="https://games.multiportllc.com/games/rapbattle"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rap Battle","description":"Play Rap Battle free online instantly. Spit your bars! Hit the matching lane key (D/F/J/K) as each lyric word crosses the line to land your verse against the AI opponent. Faster tempo each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/rapbattle","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0a0210}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;color:#fff;font-weight:700;padding:6px 10px;font-size:.95rem}
+#hud b{color:#ffd54f}
+#stage{position:relative;background:linear-gradient(#1a0a2e,#2d0a3d);border-radius:12px;overflow:hidden}
+#lanesWrap{padding:8px 10px 4px}
+.lane{position:relative;height:56px;background:rgba(255,255,255,.05);border-radius:8px;margin-bottom:6px;overflow:hidden}
+.laneLabel{position:absolute;left:6px;top:50%;transform:translateY(-50%);font-weight:900;color:rgba(255,255,255,.35);font-size:1.4rem;z-index:2}
+.hitline{position:absolute;left:56px;top:0;bottom:0;width:4px;background:#ffd54f;box-shadow:0 0 10px #ffd54f;z-index:2}
+.word{position:absolute;top:50%;transform:translateY(-50%);padding:6px 12px;border-radius:16px;font-weight:800;font-size:.95rem;white-space:nowrap;color:#fff;background:linear-gradient(135deg,#e91e63,#9c27b0)}
+.word.oppo{background:linear-gradient(135deg,#455a64,#78909c)}
+#opponentBar{color:#f8bbd0;font-weight:700;text-align:center;min-height:1.4em;padding:6px;font-style:italic}
+#keys{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px}
+#keys button{padding:14px 0;border:none;border-radius:10px;background:linear-gradient(135deg,#9c27b0,#e91e63);color:#fff;font-weight:900;font-size:1.1rem;cursor:pointer}
+#keys button:active,#keys button.pressed{transform:scale(.94);filter:brightness(1.3)}
+#msg{position:absolute;top:6px;left:0;right:0;text-align:center;color:#fff;font-weight:800;pointer-events:none;text-shadow:0 2px 6px #000}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rap Battle</div>
+  <div class="game-frame">
+    <div id="hud"><span>Round: <b id="roundVal">1</b></span><span>Score: <b id="scoreVal">0</b></span><span>Streak: <b id="streakVal">0</b></span><span>Wins: <b id="winsVal">0</b></span><span>Best: <b id="bestVal">0</b></span></div>
+    <div id="stage">
+      <div id="msg"></div>
+      <div id="opponentBar">The opponent steps up to the mic...</div>
+      <div id="lanesWrap">
+        <div class="lane" id="lane0"><div class="laneLabel">D</div><div class="hitline"></div></div>
+        <div class="lane" id="lane1"><div class="laneLabel">F</div><div class="hitline"></div></div>
+        <div class="lane" id="lane2"><div class="laneLabel">J</div><div class="hitline"></div></div>
+        <div class="lane" id="lane3"><div class="laneLabel">K</div><div class="hitline"></div></div>
+      </div>
+    </div>
+    <div id="keys">
+      <button data-lane="0">D</button>
+      <button data-lane="1">F</button>
+      <button data-lane="2">J</button>
+      <button data-lane="3">K</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Words scroll toward the glowing hit-line on a beat. Press <b>D / F / J / K</b> (or tap the matching button) exactly when a word of your color reaches the line to spit that bar. The AI opponent's bars play automatically on the grey lanes. Land more bars than your opponent to win the round — tempo speeds up each round!</div>
+</div>
+<script>
+const LANES=4;
+const KEYS=['KeyD','KeyF','KeyJ','KeyK'];
+const WORDS=['yo','flow','rhyme','beat','game','fire','crown','king','grind','shine','real','deep','loud','proud','fast','last','win','spin','high','sky','flame','claim','name','fame','word','heard','bar','star','far','close','rise','wise','true','crew','move','groove','light','fight','right','tight'];
+
+let round=1,score=0,streak=0,wins=0,best=parseInt(localStorage.getItem('rapbattle_best')||'0',10);
+document.getElementById('bestVal').textContent=best;
+
+const laneEls=[0,1,2,3].map(i=>document.getElementById('lane'+i));
+let notes=[]; // {lane, x, hit, missed, isPlayer, word, spawnT}
+let running=false;
+let elapsed=0,lastTime=null;
+let beatInterval=650; // ms between notes, decreases each round
+let laneW=0;
+let hitlineX=56+4/2;
+let playerHits=0, playerTotal=0, oppHits=0, oppTotal=0;
+let spawnTimer=0;
+let songNotes=[],songIdx=0,songLen=0;
+let ended=false;
+
+function measure(){ laneW=laneEls[0].clientWidth; }
+window.addEventListener('resize',measure);
+
+function buildSong(r){
+  const count=14+Math.min(r*2,20);
+  const arr=[];
+  let t=500;
+  const interval=Math.max(280,beatInterval);
+  for(let i=0;i<count;i++){
+    const lane=Math.floor(Math.random()*LANES);
+    const isPlayer = i%2===0; // alternate bars: player, opponent, player...
+    arr.push({t,lane,isPlayer,word:WORDS[Math.floor(Math.random()*WORDS.length)]});
+    t+=interval;
+  }
+  return {arr,len:t+600};
+}
+
+function startRound(){
+  beatInterval=Math.max(300,650-round*35);
+  const song=buildSong(round);
+  songNotes=song.arr; songLen=song.len; songIdx=0;
+  notes=[]; elapsed=0; lastTime=null; running=true; ended=false;
+  playerHits=0;playerTotal=0;oppHits=0;oppTotal=0;
+  document.getElementById('roundVal').textContent=round;
+  document.getElementById('msg').textContent='';
+  document.getElementById('opponentBar').textContent=I18N.t('rap_battle_begin','Battle begins... watch your lanes!');
+}
+
+function speed(){ return (laneW-hitlineX)/ (beatInterval*2.4); } // px per ms so notes travel over ~2.4 beats
+
+function spawnDue(){
+  while(songIdx<songNotes.length && songNotes[songIdx].t<=elapsed+ (beatInterval*2.4)){
+    const n=songNotes[songIdx];
+    notes.push({lane:n.lane,isPlayer:n.isPlayer,word:n.word,hit:false,missed:false,spawnElapsed:elapsed,dueT:n.t});
+    if(n.isPlayer)playerTotal++; else oppTotal++;
+    songIdx++;
+  }
+}
+
+function xForNote(n){
+  const travel=laneW-hitlineX;
+  const progress=(elapsed-(n.dueT-beatInterval*2.4))/(beatInterval*2.4);
+  return laneW - progress*travel;
+}
+
+function render(dt){
+  measure();
+  laneEls.forEach(el=>{ el.querySelectorAll('.word').forEach(w=>w.remove()); });
+  notes.forEach(n=>{
+    if(n.hit||n.missed)return;
+    const x=xForNote(n);
+    const el=document.createElement('div');
+    el.className='word'+(n.isPlayer?'':' oppo');
+    el.textContent=n.word;
+    el.style.left=Math.max(-80,x)+'px';
+    laneEls[n.lane].appendChild(el);
+  });
+}
+
+function judgeLane(lane){
+  // find nearest unhandled player note in this lane close to hitline
+  let best=null,bestDist=Infinity;
+  notes.forEach(n=>{
+    if(n.hit||n.missed||!n.isPlayer||n.lane!==lane)return;
+    const x=xForNote(n);
+    const dist=Math.abs(x-hitlineX);
+    if(dist<bestDist){bestDist=dist;best=n;}
+  });
+  if(best&&bestDist<50){
+    best.hit=true; playerHits++; streak++; score+=10+Math.min(streak,20);
+    SFX.point();
+    flashLane(lane,true);
+  } else {
+    // penalize wrong/early press only if there was a close note; otherwise ignore
+    streak=0;
+    SFX.click();
+    flashLane(lane,false);
+  }
+  document.getElementById('scoreVal').textContent=score;
+  document.getElementById('streakVal').textContent=streak;
+}
+
+function flashLane(i,good){
+  const el=laneEls[i];
+  el.style.boxShadow=good?'inset 0 0 20px #7ec850':'inset 0 0 20px #e53935';
+  setTimeout(()=>{el.style.boxShadow='none';},120);
+}
+
+function autoOpponent(){
+  notes.forEach(n=>{
+    if(n.hit||n.missed||n.isPlayer)return;
+    const x=xForNote(n);
+    if(Math.abs(x-hitlineX)<12){
+      n.hit=true; oppHits++; flashLane(n.lane,true);
+    }
+  });
+}
+
+function sweepMisses(){
+  notes.forEach(n=>{
+    if(n.hit||n.missed)return;
+    const x=xForNote(n);
+    if(x < hitlineX-60){
+      n.missed=true;
+      if(n.isPlayer)streak=0;
+    }
+  });
+  notes=notes.filter(n=>xForNote(n)>-120 || (!n.hit&&!n.missed));
+}
+
+document.querySelectorAll('#keys button').forEach((btn,i)=>{
+  const press=e=>{e.preventDefault(); btn.classList.add('pressed'); onPress(i); setTimeout(()=>btn.classList.remove('pressed'),100);};
+  btn.addEventListener('pointerdown',press);
+});
+window.addEventListener('keydown',e=>{
+  const i=KEYS.indexOf(e.code);
+  if(i>=0){e.preventDefault(); onPress(i);}
+});
+
+function onPress(lane){
+  if(!running){ if(!ended && document.getElementById('opponentBar').textContent.indexOf('begins')<0 ){} startOrContinue(); return; }
+  judgeLane(lane);
+}
+
+function startOrContinue(){
+  if(ended){ round++; }
+  startRound();
+}
+
+function loop(ts){
+  requestAnimationFrame(loop);
+  if(!running){
+    if(!ended){
+      measure();
+    }
+    return;
+  }
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min(ts-lastTime,50);
+  lastTime=ts;
+  elapsed+=dt;
+  spawnDue();
+  autoOpponent();
+  sweepMisses();
+  render(dt);
+
+  if(elapsed>=songLen && songIdx>=songNotes.length){
+    running=false; ended=true;
+    const playerScore=playerHits, oppScore=oppHits;
+    let msg;
+    if(playerScore>oppScore){ wins++; msg=I18N.t('rap_you_win','YOU WIN THIS ROUND!'); SFX.win(); }
+    else if(playerScore===oppScore){ msg=I18N.t('rap_tie',"IT'S A TIE!"); SFX.success(); }
+    else { msg=I18N.t('rap_lose','OPPONENT TAKES IT...'); SFX.fail(); }
+    document.getElementById('winsVal').textContent=wins;
+    if(score>best){best=score;localStorage.setItem('rapbattle_best',best);document.getElementById('bestVal').textContent=best;}
+    document.getElementById('msg').textContent=msg;
+    document.getElementById('opponentBar').textContent=I18N.t('rap_recap','You: {p} bars | Opponent: {o} bars — press any key for round {r}').replace('{p}',playerScore).replace('{o}',oppScore).replace('{r}',round+1);
+  }
+}
+requestAnimationFrame(loop);
+measure();
+document.getElementById('opponentBar').textContent=I18N.t('rap_press_start','Press D / F / J / K or tap a button to start');
+</script></body></html>

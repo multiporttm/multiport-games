@@ -1,0 +1,217 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Beehive Build</title><meta name="description" content="Play Beehive Build free online — Match the blueprint by clicking hex cells to cycle them between empty, honey, and larvae. Complete the pattern before your wax budget or the clock runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/beehivebuild"><meta property="og:title" content="Beehive Build - Multiport Games"><meta property="og:description" content="Play Beehive Build free online — Match the blueprint by clicking hex cells to cycle them between empty, honey, and larvae. Complete the pattern before your wax budget or the clock runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/beehivebuild"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Beehive Build","description":"Play Beehive Build free online instantly. Click hexagonal cells to cycle them between empty, honey, and larvae, matching the blueprint diagram exactly before your limited wax budget or the clock runs out. Patterns grow larger and trickier each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/beehivebuild","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:14px;color:#fff;text-align:center}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;max-width:640px;margin:0 auto 10px;font-weight:800;font-size:.9rem}
+#hud b{color:#ffd54f}
+#msg{min-height:1.4em;font-weight:700;color:#ffd54f;margin-bottom:8px}
+#panels{display:flex;justify-content:center;gap:24px;flex-wrap:wrap}
+.panel{background:#1b2a4a;border-radius:12px;padding:12px}
+.panel h3{margin:0 0 8px;font-size:.85rem;color:#a3d977}
+.hexcol{display:inline-flex;flex-direction:column}
+.hexgrid{display:flex}
+.hex{width:var(--hw,34px);height:calc(var(--hw,34px)*1.1547);clip-path:polygon(25% 0%,75% 0%,100% 50%,75% 100%,25% 100%,0% 50%);background:#26365e;margin-bottom:calc(var(--hw,34px)*-0.2887);cursor:pointer;transition:background .12s,transform .1s}
+.hex.honey{background:#ffc93c}
+.hex.larvae{background:#fff3d6}
+.hex.mismatch{outline:2px solid #e94560}
+.hex.cursor{outline:3px solid #4dd0e1}
+.panel.ref .hex{cursor:default}
+#btnRow{margin-top:10px}
+#btnRow button{padding:8px 18px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.9rem;font-weight:700}
+@media(max-width:480px){.hex{width:24px}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Beehive Build</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span>⏱ <b id="timeVal">75</b>s</span>
+        <span>🪵 Wax: <b id="waxVal">0</b></span>
+        <span>🐝 Hives: <b id="scoreVal">0</b></span>
+        <span>🏆 Best: <b id="bestVal">0</b></span>
+      </div>
+      <div id="msg">Match the blueprint! Click hex cells to cycle empty → honey → larvae.</div>
+      <div id="panels">
+        <div class="panel ref"><h3>Blueprint</h3><div id="refGrid"></div></div>
+        <div class="panel"><h3>Your Hive</h3><div id="mainGrid"></div></div>
+      </div>
+      <div id="btnRow"><button id="restartBtn">New Game</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a hex cell (or move the cursor with <b>arrow keys</b> and press <b>Enter</b>) to cycle it through empty, honey, and larvae. Match the blueprint pattern exactly using as few clicks as possible — your wax budget is limited and only enough for the exact number of clicks needed, plus a little slack. Complete the hive before the wax or the clock runs out to move on to a bigger, trickier pattern!</div>
+</div>
+<script>
+let COLS=4,ROWS=4;
+let target,current,wax,score,best,timeLeft,timerId,round,gameOver,cursorIdx;
+
+function cellIndex(c,r){return c*ROWS+r;}
+function genTarget(round){
+  COLS=4+Math.min(2,Math.floor((round-1)/2));
+  ROWS=4+Math.min(2,Math.floor((round-1)/2));
+  const t=[];
+  for(let c=0;c<COLS;c++){
+    t.push([]);
+    for(let r=0;r<ROWS;r++){
+      const roll=Math.random();
+      let v=0;
+      if(roll<0.5)v=1;
+      else if(roll<0.72)v=2;
+      t[c].push(v);
+    }
+  }
+  return t;
+}
+function minClicks(t){
+  let sum=0;
+  for(const col of t)for(const v of col)sum+=v;
+  return sum;
+}
+
+function newRound(){
+  target=genTarget(round);
+  current=target.map(col=>col.map(()=>0));
+  const slack=Math.max(2,6-round);
+  wax=minClicks(target)+slack;
+  cursorIdx=0;
+  renderAll();
+}
+
+function newGame(){
+  clearInterval(timerId);
+  best=parseInt(localStorage.getItem('beehivebuild_best')||'0',10);
+  score=0;timeLeft=75;round=1;gameOver=false;
+  newRound();
+  setMsg(I18N.t('bh_start','Match the blueprint! Click hex cells to cycle empty → honey → larvae.'));
+  render();
+  timerId=setInterval(tick,1000);
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function buildGridDom(container,cols,rows,cellClickFn,cursorHighlight){
+  container.innerHTML='';
+  const hw = cols>=6?24:34;
+  for(let c=0;c<cols;c++){
+    const col=document.createElement('div');
+    col.className='hexcol';
+    col.style.marginTop = (c%2===1)? (hw*0.5774)+'px':'0';
+    for(let r=0;r<rows;r++){
+      const hex=document.createElement('div');
+      hex.className='hex';
+      hex.style.setProperty('--hw',hw+'px');
+      col.appendChild(hex);
+    }
+    container.appendChild(col);
+  }
+}
+
+function paintGrids(){
+  const refEl=document.getElementById('refGrid');
+  const mainEl=document.getElementById('mainGrid');
+  paintOne(refEl,target,false);
+  paintOne(mainEl,current,true);
+}
+function classFor(v){return v===1?'honey':v===2?'larvae':'';}
+function paintOne(container,data,interactive){
+  container.innerHTML='';
+  const hw = COLS>=6?24:34;
+  for(let c=0;c<COLS;c++){
+    const col=document.createElement('div');
+    col.className='hexcol';
+    col.style.marginTop = (c%2===1)? (hw*0.5774)+'px':'0';
+    for(let r=0;r<ROWS;r++){
+      const hex=document.createElement('div');
+      const idx=cellIndex(c,r);
+      hex.className='hex '+classFor(data[c][r]);
+      hex.style.setProperty('--hw',hw+'px');
+      if(interactive){
+        if(idx===cursorIdx)hex.classList.add('cursor');
+        hex.addEventListener('click',()=>cycleCell(c,r));
+      }
+      col.appendChild(hex);
+    }
+    container.appendChild(col);
+  }
+}
+
+function cycleCell(c,r){
+  if(gameOver||wax<=0)return;
+  current[c][r]=(current[c][r]+1)%3;
+  wax--;
+  SFX.click();
+  paintGrids();
+  render();
+  checkComplete();
+  if(wax<=0&&!isComplete()){
+    setMsg(I18N.t('bh_outofwax','Out of wax! This hive is done. Starting fresh...'));
+    SFX.error();
+    setTimeout(()=>{ if(!gameOver)restartRoundOnFail(); },900);
+  }
+}
+function restartRoundOnFail(){
+  newRound();
+  render();
+}
+function isComplete(){
+  for(let c=0;c<COLS;c++)for(let r=0;r<ROWS;r++)if(current[c][r]!==target[c][r])return false;
+  return true;
+}
+function checkComplete(){
+  if(isComplete()){
+    score++;
+    timeLeft+=15;
+    SFX.levelup();
+    setMsg(I18N.t('bh_complete','Hive complete! +15s bonus. Building an even bigger hive next...').replace('{r}',round+1));
+    round++;
+    newRound();
+  }
+}
+
+function render(){
+  document.getElementById('timeVal').textContent=timeLeft;
+  document.getElementById('waxVal').textContent=wax;
+  document.getElementById('scoreVal').textContent=score;
+  document.getElementById('bestVal').textContent=best;
+}
+function renderAll(){ paintGrids(); render(); }
+
+function tick(){
+  if(gameOver)return;
+  timeLeft--;
+  if(timeLeft<=0){timeLeft=0;endGame();return;}
+  render();
+}
+function endGame(){
+  gameOver=true;
+  clearInterval(timerId);
+  if(score>best){best=score;localStorage.setItem('beehivebuild_best',String(best));SFX.win();}
+  else SFX.lose();
+  setMsg(I18N.t('bh_over','Time\'s up! You built {s} hives. Click "New Game" to try again.').replace('{s}',score));
+  render();
+}
+
+document.getElementById('restartBtn').addEventListener('click',newGame);
+
+document.addEventListener('keydown',e=>{
+  if(gameOver)return;
+  const total=COLS*ROWS;
+  if(e.key==='ArrowRight'){cursorIdx=(cursorIdx+ROWS)%total;paintGrids();e.preventDefault();}
+  else if(e.key==='ArrowLeft'){cursorIdx=(cursorIdx-ROWS+total)%total;paintGrids();e.preventDefault();}
+  else if(e.key==='ArrowDown'){ let c=Math.floor(cursorIdx/ROWS),r=(cursorIdx%ROWS+1)%ROWS; cursorIdx=cellIndex(c,r); paintGrids(); e.preventDefault();}
+  else if(e.key==='ArrowUp'){ let c=Math.floor(cursorIdx/ROWS),r=(cursorIdx%ROWS-1+ROWS)%ROWS; cursorIdx=cellIndex(c,r); paintGrids(); e.preventDefault();}
+  else if(e.key==='Enter'||e.key===' '){
+    e.preventDefault();
+    const c=Math.floor(cursorIdx/ROWS), r=cursorIdx%ROWS;
+    cycleCell(c,r);
+  }
+});
+
+newGame();
+</script></body></html>

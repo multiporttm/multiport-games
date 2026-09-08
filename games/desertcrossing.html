@@ -1,0 +1,231 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Desert Crossing</title><meta name="description" content="Play Desert Crossing free online — Lead your caravan across the desert! Click the next glowing waypoint along the trail to travel there. Each leg uses water and food..."><link rel="canonical" href="https://games.multiportllc.com/games/desertcrossing"><meta property="og:title" content="Desert Crossing - Multiport Games"><meta property="og:description" content="Play Desert Crossing free online — Lead your caravan across the desert! Click the next glowing waypoint along the trail to travel there. Each leg uses water and food..."><meta property="og:url" content="https://games.multiportllc.com/games/desertcrossing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Desert Crossing","description":"Play Desert Crossing free online instantly. Lead your caravan across the desert! Click the next glowing waypoint along the trail to travel there. Each leg uses water and food, oases let you resupply, and sandstorms drain you faster. Reach the destination with resources to spare. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/desertcrossing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:16px;text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;margin-bottom:10px;color:#fff;font-weight:800;font-size:.95rem}
+.stat{background:rgba(255,255,255,.08);border-radius:10px;padding:6px 14px;min-width:110px}
+.stat .lbl{font-size:.7rem;opacity:.7;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.stat .bar{width:100%;height:8px;border-radius:4px;background:rgba(255,255,255,.15);margin-top:4px;overflow:hidden}
+.stat .bar>div{height:100%;border-radius:4px;transition:width .3s}
+#water .bar>div{background:#4fc3f7}
+#food .bar>div{background:#ffb74d}
+#round{color:#ffd54f}
+#msg{min-height:1.5em;color:#fff;font-weight:700;margin:6px 0}
+#c{background:linear-gradient(#87CEEB,#f0d9a0 55%,#e0b872);display:block;border-radius:8px;margin:0 auto;max-width:100%;touch-action:manipulation}
+#again{display:none;margin-top:10px;padding:10px 26px;background:#e94560;border:none;border-radius:20px;color:#fff;font-size:1rem;font-weight:700;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Desert Crossing</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <div class="stat" id="water"><div class="lbl">Water</div><div class="bar"><div style="width:100%"></div></div></div>
+        <div class="stat" id="food"><div class="lbl">Food</div><div class="bar"><div style="width:100%"></div></div></div>
+        <div class="stat" id="round">Round 1</div>
+        <div class="stat">Best: <span id="best">0</span></div>
+      </div>
+      <div id="msg">Click the glowing waypoint to set out!</div>
+      <canvas id="c" width="760" height="360"></canvas>
+      <button id="again">Next Journey ▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Lead your caravan across the desert! Click the next glowing waypoint along the trail to travel there. Each leg uses <b>water</b> and <b>food</b> — oasis waypoints (blue) let you resupply, sandstorms (shown on the route) drain you faster. Reach the final waypoint with resources to spare to score points. Each round the route gets longer and harsher.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=360;
+const BEST_KEY='desertcrossing_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+document.getElementById('best').textContent=best;
+
+let round=1,water=100,food=100,pos=0,waypoints=[],score=0,gameOver=false,busy=false,totalScore=0;
+
+function lerp(a,b,t){return a+(b-a)*t;}
+
+function genRoute(){
+  const n=5+Math.min(round+2,6); // number of waypoints incl start
+  waypoints=[];
+  const marginX=60;
+  for(let i=0;i<n;i++){
+    const t=i/(n-1);
+    const x=lerp(marginX,W-marginX,t)+ (i>0&&i<n-1?(Math.random()*30-15):0);
+    const y=lerp(60,H-60,0.5+0.35*Math.sin(i*1.7+round))+ (Math.random()*20-10);
+    const isOasis = i>0 && i<n-1 && Math.random()<0.32;
+    const isStorm = i>0 && i<n-1 && !isOasis && Math.random()<0.28+round*0.03;
+    waypoints.push({x,y,oasis:isOasis,storm:isStorm,visited:i===0});
+  }
+  waypoints[0].visited=true;
+  waypoints[n-1].isEnd=true;
+}
+
+function resetRun(){
+  water=100;food=100;pos=0;gameOver=false;busy=false;
+  genRoute();
+  document.getElementById('msg').textContent=I18N.t('dc_start','Click the glowing waypoint to set out!');
+  document.getElementById('again').style.display='none';
+  updateHud();
+  draw();
+}
+
+function updateHud(){
+  document.querySelector('#water .bar>div').style.width=Math.max(0,water)+'%';
+  document.querySelector('#food .bar>div').style.width=Math.max(0,food)+'%';
+  document.getElementById('round').textContent=I18N.t('dc_round','Round {r}').replace('{r}',round);
+}
+
+function drawDunes(){
+  ctx.save();
+  ctx.fillStyle='rgba(180,140,80,0.35)';
+  for(let i=0;i<3;i++){
+    ctx.beginPath();
+    const baseY=H-30-i*40;
+    ctx.moveTo(0,baseY+20);
+    for(let x=0;x<=W;x+=40){
+      ctx.quadraticCurveTo(x+20,baseY-10-i*6,x+40,baseY+ (Math.sin(x*0.02+i)*8));
+    }
+    ctx.lineTo(W,H);ctx.lineTo(0,H);ctx.closePath();ctx.fill();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H*0.5);
+  sky.addColorStop(0,'#7ec3e6');sky.addColorStop(1,'#f2dca0');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H*0.6);
+  ctx.fillStyle='#e0b872';ctx.fillRect(0,H*0.55,W,H*0.45);
+  drawDunes();
+  // sun
+  ctx.beginPath();ctx.arc(W-70,55,28,0,7);ctx.fillStyle='#fff3b0';ctx.fill();
+
+  // path line
+  ctx.beginPath();
+  waypoints.forEach((wp,i)=>{ if(i===0)ctx.moveTo(wp.x,wp.y); else ctx.lineTo(wp.x,wp.y); });
+  ctx.strokeStyle='rgba(90,60,20,0.5)';ctx.lineWidth=3;ctx.setLineDash([8,6]);ctx.stroke();ctx.setLineDash([]);
+
+  waypoints.forEach((wp,i)=>{
+    let r=14;
+    ctx.beginPath();ctx.arc(wp.x,wp.y,r,0,7);
+    if(wp.storm) ctx.fillStyle= wp.visited?'#8d6e63':'#a1887f';
+    else if(wp.oasis) ctx.fillStyle= wp.visited?'#0288d1':'#4fc3f7';
+    else if(wp.isEnd) ctx.fillStyle='#ffd54f';
+    else ctx.fillStyle=wp.visited?'#9e9e9e':'#c9a15c';
+    ctx.fill();
+    ctx.lineWidth=2;ctx.strokeStyle='#5d4321';ctx.stroke();
+    if(i===pos+1 && !gameOver){
+      ctx.beginPath();ctx.arc(wp.x,wp.y,r+7,0,7);
+      ctx.strokeStyle='rgba(255,255,255,0.85)';ctx.lineWidth=3;ctx.stroke();
+    }
+    ctx.fillStyle='#2a2a2a';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    if(wp.oasis)ctx.fillText('💧',wp.x,wp.y+6);
+    else if(wp.storm)ctx.fillText('🌪',wp.x,wp.y+6);
+    else if(wp.isEnd)ctx.fillText('🏁',wp.x,wp.y+6);
+    else if(i===0)ctx.fillText('⛺',wp.x,wp.y+6);
+  });
+
+  // caravan marker at current position
+  const cur=waypoints[pos];
+  ctx.font='28px Arial';ctx.textAlign='center';
+  ctx.fillText('🐪',cur.x,cur.y-20);
+}
+
+function travelTo(idx){
+  if(busy||gameOver)return;
+  if(idx!==pos+1)return; // must go in sequence
+  busy=true;
+  const target=waypoints[idx];
+  const stormPenalty=target.storm?1.7:1;
+  const dist=Math.hypot(target.x-waypoints[pos].x,target.y-waypoints[pos].y);
+  const waterCost=(10+dist*0.05)*stormPenalty;
+  const foodCost=(8+dist*0.04)*stormPenalty;
+  SFX.click();
+  // animate step
+  const startX=waypoints[pos].x,startY=waypoints[pos].y;
+  const steps=20;let s=0;
+  const anim=setInterval(()=>{
+    s++;
+    const t=s/steps;
+    draw();
+    ctx.font='28px Arial';ctx.textAlign='center';
+    ctx.fillText('🐪',lerp(startX,target.x,t),lerp(startY,target.y,t)-20);
+    if(s>=steps){
+      clearInterval(anim);
+      pos=idx;
+      target.visited=true;
+      water-=waterCost;food-=foodCost;
+      if(target.storm){document.getElementById('msg').textContent=I18N.t('dc_storm','A sandstorm hit! Extra supplies used.');SFX.hurt();}
+      else if(target.oasis){
+        water=Math.min(100,water+45);food=Math.min(100,food+35);
+        document.getElementById('msg').textContent=I18N.t('dc_oasis','Oasis! Water and food replenished.');
+        SFX.powerup();
+      } else {
+        document.getElementById('msg').textContent=I18N.t('dc_travel','Traveling on...');
+      }
+      updateHud();
+      if(water<=0||food<=0){
+        water=Math.max(0,water);food=Math.max(0,food);
+        updateHud();
+        endRun(false);
+      } else if(target.isEnd){
+        endRun(true);
+      }
+      draw();
+      busy=false;
+    }
+  },16);
+}
+
+function endRun(success){
+  gameOver=true;
+  if(success){
+    const leftover=Math.round(water+food);
+    const roundBonus=round*20;
+    score=leftover+roundBonus;
+    totalScore+=score;
+    document.getElementById('msg').textContent=I18N.t('dc_win','Reached the destination! +{s} points (resources left: {l})').replace('{s}',score).replace('{l}',leftover);
+    SFX.win();
+    if(totalScore>best){best=totalScore;localStorage.setItem(BEST_KEY,best);document.getElementById('best').textContent=best;}
+    round++;
+    document.getElementById('again').textContent=I18N.t('dc_next','Next Journey ▶');
+  } else {
+    document.getElementById('msg').textContent=I18N.t('dc_lose','Your caravan ran out of supplies! Total score: {s}').replace('{s}',totalScore);
+    SFX.lose();
+    if(totalScore>best){best=totalScore;localStorage.setItem(BEST_KEY,best);document.getElementById('best').textContent=best;}
+    round=1;totalScore=0;
+    document.getElementById('again').textContent=I18N.t('dc_restart','Start Over ▶');
+  }
+  document.getElementById('again').style.display='inline-block';
+}
+
+document.getElementById('again').addEventListener('click',resetRun);
+
+function pickAt(mx,my){
+  for(let i=0;i<waypoints.length;i++){
+    const wp=waypoints[i];
+    if(Math.hypot(mx-wp.x,my-wp.y)<20){travelTo(i);return;}
+  }
+}
+function toCanvasCoords(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  const scaleX=c.width/rect.width,scaleY=c.height/rect.height;
+  return [(clientX-rect.left)*scaleX,(clientY-rect.top)*scaleY];
+}
+c.addEventListener('click',e=>{const [x,y]=toCanvasCoords(e.clientX,e.clientY);pickAt(x,y);});
+c.addEventListener('touchstart',e=>{e.preventDefault();const t=e.changedTouches[0];const [x,y]=toCanvasCoords(t.clientX,t.clientY);pickAt(x,y);},{passive:false});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Enter'||e.code==='Space'){
+    e.preventDefault();
+    if(gameOver){resetRun();}
+    else if(pos+1<waypoints.length){travelTo(pos+1);}
+  }
+});
+
+resetRun();
+</script></body></html>

@@ -1,0 +1,307 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Car Detailing</title><meta name="description" content="Play Car Detailing free online — Drag your mouse or finger across the car to scrub it with the current tool. Cover the whole car to fill the meter, then move on: Wash, then Wax, then Polish. Finish before time runs out to earn a shine rating, then detail the next car!"><link rel="canonical" href="https://games.multiportllc.com/games/cardetailing"><meta property="og:title" content="Car Detailing - Multiport Games"><meta property="og:description" content="Play Car Detailing free online — Drag your mouse or finger across the car to scrub it with the current tool. Cover the whole car to fill the meter, then move on: Wash, then Wax, then Polish. Finish before time runs out to earn a shine rating, then detail the next car!"><meta property="og:url" content="https://games.multiportllc.com/games/cardetailing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Car Detailing","description":"Play Car Detailing free online instantly. Drag your mouse or finger across the car to scrub it with the current tool. Cover the whole car to fill the meter, then move on: Wash, then Wax, then Polish. Finish before time runs out to earn a shine rating, then detail the next car! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/cardetailing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:14px;text-align:center;color:#fff}
+#hud{display:flex;justify-content:space-around;flex-wrap:wrap;gap:8px;margin-bottom:10px;font-weight:700}
+#hud span{background:rgba(255,255,255,.08);padding:6px 14px;border-radius:10px;font-size:.9rem}
+#stageBar{display:flex;justify-content:center;gap:16px;margin-bottom:8px;font-weight:800}
+.stagePill{padding:6px 16px;border-radius:16px;background:rgba(255,255,255,.06);color:rgba(255,255,255,.4)}
+.stagePill.active{background:#3fa7ff;color:#08080f}
+.stagePill.done{background:#4caf50;color:#08080f}
+#canvasWrap{position:relative;display:inline-block;touch-action:none}
+#c{background:#1a2740;border-radius:10px;display:block;cursor:crosshair}
+#coverBar{width:400px;max-width:100%;height:18px;background:rgba(255,255,255,.1);border-radius:9px;margin:10px auto 4px;overflow:hidden}
+#coverFill{height:100%;width:0%;background:linear-gradient(90deg,#3fa7ff,#4caf50);transition:width .1s}
+#msg{min-height:1.6em;font-weight:700;color:#ffd54f;margin-top:4px}
+#restartBtn{margin-top:8px;padding:8px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-weight:700;display:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Car Detailing</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span id="carDisp">Car: 1/5</span><span id="timeDisp">Time: 30</span><span id="scoreDisp">Shine: 0%</span><span id="bestDisp">Best: 0</span></div>
+      <div id="stageBar">
+        <div class="stagePill" id="pillWash">🧽 Wash</div>
+        <div class="stagePill" id="pillWax">🪣 Wax</div>
+        <div class="stagePill" id="pillPolish">✨ Polish</div>
+      </div>
+      <div id="canvasWrap"><canvas id="c" width="420" height="220"></canvas></div>
+      <div id="coverBar"><div id="coverFill"></div></div>
+      <div id="msg">Drag across the car to wash it</div>
+      <button id="restartBtn">Play Again</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag your mouse or finger across the car to scrub it with the current tool. Cover the whole car to fill the meter, then move on: Wash, then Wax, then Polish. Finish before time runs out to earn a shine rating, then detail the next car!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=420,H=220;
+const STAGES=['wash','wax','polish'];
+const STAGE_COLOR={wash:'#3fa7ff',wax:'#ffd54f',polish:'#ff6bd6'};
+let carIndex=0,totalCars=5,stageIdx=0,timeLeft=30,timerId=null;
+let grid,cellSize=10,cols,rows;
+let dragging=false,lastX=null,lastY=null;
+let overallShine=0,shineSamples=0;
+let best=parseInt(localStorage.getItem('cardetailing_best')||'0',10);
+let gameOver=false;
+document.getElementById('bestDisp').textContent=I18N.t('best_label','Best: {n}').replace('{n}',best);
+
+function carPath(){
+  // returns function isInsideCar(x,y)
+  return (x,y)=>{
+    // body
+    const bodyTop=110,bodyBot=170,bodyLeft=40,bodyRight=380;
+    const cabinTop=70,cabinBot=110,cabinLeft=130,cabinRight=290;
+    if(x>=bodyLeft&&x<=bodyRight&&y>=bodyTop&&y<=bodyBot)return true;
+    if(x>=cabinLeft&&x<=cabinRight&&y>=cabinTop&&y<=cabinBot)return true;
+    return false;
+  };
+}
+let insideCar=carPath();
+
+function setupGrid(){
+  cols=Math.ceil(W/cellSize);rows=Math.ceil(H/cellSize);
+  grid=new Array(cols*rows).fill(0);
+}
+
+function cellIdx(cx,cy){return cy*cols+cx;}
+
+function startCar(){
+  stageIdx=0;
+  timeLeft=Math.max(14,30-carIndex*3);
+  setupGrid();
+  gameOver=false;
+  document.getElementById('restartBtn').style.display='none';
+  updateHud();
+  setMsg(I18N.t('wash_hint','Drag across the car to wash it'));
+  draw();
+  clearInterval(timerId);
+  timerId=setInterval(tick,1000);
+}
+
+function tick(){
+  if(gameOver)return;
+  timeLeft--;
+  if(timeLeft<=0){
+    timeLeft=0;
+    stageFailedOrTimeout();
+  }
+  updateHud();
+}
+
+function stageFailedOrTimeout(){
+  // record partial coverage as shine contribution, move to next stage/car anyway
+  recordCoverage();
+  nextStageOrCar(true);
+}
+
+function coveragePct(){
+  let total=0,filled=0;
+  for(let cy=0;cy<rows;cy++)for(let cx=0;cx<cols;cx++){
+    if(insideCar(cx*cellSize+cellSize/2,cy*cellSize+cellSize/2)){
+      total++;
+      if(grid[cellIdx(cx,cy)]>=stageIdx+1)filled++;
+    }
+  }
+  return total?filled/total:0;
+}
+
+function recordCoverage(){
+  const pct=coveragePct();
+  overallShine+=pct;
+  shineSamples++;
+}
+
+function nextStageOrCar(timedOut){
+  clearInterval(timerId);
+  if(stageIdx<STAGES.length-1){
+    stageIdx++;
+    timeLeft=Math.max(12,26-carIndex*2);
+    updateHud();
+    const hints={wax:I18N.t('wax_hint','Now wax it! Drag to apply wax'),polish:I18N.t('polish_hint','Now polish it! Drag for that shine')};
+    setMsg(hints[STAGES[stageIdx]]||'');
+    timerId=setInterval(tick,1000);
+    draw();
+  }else{
+    // car done
+    carIndex++;
+    if(carIndex>=totalCars){
+      finishGame();
+    }else{
+      setMsg(I18N.t('next_car','Car detailed! Next car incoming...'));
+      SFX.success();
+      setTimeout(startCar,1200);
+    }
+  }
+}
+
+function finishGame(){
+  gameOver=true;
+  clearInterval(timerId);
+  const avgShine=shineSamples?Math.round((overallShine/shineSamples)*100):0;
+  if(avgShine>best){best=avgShine;localStorage.setItem('cardetailing_best',best);}
+  document.getElementById('bestDisp').textContent=I18N.t('best_label','Best: {n}').replace('{n}',best);
+  document.getElementById('scoreDisp').textContent=I18N.t('shine_label','Shine: {n}%').replace('{n}',avgShine);
+  setMsg(I18N.t('all_done','All cars detailed! Average shine: {n}%').replace('{n}',avgShine));
+  SFX.win();
+  document.getElementById('restartBtn').style.display='inline-block';
+}
+
+function updateHud(){
+  document.getElementById('carDisp').textContent=I18N.t('car_label','Car: {a}/{b}').replace('{a}',Math.min(carIndex+1,totalCars)).replace('{b}',totalCars);
+  document.getElementById('timeDisp').textContent=I18N.t('time_label','Time: {n}').replace('{n}',timeLeft);
+  const pct=Math.round(coveragePct()*100);
+  document.getElementById('scoreDisp').textContent=I18N.t('coverage_label','Coverage: {n}%').replace('{n}',pct);
+  document.getElementById('coverFill').style.width=pct+'%';
+  document.getElementById('coverFill').style.background=STAGE_COLOR[STAGES[stageIdx]];
+  ['wash','wax','polish'].forEach((s,i)=>{
+    const el=document.getElementById('pill'+s[0].toUpperCase()+s.slice(1));
+    el.classList.remove('active','done');
+    if(i<stageIdx)el.classList.add('done');
+    else if(i===stageIdx)el.classList.add('active');
+  });
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function drawCarBase(dirt){
+  ctx.clearRect(0,0,W,H);
+  // background
+  ctx.fillStyle='#0f1830';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#1c2b4a';ctx.fillRect(0,190,W,30);
+  // wheels
+  ctx.fillStyle='#111';
+  ctx.beginPath();ctx.arc(100,175,22,0,7);ctx.fill();
+  ctx.beginPath();ctx.arc(320,175,22,0,7);ctx.fill();
+  ctx.fillStyle='#555';
+  ctx.beginPath();ctx.arc(100,175,9,0,7);ctx.fill();
+  ctx.beginPath();ctx.arc(320,175,9,0,7);ctx.fill();
+  // body base color depends on stage progress (dirty -> clean tint)
+  const baseColors={wash:'#7a5a3a',wax:'#c0392b',polish:'#b0362a'};
+  ctx.fillStyle=baseColors[STAGES[stageIdx]]||'#7a5a3a';
+  roundRect(40,110,340,60,14);ctx.fill();
+  ctx.fillStyle='#8fbfe8';
+  roundRect(130,70,160,40,10);ctx.fill();
+  // windows divider
+  ctx.strokeStyle='#333';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(210,70);ctx.lineTo(210,110);ctx.stroke();
+}
+
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+function draw(){
+  drawCarBase();
+  // overlay cleaned cells with stage color, semi-transparent
+  for(let cy=0;cy<rows;cy++)for(let cx=0;cx<cols;cx++){
+    const px=cx*cellSize+cellSize/2,py=cy*cellSize+cellSize/2;
+    if(!insideCar(px,py))continue;
+    const val=grid[cellIdx(cx,cy)];
+    if(val>=stageIdx+1){
+      ctx.fillStyle=STAGE_COLOR[STAGES[stageIdx]];
+      ctx.globalAlpha=stageIdx===2?0.55:0.4;
+      ctx.fillRect(cx*cellSize,cy*cellSize,cellSize,cellSize);
+      ctx.globalAlpha=1;
+    }
+  }
+  if(stageIdx===2){
+    // sparkle effect on fully polished cells
+    ctx.fillStyle='#fff';
+    for(let cy=0;cy<rows;cy++)for(let cx=0;cx<cols;cx++){
+      if(grid[cellIdx(cx,cy)]>=3 && Math.random()<0.02){
+        ctx.globalAlpha=0.6;
+        ctx.fillRect(cx*cellSize+3,cy*cellSize+3,2,2);
+        ctx.globalAlpha=1;
+      }
+    }
+  }
+}
+
+function scrubAt(x,y,fromX,fromY){
+  const radius=18;
+  const steps=fromX!=null?Math.max(1,Math.floor(Math.hypot(x-fromX,y-fromY)/4)):1;
+  for(let s=0;s<=steps;s++){
+    const ix=fromX!=null?fromX+(x-fromX)*s/steps:x;
+    const iy=fromY!=null?fromY+(y-fromY)*s/steps:y;
+    const cx0=Math.floor((ix-radius)/cellSize),cx1=Math.floor((ix+radius)/cellSize);
+    const cy0=Math.floor((iy-radius)/cellSize),cy1=Math.floor((iy+radius)/cellSize);
+    for(let cy=cy0;cy<=cy1;cy++){
+      for(let cx=cx0;cx<=cx1;cx++){
+        if(cx<0||cy<0||cx>=cols||cy>=rows)continue;
+        const px=cx*cellSize+cellSize/2,py=cy*cellSize+cellSize/2;
+        if(Math.hypot(px-ix,py-iy)<=radius && insideCar(px,py)){
+          const idx=cellIdx(cx,cy);
+          if(grid[idx]<stageIdx+1)grid[idx]=stageIdx+1;
+        }
+      }
+    }
+  }
+}
+
+function getPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*scaleX,y:cy*scaleY};
+}
+
+function pointerDown(e){
+  if(gameOver)return;
+  e.preventDefault();
+  dragging=true;
+  const p=getPos(e);
+  lastX=p.x;lastY=p.y;
+  scrubAt(p.x,p.y,null,null);
+  SFX.tick();
+  draw();
+  checkStageComplete();
+}
+function pointerMove(e){
+  if(!dragging||gameOver)return;
+  e.preventDefault();
+  const p=getPos(e);
+  scrubAt(p.x,p.y,lastX,lastY);
+  lastX=p.x;lastY=p.y;
+  draw();
+  updateHud();
+  checkStageComplete();
+}
+function pointerUp(){dragging=false;lastX=null;lastY=null;}
+
+function checkStageComplete(){
+  if(coveragePct()>=0.97){
+    recordCoverage();
+    SFX.coin();
+    nextStageOrCar(false);
+  }
+}
+
+c.addEventListener('mousedown',pointerDown);
+c.addEventListener('mousemove',pointerMove);
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',pointerDown,{passive:false});
+c.addEventListener('touchmove',pointerMove,{passive:false});
+c.addEventListener('touchend',pointerUp);
+
+document.getElementById('restartBtn').onclick=()=>{
+  carIndex=0;overallShine=0;shineSamples=0;
+  startCar();
+};
+
+startCar();
+</script></body></html>
