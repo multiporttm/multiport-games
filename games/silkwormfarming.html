@@ -1,0 +1,225 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Silkworm Farming</title><meta name="description" content="Play Silkworm Farming free online — Feed your silkworms mulberry leaves before they get too hungry, then harvest each cocoon at peak maturity for maximum silk. More worms and tighter timing each round."><link rel="canonical" href="https://games.multiportllc.com/games/silkwormfarming"><meta property="og:title" content="Silkworm Farming - Multiport Games"><meta property="og:description" content="Play Silkworm Farming free online — Feed your silkworms mulberry leaves before they get too hungry, then harvest each cocoon at peak maturity for maximum silk. More worms and tighter timing each round."><meta property="og:url" content="https://games.multiportllc.com/games/silkwormfarming"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Silkworm Farming","description":"Play Silkworm Farming free online instantly. Feed your silkworms mulberry leaves before they get too hungry, then harvest each cocoon at peak maturity for maximum silk. More worms and tighter timing each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/silkwormfarming","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0d1a0f}
+#wrap{background:#16241a;border-radius:14px;padding:16px;max-width:640px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:#e8f5e0;font-weight:800;font-size:.95rem;margin-bottom:10px}
+#hud span{background:rgba(0,0,0,.25);padding:4px 10px;border-radius:8px}
+#cycleBar{background:#0b1a0d;border-radius:8px;height:10px;overflow:hidden;margin-bottom:12px}
+#cycleFill{height:100%;background:linear-gradient(90deg,#8bc34a,#d4e157);width:0%;transition:width .1s linear}
+#farm{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.worm{background:#1e3320;border-radius:12px;padding:10px;text-align:center;cursor:pointer;user-select:none;border:2px solid transparent;transition:transform .1s,border-color .15s}
+.worm:active{transform:scale(.95)}
+.worm.ready{border-color:#ffd54f;box-shadow:0 0 10px #ffd54f88}
+.worm.overripe{border-color:#e94560}
+.worm.dead{opacity:.35;filter:grayscale(1);cursor:default}
+.wormEmoji{font-size:2.2rem;display:block}
+.gauge{background:#0b1a0d;border-radius:6px;height:8px;margin-top:6px;overflow:hidden}
+.gaugeFill{height:100%;border-radius:6px}
+.hungerFill{background:linear-gradient(90deg,#4caf50,#ff9800,#e94560)}
+.growFill{background:linear-gradient(90deg,#4fc3f7,#ffd54f,#7ec850)}
+.label{font-size:.65rem;color:#bcd8b8;margin-top:3px}
+.stateTxt{font-size:.72rem;font-weight:800;margin-top:4px;min-height:1.1em}
+#msg{color:#ffd54f;text-align:center;font-weight:800;min-height:1.4em;margin-top:10px}
+#startBtn{display:block;margin:14px auto 0;padding:10px 26px;border:none;border-radius:20px;background:#7ec850;color:#0d1a0f;font-weight:800;font-size:1rem;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Silkworm Farming</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud">
+        <span id="roundDisplay">Round: 1</span>
+        <span id="silkDisplay">Silk: 0</span>
+        <span id="bestDisplay">Best: 0</span>
+      </div>
+      <div id="cycleBar"><div id="cycleFill"></div></div>
+      <div id="farm"></div>
+      <div id="msg">Click Start Cycle to begin farming!</div>
+      <button id="startBtn">Start Cycle</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch each silkworm's <b>hunger gauge</b> and click it to feed a mulberry leaf before it starves. As worms grow, a <b>maturity gauge</b> fills — click <b>Harvest</b> on a worm only in its golden ripe window; too early wastes silk, too late and it moths out. Complete the cycle with as much silk as possible. More worms and faster hunger each round!</div>
+</div>
+<script>
+const farmEl=document.getElementById('farm');
+const msgEl=document.getElementById('msg');
+const startBtn=document.getElementById('startBtn');
+const cycleFill=document.getElementById('cycleFill');
+let round=1,silk=0,best=parseInt(localStorage.getItem('silkwormfarming_best')||'0',10);
+let worms=[],cycleTime=0,cycleLen=0,running=false,lastT=null;
+document.getElementById('bestDisplay').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+
+function makeWorm(id){
+  return {
+    id,
+    hunger:0, // 0..100, feed resets to 0
+    hungerRate: 0, // per second
+    growth:0, // 0..100 maturity
+    growRate:0,
+    state:'growing', // growing, ready, overripe, dead, harvested
+    fedFlashT:0,
+  };
+}
+
+function setupRound(){
+  const n=Math.min(3+Math.floor((round-1)/1),8);
+  const wormCount=Math.min(3+Math.floor((round-1)*0.7),7);
+  worms=[];
+  for(let i=0;i<wormCount;i++){
+    const w=makeWorm(i);
+    w.hungerRate=6+round*1.1+Math.random()*2;
+    w.growRate=3.2+round*0.35+Math.random()*0.6;
+    worms.push(w);
+  }
+  cycleLen=42+round*3; // seconds available for the round
+  cycleTime=0;
+  document.getElementById('roundDisplay').textContent=I18N.t('round_label','Round: {r}').replace('{r}',round);
+  render();
+}
+
+function render(){
+  farmEl.innerHTML='';
+  worms.forEach(w=>{
+    const div=document.createElement('div');
+    div.className='worm';
+    if(w.state==='ready')div.className+=' ready';
+    if(w.state==='overripe')div.className+=' overripe';
+    if(w.state==='dead'||w.state==='harvested')div.className+=' dead';
+    let emoji='🐛';
+    if(w.state==='ready')emoji='🟡';
+    if(w.state==='overripe')emoji='🦋';
+    if(w.state==='dead')emoji='💀';
+    if(w.state==='harvested')emoji='🧵';
+    let stateTxt='';
+    if(w.state==='growing')stateTxt=I18N.t('growing_txt','Growing');
+    else if(w.state==='ready')stateTxt=I18N.t('ready_txt','Harvest now!');
+    else if(w.state==='overripe')stateTxt=I18N.t('overripe_txt','Overripe! Hurry!');
+    else if(w.state==='dead')stateTxt=I18N.t('dead_txt','Starved');
+    else if(w.state==='harvested')stateTxt=I18N.t('harvested_txt','Harvested!');
+    div.innerHTML=`
+      <span class="wormEmoji">${emoji}</span>
+      <div class="label">${I18N.t('hunger_label','Hunger')}</div>
+      <div class="gauge"><div class="gaugeFill hungerFill" style="width:${Math.min(100,w.hunger)}%"></div></div>
+      <div class="label">${I18N.t('maturity_label','Maturity')}</div>
+      <div class="gauge"><div class="gaugeFill growFill" style="width:${Math.min(100,w.growth)}%"></div></div>
+      <div class="stateTxt" style="color:${w.state==='ready'?'#ffd54f':w.state==='overripe'?'#e94560':'#bcd8b8'}">${stateTxt}</div>
+    `;
+    if(w.state==='growing'||w.state==='ready'||w.state==='overripe'){
+      div.addEventListener('click',()=>tapWorm(w));
+      div.addEventListener('touchstart',e=>{e.preventDefault();tapWorm(w);},{passive:false});
+    }
+    farmEl.appendChild(div);
+  });
+}
+
+function tapWorm(w){
+  if(!running)return;
+  if(w.state==='growing'){
+    // feed
+    if(w.hunger>15){
+      w.hunger=0;
+      SFX.click();
+    }else{
+      // fed too early, small waste penalty via slight extra hunger growth next tick (no-op, just click sound)
+      SFX.tick();
+    }
+  }else if(w.state==='ready'){
+    // harvest at peak = big reward
+    const bonus=Math.round(10+ (100-Math.abs(w.growth-100))*0.4);
+    silk+=bonus;
+    w.state='harvested';
+    SFX.success();
+    flashMsg(I18N.t('harvest_good','+{n} silk! Perfect harvest').replace('{n}',bonus));
+  }else if(w.state==='overripe'){
+    const bonus=Math.max(2,Math.round(6- (w.growth-115)*0.15));
+    silk+=bonus;
+    w.state='harvested';
+    SFX.point();
+    flashMsg(I18N.t('harvest_late','+{n} silk (harvested late)').replace('{n}',bonus));
+  }
+  updateHud();
+  render();
+}
+
+function flashMsg(t){ msgEl.textContent=t; }
+
+function updateHud(){
+  document.getElementById('silkDisplay').textContent=I18N.t('silk_label','Silk: {s}').replace('{s}',silk);
+}
+
+function endRound(){
+  running=false;
+  let deadCount=worms.filter(w=>w.state==='dead').length;
+  let harvestedCount=worms.filter(w=>w.state==='harvested').length;
+  if(silk>best){best=silk;localStorage.setItem('silkwormfarming_best',String(best));document.getElementById('bestDisplay').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);}
+  msgEl.textContent=I18N.t('round_over','Cycle complete! Harvested {h}/{t} cocoons. Total silk: {s}').replace('{h}',harvestedCount).replace('{t}',worms.length).replace('{s}',silk);
+  startBtn.textContent=I18N.t('next_round_btn','Start Next Cycle');
+  startBtn.style.display='block';
+  round++;
+  SFX.win();
+}
+
+function tick(dt){
+  cycleTime+=dt;
+  cycleFill.style.width=Math.min(100,(cycleTime/cycleLen)*100)+'%';
+  let anyAlive=false;
+  worms.forEach(w=>{
+    if(w.state==='growing'){
+      anyAlive=true;
+      w.hunger+=w.hungerRate*dt;
+      w.growth+=w.growRate*dt*(w.hunger>85?0.15:1); // starving worms barely grow
+      if(w.hunger>=100){
+        w.state='dead';
+        SFX.fail();
+      }else if(w.growth>=100){
+        w.state='ready';
+      }
+    }else if(w.state==='ready'){
+      anyAlive=true;
+      w.growth+=w.growRate*dt*0.7;
+      if(w.growth>=118){
+        w.state='overripe';
+      }
+    }else if(w.state==='overripe'){
+      anyAlive=true;
+      w.growth+=w.growRate*dt*0.7;
+      if(w.growth>=140){
+        w.state='dead';
+      }
+    }
+  });
+  if(cycleTime>=cycleLen || !anyAlive){
+    endRound();
+    return;
+  }
+  render();
+}
+
+function loop(ts){
+  if(!running)return;
+  if(lastT===null)lastT=ts;
+  const dt=Math.min((ts-lastT)/1000,0.15);
+  lastT=ts;
+  tick(dt);
+  requestAnimationFrame(loop);
+}
+
+function startCycle(){
+  setupRound();
+  running=true;
+  lastT=null;
+  startBtn.style.display='none';
+  msgEl.textContent=I18N.t('cycle_started','Cycle started! Feed hungry worms, harvest ripe ones.');
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+startBtn.addEventListener('click',startCycle);
+render();
+</script></body></html>

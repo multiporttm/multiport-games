@@ -1,0 +1,240 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Choir Singing</title><meta name="description" content="Play Choir Singing free online — Hold the correct pitch key when your part's note scrolls into the sing line. Blend in time with the other choir parts to build your harmony meter — wrong pitch or timing breaks the blend!"><link rel="canonical" href="https://games.multiportllc.com/games/choirsinging"><meta property="og:title" content="Choir Singing - Multiport Games"><meta property="og:description" content="Play Choir Singing free online — Hold the correct pitch key when your part's note scrolls into the sing line. Blend in time with the other choir parts to build your harmony meter — wrong pitch or timing breaks the blend!"><meta property="og:url" content="https://games.multiportllc.com/games/choirsinging"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Choir Singing","description":"Play Choir Singing free online instantly. Hold the correct pitch key when your part's note scrolls into the sing line, blending with the other choir parts. Wrong pitch or timing breaks the blend. Trickier harmonies each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/choirsinging","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:14px;text-align:center;max-width:560px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;font-size:.9rem;margin-bottom:8px}
+#hud b{color:#ffd54f}
+#scoreCanvas{background:#0e1730;border-radius:10px;display:block;margin:0 auto;max-width:100%;touch-action:none}
+#keysRow{display:flex;justify-content:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+.pitchKey{width:56px;height:56px;border-radius:10px;border:none;background:#3a4a7a;color:#fff;font-weight:900;font-size:.85rem;cursor:pointer;user-select:none}
+.pitchKey.held{background:#ffd54f;color:#222}
+.pitchKey.correctHeld{background:#4caf50;color:#fff}
+#blendMeterWrap{max-width:100%;height:14px;background:rgba(255,255,255,.15);border-radius:8px;overflow:hidden;margin-top:10px}
+#blendMeter{height:100%;width:50%;background:linear-gradient(90deg,#e94560,#ffd54f,#4caf50);transition:width .1s linear}
+#msg{color:#fff;font-weight:700;min-height:1.6em;margin-top:8px}
+#startBtn,#retryBtn{padding:10px 26px;background:#e94560;border:none;border-radius:20px;color:#fff;font-size:1rem;cursor:pointer;font-weight:700;margin-top:10px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Choir Singing</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span>Song: <b id="roundLbl">1</b></span><span>Accuracy: <b id="scoreLbl">0%</b></span><span>Best: <b id="bestLbl">0%</b></span></div>
+      <canvas id="scoreCanvas" width="520" height="220"></canvas>
+      <div id="blendMeterWrap"><div id="blendMeter"></div></div>
+      <div id="keysRow"></div>
+      <div id="msg">Press Start to begin the song</div>
+      <button id="startBtn">Start Singing</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">You sing one voice part in the choir. Notes for your part scroll toward the sing line — press and hold the matching pitch key (or tap the on-screen key) exactly when a note crosses the line, and keep holding for its full length. The other choir parts sing automatically; blend in correctly at harmony points to keep your blend meter high. Wrong pitch or bad timing breaks the blend. Trickier harmonies await each song!</div>
+</div>
+<script>
+const cv=document.getElementById('scoreCanvas'),ctx=cv.getContext('2d');
+const W=cv.width,H=cv.height;
+const roundLbl=document.getElementById('roundLbl'),scoreLbl=document.getElementById('scoreLbl'),bestLbl=document.getElementById('bestLbl');
+const msg=document.getElementById('msg'),startBtn=document.getElementById('startBtn'),keysRow=document.getElementById('keysRow');
+const blendMeter=document.getElementById('blendMeter');
+
+const BEST_KEY='choirsinging_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+bestLbl.textContent=best+'%';
+
+// Pitches available to the player's part
+const PITCHES=['Do','Re','Mi','Fa','Sol','La'];
+const PITCH_FREQ={Do:261.6,Re:293.7,Mi:329.6,Fa:349.2,Sol:392.0,La:440.0};
+const KEY_MAP={'1':'Do','2':'Re','3':'Mi','4':'Fa','5':'Sol','6':'La'};
+
+let round=1,song=[],autoParts=[],startTime=null,running=false,rafId=null;
+const SING_LINE_X=110;
+const SPEED=90; // px/sec
+let heldPitch=null;
+let hitCount=0,totalNotes=0,blend=50;
+let noteState=[]; // per-note: {judged, hit}
+
+function buildKeys(){
+  keysRow.innerHTML='';
+  PITCHES.forEach((p,i)=>{
+    const b=document.createElement('button');
+    b.className='pitchKey';
+    b.textContent=p+' ('+(i+1)+')';
+    b.dataset.pitch=p;
+    b.addEventListener('mousedown',()=>press(p));
+    b.addEventListener('mouseup',()=>release(p));
+    b.addEventListener('mouseleave',()=>{if(heldPitch===p)release(p);});
+    b.addEventListener('touchstart',e=>{e.preventDefault();press(p);},{passive:false});
+    b.addEventListener('touchend',e=>{e.preventDefault();release(p);},{passive:false});
+    keysRow.appendChild(b);
+  });
+}
+buildKeys();
+
+function press(p){
+  if(!running)return;
+  heldPitch=p;
+  document.querySelectorAll('.pitchKey').forEach(b=>b.classList.toggle('held',b.dataset.pitch===p));
+  SFX.tick();
+}
+function release(p){
+  if(heldPitch===p)heldPitch=null;
+  document.querySelectorAll('.pitchKey').forEach(b=>b.classList.remove('held'));
+}
+
+document.addEventListener('keydown',e=>{
+  if(KEY_MAP[e.key]&&!e.repeat)press(KEY_MAP[e.key]);
+});
+document.addEventListener('keyup',e=>{
+  if(KEY_MAP[e.key])release(KEY_MAP[e.key]);
+});
+
+function genSong(){
+  const n=8+round*2;
+  const notes=[];
+  let t=1.5;
+  for(let i=0;i<n;i++){
+    const pitch=PITCHES[Math.floor(Math.random()*Math.min(PITCHES.length,3+Math.floor(round/2)))];
+    const dur=0.7+Math.random()*0.5;
+    notes.push({t,dur,pitch});
+    t+=dur+0.35+Math.random()*0.3;
+  }
+  return {notes,length:t+2};
+}
+
+function newRound(){
+  const s=genSong();
+  song=s.notes;
+  noteState=song.map(()=>({judged:false,hit:false,scored:0}));
+  totalNotes=song.length;
+  hitCount=0;
+  blend=50;
+  startTime=null;
+  running=true;
+  msg.textContent=I18N.t('cs_sing_now','Sing along! Hold the matching key on each note.');
+  if(rafId)cancelAnimationFrame(rafId);
+  rafId=requestAnimationFrame(loop);
+}
+
+function xForTime(t,now){
+  return SING_LINE_X+(t-now)*SPEED;
+}
+
+function draw(now){
+  ctx.clearRect(0,0,W,H);
+  // background staff lines per pitch lane
+  const laneH=H/PITCHES.length;
+  PITCHES.forEach((p,i)=>{
+    ctx.strokeStyle='rgba(255,255,255,.08)';
+    ctx.beginPath();ctx.moveTo(0,i*laneH+laneH/2);ctx.lineTo(W,i*laneH+laneH/2);ctx.stroke();
+    ctx.fillStyle='rgba(255,255,255,.5)';
+    ctx.font='11px Arial';
+    ctx.fillText(p,4,i*laneH+laneH/2-4);
+  });
+  // sing line
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(SING_LINE_X,0);ctx.lineTo(SING_LINE_X,H);ctx.stroke();
+
+  song.forEach((note,i)=>{
+    const laneIdx=PITCHES.indexOf(note.pitch);
+    const y=laneIdx*laneH+laneH/2;
+    const xStart=xForTime(note.t,now);
+    const xEnd=xForTime(note.t+note.dur,now);
+    if(xEnd<-20||xStart>W+20)return;
+    const st=noteState[i];
+    ctx.fillStyle=st.judged?(st.hit?'#4caf50':'#e94560'):'#7ec850';
+    ctx.beginPath();
+    const rw=Math.max(2,xStart-xEnd);
+    ctx.roundRect ? ctx.roundRect(xEnd,y-9,rw,18,6) : ctx.rect(xEnd,y-9,rw,18);
+    ctx.fill();
+  });
+}
+
+let lastEval=0;
+function evaluateNotes(now){
+  song.forEach((note,i)=>{
+    const st=noteState[i];
+    if(st.judged)return;
+    const noteEnd=note.t+note.dur;
+    if(now>=note.t&&now<=noteEnd){
+      // during the note window: check if held pitch matches
+      if(heldPitch===note.pitch){
+        st.scored+=1;
+      }
+    }
+    if(now>noteEnd){
+      st.judged=true;
+      const framesExpected=1;
+      const hit=st.scored>0;
+      st.hit=hit;
+      if(hit){
+        hitCount++;
+        blend=Math.min(100,blend+8);
+        SFX.point();
+      } else {
+        blend=Math.max(0,blend-14);
+        SFX.error();
+      }
+      blendMeter.style.width=blend+'%';
+      updateHud();
+      if(blend<=0){
+        endSong(false);
+      }
+    }
+  });
+}
+
+function updateHud(){
+  const acc=totalNotes?Math.round((hitCount/song.filter((n,i)=>noteState[i].judged).length||1)*100):0;
+  const judgedCount=noteState.filter(s=>s.judged).length;
+  const pct=judgedCount?Math.round((hitCount/judgedCount)*100):0;
+  scoreLbl.textContent=pct+'%';
+}
+
+function loop(t){
+  if(!running)return;
+  if(startTime===null)startTime=t;
+  const now=(t-startTime)/1000;
+  draw(now);
+  evaluateNotes(now);
+  if(now>song[song.length-1].t+song[song.length-1].dur+1&&running){
+    endSong(true);
+    return;
+  }
+  rafId=requestAnimationFrame(loop);
+}
+
+function endSong(completed){
+  running=false;
+  if(rafId)cancelAnimationFrame(rafId);
+  const judgedCount=noteState.filter(s=>s.judged).length||1;
+  const finalPct=Math.round((hitCount/judgedCount)*100);
+  scoreLbl.textContent=finalPct+'%';
+  if(finalPct>best){best=finalPct;localStorage.setItem(BEST_KEY,String(best));bestLbl.textContent=best+'%';}
+  if(completed&&finalPct>=50){
+    SFX.win();
+    msg.textContent=I18N.t('cs_song_done','Beautiful! Accuracy: {p}% — next song is trickier.').replace('{p}',finalPct);
+    round++;
+    roundLbl.textContent=round;
+    setTimeout(newRound,1600);
+  } else {
+    SFX.lose();
+    msg.textContent=I18N.t('cs_blend_broken','The blend broke! Final accuracy: {p}%.').replace('{p}',finalPct);
+    round=1;
+    roundLbl.textContent=round;
+    startBtn.style.display='inline-block';
+    startBtn.textContent=I18N.t('cs_retry','Sing Again');
+  }
+}
+
+startBtn.addEventListener('click',()=>{
+  startBtn.style.display='none';
+  SFX.click();
+  newRound();
+});
+draw(0);
+</script></body></html>

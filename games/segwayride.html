@@ -1,0 +1,274 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Segway Ride</title><meta name="description" content="Play Segway Ride free online — Use Up/Down (or drag up/down) to control speed and lean, Left/Right (or drag left/right) to steer through the plaza. Keep your wobble meter from maxing out or you'll tip over!"><link rel="canonical" href="https://games.multiportllc.com/games/segwayride"><meta property="og:title" content="Segway Ride - Multiport Games"><meta property="og:description" content="Play Segway Ride free online — Use Up/Down (or drag up/down) to control speed and lean, Left/Right (or drag left/right) to steer through the plaza. Keep your wobble meter from maxing out or you'll tip over!"><meta property="og:url" content="https://games.multiportllc.com/games/segwayride"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Segway Ride","description":"Play Segway Ride free online instantly. Use Up/Down (or drag up/down) to control speed and lean, Left/Right (or drag left/right) to steer through the pedestrian plaza. Keep your wobble meter from maxing out or you'll tip over! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/segwayride","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#8a8a7a;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:800;padding:6px 4px;flex-wrap:wrap;gap:6px;max-width:800px;margin:0 auto}
+#hud span{color:#ffd54f}
+#wobbleWrap{max-width:800px;margin:0 auto 6px;background:#333;border-radius:6px;overflow:hidden;height:14px}
+#wobbleFill{height:100%;width:0%;background:linear-gradient(90deg,#4caf50,#ffeb3b,#f44336);transition:width .1s}
+#stage{position:relative;max-width:800px;margin:0 auto}
+#overlay{position:absolute;inset:0;background:rgba(8,8,15,.88);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;border-radius:8px;text-align:center;padding:16px}
+#overlay button{padding:12px 28px;background:#ffd54f;border:none;border-radius:22px;font-weight:900;font-size:1.05rem;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Segway Ride</div>
+  <div class="game-frame">
+    <div id="hud"><div>Distance: <span id="distVal">0</span>m</div><div>Sections: <span id="secVal">0</span></div><div>Best: <span id="bestVal">0</span>m</div></div>
+    <div id="wobbleWrap"><div id="wobbleFill"></div></div>
+    <div id="stage">
+      <canvas id="c" width="800" height="420"></canvas>
+      <div id="overlay">
+        <div style="color:#fff;font-size:1.3rem;font-weight:900">🛴 Segway Ride</div>
+        <div id="overlayMsg" style="color:#ccc;max-width:320px">Lean forward to speed up, steer around obstacles, and don't let the wobble meter max out!</div>
+        <button id="startBtn">Start Riding</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press <b>Up/Down</b> (or drag up/down) to lean forward/back and control speed. Press <b>Left/Right</b> (or drag left/right) to steer. Going fast, hitting obstacles, or hugging the path edges raises your <b>wobble meter</b> — let it max out and you'll tip over. Score is based on distance traveled and course sections completed.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+let best=parseInt(localStorage.getItem('segwayride_best')||'0',10);
+document.getElementById('bestVal').textContent=best;
+
+let running=false,gameOver=false;
+let playerX=W/2, speed=0, targetSpeed=0, steer=0;
+let wobble=0, dist=0, sections=0, worldY=0;
+let pathCenter=W/2, pathHalfWidth=170, curveT=0;
+let obstacles=[];
+let obsTimer=0;
+let keys={up:false,down:false,left:false,right:false};
+let dragging=false,dragStartX=0,dragStartY=0,dragCurX=0,dragCurY=0;
+
+function reset(){
+  playerX=W/2;speed=0;targetSpeed=0;steer=0;
+  wobble=0;dist=0;sections=0;worldY=0;
+  pathCenter=W/2;pathHalfWidth=170;curveT=0;
+  obstacles=[];obsTimer=0;gameOver=false;
+}
+
+function pathCenterAt(y){
+  // sinusoidal plaza curve based on distance traveled beyond current y
+  return W/2 + Math.sin((y*0.006)+curveT)*140;
+}
+
+function spawnObstacle(){
+  const types=['planter','bench','pedestrian'];
+  const type=types[Math.floor(Math.random()*types.length)];
+  const cx=pathCenterAt(-40);
+  const offset=(Math.random()*2-1)*(pathHalfWidth-40);
+  obstacles.push({x:cx+offset,y:-40,type,w:type==='bench'?60:30,h:type==='bench'?24:30,hit:false});
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
+  if(e.code==='ArrowUp')keys.up=true;
+  if(e.code==='ArrowDown')keys.down=true;
+  if(e.code==='ArrowLeft')keys.left=true;
+  if(e.code==='ArrowRight')keys.right=true;
+  if(e.code==='KeyW')keys.up=true;
+  if(e.code==='KeyS')keys.down=true;
+  if(e.code==='KeyA')keys.left=true;
+  if(e.code==='KeyD')keys.right=true;
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp'||e.code==='KeyW')keys.up=false;
+  if(e.code==='ArrowDown'||e.code==='KeyS')keys.down=false;
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keys.left=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keys.right=false;
+});
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const cx = (e.touches? e.touches[0].clientX : e.clientX)-r.left;
+  const cy = (e.touches? e.touches[0].clientY : e.clientY)-r.top;
+  return {x:cx*(W/r.width), y:cy*(H/r.height)};
+}
+c.addEventListener('pointerdown',e=>{
+  if(!running){return;}
+  dragging=true;
+  const p=pointerPos(e);
+  dragStartX=p.x;dragStartY=p.y;dragCurX=p.x;dragCurY=p.y;
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const p=pointerPos(e);
+  dragCurX=p.x;dragCurY=p.y;
+});
+window.addEventListener('pointerup',()=>{dragging=false;keys.left=false;keys.right=false;keys.up=false;keys.down=false;});
+
+function applyDrag(){
+  if(!dragging)return;
+  const dx=dragCurX-dragStartX, dy=dragCurY-dragStartY;
+  keys.left = dx<-12; keys.right = dx>12;
+  keys.up = dy<-12; keys.down = dy>12;
+}
+
+function rectsOverlap(ax,ay,aw,ah,bx,by,bw,bh){
+  return ax<bx+bw&&ax+aw>bx&&ay<by+ah&&ay+ah>by;
+}
+
+function tip(){
+  gameOver=true;running=false;
+  SFX.lose();
+  if(dist>best){best=Math.floor(dist);localStorage.setItem('segwayride_best',best);}
+  const overlay=document.getElementById('overlay');
+  overlay.style.display='flex';
+  document.getElementById('overlayMsg').textContent=`You tipped over! Distance: ${Math.floor(dist)}m — Sections: ${sections} — Best: ${best}m`;
+  document.getElementById('startBtn').textContent='Ride Again';
+  document.getElementById('bestVal').textContent=best;
+}
+
+function update(dt){
+  applyDrag();
+  if(keys.up)targetSpeed=Math.min(9,targetSpeed+0.12*dt);
+  else if(keys.down)targetSpeed=Math.max(0,targetSpeed-0.18*dt);
+  else targetSpeed=Math.max(0,targetSpeed-0.03*dt);
+  speed+=(targetSpeed-speed)*0.08*dt;
+
+  let steerInput=0;
+  if(keys.left)steerInput=-1;
+  if(keys.right)steerInput=1;
+  steer+=(steerInput*5-steer)*0.15*dt;
+  playerX+=steer*dt;
+  playerX=Math.max(20,Math.min(W-20,playerX));
+
+  curveT+=0.002*dt;
+  worldY+=speed*dt;
+  dist+=speed*0.12*dt;
+  if(Math.floor(dist/100)>sections){sections=Math.floor(dist/100);SFX.point();}
+
+  // wobble dynamics
+  const center=pathCenterAt(0);
+  const distFromCenter=Math.abs(playerX-center);
+  const edgeDanger=Math.max(0,distFromCenter-(pathHalfWidth-40))/40;
+  wobble+=edgeDanger*0.9*dt;
+  wobble+=Math.abs(steerInput)*speed*0.035*dt;
+  wobble+=Math.max(0,speed-6)*0.05*dt;
+  wobble-=0.35*dt*(1-Math.min(1,speed/9)*0.3);
+  wobble=Math.max(0,Math.min(100,wobble));
+
+  obsTimer-=dt;
+  if(obsTimer<=0){
+    spawnObstacle();
+    obsTimer=Math.max(18,55-speed*3);
+  }
+  obstacles.forEach(o=>{o.y+=speed*dt;});
+  obstacles=obstacles.filter(o=>o.y<H+60);
+  const playerHit={x:playerX-16,y:H-90,w:32,h:50};
+  obstacles.forEach(o=>{
+    if(!o.hit && rectsOverlap(playerHit.x,playerHit.y,playerHit.w,playerHit.h,o.x-o.w/2,o.y-o.h/2,o.w,o.h)){
+      o.hit=true;
+      wobble+=22;
+      SFX.hit();
+    }
+  });
+
+  if(distFromCenter>pathHalfWidth+10){
+    wobble+=1.2*dt;
+  }
+
+  document.getElementById('distVal').textContent=Math.floor(dist);
+  document.getElementById('secVal').textContent=sections;
+  document.getElementById('wobbleFill').style.width=wobble+'%';
+
+  if(wobble>=100)tip();
+}
+
+function drawPlaza(){
+  ctx.fillStyle='#8a8a7a';ctx.fillRect(0,0,W,H);
+  // tiles
+  ctx.strokeStyle='rgba(0,0,0,.08)';
+  for(let i=-1;i<10;i++){
+    const yy=((worldY*0.5)%40)+i*40;
+    ctx.beginPath();ctx.moveTo(0,yy);ctx.lineTo(W,yy);ctx.stroke();
+  }
+  // path
+  ctx.beginPath();
+  for(let y=-10;y<=H+10;y+=10){
+    const cx=pathCenterAt(y-H)+  (H-y)*0; // approximate using local y offset
+  }
+  ctx.fillStyle='#c9c2a0';
+  ctx.beginPath();
+  for(let y=H;y>=-10;y-=10){
+    const worldOffset = H-y;
+    const cx=pathCenterAt(-worldOffset);
+    if(y===H)ctx.moveTo(cx-pathHalfWidth,y);else ctx.lineTo(cx-pathHalfWidth,y);
+  }
+  for(let y=-10;y<=H;y+=10){
+    const worldOffset = H-y;
+    const cx=pathCenterAt(-worldOffset);
+    ctx.lineTo(cx+pathHalfWidth,y);
+  }
+  ctx.closePath();ctx.fill();
+  ctx.strokeStyle='#e0dcc0';ctx.lineWidth=3;
+  ctx.stroke();
+}
+
+function drawObstacle(o){
+  ctx.save();
+  ctx.translate(o.x,o.y);
+  if(o.type==='planter'){
+    ctx.fillStyle=o.hit?'#795548':'#5d4037';
+    ctx.beginPath();ctx.arc(0,0,15,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#4caf50';ctx.beginPath();ctx.arc(0,-6,10,0,Math.PI*2);ctx.fill();
+  } else if(o.type==='bench'){
+    ctx.fillStyle=o.hit?'#8d6e63':'#6d4c41';
+    ctx.fillRect(-30,-10,60,20);
+    ctx.fillStyle='#3e2723';
+    ctx.fillRect(-30,-14,60,4);
+  } else {
+    ctx.fillStyle=o.hit?'#ff8a65':'#2196f3';
+    ctx.beginPath();ctx.arc(0,-8,8,0,Math.PI*2);ctx.fill();
+    ctx.fillRect(-7,0,14,20);
+  }
+  ctx.restore();
+}
+
+function drawPlayer(){
+  const lean=(targetSpeed-speed)*-3;
+  ctx.save();
+  ctx.translate(playerX,H-70);
+  ctx.rotate(steer*0.02+lean*0.01);
+  // wheel
+  ctx.fillStyle='#222';ctx.beginPath();ctx.arc(0,30,16,0,Math.PI*2);ctx.fill();
+  // pole
+  ctx.fillStyle='#444';ctx.fillRect(-4,-40,8,60);
+  // handlebar
+  ctx.fillStyle='#333';ctx.fillRect(-22,-44,44,8);
+  // rider body
+  ctx.fillStyle='#1e88e5';ctx.fillRect(-10,-70,20,32);
+  ctx.fillStyle='#ffccbc';ctx.beginPath();ctx.arc(0,-80,10,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+let lastTime=null;
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min(3,(ts-lastTime)/16.6667);
+  lastTime=ts;
+  ctx.clearRect(0,0,W,H);
+  drawPlaza();
+  obstacles.forEach(drawObstacle);
+  drawPlayer();
+  if(running&&!gameOver)update(dt);
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('startBtn').addEventListener('click',()=>{
+  reset();
+  running=true;
+  document.getElementById('overlay').style.display='none';
+  SFX.select();
+});
+
+requestAnimationFrame(loop);
+</script></body></html>

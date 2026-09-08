@@ -1,0 +1,249 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Contortionist</title><meta name="description" content="Play Contortionist free online — Drag the glowing joints of the stick figure to match the target pose shown in outline. Get every joint into the tolerance zone (it glows green) and hold still to lock in the pose."><link rel="canonical" href="https://games.multiportllc.com/games/contortionist"><meta property="og:title" content="Contortionist - Multiport Games"><meta property="og:description" content="Play Contortionist free online — Drag the glowing joints of the stick figure to match the target pose shown in outline. Get every joint into the tolerance zone (it glows green) and hold still to lock in the pose."><meta property="og:url" content="https://games.multiportllc.com/games/contortionist"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Contortionist","description":"Play Contortionist free online instantly. Drag the glowing joints of the stick figure to match the target pose shown in outline. Get every joint into the tolerance zone and hold still to lock in the pose. Poses get more extreme each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/contortionist","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:14px;text-align:center}
+#hud{display:flex;justify-content:space-between;max-width:480px;margin:0 auto 8px;color:#fff;font-weight:800;font-size:.95rem}
+#hud span b{color:#ffd54f}
+#stage{background:linear-gradient(#1a2a52,#0e1730);border-radius:10px;touch-action:none;display:block;margin:0 auto;max-width:100%}
+#stabilityWrap{max-width:480px;margin:8px auto 0;height:10px;background:rgba(255,255,255,.15);border-radius:6px;overflow:hidden}
+#stabilityBar{height:100%;width:0%;background:linear-gradient(90deg,#4caf50,#8bc34a);transition:width .05s linear}
+#msg{color:#ffd54f;font-weight:800;min-height:1.6em;margin-top:6px}
+#startOverlay{position:relative}
+#startBtn{margin-top:10px;padding:10px 26px;background:#e94560;border:none;border-radius:20px;color:#fff;font-size:1rem;cursor:pointer;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Contortionist</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span>Round: <b id="roundLbl">1</b></span><span>Score: <b id="scoreLbl">0</b></span><span>Best: <b id="bestLbl">0</b></span></div>
+      <canvas id="stage" width="480" height="420"></canvas>
+      <div id="stabilityWrap"><div id="stabilityBar"></div></div>
+      <div id="msg">Drag the yellow joints onto the ghost target pose</div>
+      <div id="startOverlay"><button id="startBtn">Start Routine</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the glowing joints of the stick figure to match the target pose shown in outline. Get every joint into the tolerance zone (it glows green) and hold still to lock in the pose. Poses get more extreme and the tolerance tighter each round — how many can you nail?</div>
+</div>
+<script>
+const cv=document.getElementById('stage'),ctx=cv.getContext('2d');
+const W=cv.width,H=cv.height;
+const roundLbl=document.getElementById('roundLbl'),scoreLbl=document.getElementById('scoreLbl'),bestLbl=document.getElementById('bestLbl');
+const msg=document.getElementById('msg'),stabBar=document.getElementById('stabilityBar');
+const startBtn=document.getElementById('startBtn'),startOverlay=document.getElementById('startOverlay');
+
+const BEST_KEY='contortionist_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+bestLbl.textContent=best;
+
+// Joint chain: torsoTop(neck) -> hip is root. We define a skeleton as a set of named points
+// controlled by angles relative to parent, but for simplicity we directly drag END points
+// (hands, feet, head) while shoulders/hips are fixed anchors. This gives an intuitive
+// drag-to-pose feel similar to real contortion/yoga posing games.
+const ANCHOR={hip:{x:W/2,y:230}};
+const JOINT_NAMES=['head','lHand','rHand','lFoot','rFoot'];
+// current (player) positions
+let cur={};
+// target (ghost) positions
+let target={};
+let dragging=null;
+let round=1,score=0;
+let stability=0,started=false,locked=false;
+const TOL_BASE=34; // pixels, shrinks each round
+const HOLD_TIME=1.0; // seconds of overlap needed
+
+function tol(){return Math.max(16,TOL_BASE-round*1.5);}
+
+function randPose(seed){
+  // Generate a pose: shoulders fixed near hip, limbs extend at randomized angles.
+  // Keep it plausible: head above-ish, hands/feet spread based on round difficulty.
+  const spread=Math.min(1,0.35+round*0.07);
+  function pt(baseAngleDeg,len){
+    const a=(baseAngleDeg+(Math.random()*70-35)*spread)*Math.PI/180;
+    return {x:ANCHOR.hip.x+Math.cos(a)*len,y:ANCHOR.hip.y+Math.sin(a)*len};
+  }
+  return {
+    head: pt(-90,120),
+    lHand: pt(-150,140),
+    rHand: pt(-30,140),
+    lFoot: pt(160,150),
+    rFoot: pt(20,150),
+  };
+}
+
+function resetPlayer(){
+  cur={
+    head:{x:ANCHOR.hip.x,y:ANCHOR.hip.y-120},
+    lHand:{x:ANCHOR.hip.x-70,y:ANCHOR.hip.y-40},
+    rHand:{x:ANCHOR.hip.x+70,y:ANCHOR.hip.y-40},
+    lFoot:{x:ANCHOR.hip.x-40,y:ANCHOR.hip.y+150},
+    rFoot:{x:ANCHOR.hip.x+40,y:ANCHOR.hip.y+150},
+  };
+}
+
+function newRound(){
+  target=randPose();
+  resetPlayer();
+  stability=0;locked=false;
+  msg.textContent=I18N.t('ca_drag_hint','Match the ghost pose and hold it steady');
+  stabBar.style.width='0%';
+}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function allMatched(){
+  return JOINT_NAMES.every(n=>dist(cur[n],target[n])<=tol());
+}
+
+function drawStick(pts,color,lineWidth,alpha){
+  ctx.save();
+  ctx.globalAlpha=alpha!=null?alpha:1;
+  ctx.strokeStyle=color;ctx.fillStyle=color;
+  ctx.lineWidth=lineWidth||6;
+  ctx.lineCap='round';
+  const hip=ANCHOR.hip;
+  // torso: hip to a chest point (midway between hands' shoulder base and head start)
+  const chest={x:hip.x,y:hip.y-70};
+  ctx.beginPath();ctx.moveTo(hip.x,hip.y);ctx.lineTo(chest.x,chest.y);ctx.stroke();
+  // head
+  ctx.beginPath();ctx.moveTo(chest.x,chest.y);ctx.lineTo(pts.head.x,pts.head.y);ctx.stroke();
+  ctx.beginPath();ctx.arc(pts.head.x,pts.head.y,14,0,7);ctx.fill();
+  // arms
+  ctx.beginPath();ctx.moveTo(chest.x-14,chest.y+10);ctx.lineTo(pts.lHand.x,pts.lHand.y);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(chest.x+14,chest.y+10);ctx.lineTo(pts.rHand.x,pts.rHand.y);ctx.stroke();
+  // legs
+  ctx.beginPath();ctx.moveTo(hip.x-10,hip.y);ctx.lineTo(pts.lFoot.x,pts.lFoot.y);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(hip.x+10,hip.y);ctx.lineTo(pts.rFoot.x,pts.rFoot.y);ctx.stroke();
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // ghost target
+  drawStick(target,'#ffffff',10,0.28);
+  JOINT_NAMES.forEach(n=>{
+    ctx.beginPath();ctx.arc(target[n].x,target[n].y,tol(),0,7);
+    ctx.strokeStyle='rgba(255,255,255,.25)';ctx.lineWidth=2;ctx.stroke();
+  });
+  // player
+  drawStick(cur,'#7ec850',9,1);
+  JOINT_NAMES.forEach(n=>{
+    const ok=dist(cur[n],target[n])<=tol();
+    ctx.beginPath();ctx.arc(cur[n].x,cur[n].y,13,0,7);
+    ctx.fillStyle=ok?'#4caf50':'#ffd54f';
+    ctx.fill();
+    ctx.lineWidth=2;ctx.strokeStyle='#08080f';ctx.stroke();
+  });
+  // hip anchor marker
+  ctx.beginPath();ctx.arc(ANCHOR.hip.x,ANCHOR.hip.y,8,0,7);ctx.fillStyle='#e94560';ctx.fill();
+}
+
+function pointerPos(e){
+  const r=cv.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+
+function hitJoint(p){
+  let best=null,bd=26;
+  JOINT_NAMES.forEach(n=>{
+    const d=dist(p,cur[n]);
+    if(d<bd){bd=d;best=n;}
+  });
+  return best;
+}
+
+function onDown(e){
+  if(!started||locked)return;
+  e.preventDefault();
+  const p=pointerPos(e);
+  dragging=hitJoint(p);
+}
+function onMove(e){
+  if(!dragging)return;
+  e.preventDefault();
+  const p=pointerPos(e);
+  p.x=Math.max(10,Math.min(W-10,p.x));
+  p.y=Math.max(10,Math.min(H-10,p.y));
+  cur[dragging]=p;
+}
+function onUp(){dragging=null;}
+
+cv.addEventListener('mousedown',onDown);
+cv.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+cv.addEventListener('touchstart',onDown,{passive:false});
+cv.addEventListener('touchmove',onMove,{passive:false});
+cv.addEventListener('touchend',onUp);
+
+// Keyboard support: select joint with number keys 1-5, move with arrow keys
+let selJoint='head';
+document.addEventListener('keydown',e=>{
+  if(!started||locked)return;
+  const map={'1':'head','2':'lHand','3':'rHand','4':'lFoot','5':'rFoot'};
+  if(map[e.key]){selJoint=map[e.key];return;}
+  const step=8;
+  let handled=true;
+  if(e.key==='ArrowUp')cur[selJoint].y-=step;
+  else if(e.key==='ArrowDown')cur[selJoint].y+=step;
+  else if(e.key==='ArrowLeft')cur[selJoint].x-=step;
+  else if(e.key==='ArrowRight')cur[selJoint].x+=step;
+  else handled=false;
+  if(handled){
+    e.preventDefault();
+    cur[selJoint].x=Math.max(10,Math.min(W-10,cur[selJoint].x));
+    cur[selJoint].y=Math.max(10,Math.min(H-10,cur[selJoint].y));
+  }
+});
+
+let lastT=null;
+function loop(t){
+  if(lastT===null)lastT=t;
+  const dt=(t-lastT)/1000;
+  lastT=t;
+  if(started&&!locked){
+    if(allMatched()){
+      stability+=dt;
+      stabBar.style.width=Math.min(100,(stability/HOLD_TIME)*100)+'%';
+      if(stability>=HOLD_TIME){
+        locked=true;
+        score+=10+round*2;
+        scoreLbl.textContent=score;
+        if(score>best){best=score;localStorage.setItem(BEST_KEY,String(best));bestLbl.textContent=best;}
+        SFX.success();
+        msg.textContent=I18N.t('ca_pose_locked','Pose locked! ✔');
+        setTimeout(()=>{
+          round++;
+          roundLbl.textContent=round;
+          newRound();
+        },900);
+      }
+    } else {
+      stability=Math.max(0,stability-dt*2);
+      stabBar.style.width=Math.min(100,(stability/HOLD_TIME)*100)+'%';
+    }
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+startBtn.addEventListener('click',()=>{
+  started=true;
+  score=0;round=1;
+  scoreLbl.textContent=score;roundLbl.textContent=round;
+  startOverlay.style.display='none';
+  newRound();
+  SFX.click();
+});
+
+resetPlayer();
+target=randPose();
+requestAnimationFrame(loop);
+</script></body></html>

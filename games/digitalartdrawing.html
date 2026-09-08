@@ -1,0 +1,333 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Digital Art Drawing</title><meta name="description" content="Play Digital Art Drawing free online — Trace the glowing guide path with your stylus, then fill each region with the matching color from the palette. Stay on the line and pick the right colors to score high across each illustration."><link rel="canonical" href="https://games.multiportllc.com/games/digitalartdrawing"><meta property="og:title" content="Digital Art Drawing - Multiport Games"><meta property="og:description" content="Play Digital Art Drawing free online — Trace the glowing guide path with your stylus, then fill each region with the matching color from the palette. Stay on the line and pick the right colors to score high across each illustration."><meta property="og:url" content="https://games.multiportllc.com/games/digitalartdrawing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Digital Art Drawing","description":"Play Digital Art Drawing free online instantly. Trace the guide path with your stylus tool, then fill each region with the matching color from the palette. More intricate designs each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/digitalartdrawing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:14px;text-align:center;max-width:520px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;font-size:.9rem;margin-bottom:8px}
+#hud b{color:#ffd54f}
+#artCanvas{background:#fdfdfa;border-radius:10px;display:block;margin:0 auto;max-width:100%;touch-action:none;cursor:crosshair}
+#phaseLbl{color:#ffd54f;font-weight:800;margin:8px 0 4px}
+#palette{display:flex;justify-content:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.swatch{width:38px;height:38px;border-radius:8px;border:3px solid transparent;cursor:pointer}
+.swatch.active{border-color:#fff}
+#msg{color:#fff;font-weight:700;min-height:1.6em;margin-top:8px}
+#startBtn,#nextBtn,#retryBtn{padding:10px 26px;background:#e94560;border:none;border-radius:20px;color:#fff;font-size:1rem;cursor:pointer;font-weight:700;margin-top:8px}
+#progWrap{max-width:100%;height:12px;background:rgba(255,255,255,.15);border-radius:8px;overflow:hidden;margin-top:8px}
+#progBar{height:100%;width:0%;background:linear-gradient(90deg,#4caf50,#8bc34a);transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Digital Art Drawing</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span>Piece: <b id="roundLbl">1</b></span><span>Score: <b id="scoreLbl">0</b></span><span>Best: <b id="bestLbl">0</b></span></div>
+      <canvas id="artCanvas" width="480" height="380"></canvas>
+      <div id="progWrap"><div id="progBar"></div></div>
+      <div id="phaseLbl">Trace the glowing outline</div>
+      <div id="palette"></div>
+      <div id="msg">Press Start to begin your illustration</div>
+      <button id="startBtn">Start Drawing</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">First trace the glowing guide outline with your stylus (mouse, finger, or arrow keys) — staying close to the path fills it in green. Once the outline is fully traced, pick the correct color from the palette and click each region to fill it, matching the reference. Score is based on tracing accuracy and correct fills across increasingly intricate illustrations.</div>
+</div>
+<script>
+const cv=document.getElementById('artCanvas'),ctx=cv.getContext('2d');
+const W=cv.width,H=cv.height;
+const roundLbl=document.getElementById('roundLbl'),scoreLbl=document.getElementById('scoreLbl'),bestLbl=document.getElementById('bestLbl');
+const msg=document.getElementById('msg'),startBtn=document.getElementById('startBtn'),phaseLbl=document.getElementById('phaseLbl');
+const palette=document.getElementById('palette'),progBar=document.getElementById('progBar');
+
+const BEST_KEY='digitalartdrawing_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+bestLbl.textContent=best;
+
+let round=1,score=0;
+let phase='trace'; // trace | fill | done
+let path=[]; // guide points
+let traced=[]; // bool per path point
+let regions=[]; // {points:[...], color, filled}
+let activeColor=null;
+let started=false;
+let cursor={x:W/2,y:H/2};
+const TOL=22;
+
+function shapeForRound(r){
+  // Build a simple illustration: a house-like or flower-like shape made of straight segments
+  // forming a closed guide path, plus a couple of fill regions (circle/polygon approx via point-in-poly).
+  const cx=W/2,cy=H/2-10;
+  const scale=1+Math.min(1.2,r*0.08);
+  const shapes=[
+    // Simple house
+    ()=>{
+      const pts=[
+        {x:cx-100,y:cy+80},{x:cx-100,y:cy},{x:cx,y:cy-90},{x:cx+100,y:cy},
+        {x:cx+100,y:cy+80},{x:cx-100,y:cy+80}
+      ];
+      const regs=[
+        {name:'roof',color:'#c0392b',poly:[{x:cx-100,y:cy},{x:cx,y:cy-90},{x:cx+100,y:cy}]},
+        {name:'wall',color:'#f1c40f',poly:[{x:cx-100,y:cy},{x:cx+100,y:cy},{x:cx+100,y:cy+80},{x:cx-100,y:cy+80}]},
+      ];
+      return {pts,regs};
+    },
+    // Simple flower: circle center approximated as octagon + petals as diamonds
+    ()=>{
+      const petals=5+Math.min(3,Math.floor(r/2));
+      let pts=[];
+      for(let i=0;i<=petals;i++){
+        const a=(i/petals)*Math.PI*2;
+        const a2=((i+0.5)/petals)*Math.PI*2;
+        pts.push({x:cx+Math.cos(a)*90,y:cy+Math.sin(a)*90});
+      }
+      const regs=[
+        {name:'petals',color:'#e91e8c',poly:pts.slice()},
+        {name:'center',color:'#ffeb3b',poly:octagon(cx,cy,32)},
+      ];
+      return {pts,regs};
+    },
+    // Star
+    ()=>{
+      const spikes=5;
+      let pts=[];
+      for(let i=0;i<spikes*2;i++){
+        const a=(i/(spikes*2))*Math.PI*2-Math.PI/2;
+        const rad=i%2===0?100:45;
+        pts.push({x:cx+Math.cos(a)*rad,y:cy+Math.sin(a)*rad});
+      }
+      pts.push(pts[0]);
+      const regs=[{name:'star',color:'#3498db',poly:pts.slice(0,-1)}];
+      return {pts,regs};
+    }
+  ];
+  return shapes[(r-1)%shapes.length]();
+}
+function octagon(cx,cy,r){
+  const pts=[];
+  for(let i=0;i<8;i++){const a=i/8*Math.PI*2;pts.push({x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r});}
+  return pts;
+}
+
+function densify(pts,step){
+  const out=[];
+  for(let i=0;i<pts.length-1;i++){
+    const a=pts[i],b=pts[i+1];
+    const d=Math.hypot(b.x-a.x,b.y-a.y);
+    const n=Math.max(1,Math.floor(d/step));
+    for(let k=0;k<n;k++){
+      out.push({x:a.x+(b.x-a.x)*k/n,y:a.y+(b.y-a.y)*k/n});
+    }
+  }
+  out.push(pts[pts.length-1]);
+  return out;
+}
+
+function pointInPoly(pt,poly){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const xi=poly[i].x,yi=poly[i].y,xj=poly[j].x,yj=poly[j].y;
+    const intersect=((yi>pt.y)!==(yj>pt.y))&&(pt.x<(xj-xi)*(pt.y-yi)/((yj-yi)||1e-9)+xi);
+    if(intersect)inside=!inside;
+  }
+  return inside;
+}
+
+function newPiece(){
+  const s=shapeForRound(round);
+  path=densify(s.pts,8);
+  traced=path.map(()=>false);
+  regions=s.regs.map(r=>({...r,filled:false}));
+  phase='trace';
+  activeColor=null;
+  cursor={x:path[0].x,y:path[0].y};
+  phaseLbl.textContent=I18N.t('da_trace_phase','Trace the glowing outline');
+  msg.textContent=I18N.t('da_trace_hint','Drag along the path (or use arrow keys) to trace it');
+  progBar.style.width='0%';
+  buildPaletteUI();
+  draw();
+}
+
+function buildPaletteUI(){
+  palette.innerHTML='';
+  const colors=Array.from(new Set(regions.map(r=>r.color)));
+  // add a couple of distractor colors
+  const distractors=['#9b59b6','#1abc9c','#e67e22','#34495e'].filter(c=>!colors.includes(c));
+  const all=colors.concat(distractors.slice(0,2)).sort(()=>Math.random()-0.5);
+  all.forEach(c=>{
+    const s=document.createElement('div');
+    s.className='swatch';
+    s.style.background=c;
+    s.onclick=()=>{
+      activeColor=c;
+      document.querySelectorAll('.swatch').forEach(el=>el.classList.remove('active'));
+      s.classList.add('active');
+      SFX.click();
+    };
+    palette.appendChild(s);
+  });
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#fdfdfa';ctx.fillRect(0,0,W,H);
+
+  // draw regions (filled or outline preview)
+  regions.forEach(r=>{
+    ctx.beginPath();
+    r.poly.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+    ctx.closePath();
+    if(r.filled){
+      ctx.fillStyle=r.color;
+      ctx.fill();
+    } else if(phase==='fill'){
+      ctx.strokeStyle='#999';ctx.setLineDash([4,4]);ctx.lineWidth=1.5;ctx.stroke();ctx.setLineDash([]);
+    }
+  });
+
+  // guide path
+  ctx.lineWidth=6;
+  for(let i=0;i<path.length-1;i++){
+    ctx.strokeStyle=traced[i]?'#4caf50':'#ffd54f';
+    ctx.globalAlpha=phase==='trace'?1:0.15;
+    ctx.beginPath();ctx.moveTo(path[i].x,path[i].y);ctx.lineTo(path[i+1].x,path[i+1].y);ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+
+  if(phase==='trace'){
+    ctx.beginPath();ctx.arc(cursor.x,cursor.y,10,0,7);
+    ctx.fillStyle='#333';ctx.fill();
+  }
+}
+
+function updateTraceProgress(){
+  path.forEach((p,i)=>{
+    if(!traced[i]&&Math.hypot(cursor.x-p.x,cursor.y-p.y)<TOL){
+      traced[i]=true;
+    }
+  });
+  const done=traced.filter(Boolean).length;
+  const pct=Math.round(done/traced.length*100);
+  progBar.style.width=pct+'%';
+  if(pct>=95&&phase==='trace'){
+    phase='fill';
+    score+=20+round*2;
+    scoreLbl.textContent=score;
+    SFX.success();
+    phaseLbl.textContent=I18N.t('da_fill_phase','Now fill each region with the matching color');
+    msg.textContent=I18N.t('da_fill_hint','Pick a palette color, then click the matching region');
+    progBar.style.width='0%';
+  }
+}
+
+function pointerPos(e){
+  const r=cv.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+
+let drawing=false;
+function onDown(e){
+  if(!started||phase!=='trace')return handleFillClick(e);
+  e.preventDefault();
+  drawing=true;
+  cursor=pointerPos(e);
+  updateTraceProgress();
+  draw();
+}
+function onMove(e){
+  if(!drawing||phase!=='trace')return;
+  e.preventDefault();
+  cursor=pointerPos(e);
+  updateTraceProgress();
+  draw();
+}
+function onUp(){drawing=false;}
+
+function handleFillClick(e){
+  if(!started||phase!=='fill')return;
+  const p=pointerPos(e);
+  const region=regions.find(r=>!r.filled&&pointInPoly(p,r.poly));
+  if(!region)return;
+  if(!activeColor){
+    msg.textContent=I18N.t('da_pick_color','Pick a color from the palette first!');
+    SFX.error();
+    return;
+  }
+  if(activeColor===region.color){
+    region.filled=true;
+    score+=15;
+    scoreLbl.textContent=score;
+    SFX.success();
+    const remaining=regions.filter(r=>!r.filled).length;
+    progBar.style.width=Math.round((regions.length-remaining)/regions.length*100)+'%';
+    msg.textContent=I18N.t('da_good_fill','Nice fill!');
+    if(remaining===0){
+      finishPiece();
+    }
+  } else {
+    SFX.error();
+    msg.textContent=I18N.t('da_wrong_color','Wrong color for that region — try again.');
+  }
+  draw();
+}
+
+function finishPiece(){
+  phase='done';
+  if(score>best){best=score;localStorage.setItem(BEST_KEY,String(best));bestLbl.textContent=best;}
+  SFX.win();
+  phaseLbl.textContent=I18N.t('da_complete','Illustration complete!');
+  msg.textContent=I18N.t('da_next_hint','Great work! Preparing a more intricate piece...');
+  round++;
+  roundLbl.textContent=round;
+  setTimeout(()=>{newPiece();},1400);
+}
+
+cv.addEventListener('mousedown',onDown);
+cv.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+cv.addEventListener('click',handleFillClick);
+cv.addEventListener('touchstart',e=>{onDown(e);},{passive:false});
+cv.addEventListener('touchmove',onMove,{passive:false});
+cv.addEventListener('touchend',e=>{onUp();if(phase==='fill')handleFillClick(e.changedTouches?{clientX:e.changedTouches[0].clientX,clientY:e.changedTouches[0].clientY}:e);},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(!started||phase!=='trace')return;
+  const step=10;
+  let handled=true;
+  if(e.key==='ArrowUp')cursor.y-=step;
+  else if(e.key==='ArrowDown')cursor.y+=step;
+  else if(e.key==='ArrowLeft')cursor.x-=step;
+  else if(e.key==='ArrowRight')cursor.x+=step;
+  else handled=false;
+  if(handled){
+    e.preventDefault();
+    cursor.x=Math.max(0,Math.min(W,cursor.x));
+    cursor.y=Math.max(0,Math.min(H,cursor.y));
+    updateTraceProgress();
+    draw();
+  }
+});
+
+startBtn.addEventListener('click',()=>{
+  started=true;
+  round=1;score=0;
+  roundLbl.textContent=round;scoreLbl.textContent=score;
+  startBtn.style.display='none';
+  SFX.click();
+  newPiece();
+});
+
+// initial preview
+(function(){
+  const s=shapeForRound(1);
+  path=densify(s.pts,8);
+  traced=path.map(()=>false);
+  regions=s.regs.map(r=>({...r,filled:false}));
+  draw();
+})();
+</script></body></html>

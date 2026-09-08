@@ -1,0 +1,244 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Vaccine Shot</title><meta name="description" content="Play Vaccine Shot free online — Hold to draw the correct dose to the marked line, then release the injection when the needle guide lines up on the moving patient. Bad dose or bad technique costs points. Vaccinate as many patients as you can before the shift ends."><link rel="canonical" href="https://games.multiportllc.com/games/vaccineshot"><meta property="og:title" content="Vaccine Shot - Multiport Games"><meta property="og:description" content="Play Vaccine Shot free online — Hold to draw the correct dose to the marked line, then release the injection when the needle guide lines up on the moving patient. Bad dose or bad technique costs points. Vaccinate as many patients as you can before the shift ends."><meta property="og:url" content="https://games.multiportllc.com/games/vaccineshot"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Vaccine Shot","description":"Play Vaccine Shot free online instantly. Hold to draw the correct dose to the marked line, then release the injection when the needle guide lines up on the moving patient. Bad dose or bad technique costs points. Vaccinate as many patients as you can before the shift ends. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/vaccineshot","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#vs-wrap{background:#0c1220;border-radius:14px;padding:14px;text-align:center}
+#hud{display:flex;justify-content:space-between;max-width:520px;margin:0 auto 8px;color:#dbe7ff;font-weight:800;font-size:.95rem}
+#hud span{color:#5ad1ff}
+#timerbar-outer{max-width:520px;margin:0 auto 8px;height:10px;background:#1a2338;border-radius:6px;overflow:hidden}
+#timerbar{height:100%;width:100%;background:linear-gradient(90deg,#5ad1ff,#7ee787)}
+#c{background:#101a2e;border-radius:10px;display:block;margin:0 auto;touch-action:none}
+#msg{min-height:1.6em;color:#ffd54f;font-weight:800;margin-top:8px}
+#actionBtn{display:block;margin:10px auto 0;padding:12px 30px;background:#e94560;border:none;border-radius:22px;color:#fff;font-weight:800;cursor:pointer;font-size:1.05rem;user-select:none;-webkit-user-select:none}
+#actionBtn:active{background:#c22e46}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Vaccine Shot</div>
+  <div class="game-frame">
+    <div id="vs-wrap">
+      <div id="hud"><div>Patients: <span id="scoreVal">0</span></div><div>Best: <span id="bestVal">0</span></div><div>Time: <span id="timeVal">60</span>s</div></div>
+      <div id="timerbar-outer"><div id="timerbar"></div></div>
+      <canvas id="c" width="500" height="300"></canvas>
+      <div id="msg">Click Start Shift to begin</div>
+      <button id="actionBtn">Start Shift</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold the button to draw the syringe to the marked dose line, then release. Then time your injection: hold and release the button so the needle marker lands in the target zone on the moving patient. Bad dose or bad timing costs points — vaccinate as many patients as you can before the shift timer runs out.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const scoreEl=document.getElementById('scoreVal'),bestEl=document.getElementById('bestVal'),timeEl=document.getElementById('timeVal');
+const bar=document.getElementById('timerbar'),msgEl=document.getElementById('msg'),actionBtn=document.getElementById('actionBtn');
+
+let best=parseInt(localStorage.getItem('vaccineshot_best')||'0',10);
+bestEl.textContent=best;
+
+let score=0,round=0,running=false,timeLeft=60,TOTAL=60,rafId=null,lastT=null;
+let phase='idle'; // idle | draw | aim | resulting
+let fill=0,fillRate=0.55,targetMin=0,targetMax=0;
+let aimPos=0,aimDir=1,aimSpeed=1.3,zoneCenter=0.5,zoneWidth=0.16,wobble=0;
+let holding=false;
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function newPatient(){
+  phase='draw';
+  fill=0;
+  fillRate=0.5+round*0.03;
+  const tol=Math.max(0.05,0.14-round*0.008);
+  const center=rand(0.35,0.75);
+  targetMin=center-tol;targetMax=center+tol;
+  msgEl.textContent=I18N.t('vs_draw','Hold to draw the dose to the marked line, then release!');
+  actionBtn.textContent=I18N.t('vs_hold_draw','Hold to Draw');
+}
+
+function beginAim(){
+  phase='aim';
+  aimPos=0;aimDir=1;
+  aimSpeed=1.1+round*0.09;
+  zoneWidth=Math.max(0.1,0.24-round*0.012);
+  zoneCenter=rand(zoneWidth,1-zoneWidth);
+  wobble=0;
+  msgEl.textContent=I18N.t('vs_aim','Time it! Press when the needle lines up with the target.');
+  actionBtn.textContent=I18N.t('vs_inject','Inject!');
+}
+
+function evaluateDraw(){
+  phase='resulting';
+  if(fill>=targetMin&&fill<=targetMax){
+    SFX.success();
+    msgEl.textContent=I18N.t('vs_gooddose','Good dose! Now administer the shot.');
+    setTimeout(()=>{ if(running){beginAim();} },500);
+  } else {
+    SFX.error();
+    score=Math.max(0,score-1);
+    scoreEl.textContent=score;
+    msgEl.textContent=I18N.t('vs_baddose','Bad dose! That patient needs a redo — next up.');
+    round=Math.max(0,round-1);
+    setTimeout(()=>{ if(running)newPatient(); },800);
+  }
+}
+
+function evaluateAim(){
+  phase='resulting';
+  const diff=Math.abs(aimPos-zoneCenter);
+  if(diff<=zoneWidth/2){
+    SFX.win();
+    score++;
+    round++;
+    scoreEl.textContent=score;
+    msgEl.textContent=I18N.t('vs_success','Vaccination successful!');
+  } else {
+    SFX.hurt();
+    score=Math.max(0,score-1);
+    scoreEl.textContent=score;
+    msgEl.textContent=I18N.t('vs_badtech','Missed the mark — technique needs work.');
+  }
+  setTimeout(()=>{ if(running)newPatient(); },700);
+}
+
+function drawScene(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#101a2e';ctx.fillRect(0,0,W,H);
+
+  if(phase==='draw'||phase==='resulting'&&fill!==undefined&&phase!=='aim'){
+    // syringe barrel vertical
+    const bx=W/2-30,by=40,bw=60,bh=220;
+    ctx.strokeStyle='#8fa3c9';ctx.lineWidth=3;
+    ctx.strokeRect(bx,by,bw,bh);
+    // target band
+    const tY1=by+bh-(targetMax*bh);
+    const tY2=by+bh-(targetMin*bh);
+    ctx.fillStyle='rgba(126,231,135,0.3)';
+    ctx.fillRect(bx,tY1,bw,tY2-tY1);
+    ctx.strokeStyle='#7ee787';ctx.lineWidth=2;
+    ctx.strokeRect(bx,tY1,bw,tY2-tY1);
+    // fluid
+    const fh=Math.min(1,fill)*bh;
+    ctx.fillStyle='#5ad1ff';
+    ctx.fillRect(bx+3,by+bh-fh,bw-6,fh);
+    // ticks
+    ctx.fillStyle='#cfe0ff';ctx.font='12px Arial';ctx.textAlign='left';
+    for(let i=0;i<=10;i++){
+      const y=by+bh-(i/10)*bh;
+      ctx.fillRect(bx+bw,y,6,1.5);
+    }
+    ctx.textAlign='center';ctx.font='bold 16px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('vs_dose_label','Dose: {p}%').replace('{p}',Math.round(Math.min(1,fill)*100)),W/2,300-8);
+  }
+
+  if(phase==='aim'){
+    const ay=150,ax1=60,ax2=W-60;
+    ctx.strokeStyle='#8fa3c9';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(ax1,ay);ctx.lineTo(ax2,ay);ctx.stroke();
+    // patient wobble indicator (visual nervousness)
+    const wob=Math.sin(wobble)*6;
+    ctx.save();
+    ctx.translate(0,wob);
+    const zx1=ax1+(zoneCenter-zoneWidth/2)*(ax2-ax1);
+    const zx2=ax1+(zoneCenter+zoneWidth/2)*(ax2-ax1);
+    ctx.fillStyle='rgba(126,231,135,0.35)';
+    ctx.fillRect(zx1,ay-18,zx2-zx1,36);
+    ctx.strokeStyle='#7ee787';ctx.lineWidth=2;
+    ctx.strokeRect(zx1,ay-18,zx2-zx1,36);
+    ctx.restore();
+    // moving needle marker
+    const nx=ax1+aimPos*(ax2-ax1);
+    ctx.strokeStyle='#ff6b6b';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(nx,ay-40);ctx.lineTo(nx,ay+40);ctx.stroke();
+    ctx.fillStyle='#ff6b6b';
+    ctx.beginPath();ctx.moveTo(nx,ay-40);ctx.lineTo(nx-6,ay-52);ctx.lineTo(nx+6,ay-52);ctx.fill();
+    ctx.fillStyle='#cfe0ff';ctx.font='14px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('vs_patient_moving','Patient is a little nervous...'),W/2,60);
+  }
+
+  if(phase==='idle'){
+    ctx.fillStyle='#cfe0ff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('vs_idle_hint','Press Start Shift below'),W/2,H/2);
+  }
+}
+
+function pointerDown(){
+  if(!running)return;
+  holding=true;
+  if(phase==='draw')SFX.tick();
+}
+function pointerUp(){
+  if(!running)return;
+  if(!holding)return;
+  holding=false;
+  if(phase==='draw'){ evaluateDraw(); }
+  else if(phase==='aim'){ evaluateAim(); }
+}
+
+actionBtn.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  if(!running){ startGame(); }
+  pointerDown();
+});
+actionBtn.addEventListener('pointerup',e=>{ e.preventDefault(); pointerUp(); });
+actionBtn.addEventListener('pointerleave',e=>{ if(holding)pointerUp(); });
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){
+    e.preventDefault();
+    if(!running){ startGame(); }
+    if(!holding)pointerDown();
+  }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){ e.preventDefault(); if(holding)pointerUp(); }
+});
+
+function endRun(){
+  running=false;
+  cancelAnimationFrame(rafId);
+  if(score>best){best=score;localStorage.setItem('vaccineshot_best',String(best));bestEl.textContent=best;}
+  phase='idle';
+  msgEl.textContent=I18N.t('vs_shift_over','Shift over! Vaccinated {s} patients.').replace('{s}',score);
+  actionBtn.textContent=I18N.t('vs_restart','Start New Shift');
+  drawScene();
+}
+
+function loop(ts){
+  if(!running){ return; }
+  if(lastT===null)lastT=ts;
+  const dt=(ts-lastT)/1000;
+  lastT=ts;
+  timeLeft-=dt;
+  timeEl.textContent=Math.max(0,Math.ceil(timeLeft));
+  bar.style.width=Math.max(0,(timeLeft/TOTAL)*100)+'%';
+  if(timeLeft<=0){ endRun(); return; }
+
+  if(phase==='draw'&&holding){
+    fill+=fillRate*dt;
+    if(fill>1.3){ fill=1.3; }
+  }
+  if(phase==='aim'){
+    aimPos+=aimDir*aimSpeed*dt;
+    if(aimPos>1){aimPos=1;aimDir=-1;}
+    if(aimPos<0){aimPos=0;aimDir=1;}
+    wobble+=dt*4;
+    zoneCenter+=Math.sin(wobble*0.7)*0.0015*(1+round*0.05);
+    zoneCenter=Math.min(1-zoneWidth/2,Math.max(zoneWidth/2,zoneCenter));
+  }
+  drawScene();
+  rafId=requestAnimationFrame(loop);
+}
+
+function startGame(){
+  score=0;round=0;timeLeft=60;TOTAL=60;
+  scoreEl.textContent=score;timeEl.textContent=60;bar.style.width='100%';
+  running=true;lastT=null;
+  newPatient();
+  rafId=requestAnimationFrame(loop);
+}
+
+drawScene();
+</script></body></html>

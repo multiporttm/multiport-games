@@ -1,0 +1,297 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Island Hopping</title><meta name="description" content="Play Island Hopping free online — Plan a boat route by clicking connected islands from start to destination. Longer hops cost more fuel; collect fuel caches along the way. Reach the destination with fuel to spare!"><link rel="canonical" href="https://games.multiportllc.com/games/islandhopping"><meta property="og:title" content="Island Hopping - Multiport Games"><meta property="og:description" content="Play Island Hopping free online — Plan a boat route by clicking connected islands from start to destination. Longer hops cost more fuel; collect fuel caches along the way. Reach the destination with fuel to spare!"><meta property="og:url" content="https://games.multiportllc.com/games/islandhopping"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Island Hopping","description":"Play Island Hopping free online instantly. Plan a boat route from a start island to a destination using limited fuel per hop, collecting fuel caches along the way. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/islandhopping","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#08344a;border-radius:14px;padding:16px;text-align:center;max-width:680px;margin:0 auto}
+#status{color:#fff;font-size:1.05rem;font-weight:700;margin:4px 0 8px;min-height:2.2em}
+#stats{color:#ddd;font-size:.85rem;margin:8px 0}
+#stats b{color:#ffd54f}
+#wrap{position:relative;background:linear-gradient(180deg,#0b4a6f,#0a6a9a);border-radius:10px;overflow:hidden;touch-action:none}
+canvas{display:block;width:100%;height:auto}
+#controls{margin:10px 0;display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+#controls button{padding:9px 20px;background:#2a8ac0;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+#controls button:disabled{opacity:.35;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Island Hopping</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="status">Loading…</div>
+      <div id="wrap"><canvas id="c" width="640" height="420"></canvas></div>
+      <div id="controls">
+        <button id="goBtn" onclick="setSail()">⛴️ Set Sail</button>
+        <button id="undoBtn" onclick="undoHop()">↩ Undo Last Hop</button>
+        <button id="resetBtn" onclick="resetRoute()">Reset Route</button>
+        <button id="nextBtn" onclick="nextMap()" style="display:none">Next Map →</button>
+      </div>
+      <div id="stats">Map <b id="mnum">1</b> · Fuel: <b id="fuel">0</b> · Best Spare: <b id="best">–</b> · Reached: <b id="solved">0</b></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click connected islands in sequence to plan a boat route from the green start island 🚩 to the red destination ⚑. Each hop between connected islands costs fuel proportional to distance — collect fuel cache islands ⛽ along the way to top up. Click <b>Set Sail</b> to attempt your planned route. Reach the destination with fuel to spare for the best score!</div>
+</div>
+<script>
+const BEST_KEY='islandhopping_best',SOLVED_KEY='islandhopping_solved';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=640,H=420;
+
+function seededRand(seed){let s=seed;return()=>{s=(s*9301+49297)%233280;return s/233280;};}
+
+function genMap(mapIdx){
+  const rand=seededRand(1000+mapIdx*37);
+  const n=6+Math.min(6,mapIdx);
+  const nodes=[];
+  // place start bottom-left area, dest top-right area, others scattered
+  nodes.push({x:60,y:H-60,fuel:0,label:'start'});
+  for(let i=1;i<n-1;i++){
+    nodes.push({x:80+rand()*(W-160),y:60+rand()*(H-120),fuel: rand()<0.4?Math.floor(20+rand()*30):0,label:'mid'});
+  }
+  nodes.push({x:W-60,y:60,fuel:0,label:'dest'});
+  // ensure minimum spacing by nudging
+  for(let iter=0;iter<40;iter++){
+    for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){
+      const dx=nodes[j].x-nodes[i].x,dy=nodes[j].y-nodes[i].y;
+      const d=Math.hypot(dx,dy);
+      if(d<70&&d>0.01){
+        const push=(70-d)/2;
+        const ux=dx/d,uy=dy/d;
+        nodes[i].x-=ux*push;nodes[i].y-=uy*push;
+        nodes[j].x+=ux*push;nodes[j].y+=uy*push;
+      }
+    }
+  }
+  nodes.forEach(nd=>{nd.x=Math.max(35,Math.min(W-35,nd.x));nd.y=Math.max(35,Math.min(H-35,nd.y));});
+  // build edges: connect each node to its k nearest neighbors (k grows a bit with map)
+  const k=Math.max(3,5-Math.floor(mapIdx/3));
+  const edges=new Set();
+  const adj=nodes.map(()=>[]);
+  for(let i=0;i<nodes.length;i++){
+    const dists=nodes.map((nd,j)=>({j,d:Math.hypot(nd.x-nodes[i].x,nd.y-nodes[i].y)})).filter(o=>o.j!==i).sort((a,b)=>a.d-b.d);
+    dists.slice(0,k).forEach(o=>{
+      const key=[Math.min(i,o.j),Math.max(i,o.j)].join('-');
+      if(!edges.has(key)){edges.add(key);adj[i].push(o.j);adj[o.j].push(i);}
+    });
+  }
+  // ensure connectivity via BFS from start; if dest unreachable, add direct edges along a path
+  function reachable(){
+    const seen=new Set([0]);const q=[0];
+    while(q.length){const u=q.pop();adj[u].forEach(v=>{if(!seen.has(v)){seen.add(v);q.push(v);}});}
+    return seen;
+  }
+  let seen=reachable();
+  if(!seen.has(nodes.length-1)){
+    // connect nearest reachable node to nearest unreachable node repeatedly
+    let guard=0;
+    while(!seen.has(nodes.length-1)&&guard++<20){
+      let best=null;
+      seen.forEach(i=>{
+        nodes.forEach((nd,j)=>{
+          if(!seen.has(j)){
+            const d=Math.hypot(nd.x-nodes[i].x,nd.y-nodes[i].y);
+            if(!best||d<best.d)best={i,j,d};
+          }
+        });
+      });
+      if(best){adj[best.i].push(best.j);adj[best.j].push(best.i);edges.add([Math.min(best.i,best.j),Math.max(best.i,best.j)].join('-'));}
+      seen=reachable();
+    }
+  }
+  const edgeList=Array.from(edges).map(k=>{const[a,b]=k.split('-').map(Number);return{a,b,d:Math.hypot(nodes[a].x-nodes[b].x,nodes[a].y-nodes[b].y)};});
+  const startFuel=Math.floor(120+mapIdx*8);
+  return {nodes,adj,edgeList,startFuel};
+}
+
+let mapIdx=0,map,route,fuel,sailing=false,solvedCount;
+const FUEL_PER_PIXEL=0.55;
+
+function loadStats(){
+  document.getElementById('best').textContent=localStorage.getItem(BEST_KEY)||'–';
+  document.getElementById('solved').textContent=localStorage.getItem(SOLVED_KEY)||'0';
+}
+
+function setupMap(idx){
+  mapIdx=idx;
+  map=genMap(idx);
+  route=[0];
+  fuel=map.startFuel;
+  sailing=false;
+  document.getElementById('mnum').textContent=idx+1;
+  document.getElementById('fuel').textContent=fuel;
+  document.getElementById('nextBtn').style.display='none';
+  document.getElementById('goBtn').disabled=false;
+  setStatus(I18N.t('ih_start','Click a connected island to extend your route toward the red flag.'));
+  draw();
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function edgeCost(a,b){
+  const nd1=map.nodes[a],nd2=map.nodes[b];
+  return Math.round(Math.hypot(nd1.x-nd2.x,nd1.y-nd2.y)*FUEL_PER_PIXEL);
+}
+
+function connected(a,b){return map.adj[a].includes(b);}
+
+function nodeAt(px,py){
+  for(let i=0;i<map.nodes.length;i++){
+    const nd=map.nodes[i];
+    if(Math.hypot(nd.x-px,nd.y-py)<22)return i;
+  }
+  return -1;
+}
+
+function canvasPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+
+function handlePick(e){
+  if(sailing)return;
+  e.preventDefault();
+  const p=canvasPos(e);
+  const idx=nodeAt(p.x,p.y);
+  if(idx<0)return;
+  const last=route[route.length-1];
+  if(idx===last)return;
+  if(route.length>1&&route[route.length-2]===idx){
+    route.pop();
+    SFX.click();
+    draw();
+    return;
+  }
+  if(!connected(last,idx)){
+    setStatus(I18N.t('ih_nolink','Those islands are not connected — pick a linked island.'));
+    SFX.error();
+    return;
+  }
+  if(route.includes(idx)){
+    setStatus(I18N.t('ih_visited','You already visited that island in this route.'));
+    SFX.error();
+    return;
+  }
+  route.push(idx);
+  SFX.select();
+  draw();
+  if(idx===map.nodes.length-1){
+    setStatus(I18N.t('ih_ready','Route reaches the destination! Click Set Sail to attempt it.'));
+  }
+}
+
+c.addEventListener('click',handlePick);
+c.addEventListener('touchstart',handlePick,{passive:false});
+
+function undoHop(){
+  if(sailing||route.length<=1)return;
+  route.pop();
+  SFX.click();
+  draw();
+}
+function resetRoute(){
+  if(sailing)return;
+  route=[0];
+  draw();
+  setStatus(I18N.t('ih_start','Click a connected island to extend your route toward the red flag.'));
+}
+
+function setSail(){
+  if(sailing)return;
+  if(route[route.length-1]!==map.nodes.length-1){
+    setStatus(I18N.t('ih_notdest','Your route must end at the destination island before you set sail.'));
+    SFX.error();
+    return;
+  }
+  sailing=true;
+  document.getElementById('goBtn').disabled=true;
+  let hop=0,curFuel=map.startFuel;
+  fuel=curFuel;
+  document.getElementById('fuel').textContent=fuel;
+  const step=()=>{
+    if(hop>=route.length-1){
+      solvedCount=(parseInt(localStorage.getItem(SOLVED_KEY)||'0'))+1;
+      localStorage.setItem(SOLVED_KEY,solvedCount);
+      const best=localStorage.getItem(BEST_KEY);
+      if(!best||fuel>parseInt(best))localStorage.setItem(BEST_KEY,fuel);
+      loadStats();
+      setStatus(I18N.t('ih_win',`🎉 Arrived with ${fuel} fuel to spare!`));
+      SFX.win();
+      document.getElementById('nextBtn').style.display='inline-block';
+      sailing=false;
+      return;
+    }
+    const a=route[hop],b=route[hop+1];
+    const cost=edgeCost(a,b);
+    fuel-=cost;
+    hop++;
+    SFX.swoosh();
+    if(fuel<0){
+      document.getElementById('fuel').textContent=fuel;
+      setStatus(I18N.t('ih_ranout',`💥 Ran out of fuel between islands! Needed ${cost}, had ${fuel+cost}.`));
+      SFX.lose();
+      sailing=false;
+      setTimeout(()=>setupMap(mapIdx),1800);
+      return;
+    }
+    const nd=map.nodes[b];
+    if(nd.fuel>0){fuel+=nd.fuel;setStatus(I18N.t('ih_refuel',`⛽ Collected ${nd.fuel} fuel!`));nd.fuel=0;SFX.coin();}
+    document.getElementById('fuel').textContent=fuel;
+    draw(hop);
+    setTimeout(step,650);
+  };
+  setTimeout(step,300);
+}
+
+function nextMap(){setupMap(mapIdx+1);}
+
+function draw(highlightUpto){
+  ctx.clearRect(0,0,W,H);
+  // waves
+  ctx.fillStyle='rgba(255,255,255,0.03)';
+  for(let y=0;y<H;y+=24)ctx.fillRect(0,y,W,2);
+  // edges
+  map.edgeList.forEach(e=>{
+    const a=map.nodes[e.a],b=map.nodes[e.b];
+    ctx.strokeStyle='rgba(255,255,255,0.25)';
+    ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+    const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
+    ctx.fillStyle='#cfe';
+    ctx.font='11px Arial';ctx.textAlign='center';
+    ctx.fillText(edgeCost(e.a,e.b),mx,my-4);
+  });
+  // route path
+  if(route.length>1){
+    ctx.strokeStyle=sailing?'#ffd54f':'#4caf50';
+    ctx.lineWidth=4;
+    ctx.beginPath();
+    const upto=highlightUpto!=null?highlightUpto:route.length-1;
+    ctx.moveTo(map.nodes[route[0]].x,map.nodes[route[0]].y);
+    for(let i=1;i<=upto;i++)ctx.lineTo(map.nodes[route[i]].x,map.nodes[route[i]].y);
+    ctx.stroke();
+  }
+  // nodes
+  map.nodes.forEach((nd,i)=>{
+    const isStart=i===0,isDest=i===map.nodes.length-1;
+    ctx.beginPath();
+    ctx.arc(nd.x,nd.y,20,0,7);
+    ctx.fillStyle=isStart?'#4caf50':isDest?'#e94560':nd.fuel>0?'#ffb300':'#c9a876';
+    ctx.fill();
+    ctx.strokeStyle=route.includes(i)?'#fff':'rgba(0,0,0,.3)';
+    ctx.lineWidth=route.includes(i)?3:1.5;
+    ctx.stroke();
+    ctx.fillStyle='#1a1a1a';
+    ctx.font='16px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(isStart?'🚩':isDest?'⚑':nd.fuel>0?'⛽':'🏝️',nd.x,nd.y+1);
+  });
+  ctx.textBaseline='alphabetic';
+}
+
+loadStats();
+setupMap(0);
+</script></body></html>
