@@ -1,0 +1,215 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Stand Up Paddleboard</title><meta name="description" content="Play Stand Up Paddleboard free online — Tap/click the left and right sides of the board (or press Left/Right Arrows or A/D) alternately to paddle forward. Keep your rhythm even to stay balanced, dodge boats and buoys, and reach as many checkpoints as you can before you fall in!"><link rel="canonical" href="https://games.multiportllc.com/games/standuppaddleboard"><meta property="og:title" content="Stand Up Paddleboard - Multiport Games"><meta property="og:description" content="Play Stand Up Paddleboard free online — Tap/click the left and right sides of the board (or press Left/Right Arrows or A/D) alternately to paddle forward. Keep your rhythm even to stay balanced, dodge boats and buoys, and reach as many checkpoints as you can before you fall in!"><meta property="og:url" content="https://games.multiportllc.com/games/standuppaddleboard"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Stand Up Paddleboard","description":"Play Stand Up Paddleboard free online instantly. Alternate left and right paddle strokes to move forward, keep your balance meter steady, dodge boats and buoys, and reach checkpoints before you fall in. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/standuppaddleboard","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0a4a63;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#dff6ff;font-size:.95rem;font-weight:700;padding:6px 4px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+#balwrap{background:rgba(255,255,255,.12);border-radius:8px;height:12px;margin:0 4px 6px;overflow:hidden}
+#balbar{height:100%;width:0%;background:linear-gradient(90deg,#4caf50,#ffd54f,#ff5555);transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Stand Up Paddleboard</div>
+  <div class="game-frame">
+    <div id="hud"><div id="score-display">Checkpoints: 0 | Distance: 0m</div><div id="hi-display">Best: 0</div></div>
+    <div id="balwrap"><div id="balbar"></div></div>
+    <canvas id="c" width="480" height="560"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Tap/click the <b>left and right sides</b> of the board (or press <b>Left/Right Arrows</b> or <b>A/D</b>) alternately to paddle forward. Keep your rhythm even to stay balanced, dodge boats and buoys, and reach as many checkpoints as you can before you fall in!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=480,H=560;
+let best=parseInt(localStorage.getItem('standuppaddleboard_best')||'0');
+
+let dist,checkpoints,wobble,lastSide,strokeIntervals,lastStrokeT,boardX,boardXTarget,obstacles,nextCheckpointDist,checkpointsX,gameOver,lastTime,elapsed,flashT,flashMsg;
+
+function reset(){
+  dist=0;checkpoints=0;wobble=15;lastSide=null;strokeIntervals=[];lastStrokeT=null;
+  boardX=W/2;boardXTarget=W/2;
+  obstacles=[];nextCheckpointDist=250;gameOver=false;lastTime=null;elapsed=0;
+  flashT=0;flashMsg='';
+  seedObstacles();
+}
+function seedObstacles(){
+  let d=200;
+  while(d<6000){
+    obstacles.push({d,x:60+Math.random()*(W-120),type:Math.random()<0.5?'buoy':'boat'});
+    d+=180+Math.random()*220;
+  }
+}
+reset();
+
+function stroke(side){
+  if(gameOver){reset();return;}
+  const now=performance.now();
+  if(lastStrokeT!=null){
+    const interval=now-lastStrokeT;
+    strokeIntervals.push(interval);
+    if(strokeIntervals.length>6)strokeIntervals.shift();
+  }
+  lastStrokeT=now;
+  dist+=14;
+  boardXTarget += side==='left'? 10 : -10;
+
+  if(lastSide===side){
+    wobble=Math.min(100,wobble+14);
+  } else {
+    wobble=Math.max(0,wobble-6);
+  }
+  lastSide=side;
+
+  if(strokeIntervals.length>=3){
+    const avg=strokeIntervals.reduce((a,b)=>a+b,0)/strokeIntervals.length;
+    const variance=strokeIntervals.reduce((a,b)=>a+(b-avg)*(b-avg),0)/strokeIntervals.length;
+    const unevenness=Math.min(1,Math.sqrt(variance)/220);
+    wobble=Math.max(0,Math.min(100,wobble+unevenness*10-3));
+  }
+  SFX.click();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','KeyA','KeyD'].includes(e.code))e.preventDefault();
+  if(e.repeat)return;
+  if(e.code==='ArrowLeft'||e.code==='KeyA')stroke('left');
+  if(e.code==='ArrowRight'||e.code==='KeyD')stroke('right');
+});
+c.addEventListener('pointerdown',e=>{
+  const rect=c.getBoundingClientRect();
+  const px=(e.clientX-rect.left)/rect.width;
+  stroke(px<0.5?'left':'right');
+});
+
+function loop(now){
+  if(lastTime==null)lastTime=now;
+  const dt=Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  if(!gameOver)elapsed+=dt/60;
+  ctx.clearRect(0,0,W,H);
+  drawWater();
+
+  boardX += (boardXTarget-boardX)*0.15*dt;
+  boardX=Math.max(40,Math.min(W-40,boardX));
+  boardXTarget += (boardX-boardXTarget)*0.02*dt;
+
+  if(!gameOver){
+    // natural balance decay toward center-ish is handled by stroke evenness only;
+    // passive drift adds slight difficulty over time
+    wobble += 0.03*dt;
+    wobble=Math.max(0,Math.min(100,wobble));
+
+    obstacles.forEach(o=>{
+      if(!o.hit && Math.abs(o.d-dist)<20 && Math.abs(o.x-boardX)<26){
+        o.hit=true;wobble=Math.min(100,wobble+30);
+        flashMsg=I18N.t('obstacle_hit','Bumped! Balance shaken');flashT=50;
+        SFX.hit();
+      }
+    });
+
+    if(dist>=nextCheckpointDist){
+      checkpoints++;
+      nextCheckpointDist+=250+Math.random()*100;
+      flashMsg=I18N.t('checkpoint_reached','Checkpoint {n}!').replace('{n}',checkpoints);
+      flashT=50;
+      SFX.success();
+      wobble=Math.max(0,wobble-10);
+    }
+
+    if(wobble>=100){
+      gameOver=true;SFX.lose();
+      if(checkpoints>best){best=checkpoints;localStorage.setItem('standuppaddleboard_best',String(best));}
+    }
+  }
+
+  drawScene();
+
+  document.getElementById('balbar').style.width=wobble+'%';
+  updateHud();
+
+  if(flashT>0){
+    flashT-=dt;
+    ctx.fillStyle='rgba(255,255,255,'+Math.min(1,flashT/20)+')';
+    ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,80);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('fell_in','YOU FELL IN!'),W/2,H/2-30);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('sup_result','Checkpoints: {c} | Distance: {d}m').replace('{c}',checkpoints).replace('{d}',Math.floor(dist)),W/2,H/2+4);
+    ctx.fillText(I18N.t('restart_hint','Tap or press a key to restart'),W/2,H/2+34);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+let waterT=0;
+function drawWater(){
+  waterT+=1;
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#0a2540');g.addColorStop(1,'#0d6b8a');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,.08)';
+  for(let i=0;i<10;i++){
+    const y=((i*60)+waterT*1.5)%H;
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y-14);ctx.stroke();
+  }
+}
+
+function worldY(d){ return H-90-(d-dist); }
+
+function drawScene(){
+  obstacles.forEach(o=>{
+    const y=worldY(o.d);
+    if(y<-40||y>H+40)return;
+    if(o.type==='buoy'){
+      ctx.fillStyle=o.hit?'#888':'#ff5e5e';
+      ctx.beginPath();ctx.arc(o.x,y,14,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(o.x,y,5,0,Math.PI*2);ctx.fill();
+    } else {
+      ctx.fillStyle=o.hit?'#666':'#3a3a5c';
+      ctx.fillRect(o.x-26,y-14,52,28);
+      ctx.fillStyle='#ddd';ctx.fillRect(o.x-14,y-24,28,14);
+    }
+  });
+
+  // checkpoint marker (next one, faint line at its distance)
+  const cy=worldY(nextCheckpointDist);
+  if(cy>-20&&cy<H+20){
+    ctx.strokeStyle='rgba(126,214,255,.5)';ctx.setLineDash([8,8]);ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(20,cy);ctx.lineTo(W-20,cy);ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // board + rider
+  const y=H-90;
+  ctx.fillStyle='#e6c88a';
+  ctx.beginPath();ctx.ellipse(boardX,y,16,60,0,0,Math.PI*2);ctx.fill();
+  const tilt=Math.sign(boardXTarget-boardX)*Math.min(1,wobble/60)*8;
+  ctx.save();
+  ctx.translate(boardX,y-20);
+  ctx.rotate(tilt*Math.PI/180);
+  ctx.fillStyle='#2d2d44';ctx.fillRect(-8,-30,16,34);
+  ctx.fillStyle='#ffcc99';ctx.beginPath();ctx.arc(0,-38,8,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#8a5a2b';ctx.lineWidth=4;
+  const paddleSide=lastSide==='left'?-1:1;
+  ctx.beginPath();ctx.moveTo(0,-20);ctx.lineTo(paddleSide*22,10);ctx.stroke();
+  ctx.restore();
+}
+
+function updateHud(){
+  document.getElementById('score-display').textContent=
+    I18N.t('sup_hud','Checkpoints: {c} | Distance: {d}m').replace('{c}',checkpoints).replace('{d}',Math.floor(dist));
+  document.getElementById('hi-display').textContent=I18N.t('best_checkpoints','Best: {b}').replace('{b}',best);
+}
+
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,203 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Flooring Install</title><meta name="description" content="Play Flooring Install free online — Click a plank from the queue, then click a highlighted cell in its row to lay it. Keep seams staggered between rows for bonus points. Fill the whole room to win the round!"><link rel="canonical" href="https://games.multiportllc.com/games/flooringinstall"><meta property="og:title" content="Flooring Install - Multiport Games"><meta property="og:description" content="Play Flooring Install free online — Click a plank from the queue, then click a highlighted cell in its row to lay it. Keep seams staggered between rows for bonus points. Fill the whole room to win the round!"><meta property="og:url" content="https://games.multiportllc.com/games/flooringinstall"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Flooring Install","description":"Play Flooring Install free online instantly. Click a plank from the queue, then click a highlighted cell in its row to lay it. Keep seams staggered between rows for bonus points. Fill the whole room to win the round! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/flooringinstall","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{text-align:center}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;margin:6px 0;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span{color:#e0a458}
+#room{display:inline-grid;gap:3px;background:#2b1d13;padding:8px;border-radius:10px;margin:12px auto}
+.row{display:flex;gap:3px}
+.cell{height:34px;background:#3a2a1c;border-radius:3px;border:1px solid #1f140c;position:relative;flex-shrink:0}
+.cell.filled{background:linear-gradient(90deg,#c8935a,#a97142);border-color:#7a5230}
+.cell.filled.seam-left::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:#5c3d20}
+.cell.target{outline:3px solid #4caf50;outline-offset:-2px;cursor:pointer}
+.cell.badtarget{outline:3px solid #e94560;outline-offset:-2px;cursor:pointer}
+.cell.wall{background:#151515;border:none}
+#queueWrap{margin:14px 0}
+#queueLabel{color:#bbb;font-size:.85rem;margin-bottom:6px}
+#queue{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}
+.plank{width:70px;height:30px;background:linear-gradient(90deg,#e0a458,#c8935a);border-radius:4px;border:2px solid #7a5230;cursor:pointer;display:flex;align-items:center;justify-content:center;font-weight:800;color:#3a2410;font-size:.8rem;transition:transform .1s}
+.plank.selected{outline:3px solid #ffd54f;transform:translateY(-3px)}
+.plank:hover{transform:translateY(-2px)}
+#msg{color:#ffd54f;font-weight:800;min-height:1.4em;margin-top:6px}
+#controls{margin-top:10px}
+#controls button{padding:8px 20px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;margin:0 5px}
+@media(max-width:480px){.cell{height:26px}.plank{width:50px;height:24px;font-size:.7rem}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Flooring Install</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud">Round: <span id="roundNum">1</span> Score: <span id="score">0</span> Best: <span id="best">0</span></div>
+      <div id="room"></div>
+      <div id="queueWrap">
+        <div id="queueLabel">Pick a plank, then click a green-highlighted cell to lay it</div>
+        <div id="queue"></div>
+      </div>
+      <div id="msg"></div>
+      <div id="controls"><button id="skipBtn">New Room</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a <b>plank</b> from the queue below, then click a <b>green-highlighted</b> cell in the room to lay it there. Planks must fill each row left-to-right. Real staggered flooring never lets two seams from adjacent rows line up — if a placement would create an aligned seam it's marked <b>red</b>: you can still place it, but it costs points. Fill the whole room correctly to finish the round and move on to a bigger, trickier one!</div>
+</div>
+<script>
+const roomEl=document.getElementById('room'),queueEl=document.getElementById('queue'),msgEl=document.getElementById('msg');
+const scoreEl=document.getElementById('score'),bestEl=document.getElementById('best'),roundEl=document.getElementById('roundNum');
+let best=parseInt(localStorage.getItem('flooringinstall_best')||'0',10);
+bestEl.textContent=best;
+
+let round=1,score=0;
+let rows=[]; // rows[r] = {cells:[{filled,seamLeft}], widthUnits: N}
+let cellPx=40;
+let queue=[]; // array of plank lengths (in units, 1-3)
+let selectedIdx=null;
+let cols=0;
+
+function setMsg(t,cls){ msgEl.textContent=t; msgEl.style.color= cls==='bad'?'#e94560':cls==='good'?'#7ec850':'#ffd54f'; }
+
+function newRoom(){
+  const numRows=3+Math.min(4,Math.floor(round/2));
+  cols=6+Math.min(6,Math.floor(round/2));
+  cellPx = cols>10?26:cols>8?32:38;
+  rows=[];
+  for(let r=0;r<numRows;r++){
+    const cells=[];
+    for(let c=0;c<cols;c++) cells.push({filled:false,seamLeft:false});
+    rows.push({cells, nextCol:0});
+  }
+  // build a queue with enough planks (mix of lengths 1-3 units) to cover total cols*rows with some margin
+  queue=[];
+  const totalUnitsNeeded = cols*numRows;
+  let unitsSoFar=0;
+  while(unitsSoFar<totalUnitsNeeded+6){
+    const len=1+Math.floor(Math.random()*3);
+    queue.push(len);
+    unitsSoFar+=len;
+  }
+  selectedIdx=null;
+  setMsg(I18N.t('flooring_new_room','New room! Lay the planks left-to-right, row by row.'));
+  render();
+}
+
+function currentRowIndex(){
+  for(let r=0;r<rows.length;r++){ if(rows[r].nextCol<cols) return r; }
+  return -1;
+}
+
+function wouldCreateSeam(rowIdx,plankLen){
+  const row=rows[rowIdx];
+  const startCol=row.nextCol;
+  const endCol=startCol+plankLen; // seam occurs at endCol boundary (right edge of plank), unless it's exactly at wall (endCol===cols)
+  if(endCol>=cols) return false; // ends exactly at wall — not an internal seam
+  // check row above and below for a seam at same boundary
+  const checkRow=(ri)=>{
+    if(ri<0||ri>=rows.length) return false;
+    const other=rows[ri];
+    // does other row have a seam boundary exactly at endCol? A seam exists at boundary x if some plank in that row starts or ends there (and it's an internal seam, i.e. not at wall)
+    // We track seams by marking seamLeft on the cell to the right of a boundary when a plank starts there (except col0)
+    return other.cells[endCol] && other.cells[endCol].seamLeft && other.cells[endCol].filled;
+  };
+  return checkRow(rowIdx-1)||checkRow(rowIdx+1);
+}
+
+function placePlank(plankLen){
+  const rowIdx=currentRowIndex();
+  if(rowIdx===-1) return;
+  const row=rows[rowIdx];
+  const startCol=row.nextCol;
+  let endCol=startCol+plankLen;
+  let clipped=false;
+  if(endCol>cols){ endCol=cols; clipped=true; } // cut to fit at wall
+  const bad=wouldCreateSeam(rowIdx,endCol-startCol);
+  for(let c=startCol;c<endCol;c++){
+    row.cells[c].filled=true;
+    row.cells[c].seamLeft = (c===startCol && startCol>0);
+  }
+  row.nextCol=endCol;
+  if(bad){ score=Math.max(0,score-8); SFX.error(); setMsg(I18N.t('flooring_seam_bad','Seams aligned! -8 points'),'bad'); }
+  else { score+=10+(clipped?2:0); SFX.click(); setMsg(clipped?I18N.t('flooring_cut','Cut to fit! +12 points'):I18N.t('flooring_good','Nicely staggered! +10 points'),'good'); }
+  scoreEl.textContent=score;
+  // remove one instance of plankLen from queue (the one selected)
+  queue.splice(selectedIdx,1);
+  selectedIdx=null;
+  checkRoomComplete();
+  render();
+}
+
+function checkRoomComplete(){
+  const done=rows.every(r=>r.nextCol>=cols);
+  if(done){
+    SFX.win();
+    score+=50;
+    scoreEl.textContent=score;
+    if(score>best){ best=score; localStorage.setItem('flooringinstall_best',String(best)); bestEl.textContent=best; }
+    round++;
+    roundEl.textContent=round;
+    setMsg(I18N.t('flooring_room_done','Room floored! +50 bonus. Starting a bigger room...'),'good');
+    setTimeout(newRoom,1400);
+  } else if(queue.length===0){
+    // ran out of planks unexpectedly (shouldn't normally happen) — refill a bit
+    queue.push(1,2,3);
+    render();
+  }
+}
+
+function render(){
+  roomEl.style.gridTemplateColumns='';
+  roomEl.innerHTML='';
+  const rowIdx=currentRowIndex();
+  rows.forEach((row,ri)=>{
+    const rowDiv=document.createElement('div');
+    rowDiv.className='row';
+    row.cells.forEach((cell,ci)=>{
+      const d=document.createElement('div');
+      d.className='cell';
+      d.style.width=cellPx+'px';
+      if(cell.filled){
+        d.classList.add('filled');
+        if(cell.seamLeft) d.classList.add('seam-left');
+      } else if(ri===rowIdx && ci===row.nextCol && selectedIdx!==null){
+        const plankLen=queue[selectedIdx];
+        const bad=wouldCreateSeam(ri,Math.min(plankLen,cols-row.nextCol));
+        d.classList.add(bad?'badtarget':'target');
+        d.onclick=()=>placePlank(plankLen);
+      }
+      rowDiv.appendChild(d);
+    });
+    roomEl.appendChild(rowDiv);
+  });
+
+  queueEl.innerHTML='';
+  queue.slice(0,8).forEach((len,i)=>{
+    const p=document.createElement('div');
+    p.className='plank';
+    if(i===selectedIdx) p.classList.add('selected');
+    p.style.width=(len*24+10)+'px';
+    p.textContent=len+'u';
+    p.onclick=()=>{
+      selectedIdx = (selectedIdx===i)?null:i;
+      render();
+    };
+    queueEl.appendChild(p);
+  });
+}
+
+document.getElementById('skipBtn').addEventListener('click',()=>{ SFX.select(); newRoom(); });
+
+document.addEventListener('keydown',e=>{
+  if(e.key>='1'&&e.key<='8'){
+    const i=parseInt(e.key,10)-1;
+    if(i<queue.length){ selectedIdx=(selectedIdx===i)?null:i; render(); }
+  } else if(e.key==='Enter' && selectedIdx!==null){
+    placePlank(queue[selectedIdx]);
+  }
+});
+
+newRoom();
+</script></body></html>

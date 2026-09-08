@@ -1,0 +1,342 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Water Skiing</title><meta name="description" content="Play Water Skiing free online — Use Arrow Keys, A/D, or drag to steer the skier through the slalom buoys and hit Space at the wake ramps to land jump tricks. Don't lose your balance!"><link rel="canonical" href="https://games.multiportllc.com/games/waterskiing"><meta property="og:title" content="Water Skiing - Multiport Games"><meta property="og:description" content="Play Water Skiing free online — Use Arrow Keys, A/D, or drag to steer the skier through the slalom buoys and hit Space at the wake ramps to land jump tricks. Don't lose your balance!"><meta property="og:url" content="https://games.multiportllc.com/games/waterskiing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Water Skiing","description":"Play Water Skiing free online instantly. Use Arrow Keys, A/D, or drag to steer the skier through the slalom buoys and hit Space at the wake ramps to land jump tricks. Losing your balance for too long ends the run. Score points for buoys cleared and tricks landed before you fall. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/waterskiing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1e88c9;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#fff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#balance-display{max-width:300px;margin:0 auto 6px;height:10px;background:rgba(255,255,255,.2);border-radius:5px;overflow:hidden}
+#balance-fill{height:100%;background:#4caf50;width:100%;transition:width .1s,background .2s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Water Skiing</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Best: 0</div>
+    <div id="balance-display"><div id="balance-fill"></div></div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> / <b>A</b>-<b>D</b> or <b>drag</b> to steer the skier left and right, weaving through the slalom buoys. When you cross a boat wake, press <b>Space</b> (or tap the jump button) right at the ramp to launch a trick for bonus points. Missing buoys or riding rough water knocks your balance down — if it hits zero for too long, you wipe out. Clear buoys and land tricks to rack up your score before you fall!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisplay=document.getElementById('score-display');
+const balanceFill=document.getElementById('balance-fill');
+const W=800,H=400;
+
+let best=parseInt(localStorage.getItem('waterskiing_best')||'0',10);
+let score=0,balance=100,started=false,gameOver=false,frame=0;
+let skierX=W/2, skierVX=0, lean=0;
+let scrollY=0, worldSpeed=4.6;
+let buoys=[],wakes=[],tricks=[];
+let jumpState=null; // {y, active, resolved}
+let keys={left:false,right:false};
+let dragging=false,dragX=0;
+let lastTime=null;
+let shakeT=0;
+
+function reset(){
+  score=0;balance=100;gameOver=false;started=false;skierX=W/2;skierVX=0;lean=0;
+  scrollY=0;worldSpeed=4.6;buoys=[];wakes=[];tricks=[];jumpState=null;lastTime=null;frame=0;
+  spawnBuoyPair(600);
+  spawnBuoyPair(900);
+  spawnWake(750);
+}
+
+function spawnBuoyPair(y){
+  const gap=170;
+  const cx=W/2+(Math.random()*160-80);
+  buoys.push({y,x:cx-gap/2,side:'L',passed:false});
+  buoys.push({y,x:cx+gap/2,side:'R',passed:false});
+}
+function spawnWake(y){ wakes.push({y,hit:false}); }
+
+function startGame(){ if(!started){started=true;} }
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){keys.left=true;startGame();e.preventDefault();}
+  if(e.code==='ArrowRight'||e.code==='KeyD'){keys.right=true;startGame();e.preventDefault();}
+  if(e.code==='Space'){ e.preventDefault(); startGame(); if(gameOver){reset();return;} attemptTrick(); }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keys.left=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keys.right=false;
+});
+
+function canvasX(clientX){
+  const r=c.getBoundingClientRect();
+  return (clientX-r.left)*(W/r.width);
+}
+c.addEventListener('pointerdown',e=>{
+  startGame();
+  if(gameOver){reset();return;}
+  dragging=true;dragX=canvasX(e.clientX);
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const x=canvasX(e.clientX);
+  const dx=x-dragX;
+  dragX=x;
+  skierVX+=dx*0.15;
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+c.addEventListener('dblclick',()=>attemptTrick());
+let lastTap=0;
+c.addEventListener('pointerdown',()=>{
+  const now=performance.now();
+  if(now-lastTap<300)attemptTrick();
+  lastTap=now;
+});
+
+function attemptTrick(){
+  if(!jumpState||jumpState.resolved)return;
+  const dist=Math.abs(jumpState.y-scrollY-260);
+  jumpState.resolved=true;
+  if(dist<40){
+    score+=50;
+    balance=Math.min(100,balance+10);
+    SFX.powerup();
+    tricks.push({t:performance.now(),text:'+50 TRICK!',good:true});
+  }else{
+    balance-=15;
+    SFX.error();
+    tricks.push({t:performance.now(),text:'MISSED TIMING',good:false});
+  }
+}
+
+function rectHit(ax,ay,bx,by,r){ return Math.hypot(ax-bx,ay-by)<r; }
+
+function update(dt){
+  if(!started||gameOver)return;
+  frame+=dt;
+  scrollY+=worldSpeed*dt;
+  worldSpeed=Math.min(11,4.6+score/400);
+
+  // steering
+  let accel=0;
+  if(keys.left)accel-=0.55;
+  if(keys.right)accel+=0.55;
+  skierVX+=accel*dt;
+  skierVX*=0.9;
+  skierVX=Math.max(-9,Math.min(9,skierVX));
+  skierX+=skierVX*dt;
+  lean=skierVX/9;
+  if(skierX<40){skierX=40;skierVX=0;}
+  if(skierX>W-40){skierX=W-40;skierVX=0;}
+
+  const skierWorldY=scrollY+260;
+
+  // buoy scoring
+  buoys.forEach(b=>{
+    if(!b.passed && b.y<skierWorldY-10){
+      b.passed=true;
+      const dx=Math.abs(skierX-b.x);
+      if(dx<55){
+        score+=20;
+        SFX.point();
+      }else{
+        balance-=18;
+        SFX.hit();
+      }
+    }
+  });
+  buoys=buoys.filter(b=>b.y>skierWorldY-700);
+  if(buoys.length<6)spawnBuoyPair(buoys.length? buoys[buoys.length-1].y+220 : skierWorldY+400);
+
+  // wake jump detection
+  wakes.forEach(w=>{
+    if(!w.hit && Math.abs(w.y-skierWorldY)<14){
+      w.hit=true;
+      jumpState={y:w.y,resolved:false};
+      SFX.jump();
+    }
+  });
+  wakes=wakes.filter(w=>w.y>skierWorldY-700);
+  if(wakes.length<3)spawnWake((wakes.length?wakes[wakes.length-1].y:skierWorldY)+300+Math.random()*150);
+
+  if(jumpState && !jumpState.resolved && (jumpState.y-skierWorldY)<-50){
+    jumpState.resolved=true;
+    balance-=10;
+    SFX.error();
+    tricks.push({t:performance.now(),text:'MISSED JUMP',good:false});
+  }
+
+  // passive balance drift + rough water randomness
+  balance-=0.06*dt;
+  if(Math.abs(skierVX)>7)balance-=0.05*dt;
+  balance=Math.max(0,Math.min(100,balance));
+  balanceFill.style.width=balance+'%';
+  balanceFill.style.background=balance>50?'#4caf50':(balance>20?'#ff9800':'#e94560');
+
+  score+=0.03*dt;
+
+  if(balance<=0){
+    gameOver=true;
+    SFX.lose();
+    shakeT=20;
+    if(score>best){best=Math.floor(score);localStorage.setItem('waterskiing_best',best);}
+  }
+}
+
+function drawWater(){
+  ctx.fillStyle='#1e88c9';
+  ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,.18)';
+  ctx.lineWidth=2;
+  for(let i=0;i<10;i++){
+    const y=((i*60 - scrollY*1.4)%(H+60)+H+60)%(H+60);
+    ctx.beginPath();
+    ctx.moveTo(0,y);
+    ctx.lineTo(W,y+10);
+    ctx.stroke();
+  }
+}
+
+function worldToScreen(y){ return y-scrollY; }
+
+function drawBuoy(b){
+  const sy=worldToScreen(b.y);
+  if(sy<-20||sy>H+20)return;
+  ctx.fillStyle='#ff5722';
+  ctx.beginPath();
+  ctx.arc(b.x,sy,14,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath();
+  ctx.arc(b.x,sy,5,0,Math.PI*2);
+  ctx.fill();
+}
+
+function drawWake(w){
+  const sy=worldToScreen(w.y);
+  if(sy<-20||sy>H+20)return;
+  ctx.strokeStyle='rgba(255,255,255,.8)';
+  ctx.lineWidth=4;
+  ctx.beginPath();
+  ctx.moveTo(0,sy);
+  for(let x=0;x<=W;x+=20)ctx.lineTo(x,sy+Math.sin(x*0.05)*6);
+  ctx.stroke();
+}
+
+function drawBoat(){
+  ctx.save();
+  ctx.translate(skierX+40,40);
+  ctx.fillStyle='#fff';
+  ctx.beginPath();
+  ctx.moveTo(-30,0);ctx.lineTo(30,0);ctx.lineTo(20,18);ctx.lineTo(-20,18);ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(-14,-14,28,16);
+  ctx.restore();
+  // rope
+  ctx.strokeStyle='rgba(255,255,255,.6)';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(skierX+40,58);
+  ctx.lineTo(skierX,260);
+  ctx.stroke();
+}
+
+function drawSkier(){
+  const sy=260;
+  const jumping = jumpState && !jumpState.resolved && Math.abs(jumpState.y-scrollY-sy)<70;
+  const lift = jumping?30:0;
+  ctx.save();
+  ctx.translate(skierX, sy-lift);
+  ctx.rotate(lean*0.35);
+  // skis
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(-26,26,52,6);
+  // legs
+  ctx.strokeStyle='#3a3a3a';ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(-8,10);ctx.lineTo(-10,28);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(8,10);ctx.lineTo(10,28);ctx.stroke();
+  // body
+  ctx.fillStyle='#2196c9';
+  ctx.fillRect(-10,-14,20,26);
+  // arms to rope
+  ctx.strokeStyle='#3a3a3a';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(-8,-10);ctx.lineTo(0,-40);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(8,-10);ctx.lineTo(0,-40);ctx.stroke();
+  // head
+  ctx.fillStyle='#ffccb3';
+  ctx.beginPath();ctx.arc(0,-22,9,0,Math.PI*2);ctx.fill();
+  if(jumping){
+    ctx.fillStyle='rgba(255,255,255,.6)';
+    ctx.beginPath();ctx.ellipse(0,32,20,6,0,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawSplashTricks(){
+  const now=performance.now();
+  tricks=tricks.filter(t=>now-t.t<900);
+  tricks.forEach(t=>{
+    const age=(now-t.t)/900;
+    ctx.globalAlpha=1-age;
+    ctx.fillStyle=t.good?'#ffd54f':'#e94560';
+    ctx.font='bold 20px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(t.text,skierX,260-40-age*40);
+    ctx.globalAlpha=1;
+  });
+}
+
+function drawJumpRamp(){
+  wakes.forEach(w=>{
+    if(jumpState && jumpState.y===w.y && !jumpState.resolved){
+      const dist=Math.abs(w.y-scrollY-260);
+      if(dist<120){
+        ctx.fillStyle='rgba(255,213,79,.85)';
+        ctx.font='bold 16px Arial';
+        ctx.textAlign='center';
+        ctx.fillText(I18N.t('press_space_hint','SPACE!'),skierX,190);
+      }
+    }
+  });
+}
+
+function loop(ts){
+  let dt=1;
+  if(lastTime!==null)dt=Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+
+  ctx.save();
+  if(shakeT>0){
+    shakeT-=dt;
+    ctx.translate((Math.random()-0.5)*8,(Math.random()-0.5)*8);
+  }
+
+  drawWater();
+  buoys.forEach(drawBuoy);
+  wakes.forEach(drawWake);
+  drawBoat();
+  update(dt);
+  drawSkier();
+  drawSplashTricks();
+  drawJumpRamp();
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Arrow Keys / Drag to steer — Space to start'),W/2,120);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.45)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('wipeout_title','WIPEOUT!'),W/2,180);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to try again'),W/2,216);
+  }
+  ctx.restore();
+
+  scoreDisplay.textContent=I18N.t('score_best_label','Score: {s} | Best: {b}').replace('{s}',Math.floor(score)).replace('{b}',best);
+  requestAnimationFrame(loop);
+}
+
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

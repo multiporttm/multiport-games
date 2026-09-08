@@ -1,0 +1,302 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Painting Walls</title><meta name="description" content="Play Painting Walls free online — Drag the roller across the wall in overlapping strokes for even coverage. Don't linger too long or paint drips! Then trace the brush along the highlighted edges to cut in before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/paintingwalls"><meta property="og:title" content="Painting Walls - Multiport Games"><meta property="og:description" content="Play Painting Walls free online — Drag the roller across the wall in overlapping strokes for even coverage. Don't linger too long or paint drips! Then trace the brush along the highlighted edges to cut in before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/paintingwalls"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Painting Walls","description":"Play Painting Walls free online instantly. Drag the roller across the wall in overlapping strokes for even coverage, tracked live with a heatmap. Don't linger too long in one spot or paint drips! Then trace the brush along the highlighted edges to cut in before time runs out. Paint walls evenly to score, with bigger walls and trickier edges each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/paintingwalls","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:16px;text-align:center;max-width:640px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;font-size:.95rem;padding:0 6px 10px;flex-wrap:wrap;gap:4px}
+#hud span{color:#ffd54f}
+#stageWrap{position:relative;margin:0 auto 10px;width:100%;max-width:480px}
+canvas{display:block;width:100%;height:auto;border-radius:10px;background:#e8dcc8;touch-action:none;cursor:crosshair}
+#msg{min-height:1.4em;color:#ffd54f;font-weight:800;margin-top:4px}
+#controls{margin-top:8px}
+#controls button{padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px}
+#phaseLabel{color:#7ec850;font-weight:900;font-size:1.05rem;margin-bottom:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Painting Walls</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><div>Score: <span id="score">0</span></div><div>Best: <span id="best">0</span></div><div>Wall <span id="wallnum">1</span></div><div>Time: <span id="time">30</span>s</div></div>
+      <div id="phaseLabel">Roll paint for even coverage</div>
+      <div id="stageWrap"><canvas id="c" width="480" height="320"></canvas></div>
+      <div id="msg">Drag across the wall with the roller</div>
+      <div id="controls"><button id="restartBtn">New Game</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the roller across the wall in overlapping strokes for even coverage, tracked live with a heatmap. Don't linger too long in one spot or the paint drips! Once coverage is high enough, trace the brush along the highlighted edges to cut in before time runs out. Paint walls evenly to score — bigger walls and trickier edges each round.</div>
+</div>
+<script>
+const canvas=document.getElementById('c'),ctx=canvas.getContext('2d');
+const scoreEl=document.getElementById('score'),bestEl=document.getElementById('best'),wallnumEl=document.getElementById('wallnum'),timeEl=document.getElementById('time');
+const msgEl=document.getElementById('msg'),phaseLabel=document.getElementById('phaseLabel');
+let best=parseInt(localStorage.getItem('paintingwalls_best')||'0',10);
+bestEl.textContent=best;
+
+const GRID=24; // heatmap cell px (in canvas coords)
+let cols,rows,cov,drip; // coverage 0..1 per cell, drip timer per cell
+let score=0,wallIndex=0,timeLeft=30,timerId=null;
+let phase='roll'; // 'roll' -> 'cut' -> done
+let painting=false,lastPt=null,dwellCell=null,dwellStart=0;
+let edges=[]; // for cut-in phase: list of {x1,y1,x2,y2,progress,done}
+let cutPath=null;
+
+function setupWall(){
+  const w=canvas.width,h=canvas.height;
+  cols=Math.ceil(w/GRID); rows=Math.ceil(h/GRID);
+  cov=new Array(cols*rows).fill(0);
+  drip=new Array(cols*rows).fill(0);
+  phase='roll';
+  const baseTime=30+wallIndex*4;
+  timeLeft=baseTime;
+  edges=buildEdges();
+  cutPath=null;
+}
+
+function buildEdges(){
+  // top and bottom edges as cut lines, count grows with wallIndex
+  const w=canvas.width,h=canvas.height;
+  const list=[
+    {x1:10,y1:14,x2:w-10,y2:14,seg:0,done:false},
+    {x1:10,y1:h-14,x2:w-10,y2:h-14,seg:0,done:false}
+  ];
+  if(wallIndex>0)list.push({x1:14,y1:10,x2:14,y2:h-10,seg:0,done:false});
+  if(wallIndex>1)list.push({x1:w-14,y1:10,x2:w-14,y2:h-10,seg:0,done:false});
+  return list;
+}
+
+function cellIndex(cx,cy){ return cy*cols+cx; }
+
+function paintAt(x,y,dt){
+  const radius=34;
+  const cx0=Math.max(0,Math.floor((x-radius)/GRID)), cx1=Math.min(cols-1,Math.floor((x+radius)/GRID));
+  const cy0=Math.max(0,Math.floor((y-radius)/GRID)), cy1=Math.min(rows-1,Math.floor((y+radius)/GRID));
+  for(let gy=cy0;gy<=cy1;gy++){
+    for(let gx=cx0;gx<=cx1;gx++){
+      const ccx=gx*GRID+GRID/2, ccy=gy*GRID+GRID/2;
+      const d=Math.hypot(ccx-x,ccy-y);
+      if(d<radius){
+        const idx=cellIndex(gx,gy);
+        const add=(1-d/radius)*dt*0.006;
+        cov[idx]=Math.min(1.3,cov[idx]+add);
+      }
+    }
+  }
+}
+
+function checkDrip(x,y,dt){
+  const gx=Math.min(cols-1,Math.max(0,Math.floor(x/GRID)));
+  const gy=Math.min(rows-1,Math.max(0,Math.floor(y/GRID)));
+  const idx=cellIndex(gx,gy);
+  if(dwellCell===idx){
+    drip[idx]+=dt;
+    if(drip[idx]>550){
+      // drip! penalty and reset that cell's coverage a bit
+      cov[idx]=Math.max(0,cov[idx]-0.5);
+      drip[idx]=0;
+      score=Math.max(0,score-5);
+      SFX.error();
+      msgEl.textContent=I18N.t('pw_drip','Drip! Keep the roller moving.');
+    }
+  } else {
+    dwellCell=idx;
+    drip[idx]=0;
+  }
+}
+
+function coverageRatio(){
+  let sum=0;
+  for(let i=0;i<cov.length;i++) sum+=Math.min(1,cov[i]);
+  return sum/cov.length;
+}
+
+function drawRoll(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  // base wall
+  ctx.fillStyle='#e8dcc8';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  for(let gy=0;gy<rows;gy++){
+    for(let gx=0;gx<cols;gx++){
+      const idx=cellIndex(gx,gy);
+      const c=Math.min(1,cov[idx]);
+      if(c>0.01){
+        ctx.fillStyle=`rgba(70,130,200,${0.15+c*0.65})`;
+        ctx.fillRect(gx*GRID,gy*GRID,GRID,GRID);
+      }
+    }
+  }
+}
+
+function drawCut(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#a9c8ea';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  edges.forEach(e=>{
+    ctx.strokeStyle=e.done?'#7ec850':'#ffd54f';
+    ctx.lineWidth=6;
+    ctx.beginPath();ctx.moveTo(e.x1,e.y1);ctx.lineTo(e.x2,e.y2);ctx.stroke();
+    if(!e.done){
+      const px=e.x1+(e.x2-e.x1)*e.seg, py=e.y1+(e.y2-e.y1)*e.seg;
+      ctx.fillStyle='#fff';
+      ctx.beginPath();ctx.arc(px,py,7,0,Math.PI*2);ctx.fill();
+    } else {
+      ctx.strokeStyle='#2d5a27';
+      ctx.lineWidth=8;
+      ctx.beginPath();ctx.moveTo(e.x1,e.y1);ctx.lineTo(e.x2,e.y2);ctx.stroke();
+    }
+  });
+}
+
+function pointerPos(e){
+  const rect=canvas.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(canvas.width/rect.width), y:cy*(canvas.height/rect.height)};
+}
+
+function onDown(e){
+  e.preventDefault();
+  painting=true;
+  const p=pointerPos(e);
+  lastPt=p;
+  if(phase==='roll'){ paintAt(p.x,p.y,16); }
+  else if(phase==='cut'){ tryCut(p); }
+}
+function onMove(e){
+  if(!painting)return;
+  e.preventDefault();
+  const p=pointerPos(e);
+  if(phase==='roll'){
+    const dist=lastPt?Math.hypot(p.x-lastPt.x,p.y-lastPt.y):0;
+    const steps=Math.max(1,Math.floor(dist/6));
+    for(let i=1;i<=steps;i++){
+      const ix=lastPt.x+(p.x-lastPt.x)*(i/steps);
+      const iy=lastPt.y+(p.y-lastPt.y)*(i/steps);
+      paintAt(ix,iy,16);
+    }
+    checkDrip(p.x,p.y,16);
+  } else if(phase==='cut'){
+    tryCut(p);
+  }
+  lastPt=p;
+}
+function onUp(e){ painting=false; dwellCell=null; }
+
+function tryCut(p){
+  edges.forEach(e=>{
+    if(e.done)return;
+    const px=e.x1+(e.x2-e.x1)*e.seg, py=e.y1+(e.y2-e.y1)*e.seg;
+    const d=Math.hypot(p.x-px,p.y-py);
+    if(d<28){
+      e.seg=Math.min(1,e.seg+0.045);
+      if(e.seg>=1){ e.done=true; SFX.success(); score+=15; }
+    }
+  });
+}
+
+canvas.addEventListener('mousedown',onDown);
+canvas.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+canvas.addEventListener('touchstart',onDown,{passive:false});
+canvas.addEventListener('touchmove',onMove,{passive:false});
+canvas.addEventListener('touchend',onUp);
+
+function tick(){
+  timeLeft-=1;
+  if(timeLeft<=0){
+    endWall(false);
+    return;
+  }
+  timeEl.textContent=timeLeft;
+}
+
+function loop(){
+  if(phase==='roll'){
+    drawRoll();
+    const ratio=coverageRatio();
+    scoreEl.textContent=score+Math.floor(ratio*50);
+    msgEl.textContent=I18N.t('pw_coverage','Coverage: {p}%').replace('{p}',Math.floor(ratio*100));
+    if(ratio>=0.85){
+      score+=Math.floor(ratio*60);
+      phase='cut';
+      phaseLabel.textContent=I18N.t('pw_cutphase','Cut in the edges!');
+      msgEl.textContent=I18N.t('pw_cut_hint','Trace the brush along the glowing dots.');
+      SFX.levelup();
+    }
+  } else if(phase==='cut'){
+    drawCut();
+    if(edges.every(e=>e.done)){
+      endWall(true);
+      return;
+    }
+  }
+  requestAnimationFrame(loop);
+}
+
+function endWall(success){
+  clearInterval(timerId);
+  if(success){
+    score+=40;
+    SFX.win();
+    msgEl.textContent=I18N.t('pw_wall_done','Wall painted perfectly! 🎉');
+  } else {
+    SFX.fail();
+    msgEl.textContent=I18N.t('pw_time_up','Time\'s up! Moving to the next wall.');
+  }
+  if(score>best){best=score;localStorage.setItem('paintingwalls_best',best);bestEl.textContent=best;}
+  scoreEl.textContent=score;
+  setTimeout(()=>{
+    wallIndex++;
+    wallnumEl.textContent=wallIndex+1;
+    setupWall();
+    phaseLabel.textContent=I18N.t('pw_rollphase','Roll paint for even coverage');
+    timeEl.textContent=timeLeft;
+    startTimer();
+    requestAnimationFrame(loop);
+  },1400);
+}
+
+function startTimer(){
+  clearInterval(timerId);
+  timerId=setInterval(tick,1000);
+}
+
+function newGame(){
+  score=0;wallIndex=0;
+  wallnumEl.textContent=1;
+  scoreEl.textContent=0;
+  setupWall();
+  phaseLabel.textContent=I18N.t('pw_rollphase','Roll paint for even coverage');
+  msgEl.textContent=I18N.t('pw_start','Drag across the wall with the roller');
+  timeEl.textContent=timeLeft;
+  startTimer();
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('restartBtn').onclick=newGame;
+
+// keyboard support: arrow keys nudge a virtual roller
+let vx=canvas.width/2, vy=canvas.height/2;
+document.addEventListener('keydown',e=>{
+  const step=18;
+  let moved=false;
+  if(e.key==='ArrowLeft'){vx-=step;moved=true;}
+  else if(e.key==='ArrowRight'){vx+=step;moved=true;}
+  else if(e.key==='ArrowUp'){vy-=step;moved=true;}
+  else if(e.key==='ArrowDown'){vy+=step;moved=true;}
+  if(moved){
+    e.preventDefault();
+    vx=Math.max(0,Math.min(canvas.width,vx));
+    vy=Math.max(0,Math.min(canvas.height,vy));
+    if(phase==='roll'){ paintAt(vx,vy,16); checkDrip(vx,vy,16); }
+    else if(phase==='cut'){ tryCut({x:vx,y:vy}); }
+  }
+});
+
+newGame();
+</script></body></html>

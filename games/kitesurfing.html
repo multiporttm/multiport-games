@@ -1,0 +1,205 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Kitesurfing</title><meta name="description" content="Play Kitesurfing free online — Use Left/Right Arrows or A/D (or drag) to angle your kite relative to the wind. Keep the angle aligned with the wind arrow to stay powered up. Press Space when you hit a wave crest to launch a trick — press more keys in the air to add points. Don't lose control or you'll wipe out!"><link rel="canonical" href="https://games.multiportllc.com/games/kitesurfing"><meta property="og:title" content="Kitesurfing - Multiport Games"><meta property="og:description" content="Play Kitesurfing free online — Use Left/Right Arrows or A/D (or drag) to angle your kite relative to the wind. Keep the angle aligned with the wind arrow to stay powered up. Press Space when you hit a wave crest to launch a trick — press more keys in the air to add points. Don't lose control or you'll wipe out!"><meta property="og:url" content="https://games.multiportllc.com/games/kitesurfing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Kitesurfing","description":"Play Kitesurfing free online instantly. Angle your kite relative to the shifting wind to build speed, ride the waves, and press the trick key on crests for bonus points before you wipe out. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/kitesurfing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d3b4f;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#dff6ff;font-size:.95rem;font-weight:700;padding:6px 4px}
+#hud span{color:#7ed6ff}
+#barwrap{background:rgba(255,255,255,.12);border-radius:8px;height:10px;margin:0 4px 6px;overflow:hidden}
+#bar{height:100%;width:100%;background:linear-gradient(90deg,#ff5555,#ffd54f,#4caf50);transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Kitesurfing</div>
+  <div class="game-frame">
+    <div id="hud"><div id="score-display">Distance: 0m | Tricks: 0</div><div id="hi-display">Best: 0m</div></div>
+    <div id="barwrap"><div id="bar"></div></div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Left/Right Arrows</b> or <b>A/D</b> (or drag) to angle your kite relative to the wind. Keep the angle aligned with the wind arrow to stay powered up. Press <b>Space</b> when you hit a wave crest to launch a trick — press more keys in the air to add points. Don't lose control or you'll wipe out!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320,base=210;
+let best=parseFloat(localStorage.getItem('kitesurfing_best')||'0');
+let dist,tricks,control,kiteAngle,windAngle,windTarget,windTimer,wavePhase,started,gameOver,inAir,airTime,airKeys,onCrestFlash,lastTime;
+
+function reset(){
+  dist=0;tricks=0;control=70;kiteAngle=10;windAngle=10;windTarget=10;windTimer=0;
+  wavePhase=0;started=false;gameOver=false;inAir=false;airTime=0;airKeys=new Set();onCrestFlash=0;lastTime=null;
+}
+reset();
+
+function waveY(x,phase){
+  return Math.sin((x*0.02)+phase)*22 + Math.sin((x*0.045)+phase*1.7)*10;
+}
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(!started){started=true;}
+  if(gameOver){reset();return;}
+  if(e.code==='Space'){onSpace();}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let dragStartX=null,dragStartAngle=0;
+c.addEventListener('pointerdown',e=>{
+  if(!started){started=true;}
+  if(gameOver){reset();return;}
+  dragStartX=e.clientX;dragStartAngle=kiteAngle;
+  onSpace();
+});
+c.addEventListener('pointermove',e=>{
+  if(dragStartX==null)return;
+  const dx=e.clientX-dragStartX;
+  kiteAngle=Math.max(-80,Math.min(80,dragStartAngle+dx*0.4));
+});
+window.addEventListener('pointerup',()=>{dragStartX=null;});
+
+function onSpace(){
+  if(gameOver)return;
+  if(!inAir && onCrestFlash>0){
+    inAir=true;airTime=0;airKeys=new Set(['space']);SFX.jump();
+  } else if(inAir){
+    if(!airKeys.has('space')){airKeys.add('space');tricks++;dist+=0;SFX.coin();}
+  }
+}
+
+function loop(now){
+  if(lastTime==null)lastTime=now;
+  const dt=Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  ctx.clearRect(0,0,W,H);
+
+  // sky
+  const sky=ctx.createLinearGradient(0,0,0,base);
+  sky.addColorStop(0,'#0a2540');sky.addColorStop(1,'#3aa0c9');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,base+40);
+
+  // wind indicator
+  windTimer-=dt;
+  if(windTimer<=0){windTarget=(Math.random()*140-70);windTimer=90+Math.random()*90;}
+  windAngle+=(windTarget-windAngle)*0.01*dt;
+  drawCompass();
+
+  if(!started||gameOver){
+    drawWater(0);
+    drawKiter(400,base,kiteAngle);
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    if(gameOver){
+      ctx.fillText(I18N.t('game_over_title','WIPEOUT!'),400,120);
+      ctx.font='18px Arial';
+      ctx.fillText(I18N.t('kitesurf_result','Distance: {d}m  Tricks: {t}').replace('{d}',Math.floor(dist)).replace('{t}',tricks),400,150);
+      ctx.fillText(I18N.t('restart_hint','Tap or press a key to restart'),400,178);
+    } else {
+      ctx.fillText(I18N.t('start_hint','Press a key or tap to start'),400,150);
+    }
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // steering via keys
+  if(keys['ArrowLeft']||keys['KeyA'])kiteAngle-=1.6*dt;
+  if(keys['ArrowRight']||keys['KeyD'])kiteAngle+=1.6*dt;
+  kiteAngle=Math.max(-80,Math.min(80,kiteAngle));
+
+  const diff=Math.abs(kiteAngle-windAngle);
+  const efficiency=Math.max(0,1-diff/85);
+  const speed=2.2+efficiency*5.2;
+  dist+=speed*dt*0.12;
+  control+=(efficiency-0.42)*0.35*dt;
+  control=Math.max(0,Math.min(100,control));
+
+  wavePhase+=dt*0.045*(1+efficiency*0.6);
+  drawWater(wavePhase);
+
+  // crest detection at kiter's x
+  const wy=waveY(400,wavePhase);
+  onCrestFlash = wy < -20 ? 1 : 0;
+
+  if(inAir){
+    airTime+=dt;
+    if(keys['ArrowUp']&&!airKeys.has('up')){airKeys.add('up');tricks++;SFX.coin();}
+    if(keys['ArrowDown']&&!airKeys.has('down')){airKeys.add('down');tricks++;SFX.coin();}
+    if(airTime>40){inAir=false;SFX.land();}
+  }
+
+  drawKiter(400,base+wy*0.6-(inAir?Math.min(airTime,40)*1.1:0),kiteAngle);
+
+  if(onCrestFlash>0 && !inAir){
+    ctx.fillStyle='#ffd54f';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('crest_hint','CREST! Press SPACE'),400,base-90);
+  }
+
+  if(control<=0 && !gameOver){
+    gameOver=true;SFX.lose();
+    if(dist>best){best=dist;localStorage.setItem('kitesurfing_best',String(best));}
+  }
+
+  document.getElementById('bar').style.width=control+'%';
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function drawWater(phase){
+  ctx.fillStyle='#0b5e78';
+  ctx.beginPath();ctx.moveTo(0,H);
+  for(let x=0;x<=W;x+=10){ctx.lineTo(x,base+waveY(x,phase));}
+  ctx.lineTo(W,H);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.35)';ctx.lineWidth=2;
+  ctx.beginPath();
+  for(let x=0;x<=W;x+=10){const y=base+waveY(x,phase);x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+  ctx.stroke();
+}
+
+function drawCompass(){
+  ctx.save();
+  ctx.translate(730,50);
+  ctx.strokeStyle='rgba(255,255,255,.4)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(0,0,30,0,Math.PI*2);ctx.stroke();
+  ctx.rotate(windAngle*Math.PI/180);
+  ctx.strokeStyle='#7ed6ff';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(0,20);ctx.lineTo(0,-20);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,-20);ctx.lineTo(-6,-10);ctx.moveTo(0,-20);ctx.lineTo(6,-10);ctx.stroke();
+  ctx.restore();
+  ctx.save();
+  ctx.translate(730,50);ctx.rotate(kiteAngle*Math.PI/180);
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(0,14);ctx.lineTo(0,-14);ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('wind_label','WIND'),730,92);
+}
+
+function drawKiter(x,y,angle){
+  // kite lines
+  const kx=x+Math.sin(angle*Math.PI/180)*90;
+  const ky=y-70-Math.cos(angle*Math.PI/180)*40;
+  ctx.strokeStyle='rgba(255,255,255,.5)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(x,y-16);ctx.lineTo(kx,ky);ctx.stroke();
+  ctx.save();
+  ctx.translate(kx,ky);ctx.rotate(angle*Math.PI/180*0.6);
+  ctx.fillStyle='#ff5e5e';
+  ctx.beginPath();ctx.moveTo(0,-14);ctx.lineTo(26,6);ctx.lineTo(0,14);ctx.lineTo(-26,6);ctx.closePath();ctx.fill();
+  ctx.restore();
+  // rider
+  ctx.fillStyle='#222';ctx.fillRect(x-6,y-16,12,20);
+  ctx.fillStyle='#ffcc99';ctx.beginPath();ctx.arc(x,y-20,6,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#111';ctx.fillRect(x-14,y,28,4);
+}
+
+function updateHud(){
+  document.getElementById('score-display').textContent=I18N.t('kitesurf_hud','Distance: {d}m | Tricks: {t}').replace('{d}',Math.floor(dist)).replace('{t}',tricks);
+  document.getElementById('hi-display').textContent=I18N.t('best_label','Best: {b}m').replace('{b}',Math.floor(best));
+}
+
+requestAnimationFrame(loop);
+</script></body></html>

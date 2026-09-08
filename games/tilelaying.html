@@ -1,0 +1,213 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Tile Laying</title><meta name="description" content="Play Tile Laying free online — Pick a tile color from the palette and click a grid cell to lay it, matching the reference pattern shown above. Edge cells need a quick precision cut. Wrong placement costs points!"><link rel="canonical" href="https://games.multiportllc.com/games/tilelaying"><meta property="og:title" content="Tile Laying - Multiport Games"><meta property="og:description" content="Play Tile Laying free online — Pick a tile color from the palette and click a grid cell to lay it, matching the reference pattern shown above. Edge cells need a quick precision cut. Wrong placement costs points!"><meta property="og:url" content="https://games.multiportllc.com/games/tilelaying"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Tile Laying","description":"Play Tile Laying free online instantly. Pick a tile from the palette and click a grid cell to lay it, matching the reference pattern shown above, with grout lines keeping even spacing. Edge cells need a quick precision cut to fit. Wrong placement costs points. Tile full floors correctly to score, with more intricate patterns each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/tilelaying","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:16px;text-align:center;max-width:640px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;font-size:.95rem;padding:0 6px 10px;flex-wrap:wrap;gap:4px}
+#hud span{color:#ffd54f}
+#boards{display:flex;gap:18px;justify-content:center;flex-wrap:wrap;margin-bottom:12px}
+.boardCol{display:flex;flex-direction:column;align-items:center}
+.boardLabel{color:#ccc;font-size:.75rem;font-weight:800;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}
+.grid{display:grid;gap:3px;background:#0b3d2e;padding:6px;border-radius:8px}
+.cell{width:32px;height:32px;border-radius:3px;background:#e8dcc8;transition:transform .1s}
+.cell.edge{outline:2px dashed rgba(255,213,79,.6);outline-offset:-2px}
+.cell.needcut{position:relative}
+.cell.needcut::after{content:'✂';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.7rem;color:#3a2f28}
+#refGrid .cell{cursor:default}
+#playGrid .cell{cursor:pointer}
+#playGrid .cell:hover{transform:scale(1.08)}
+#palette{display:flex;gap:8px;justify-content:center;margin-bottom:10px;flex-wrap:wrap}
+.swatchBtn{width:40px;height:40px;border-radius:8px;border:3px solid transparent;cursor:pointer}
+.swatchBtn.active{border-color:#ffd54f;transform:scale(1.1)}
+#msg{min-height:1.4em;color:#ffd54f;font-weight:800;margin-top:4px}
+#controls{margin-top:6px}
+#controls button{padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Tile Laying</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><div>Score: <span id="score">0</span></div><div>Best: <span id="best">0</span></div><div>Floor <span id="floornum">1</span></div></div>
+      <div id="boards">
+        <div class="boardCol"><div class="boardLabel">Reference</div><div class="grid" id="refGrid"></div></div>
+        <div class="boardCol"><div class="boardLabel">Your Floor</div><div class="grid" id="playGrid"></div></div>
+      </div>
+      <div id="palette"></div>
+      <div id="msg">Pick a tile color, then click a cell to lay it — match the reference!</div>
+      <div id="controls"><button id="restartBtn">New Game</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Pick a tile color from the palette, then click a cell on your floor to lay it, matching the reference pattern shown alongside — keep the grout lines even. Border cells marked with scissors need an extra click to cut them to fit. Wrong placement costs points, so check the reference carefully. Tile full floors correctly to score — more intricate patterns each round.</div>
+</div>
+<script>
+const refGridEl=document.getElementById('refGrid');
+const playGridEl=document.getElementById('playGrid');
+const paletteEl=document.getElementById('palette');
+const scoreEl=document.getElementById('score'),bestEl=document.getElementById('best'),floornumEl=document.getElementById('floornum');
+const msgEl=document.getElementById('msg');
+let best=parseInt(localStorage.getItem('tilelaying_best')||'0',10);
+bestEl.textContent=best;
+
+const COLORS=['#e94560','#2d5a27','#1976d2','#ff8f00','#8e24aa','#00838f'];
+
+let score=0,floorIndex=0,size,pattern,playerGrid,cutDone,selectedColor,cellsTotal,placedCount;
+
+function genPattern(n){
+  const p=[];
+  for(let r=0;r<n;r++){
+    const row=[];
+    for(let c=0;c<n;c++){
+      // deterministic-ish based on position + floorIndex for variety, but randomized per game
+      row.push(Math.floor(Math.random()*Math.min(2+floorIndex,COLORS.length)));
+    }
+    p.push(row);
+  }
+  return p;
+}
+
+function isEdge(r,c){ return r===0||c===0||r===size-1||c===size-1; }
+
+function setupFloor(){
+  size=Math.min(3+Math.floor(floorIndex/1),7);
+  size=Math.min(3+floorIndex,7);
+  pattern=genPattern(size);
+  playerGrid=Array.from({length:size},()=>new Array(size).fill(-1));
+  cutDone=Array.from({length:size},()=>new Array(size).fill(false));
+  selectedColor=0;
+  cellsTotal=size*size;
+  placedCount=0;
+  renderPalette();
+  renderGrids();
+}
+
+function renderPalette(){
+  paletteEl.innerHTML='';
+  const numColors=Math.min(2+floorIndex,COLORS.length);
+  for(let i=0;i<numColors;i++){
+    const b=document.createElement('div');
+    b.className='swatchBtn'+(selectedColor===i?' active':'');
+    b.style.background=COLORS[i];
+    b.onclick=()=>{selectedColor=i;SFX.select();renderPalette();};
+    paletteEl.appendChild(b);
+  }
+}
+
+function renderGrids(){
+  refGridEl.style.gridTemplateColumns=`repeat(${size},32px)`;
+  playGridEl.style.gridTemplateColumns=`repeat(${size},32px)`;
+  refGridEl.innerHTML='';
+  playGridEl.innerHTML='';
+  for(let r=0;r<size;r++){
+    for(let c=0;c<size;c++){
+      const rc=document.createElement('div');
+      rc.className='cell';
+      rc.style.background=COLORS[pattern[r][c]];
+      refGridEl.appendChild(rc);
+
+      const pc=document.createElement('div');
+      const edge=isEdge(r,c);
+      pc.className='cell'+(edge?' edge':'');
+      if(playerGrid[r][c]>=0){
+        pc.style.background=COLORS[playerGrid[r][c]];
+        if(edge&&!cutDone[r][c])pc.classList.add('needcut');
+      } else {
+        pc.style.background='#e8dcc8';
+      }
+      pc.onclick=()=>placeTile(r,c);
+      playGridEl.appendChild(pc);
+    }
+  }
+}
+
+function placeTile(r,c){
+  const edge=isEdge(r,c);
+  if(playerGrid[r][c]>=0 && (!edge || cutDone[r][c])){
+    return; // already fully placed
+  }
+  if(playerGrid[r][c]>=0 && edge && !cutDone[r][c]){
+    // second click = cut to fit
+    cutDone[r][c]=true;
+    SFX.click();
+    score+=5;
+    scoreEl.textContent=score;
+    renderGrids();
+    checkComplete();
+    return;
+  }
+  // first placement
+  if(selectedColor===pattern[r][c]){
+    playerGrid[r][c]=selectedColor;
+    SFX.click();
+    score+=10;
+    msgEl.textContent=I18N.t('tl_good','Nice match!');
+    placedCount++;
+  } else {
+    playerGrid[r][c]=selectedColor;
+    score=Math.max(0,score-6);
+    SFX.error();
+    msgEl.textContent=I18N.t('tl_wrong','Wrong color for this spot! Check the reference.');
+    placedCount++;
+  }
+  scoreEl.textContent=score;
+  renderGrids();
+  checkComplete();
+}
+
+function checkComplete(){
+  let done=true;
+  for(let r=0;r<size;r++){
+    for(let c=0;c<size;c++){
+      if(playerGrid[r][c]<0){done=false;break;}
+      if(isEdge(r,c)&&!cutDone[r][c]){done=false;break;}
+    }
+    if(!done)break;
+  }
+  if(done)finishFloor();
+}
+
+function finishFloor(){
+  let correct=0;
+  for(let r=0;r<size;r++)for(let c=0;c<size;c++)if(playerGrid[r][c]===pattern[r][c])correct++;
+  const accuracy=correct/cellsTotal;
+  const bonus=Math.floor(accuracy*50);
+  score+=bonus;
+  scoreEl.textContent=score;
+  SFX.win();
+  msgEl.textContent=I18N.t('tl_floor_done','Floor complete! {p}% accurate 🎉').replace('{p}',Math.floor(accuracy*100));
+  if(score>best){best=score;localStorage.setItem('tilelaying_best',best);bestEl.textContent=best;}
+  setTimeout(()=>{
+    floorIndex++;
+    floornumEl.textContent=floorIndex+1;
+    setupFloor();
+    msgEl.textContent=I18N.t('tl_next','Next floor — a trickier pattern!');
+  },1400);
+}
+
+function newGame(){
+  score=0;floorIndex=0;
+  scoreEl.textContent=0;
+  floornumEl.textContent=1;
+  setupFloor();
+  msgEl.textContent=I18N.t('tl_start','Pick a tile color, then click a cell to lay it — match the reference!');
+}
+
+document.getElementById('restartBtn').onclick=newGame;
+
+document.addEventListener('keydown',e=>{
+  const n=parseInt(e.key,10);
+  const numColors=Math.min(2+floorIndex,COLORS.length);
+  if(!isNaN(n)&&n>=1&&n<=numColors){
+    selectedColor=n-1;
+    SFX.select();
+    renderPalette();
+  }
+});
+
+newGame();
+</script></body></html>
