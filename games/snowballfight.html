@@ -1,0 +1,294 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Snowball Fight</title><meta name="description" content="Play Snowball Fight free online — Move with WASD or Arrow keys (or drag on mobile), click/tap to throw snowballs at the AI opponents, and duck behind snow forts for cover. Hit opponents and dodge incoming snowballs before your health runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/snowballfight"><meta property="og:title" content="Snowball Fight - Multiport Games"><meta property="og:description" content="Play Snowball Fight free online — Move with WASD or Arrow keys (or drag on mobile), click/tap to throw snowballs at the AI opponents, and duck behind snow forts for cover. Hit opponents and dodge incoming snowballs before your health runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/snowballfight"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Snowball Fight","description":"Play Snowball Fight free online instantly. Move with WASD or Arrow keys (or drag on mobile), click/tap to throw snowballs at the AI opponents, and duck behind snow forts for cover. Hit opponents and dodge incoming snowballs before your health runs out! No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/snowballfight","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:700;padding:8px 14px;font-size:.95rem;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffd54f}
+#healthBar{width:140px;height:14px;border-radius:7px;background:#333;overflow:hidden;border:1px solid rgba(255,255,255,.2)}
+#healthFill{height:100%;background:#4caf50;width:100%;transition:width .15s}
+#c{background:#cfe8f5;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Snowball Fight</div>
+  <div class="game-frame">
+    <div id="hud"><div>Health <div id="healthBar"><div id="healthFill"></div></div></div><div>Hits: <span id="hits">0</span></div><div>Score: <span id="score">0</span></div><div>Hi: <span id="hiScore">0</span></div></div>
+    <canvas id="c" width="860" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Move with <b>WASD or Arrow keys</b> (or drag anywhere on mobile). <b>Click/tap</b> a spot to throw a snowball toward it. Duck behind the <b>snow forts</b> (gray mounds) to block incoming snowballs — they can't hit you while you're behind one. Score points for every opponent you hit; lose health when you get hit. Survive and rack up hits before your health reaches zero — more opponents join as your score climbs!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=860,H=440;
+const KEY='snowballfight_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+document.getElementById('hiScore').textContent=hi;
+
+let score=0,hits=0,health=100,gameOver=false,started=false;
+let player={x:W/2,y:H-60,r:16,speed:3.2};
+let enemies=[];
+let snowballs=[]; // {x,y,vx,vy,owner,r}
+let forts=[];
+let lastTime=null;
+let spawnTimer=0;
+let keys={};
+
+function buildForts(){
+  forts=[
+    {x:180,y:230,r:36},
+    {x:430,y:150,r:32},
+    {x:680,y:230,r:36},
+    {x:300,y:330,r:28},
+    {x:560,y:330,r:28}
+  ];
+}
+
+function behindFort(x,y){
+  return forts.some(f=>Math.hypot(f.x-x,f.y-y)<f.r);
+}
+
+function spawnEnemy(){
+  const side=Math.floor(Math.random()*3);
+  let x,y;
+  if(side===0){x=20+Math.random()*(W-40);y=20;}
+  else if(side===1){x=20;y=40+Math.random()*160;}
+  else {x=W-20;y=40+Math.random()*160;}
+  enemies.push({x,y,r:15,hp:1,throwCd:60+Math.random()*60,speed:0.6+Math.random()*0.5,dir:Math.random()*Math.PI*2});
+}
+
+function reset(){
+  score=0;hits=0;health=100;gameOver=false;started=false;
+  document.getElementById('score').textContent=0;
+  document.getElementById('hits').textContent=0;
+  document.getElementById('healthFill').style.width='100%';
+  player.x=W/2;player.y=H-60;
+  enemies=[];snowballs=[];
+  buildForts();
+  spawnEnemy();spawnEnemy();
+  spawnTimer=0;
+}
+reset();
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(!started){started=true;}
+  if(gameOver&&['Space','Enter'].includes(e.code)){reset();started=true;}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function throwSnowballFromPlayer(tx,ty){
+  if(gameOver)return;
+  if(!started){started=true;return;}
+  const dx=tx-player.x,dy=ty-player.y;
+  const dist=Math.hypot(dx,dy)||1;
+  const spd=7;
+  snowballs.push({x:player.x,y:player.y-10,vx:dx/dist*spd,vy:dy/dist*spd,owner:'player',r:6});
+  SFX.swoosh();
+}
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const t=e.changedTouches?e.changedTouches[0]:e;
+  return {x:(t.clientX-r.left)*(W/r.width),y:(t.clientY-r.top)*(H/r.height)};
+}
+
+let touchDragStart=null;
+c.addEventListener('mousedown',e=>{
+  if(gameOver){reset();started=true;return;}
+  const p=pointerPos(e);
+  throwSnowballFromPlayer(p.x,p.y);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){reset();started=true;return;}
+  const p=pointerPos(e);
+  touchDragStart={x:p.x,y:p.y,moved:false,t:performance.now()};
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(!touchDragStart)return;
+  const p=pointerPos(e);
+  const dx=p.x-touchDragStart.x,dy=p.y-touchDragStart.y;
+  if(Math.hypot(dx,dy)>6){
+    touchDragStart.moved=true;
+    player.x=Math.max(player.r,Math.min(W-player.r,player.x+dx*0.5));
+    player.y=Math.max(H*0.5,Math.min(H-player.r,player.y+dy*0.5));
+    touchDragStart.x=p.x;touchDragStart.y=p.y;
+  }
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  e.preventDefault();
+  if(!started){started=true;touchDragStart=null;return;}
+  if(touchDragStart&&!touchDragStart.moved){
+    const p=pointerPos(e);
+    throwSnowballFromPlayer(p.x,p.y);
+  }
+  touchDragStart=null;
+},{passive:false});
+
+function updatePlayer(dt){
+  let dx=0,dy=0;
+  if(keys['KeyW']||keys['ArrowUp'])dy-=1;
+  if(keys['KeyS']||keys['ArrowDown'])dy+=1;
+  if(keys['KeyA']||keys['ArrowLeft'])dx-=1;
+  if(keys['KeyD']||keys['ArrowRight'])dx+=1;
+  const len=Math.hypot(dx,dy)||1;
+  player.x+=dx/len*player.speed*dt;
+  player.y+=dy/len*player.speed*dt;
+  player.x=Math.max(player.r,Math.min(W-player.r,player.x));
+  player.y=Math.max(H*0.45,Math.min(H-player.r,player.y));
+}
+
+function updateEnemies(dt){
+  enemies.forEach(en=>{
+    en.dir+=(Math.random()-0.5)*0.1;
+    en.x+=Math.cos(en.dir)*en.speed*dt;
+    en.y+=Math.sin(en.dir)*en.speed*dt*0.5;
+    en.x=Math.max(en.r,Math.min(W-en.r,en.x));
+    en.y=Math.max(20,Math.min(H*0.5,en.y));
+    en.throwCd-=dt;
+    if(en.throwCd<=0){
+      en.throwCd=70+Math.random()*70-Math.min(30,score/50);
+      const dx=player.x-en.x,dy=player.y-en.y;
+      const dist=Math.hypot(dx,dy)||1;
+      const spd=4.5;
+      snowballs.push({x:en.x,y:en.y,vx:dx/dist*spd,vy:dy/dist*spd,owner:'enemy',r:6});
+    }
+  });
+}
+
+function updateSnowballs(dt){
+  snowballs=snowballs.filter(s=>s.x>-20&&s.x<W+20&&s.y>-20&&s.y<H+20);
+  snowballs.forEach(s=>{
+    s.x+=s.vx*dt;s.y+=s.vy*dt;
+    if(behindFort(s.x,s.y)){s.dead=true;return;}
+    if(s.owner==='player'){
+      enemies.forEach(en=>{
+        if(!s.dead&&!en.dead&&Math.hypot(en.x-s.x,en.y-s.y)<en.r+s.r){
+          en.dead=true;s.dead=true;
+          hits++;score+=25;
+          document.getElementById('hits').textContent=hits;
+          document.getElementById('score').textContent=score;
+          SFX.hit();
+        }
+      });
+    } else if(s.owner==='enemy'){
+      if(!s.dead&&Math.hypot(player.x-s.x,player.y-s.y)<player.r+s.r){
+        s.dead=true;
+        health=Math.max(0,health-12);
+        document.getElementById('healthFill').style.width=health+'%';
+        document.getElementById('healthFill').style.background=health>50?'#4caf50':health>20?'#ffb300':'#e94560';
+        SFX.hurt();
+      }
+    }
+  });
+  snowballs=snowballs.filter(s=>!s.dead);
+  enemies=enemies.filter(en=>!en.dead);
+}
+
+function drawScene(){
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#bcd9ef');sky.addColorStop(1,'#e8f4fb');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // ground snow texture dots
+  ctx.fillStyle='rgba(255,255,255,0.6)';
+  for(let i=0;i<40;i++){
+    const x=(i*173)%W, y=((i*97)%H);
+    ctx.beginPath();ctx.arc(x,y,2,0,Math.PI*2);ctx.fill();
+  }
+  forts.forEach(f=>{
+    ctx.fillStyle='#e0ecf2';
+    ctx.beginPath();ctx.ellipse(f.x,f.y,f.r,f.r*0.7,0,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#b8c9d6';ctx.lineWidth=2;ctx.stroke();
+  });
+}
+
+function drawPlayer(){
+  ctx.fillStyle='#e94560';
+  ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffe0c2';
+  ctx.beginPath();ctx.arc(player.x,player.y-player.r-4,8,0,Math.PI*2);ctx.fill();
+}
+
+function drawEnemy(en){
+  ctx.fillStyle='#2196f3';
+  ctx.beginPath();ctx.arc(en.x,en.y,en.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffe0c2';
+  ctx.beginPath();ctx.arc(en.x,en.y-en.r-4,7,0,Math.PI*2);ctx.fill();
+}
+
+function drawSnowball(s){
+  ctx.fillStyle='#fff';
+  ctx.strokeStyle='#9ab';
+  ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fill();ctx.stroke();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawScene();
+
+  if(!started){
+    drawPlayer();
+    forts.forEach(()=>{});
+    enemies.forEach(drawEnemy);
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Move with WASD/Arrows, click/tap to throw'),W/2,H/2);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawPlayer();
+    enemies.forEach(drawEnemy);
+    ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','ELIMINATED!'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press Space/Enter or tap to try again'),W/2,H/2+24);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  updatePlayer(dt);
+  updateEnemies(dt);
+  updateSnowballs(dt);
+
+  spawnTimer+=dt;
+  const maxEnemies=Math.min(6,2+Math.floor(score/100));
+  if(spawnTimer>140&&enemies.length<maxEnemies){
+    spawnTimer=0;
+    spawnEnemy();
+  }
+
+  forts.forEach(()=>{});
+  enemies.forEach(drawEnemy);
+  snowballs.forEach(drawSnowball);
+  drawPlayer();
+  // redraw forts on top for cover feel
+  forts.forEach(f=>{
+    ctx.fillStyle='rgba(224,236,242,0.55)';
+    ctx.beginPath();ctx.ellipse(f.x,f.y,f.r,f.r*0.7,0,0,Math.PI*2);ctx.fill();
+  });
+
+  if(health<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(KEY,hi);document.getElementById('hiScore').textContent=hi;}
+    SFX.lose();
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

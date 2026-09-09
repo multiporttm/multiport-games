@@ -1,0 +1,312 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Netball</title><meta name="description" content="Play Netball free online — Move with Arrow keys/WASD or drag. Get inside the shooting circle and tap/click to shoot. Tap outside the circle to dash-pass upcourt. Don't hold the ball too long — beat the shot clock and dodge defenders!"><link rel="canonical" href="https://games.multiportllc.com/games/netball"><meta property="og:title" content="Netball - Multiport Games"><meta property="og:description" content="Play Netball free online — Move with Arrow keys/WASD or drag. Get inside the shooting circle and tap/click to shoot. Tap outside the circle to dash-pass upcourt. Don't hold the ball too long — beat the shot clock and dodge defenders!"><meta property="og:url" content="https://games.multiportllc.com/games/netball"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Netball","description":"Play Netball free online instantly. Move with Arrow keys/WASD or drag. Get inside the shooting circle and tap/click to shoot. Tap outside the circle to dash-pass upcourt. Don't hold the ball too long — beat the shot clock and dodge defenders! No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/netball","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{display:block;border-radius:8px;touch-action:none;background:#1d5c3a}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;font-size:1rem;padding:6px 10px;max-width:480px;margin:0 auto}
+#hud span{color:#ffd54f}
+#clockbar{width:100%;height:6px;background:rgba(255,255,255,.15);border-radius:3px;overflow:hidden;max-width:480px;margin:0 auto 4px}
+#clockfill{height:100%;background:#ffd54f;width:100%;transition:width .08s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Netball</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="hud"><div>Score: <span id="scoreVal">0</span></div><div>Level: <span id="levelVal">1</span></div><div>Time: <span id="timeVal">75</span>s</div></div>
+    <div id="clockbar"><div id="clockfill"></div></div>
+    <canvas id="c" width="480" height="640"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move with <b>Arrow keys/WASD</b> or drag. Get inside the shooting circle and <b>tap/click</b> to shoot. Tap outside the circle to dash-pass upcourt. Don't hold the ball too long — beat the shot clock and dodge defenders!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const HOOP={x:W/2,y:70};
+const CIRCLE_R=140;
+const KEY='netball_best';
+let best=parseInt(localStorage.getItem(KEY)||'0',10);
+
+let score=0,level=1,matchTime=75,state='idle',flashMsg='',flashTimer=0;
+let player={x:W/2,y:H-90,r:16};
+let ball={x:player.x,y:player.y,inFlight:false,fx:0,fy:0,tx:0,ty:0,t:0,dur:0};
+let defenders=[];
+let holdMs=0,HOLD_MAX=3200;
+let dashCooldown=0;
+let keys={};
+let pointer={active:false,x:player.x,y:player.y};
+let lastTime=null,matchAccum=0;
+
+function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+function dist(ax,ay,bx,by){return Math.hypot(ax-bx,ay-by);}
+
+function spawnDefenders(){
+  defenders=[];
+  const n=Math.min(1+level,5);
+  for(let i=0;i<n;i++){
+    defenders.push({x:80+Math.random()*(W-160),y:120+Math.random()*180,speed:1.6+level*0.28+Math.random()*0.4});
+  }
+}
+
+function resetPossession(pushBack){
+  ball.inFlight=false;
+  holdMs=HOLD_MAX;
+  if(pushBack){ player.x=W/2; player.y=H-90; }
+  ball.x=player.x; ball.y=player.y;
+}
+
+function startGame(){
+  score=0;level=1;matchTime=75;state='play';flashMsg='';flashTimer=0;
+  player={x:W/2,y:H-90,r:16};
+  spawnDefenders();
+  resetPossession(false);
+  lastTime=null;matchAccum=0;dashCooldown=0;
+}
+
+function flash(msg){flashMsg=msg;flashTimer=90;}
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  if(e.code==='Space'&&state!=='play'){startGame();}
+});
+document.addEventListener('keyup',e=>keys[e.code]=false);
+
+function getPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*W/rect.width,y:(cy-rect.top)*H/rect.height};
+}
+
+let dragStart=null,dragMoved=false;
+function pdown(e){
+  e.preventDefault();
+  const p=getPos(e);
+  if(state!=='play'){startGame();return;}
+  dragStart=p;dragMoved=false;
+  pointer.active=true;pointer.x=p.x;pointer.y=p.y;
+}
+function pmove(e){
+  if(!pointer.active)return;
+  e.preventDefault();
+  const p=getPos(e);
+  if(dragStart&&dist(p.x,p.y,dragStart.x,dragStart.y)>6)dragMoved=true;
+  pointer.x=p.x;pointer.y=p.y;
+}
+function pup(e){
+  if(state==='play'&&!dragMoved)tapAction();
+  pointer.active=false;dragStart=null;
+}
+c.addEventListener('mousedown',pdown);
+c.addEventListener('mousemove',pmove);
+window.addEventListener('mouseup',pup);
+c.addEventListener('touchstart',pdown,{passive:false});
+c.addEventListener('touchmove',pmove,{passive:false});
+c.addEventListener('touchend',pup);
+c.addEventListener('touchcancel',()=>{pointer.active=false;});
+
+function inCircle(x,y){return dist(x,y,HOOP.x,HOOP.y)<=CIRCLE_R;}
+
+function tapAction(){
+  if(ball.inFlight)return;
+  if(inCircle(player.x,player.y)){
+    shoot();
+  } else {
+    dashPass();
+  }
+}
+
+function dashPass(){
+  if(dashCooldown>0)return;
+  SFX.catch();
+  const dx=HOOP.x-player.x,dy=HOOP.y-player.y;
+  const d=Math.hypot(dx,dy)||1;
+  const moveDist=Math.min(150,d*0.55);
+  player.x+=dx/d*moveDist;
+  player.y+=dy/d*moveDist;
+  player.x=clamp(player.x,20,W-20);
+  player.y=clamp(player.y,90,H-40);
+  ball.x=player.x;ball.y=player.y;
+  holdMs=Math.min(HOLD_MAX,holdMs+900);
+  dashCooldown=45;
+  flash(I18N.t('nb_pass','Nice pass upcourt!'));
+}
+
+function shoot(){
+  const d=dist(player.x,player.y,HOOP.x,HOOP.y);
+  const chance=clamp(1-d/CIRCLE_R,0.15,0.93);
+  ball.inFlight=true;
+  ball.fx=player.x;ball.fy=player.y;
+  ball.tx=HOOP.x;ball.ty=HOOP.y-10;
+  ball.t=0;ball.dur=26;
+  ball.willScore=Math.random()<chance;
+  SFX.swoosh();
+}
+
+function resolveShot(){
+  ball.inFlight=false;
+  if(ball.willScore){
+    score++;
+    SFX.success();
+    if(score%3===0){level++;spawnDefenders();SFX.powerup();flash(I18N.t('nb_tougher','Defense is tougher now!'));}
+    else flash(I18N.t('nb_goal','GOAL!'));
+  } else {
+    SFX.fail();
+    flash(I18N.t('nb_miss','Missed — rebounded!'));
+  }
+  player.x=W/2;player.y=H-90;
+  resetPossession(false);
+}
+
+function endGame(){
+  state='over';
+  if(score>best){best=score;localStorage.setItem(KEY,String(best));SFX.win();}
+  else SFX.lose();
+}
+
+function update(dt){
+  if(dashCooldown>0)dashCooldown-=dt;
+  if(flashTimer>0)flashTimer-=dt;
+
+  matchAccum+=dt/60;
+  if(matchAccum>=1){matchAccum-=1;matchTime--; if(matchTime<=0){matchTime=0;endGame();return;}}
+
+  if(ball.inFlight){
+    ball.t+=dt;
+    const p=Math.min(1,ball.t/ball.dur);
+    ball.x=ball.fx+(ball.tx-ball.fx)*p;
+    ball.y=ball.fy+(ball.ty-ball.fy)*p-Math.sin(p*Math.PI)*60;
+    if(p>=1)resolveShot();
+    return;
+  }
+
+  // movement
+  let dx=0,dy=0;
+  if(keys['ArrowLeft']||keys['KeyA'])dx-=1;
+  if(keys['ArrowRight']||keys['KeyD'])dx+=1;
+  if(keys['ArrowUp']||keys['KeyW'])dy-=1;
+  if(keys['ArrowDown']||keys['KeyS'])dy+=1;
+  if(dx||dy){
+    const len=Math.hypot(dx,dy)||1;
+    player.x+=(dx/len)*4.2*dt;
+    player.y+=(dy/len)*4.2*dt;
+  } else if(pointer.active){
+    const ddx=pointer.x-player.x,ddy=pointer.y-player.y;
+    const dd=Math.hypot(ddx,ddy);
+    if(dd>3){player.x+=ddx*0.18*dt;player.y+=ddy*0.18*dt;}
+  }
+  player.x=clamp(player.x,20,W-20);
+  player.y=clamp(player.y,90,H-30);
+  ball.x=player.x;ball.y=player.y;
+
+  // shot clock
+  holdMs-=dt*16.6667;
+  if(holdMs<=0){
+    holdMs=0;
+    SFX.hurt();
+    flash(I18N.t('nb_turnover_clock','Held too long — turnover!'));
+    player.x=W/2;player.y=H-90;
+    resetPossession(false);
+    return;
+  }
+
+  // defenders chase
+  defenders.forEach(d=>{
+    const ddx=player.x-d.x,ddy=player.y-d.y;
+    const dd=Math.hypot(ddx,ddy)||1;
+    d.x+=(ddx/dd)*d.speed*dt;
+    d.y+=(ddy/dd)*d.speed*dt;
+    d.y=clamp(d.y,90,H-60);
+    if(dd<player.r+16){
+      SFX.hit();
+      flash(I18N.t('nb_turnover_steal','Stolen! Turnover.'));
+      player.x=W/2;player.y=H-90;
+      resetPossession(false);
+      spawnDefenders();
+    }
+  });
+}
+
+function drawCourt(){
+  ctx.fillStyle='#1d5c3a';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,.55)';ctx.lineWidth=3;
+  ctx.strokeRect(10,10,W-20,H-20);
+  // shooting circle
+  ctx.beginPath();ctx.arc(HOOP.x,HOOP.y,CIRCLE_R,0,Math.PI*2);ctx.stroke();
+  // thirds line
+  ctx.beginPath();ctx.moveTo(10,H*0.62);ctx.lineTo(W-10,H*0.62);ctx.setLineDash([10,8]);ctx.stroke();ctx.setLineDash([]);
+  // goal post + ring
+  ctx.strokeStyle='#eee';ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(HOOP.x,HOOP.y-10);ctx.lineTo(HOOP.x,HOOP.y-46);ctx.stroke();
+  ctx.beginPath();ctx.ellipse(HOOP.x,HOOP.y-10,22,8,0,0,Math.PI*2);ctx.strokeStyle='#ffd54f';ctx.lineWidth=4;ctx.stroke();
+}
+
+function drawDefender(d){
+  ctx.beginPath();ctx.arc(d.x,d.y,15,0,Math.PI*2);
+  ctx.fillStyle='#e94560';ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText('D',d.x,d.y+4);
+}
+
+function drawPlayer(){
+  ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);
+  ctx.fillStyle='#66c0f4';ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+  ctx.fillStyle='#0d1b2e';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText('GA',player.x,player.y+4);
+}
+
+function drawBall(){
+  ctx.beginPath();ctx.arc(ball.x,ball.y-(ball.inFlight?0:0),9,0,Math.PI*2);
+  ctx.fillStyle='#ffb703';ctx.fill();
+  ctx.strokeStyle='#8a5500';ctx.lineWidth=1.5;ctx.stroke();
+}
+
+function drawOverlay(title,sub){
+  ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#ffd54f';ctx.font='bold 30px Arial';ctx.textAlign='center';
+  ctx.fillText(title,W/2,H/2-16);
+  ctx.fillStyle='#fff';ctx.font='18px Arial';ctx.fillText(sub,W/2,H/2+20);
+}
+
+function render(){
+  drawCourt();
+  defenders.forEach(drawDefender);
+  drawPlayer();
+  if(!ball.inFlight){
+    // draw ball near player unless we already drew via player pos
+  }
+  drawBall();
+
+  if(flashTimer>0){
+    ctx.fillStyle='rgba(255,255,255,.9)';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,40);
+  }
+
+  document.getElementById('scoreVal').textContent=score;
+  document.getElementById('levelVal').textContent=level;
+  document.getElementById('timeVal').textContent=Math.ceil(matchTime);
+  document.getElementById('clockfill').style.width=Math.max(0,(holdMs/HOLD_MAX*100))+'%';
+
+  if(state==='idle'){
+    drawOverlay(I18N.t('nb_title','NETBALL'),I18N.t('nb_start_hint','Tap / Space to start'));
+  } else if(state==='over'){
+    drawOverlay(I18N.t('nb_over','TIME UP!'),I18N.t('nb_final','Score: {s}  Best: {b}').replace('{s}',score).replace('{b}',best));
+  }
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  if(state==='play')update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

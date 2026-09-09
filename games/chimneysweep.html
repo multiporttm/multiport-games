@@ -1,0 +1,309 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Chimney Sweep</title><meta name="description" content="Play Chimney Sweep free online — Drag up and down (or use Arrow keys / W-S) to push the brush along the flue and scrape off soot. Watch the coverage meter, and mash the wiggle button if the brush gets snagged. Clean each chimney before time runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/chimneysweep"><meta property="og:title" content="Chimney Sweep - Multiport Games"><meta property="og:description" content="Play Chimney Sweep free online — Drag up and down (or use Arrow keys / W-S) to push the brush along the flue and scrape off soot. Watch the coverage meter, and mash the wiggle button if the brush gets snagged. Clean each chimney before time runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/chimneysweep"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Chimney Sweep","description":"Play Chimney Sweep free online instantly. Drag up and down (or use Arrow keys / W-S) to push the brush along the flue and scrape off soot. Watch the coverage meter, and mash the wiggle button if the brush gets snagged. Clean each chimney before time runs out! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/chimneysweep","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;padding:10px 16px;font-weight:700;font-size:.95rem;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffb74d}
+#covWrap{flex:1;min-width:120px;height:14px;background:#222;border-radius:8px;overflow:hidden;margin:0 10px}
+#covBar{height:100%;width:0%;background:linear-gradient(90deg,#5aaa30,#7ec850);transition:width .12s}
+#stage{position:relative;padding:0 0 14px}
+#c{background:#1a1410;display:block;margin:0 auto;touch-action:none;cursor:grab}
+#snagBtn{display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:14px 26px;font-size:1.1rem;font-weight:800;border:none;border-radius:14px;background:#e94560;color:#fff;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.5);animation:pulse 0.5s infinite alternate}
+@keyframes pulse{from{transform:translate(-50%,-50%) scale(1)}to{transform:translate(-50%,-50%) scale(1.08)}}
+#msg{position:absolute;left:0;right:0;top:40%;text-align:center;color:#fff;font-size:1.6rem;font-weight:900;text-shadow:0 2px 8px #000;pointer-events:none}
+#roundInfo{color:#bbb;font-size:.8rem;text-align:center;padding-bottom:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Chimney Sweep</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div>Chimney <span id="roundNum">1</span></div>
+      <div id="covWrap"><div id="covBar"></div></div>
+      <div><span id="covPct">0%</span></div>
+      <div>Time <span id="timeLeft">30</span>s</div>
+      <div>Best <span id="bestScore">0</span></div>
+    </div>
+    <div id="roundInfo">Coverage needed: <span id="needPct">80</span>%</div>
+    <div id="stage">
+      <canvas id="c" width="360" height="440"></canvas>
+      <div id="msg"></div>
+      <button id="snagBtn">WIGGLE!</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag up and down (or use <b>Arrow keys</b> / <b>W-S</b>) to push the brush along the flue and scrape off soot. Watch the coverage meter, and mash the <b>WIGGLE</b> button if the brush gets snagged. Clean each chimney before time runs out — each round the flue gets longer and narrower!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const covBar=document.getElementById('covBar'),covPct=document.getElementById('covPct');
+const timeLeftEl=document.getElementById('timeLeft'),roundNumEl=document.getElementById('roundNum');
+const needPctEl=document.getElementById('needPct'),bestScoreEl=document.getElementById('bestScore');
+const msgEl=document.getElementById('msg'),snagBtn=document.getElementById('snagBtn');
+
+const BEST_KEY='chimneysweep_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+bestScoreEl.textContent=best;
+
+let round=1,score=0,flueLen=0,flueWidth=0,brushW=0;
+let brushY=0,soot=null,cols=0,rows=0,cellH=0;
+let coveredCount=0,neededCells=0;
+let timeLeft=30,running=false,gameOver=false,snagged=false,snagProgress=0,snagNeeded=0;
+let pointerActive=false,pointerY=0;
+let lastT=null,timerAcc=0;
+
+function startRound(){
+  flueLen=1400+round*180;
+  flueWidth=Math.max(70,150-round*8);
+  brushW=Math.max(30,flueWidth*0.6);
+  rows=60+round*4;
+  cellH=flueLen/rows;
+  cols=1;
+  soot=new Array(rows).fill(1); // 1 = dirty, 0 = clean
+  coveredCount=0;
+  neededCells=Math.ceil(rows*0.8);
+  needPctEl.textContent='80';
+  brushY=0;
+  timeLeft=Math.max(18,30-round);
+  running=true;gameOver=false;snagged=false;
+  snagBtn.style.display='none';
+  msgEl.textContent='';
+  roundNumEl.textContent=round;
+  lastT=null;timerAcc=0;
+  scheduleSnag();
+}
+
+let nextSnagAt=0;
+function scheduleSnag(){
+  nextSnagAt=200+Math.random()*(flueLen-400);
+}
+
+function rowAt(y){return Math.max(0,Math.min(rows-1,Math.floor(y/cellH)));}
+
+function scrapeAt(y){
+  const r0=rowAt(y-brushW/2),r1=rowAt(y+brushW/2);
+  for(let r=r0;r<=r1;r++){
+    if(soot[r]===1){soot[r]=0;coveredCount++;}
+  }
+}
+
+function coveragePct(){return rows? (coveredCount/rows)*100 : 0;}
+
+function triggerSnag(){
+  if(snagged||gameOver)return;
+  snagged=true;
+  snagProgress=0;
+  snagNeeded=8+Math.floor(round/2);
+  snagBtn.style.display='block';
+  SFX.error();
+}
+
+function freeSnag(){
+  snagProgress++;
+  SFX.tick();
+  if(snagProgress>=snagNeeded){
+    snagged=false;
+    snagBtn.style.display='none';
+    scheduleSnag();
+    SFX.success();
+  }
+}
+snagBtn.addEventListener('click',e=>{e.stopPropagation();freeSnag();});
+snagBtn.addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();freeSnag();},{passive:false});
+
+function endRound(win){
+  running=false;
+  if(win){
+    score+=Math.round(coveragePct())+round*10;
+    if(score>best){best=score;localStorage.setItem(BEST_KEY,best);bestScoreEl.textContent=best;}
+    msgEl.textContent=I18N.t('chimney_clean','Chimney Clean!');
+    SFX.win();
+    round++;
+    setTimeout(()=>{ if(!gameOver) startRound(); },1400);
+  } else {
+    gameOver=true;
+    if(score>best){best=score;localStorage.setItem(BEST_KEY,best);bestScoreEl.textContent=best;}
+    msgEl.textContent=I18N.t('time_up','Time\'s Up! Tap/Space to retry');
+    SFX.lose();
+  }
+}
+
+function moveBrush(dy){
+  if(!running||gameOver||snagged)return;
+  brushY=Math.max(0,Math.min(flueLen-1,brushY+dy));
+  scrapeAt(brushY);
+}
+
+// keyboard
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','KeyW','KeyS','Space'].includes(e.code))e.preventDefault();
+  if(e.code==='Space'){
+    if(gameOver){restart();return;}
+    if(snagged)freeSnag();
+    return;
+  }
+  keys[e.code]=true;
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function restart(){
+  round=1;score=0;
+  startRound();
+}
+
+// pointer/touch drag on canvas
+c.addEventListener('pointerdown',e=>{
+  if(gameOver){restart();return;}
+  pointerActive=true;pointerY=e.offsetY;c.style.cursor='grabbing';
+  if(snagged)freeSnag();
+});
+window.addEventListener('pointermove',e=>{
+  if(!pointerActive)return;
+  const rect=c.getBoundingClientRect();
+  const scaleY=c.height/rect.height;
+  const y=(e.clientY-rect.top)*scaleY;
+  const dy=(y-pointerY);
+  pointerY=y;
+  const flueDY=dy*(flueLen/H)*1.4;
+  moveBrush(flueDY);
+});
+window.addEventListener('pointerup',()=>{pointerActive=false;c.style.cursor='grab';});
+
+function drawScene(){
+  ctx.clearRect(0,0,W,H);
+  // background bricks
+  ctx.fillStyle='#2b2018';
+  ctx.fillRect(0,0,W,H);
+
+  const cx=W/2;
+  const wallPx=(W-flueWidth*(W/220))/2; // just visual scale
+  const scaleX=Math.min(1.6,W/(flueWidth+80));
+  const halfW=(flueWidth*scaleX)/2;
+
+  // viewport window: show a scrolling window centered on brush
+  const viewSpan=flueLen*(H/flueLen); // full flue mapped to H (scrolled)
+  const camCenter=brushY;
+  const pxPerUnit=H/(flueLen>H? Math.min(flueLen,900):flueLen);
+  // simpler: map [camTop, camTop+H*unitsPerPx] to screen
+  const unitsPerPx=Math.max(1,flueLen/ (H*2));
+  let camTop=camCenter-H*unitsPerPx/2;
+  camTop=Math.max(0,Math.min(flueLen-H*unitsPerPx,camTop));
+  if(flueLen<=H*unitsPerPx)camTop=0;
+
+  // brick wall pattern (left & right of flue)
+  ctx.fillStyle='#4a3626';
+  ctx.fillRect(0,0,cx-halfW,H);
+  ctx.fillRect(cx+halfW,0,W-(cx+halfW),H);
+  ctx.strokeStyle='#3a2a1c';ctx.lineWidth=1;
+  for(let y=0;y<H;y+=14){
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(cx-halfW,y);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(cx+halfW,y);ctx.lineTo(W,y);ctx.stroke();
+  }
+
+  // flue interior — draw each row's soot state
+  for(let py=0;py<H;py++){
+    const worldY=camTop+py*unitsPerPx;
+    const r=rowAt(worldY);
+    if(r<0||r>=rows)continue;
+    const dirty=soot[r]===1;
+    ctx.fillStyle=dirty?'#241a12':'#7a6a55';
+    ctx.fillRect(cx-halfW,py,halfW*2,1);
+  }
+  // subtle soot speckle texture on dirty rows
+  ctx.fillStyle='rgba(0,0,0,0.25)';
+  for(let py=0;py<H;py+=3){
+    const worldY=camTop+py*unitsPerPx;
+    const r=rowAt(worldY);
+    if(r>=0&&r<rows&&soot[r]===1){
+      for(let s=0;s<2;s++){
+        const sx=cx-halfW+Math.random()*halfW*2;
+        ctx.fillRect(sx,py,2,2);
+      }
+    }
+  }
+
+  // flue edges
+  ctx.strokeStyle='#000';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(cx-halfW,0);ctx.lineTo(cx-halfW,H);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(cx+halfW,0);ctx.lineTo(cx+halfW,H);ctx.stroke();
+
+  // brush position on screen
+  const brushScreenY=(brushY-camTop)/unitsPerPx;
+  const brushHalfW=(brushW*scaleX)/2;
+  // rod above brush
+  ctx.fillStyle='#7a5230';
+  ctx.fillRect(cx-4,0,8,Math.max(0,brushScreenY-14));
+  // bristles
+  ctx.save();
+  ctx.translate(cx,brushScreenY);
+  ctx.fillStyle=snagged?'#e94560':'#3a3a3a';
+  ctx.beginPath();
+  ctx.ellipse(0,0,brushHalfW,16,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle='#222';ctx.lineWidth=2;
+  for(let i=-4;i<=4;i++){
+    ctx.beginPath();
+    ctx.moveTo(i*(brushHalfW/5),-16);
+    ctx.lineTo(i*(brushHalfW/5)+(Math.random()-0.5)*4,-16-8-Math.random()*4);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(i*(brushHalfW/5),16);
+    ctx.lineTo(i*(brushHalfW/5)+(Math.random()-0.5)*4,16+8+Math.random()*4);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // coverage heatmap strip on the side
+  const stripX=W-14;
+  for(let r=0;r<rows;r++){
+    const y0=Math.floor((r*cellH-camTop)/unitsPerPx);
+    if(y0<-4||y0>H+4)continue;
+    ctx.fillStyle=soot[r]===0?'#5aaa30':'#442';
+    ctx.fillRect(stripX,y0,8,Math.max(1,cellH/unitsPerPx));
+  }
+}
+
+function loop(ts){
+  if(lastT===null)lastT=ts;
+  const dt=Math.min(0.05,(ts-lastT)/1000);
+  lastT=ts;
+
+  if(running&&!gameOver){
+    // keyboard movement
+    let dy=0;
+    if(keys['ArrowUp']||keys['KeyW'])dy-=6;
+    if(keys['ArrowDown']||keys['KeyS'])dy+=6;
+    if(dy!==0)moveBrush(dy);
+
+    if(!snagged){
+      if(brushY>=nextSnagAt&&brushY<flueLen-100&&Math.random()<0.02){
+        triggerSnag();
+      }
+    }
+
+    timerAcc+=dt;
+    if(timerAcc>=1){
+      timerAcc-=1;
+      timeLeft--;
+      if(timeLeft<=0){timeLeft=0;endRound(false);}
+    }
+    timeLeftEl.textContent=timeLeft;
+    const pct=coveragePct();
+    covBar.style.width=Math.min(100,pct)+'%';
+    covPct.textContent=Math.round(pct)+'%';
+    if(pct>=80){endRound(true);}
+  }
+
+  drawScene();
+  requestAnimationFrame(loop);
+}
+
+startRound();
+requestAnimationFrame(loop);
+</script></body></html>

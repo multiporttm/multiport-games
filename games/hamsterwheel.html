@@ -1,0 +1,289 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Hamster Wheel</title><meta name="description" content="Play Hamster Wheel free online — Alternate Left/Right Arrow (or A/D) or tap the two pedals in a steady rhythm to keep your hamster running at the target speed. Grab treats with a quick tap without breaking your rhythm."><link rel="canonical" href="https://games.multiportllc.com/games/hamsterwheel"><meta property="og:title" content="Hamster Wheel - Multiport Games"><meta property="og:description" content="Play Hamster Wheel free online — Alternate Left/Right Arrow (or A/D) or tap the two pedals in a steady rhythm to keep your hamster running at the target speed. Grab treats with a quick tap without breaking your rhythm."><meta property="og:url" content="https://games.multiportllc.com/games/hamsterwheel"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Hamster Wheel","description":"Play Hamster Wheel free online instantly. Alternate Left/Right Arrow (or A/D) or tap the two pedals in a steady rhythm to keep your hamster running on its wheel at the target speed shown on the gauge. Run too fast and you fall off; too slow and the wheel stops. Grab treats with a quick timed tap for bonus points without breaking your rhythm too much. Scored by longest sustained run and treats collected before falling off. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/hamsterwheel","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(#3a2a1c,#5a4028);display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#ffe0a3;font-size:1.05rem;font-weight:700;padding:6px 4px;flex-wrap:wrap;gap:4px}
+#hud span{white-space:nowrap}
+#pedals{display:flex;gap:10px;justify-content:center;margin-top:10px}
+.pedal{flex:1;max-width:220px;height:64px;border-radius:14px;border:none;font-size:1.3rem;font-weight:900;color:#3a2a1c;cursor:pointer;user-select:none;transition:transform .06s}
+.pedal.left{background:#ffd54f}
+.pedal.right{background:#ffb74d}
+.pedal:active,.pedal.pressed{transform:scale(.94)}
+@media(max-width:480px){#c{width:100%;height:auto}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Hamster Wheel</div>
+  <div class="game-frame">
+    <div id="hud"><span id="score-display">Score: 0 | Hi: 0</span><span id="treat-display">Treats: 0</span></div>
+    <canvas id="c" width="800" height="320"></canvas>
+    <div id="pedals">
+      <button class="pedal left" id="pedalL">◀ A</button>
+      <button class="pedal right" id="pedalR">D ▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Alternate <b>Left/Right Arrow</b> (or <b>A</b>/<b>D</b>), or tap the two pedals, in a steady rhythm to keep the hamster running at the target speed shown on the gauge (green zone). Too fast and it flies off the wheel; too slow and the wheel stops. When a <b>treat</b> appears on the wheel, tap/press either key right as it passes the top to grab a bonus without losing too much rhythm. You're scored on longest sustained run and treats collected before falling off.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320,cx=400,cy=160,R=110;
+let best=parseInt(localStorage.getItem('hamsterwheel_best')||'0',10);
+
+let speed=0;            // current wheel speed (arbitrary units)
+let target=0;           // target speed for this phase
+let angle=0;            // wheel rotation angle
+let lastStep=null;      // 'L' or 'R' — which pedal was last pressed
+let time=0;             // survival time (score basis)
+let treats=0;
+let gameOver=true;
+let started=false;
+let treatObjs=[];       // {ang, grabbed}
+let treatTimer=0;
+let particles=[];
+let flashMsg='',flashTimer=0;
+let comboFlash=0;
+let lastTime=null;
+
+function reset(){
+  speed=0;target=1.6;angle=0;lastStep=null;time=0;treats=0;gameOver=false;started=true;
+  treatObjs=[];treatTimer=0;particles=[];flashMsg='';flashTimer=0;comboFlash=0;lastTime=null;
+}
+
+function fail(reason){
+  if(gameOver)return;
+  gameOver=true;
+  SFX.lose();
+  const finalScore=Math.floor(time*10)+treats*25;
+  if(finalScore>best){best=finalScore;localStorage.setItem('hamsterwheel_best',String(best));}
+  flashMsg=reason;flashTimer=90;
+}
+
+function step(side){
+  if(!started){reset();return;}
+  if(gameOver){reset();return;}
+  // Alternation required: same key twice in a row barely helps
+  if(side===lastStep){
+    speed+=0.35; // small push even on repeat, but inefficient
+  }else{
+    speed+=1.15;
+    comboFlash=8;
+  }
+  lastStep=side;
+  SFX.tick();
+
+  // treat grab check — press while a treat is near the top of the wheel
+  for(const t of treatObjs){
+    if(t.grabbed)continue;
+    const a=((t.ang-angle)%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
+    const dist=Math.min(a,Math.PI*2-a);
+    if(dist<0.35){
+      t.grabbed=true;
+      treats++;
+      SFX.coin();
+      spawnBurst(cx+Math.cos(t.ang-angle-Math.PI/2)*R,cy+Math.sin(t.ang-angle-Math.PI/2)*R);
+      flashMsg=I18N.t('treat_grabbed','Treat! +25');flashTimer=45;
+    }
+  }
+}
+
+function spawnBurst(x,y){
+  for(let i=0;i<10;i++){
+    const a=Math.random()*Math.PI*2,sp=1+Math.random()*3;
+    particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:30});
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){e.preventDefault();step('L');flashPedal('L');}
+  else if(e.code==='ArrowRight'||e.code==='KeyD'){e.preventDefault();step('R');flashPedal('R');}
+});
+
+const pedalL=document.getElementById('pedalL'),pedalR=document.getElementById('pedalR');
+function flashPedal(side){
+  const el=side==='L'?pedalL:pedalR;
+  el.classList.add('pressed');
+  setTimeout(()=>el.classList.remove('pressed'),90);
+}
+pedalL.addEventListener('pointerdown',e=>{e.preventDefault();step('L');flashPedal('L');});
+pedalR.addEventListener('pointerdown',e=>{e.preventDefault();step('R');flashPedal('R');});
+c.addEventListener('pointerdown',e=>{
+  if(!started||gameOver){reset();return;}
+});
+
+function drawWheel(){
+  ctx.save();
+  ctx.translate(cx,cy);
+  // outer rim
+  ctx.strokeStyle='#c9a24b';ctx.lineWidth=14;
+  ctx.beginPath();ctx.arc(0,0,R,0,Math.PI*2);ctx.stroke();
+  ctx.strokeStyle='#8a6a2e';ctx.lineWidth=4;
+  ctx.beginPath();ctx.arc(0,0,R,0,Math.PI*2);ctx.stroke();
+  // spokes rotate with angle
+  ctx.rotate(angle);
+  ctx.strokeStyle='#a9843f';ctx.lineWidth=5;
+  for(let i=0;i<8;i++){
+    const a=i/8*Math.PI*2;
+    ctx.beginPath();
+    ctx.moveTo(0,0);
+    ctx.lineTo(Math.cos(a)*R,Math.sin(a)*R);
+    ctx.stroke();
+  }
+  ctx.fillStyle='#b8933f';
+  ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();
+  // treats sit on the rim, rotating with wheel
+  treatObjs.forEach(t=>{
+    if(t.grabbed)return;
+    const a=t.ang;
+    ctx.save();
+    ctx.rotate(a);
+    ctx.translate(R-2,0);
+    ctx.rotate(-a-angle);
+    ctx.font='22px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText('🥕',0,0);
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+function drawHamster(){
+  // Hamster stays fixed at the bottom-front of the wheel; legs animate with speed
+  const hx=cx,hy=cy+R-6;
+  ctx.save();
+  ctx.translate(hx,hy);
+  const bob=Math.sin(time*14+angle*4)*2*Math.min(speed,3);
+  ctx.translate(0,bob);
+  // body
+  ctx.fillStyle='#d9a86c';
+  ctx.beginPath();ctx.ellipse(0,-14,22,16,0,0,Math.PI*2);ctx.fill();
+  // head
+  ctx.beginPath();ctx.ellipse(20,-20,12,11,0,0,Math.PI*2);ctx.fill();
+  // ear
+  ctx.fillStyle='#c48f57';
+  ctx.beginPath();ctx.arc(24,-30,5,0,Math.PI*2);ctx.fill();
+  // eye
+  ctx.fillStyle='#2b1c10';
+  ctx.beginPath();ctx.arc(26,-21,2,0,Math.PI*2);ctx.fill();
+  // legs (animated)
+  const legPhase=Math.floor((time*8+angle*3))%2;
+  ctx.strokeStyle='#c48f57';ctx.lineWidth=5;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(-8,-2);ctx.lineTo(-8+(legPhase?8:-8),12);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(8,-2);ctx.lineTo(8+(legPhase?-8:8),12);ctx.stroke();
+  ctx.restore();
+}
+
+function drawGauge(){
+  // speed gauge top-right: shows current speed vs target zone
+  const gx=W-150,gy=30,gw=120,gh=16;
+  ctx.fillStyle='rgba(0,0,0,.35)';
+  ctx.fillRect(gx,gy,gw,gh);
+  const maxShown=6;
+  // green target zone
+  const zoneLo=target-0.5, zoneHi=target+0.5;
+  ctx.fillStyle='rgba(120,220,110,.55)';
+  ctx.fillRect(gx+(zoneLo/maxShown)*gw,gy,((zoneHi-zoneLo)/maxShown)*gw,gh);
+  // current speed marker
+  const sx=gx+Math.min(1,Math.max(0,speed/maxShown))*gw;
+  ctx.fillStyle=speed<zoneLo?'#5ac8ff':(speed>zoneHi?'#ff5a5a':'#ffe066');
+  ctx.fillRect(sx-2,gy-4,4,gh+8);
+  ctx.strokeStyle='#fff8';ctx.lineWidth=1;ctx.strokeRect(gx,gy,gw,gh);
+  ctx.fillStyle='#ffe0a3';ctx.font='12px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('speed_label','SPEED'),gx,gy-6);
+}
+
+function update(dt){
+  time+=dt/60;
+  // target speed slowly ramps and wobbles a bit to keep it interesting
+  target=1.6+Math.min(2.2,time*0.045)+Math.sin(time*0.7)*0.15;
+
+  // natural decay toward zero — must keep pedaling
+  speed*=Math.pow(0.965,dt);
+  if(speed<0)speed=0;
+  angle+=speed*0.05*dt;
+
+  // fail conditions
+  if(speed>target+2.3){fail(I18N.t('fail_fast','Too fast — the hamster flew off the wheel!'));return;}
+  if(time>3 && speed<0.35){fail(I18N.t('fail_slow','Too slow — the wheel ground to a halt.'));return;}
+
+  // spawn treats occasionally
+  treatTimer-=dt;
+  if(treatTimer<=0){
+    treatTimer=140+Math.random()*120;
+    treatObjs.push({ang:Math.random()*Math.PI*2,grabbed:false});
+  }
+  // clean old grabbed treats
+  treatObjs=treatObjs.filter(t=>!t.grabbed || performance.now());
+  if(treatObjs.length>6)treatObjs.shift();
+
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=0.15;p.life--;});
+  particles=particles.filter(p=>p.life>0);
+
+  if(flashTimer>0)flashTimer--;
+  if(comboFlash>0)comboFlash--;
+}
+
+function drawBG(){
+  ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#4a3420');g.addColorStop(1,'#6a4c2c');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // cage bars
+  ctx.strokeStyle='rgba(255,255,255,.06)';ctx.lineWidth=3;
+  for(let i=0;i<W;i+=40){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,H);ctx.stroke();}
+}
+
+function draw(){
+  drawBG();
+  drawWheel();
+  drawHamster();
+  particles.forEach(p=>{ctx.fillStyle='rgba(255,224,102,'+Math.max(0,p.life/30)+')';ctx.fillRect(p.x-2,p.y-2,4,4);});
+  drawGauge();
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='#ffe0a3';ctx.font='bold 24px Arial';
+    ctx.fillText(I18N.t('start_hint','Tap a pedal or press A/D to start'),cx,60);
+  } else if(comboFlash>0){
+    ctx.fillStyle='#a9f5a9';ctx.font='bold 18px Arial';
+    ctx.fillText(I18N.t('good_rhythm','Nice rhythm!'),cx,290);
+  }
+
+  if(flashTimer>0 && flashMsg){
+    ctx.fillStyle='#fff';ctx.font='bold 16px Arial';
+    ctx.fillText(flashMsg,cx,60);
+  }
+
+  if(gameOver && started){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),cx,130);
+    ctx.font='18px Arial';
+    ctx.fillText(flashMsg||'',cx,164);
+    const finalScore=Math.floor(time*10)+treats*25;
+    ctx.font='bold 20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Score: {s}').replace('{s}',finalScore),cx,200);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap or press A/D to run again'),cx,232);
+  }
+
+  const finalScore=gameOver?Math.floor(time*10)+treats*25:Math.floor(time*10)+treats*25;
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',finalScore).replace('{h}',best);
+  document.getElementById('treat-display').textContent=I18N.t('treats_label','Treats: {t}').replace('{t}',treats);
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min(3,(ts-lastTime)/16.6667);
+  lastTime=ts;
+  if(started&&!gameOver)update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+draw();
+requestAnimationFrame(loop);
+</script></body></html>

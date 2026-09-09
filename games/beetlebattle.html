@@ -1,0 +1,251 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Beetle Battle</title><meta name="description" content="Play Beetle Battle free online — Use Arrow Keys / WASD or drag on the arena to move your rhinoceros beetle. Hold Space or tap-and-hold to charge a horn push, then release to slam your rival. Push the AI beetle out of the ring to win the match!"><link rel="canonical" href="https://games.multiportllc.com/games/beetlebattle"><meta property="og:title" content="Beetle Battle - Multiport Games"><meta property="og:description" content="Play Beetle Battle free online — Use Arrow Keys / WASD or drag on the arena to move your rhinoceros beetle. Hold Space or tap-and-hold to charge a horn push, then release to slam your rival. Push the AI beetle out of the ring to win the match!"><meta property="og:url" content="https://games.multiportllc.com/games/beetlebattle"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Beetle Battle","description":"Play Beetle Battle free online instantly. Use Arrow Keys / WASD or drag on the arena to move your rhinoceros beetle. Hold Space or tap-and-hold to charge a horn push, then release to slam your rival. Push the AI beetle out of the ring to win the match! No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/beetlebattle","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a2a1a;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:700;padding:6px 4px;font-size:1rem}
+#hud span{color:#ffd54f}
+#charge-wrap{width:100%;max-width:800px;height:10px;background:rgba(255,255,255,.15);border-radius:5px;margin:4px 0;overflow:hidden}
+#charge-bar{height:100%;width:0%;background:linear-gradient(90deg,#ffd54f,#ff6b35);transition:width .05s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Beetle Battle</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div id="round-label">Round 1</div>
+      <div id="wins-label">Wins: <span id="wins">0</span> | Best: <span id="best">0</span></div>
+    </div>
+    <div id="charge-wrap"><div id="charge-bar"></div></div>
+    <canvas id="c" width="800" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>drag</b> on the arena to move your rhinoceros beetle. Hold <b>Space</b> or <b>tap-and-hold</b> to charge a horn push, then release to slam your rival. Push the AI beetle out of the ring to win the match! Win to advance to a tougher opponent.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480,cx=W/2,cy=H/2,ringR=210;
+const BEST_KEY='beetlebattle_best';
+let best=parseInt(localStorage.getItem(BEST_KEY)||'0',10);
+let wins=0,round=1;
+document.getElementById('best').textContent=best;
+
+function newBeetle(x,y,color,isAI){
+  return {x,y,vx:0,vy:0,angle:0,color,isAI,r:26,charge:0,charging:false,cooldown:0,stunned:0,alive:true};
+}
+let player,ai,keys={},dragTarget=null,gameState='ready',msgTimer=0,message='';
+
+function resetMatch(){
+  player=newBeetle(cx-100,cy,'#c0392b',false);
+  ai=newBeetle(cx+100,cy,'#2c5f2d',true);
+  ai.dir=Math.random()*Math.PI*2;
+  ai.aiTimer=0;
+  gameState='playing';
+}
+resetMatch();
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(e.code==='Space'){e.preventDefault();if(gameState==='playing'&&!player.charging&&player.cooldown<=0){player.charging=true;}}
+  if(gameState==='over'&&(e.code==='Space'||e.key==='Enter')){startNext();}
+});
+document.addEventListener('keyup',e=>{
+  keys[e.key.toLowerCase()]=false;
+  if(e.code==='Space'){
+    if(player.charging){releaseCharge(player);}
+  }
+});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  return {x:(t.clientX-rect.left)*(W/rect.width),y:(t.clientY-rect.top)*(H/rect.height)};
+}
+let holdTimer=null;
+c.addEventListener('pointerdown',e=>{
+  if(gameState==='over'){startNext();return;}
+  const p=pointerPos(e);
+  dragTarget=p;
+  holdTimer=setTimeout(()=>{ if(!player.charging&&player.cooldown<=0){player.charging=true;} },140);
+});
+c.addEventListener('pointermove',e=>{ if(dragTarget)dragTarget=pointerPos(e); });
+window.addEventListener('pointerup',()=>{
+  dragTarget=null;
+  clearTimeout(holdTimer);
+  if(player.charging)releaseCharge(player);
+});
+
+function releaseCharge(b){
+  b.charging=false;
+  const power=6+b.charge*13;
+  b.vx+=Math.cos(b.angle)*power;
+  b.vy+=Math.sin(b.angle)*power;
+  b.cooldown=45;
+  SFX.powerup();
+  b.charge=0;
+}
+
+function updatePlayer(dt){
+  let mx=0,my=0;
+  if(keys['arrowup']||keys['w'])my-=1;
+  if(keys['arrowdown']||keys['s'])my+=1;
+  if(keys['arrowleft']||keys['a'])mx-=1;
+  if(keys['arrowright']||keys['d'])mx+=1;
+  if(dragTarget){
+    const dx=dragTarget.x-player.x,dy=dragTarget.y-player.y;
+    const d=Math.hypot(dx,dy);
+    if(d>10){mx=dx/d;my=dy/d;}
+  }
+  if(mx||my){
+    const len=Math.hypot(mx,my)||1;
+    mx/=len;my/=len;
+    player.angle=Math.atan2(my,mx);
+    if(!player.charging){
+      const spd=player.cooldown>0?1.2:3.4;
+      player.vx+=mx*spd*dt*0.6;
+      player.vy+=my*spd*dt*0.6;
+    }
+  }
+  if(player.charging){
+    player.charge=Math.min(1,player.charge+dt*0.045);
+  }
+  document.getElementById('charge-bar').style.width=(player.charge*100)+'%';
+}
+
+function updateAI(dt){
+  ai.aiTimer-=dt;
+  const dx=player.x-ai.x,dy=player.y-ai.y;
+  const dist=Math.hypot(dx,dy);
+  ai.angle=Math.atan2(dy,dx);
+  const aggressiveness=0.5+round*0.08;
+  if(ai.aiTimer<=0){
+    ai.aiTimer=20+Math.random()*30;
+    if(dist<130&&Math.random()<Math.min(0.85,aggressiveness)&&ai.cooldown<=0&&!ai.charging){
+      ai.charging=true;
+      ai.chargeTarget=0.4+Math.random()*0.6;
+    }
+  }
+  if(ai.charging){
+    ai.charge=Math.min(1,ai.charge+dt*0.05);
+    if(ai.charge>=ai.chargeTarget){releaseCharge(ai);}
+  } else if(ai.cooldown<=0) {
+    const spd=2.6+round*0.15;
+    ai.vx+=Math.cos(ai.angle)*spd*dt*0.55;
+    ai.vy+=Math.sin(ai.angle)*spd*dt*0.55;
+  }
+}
+
+function physics(b,dt){
+  b.vx*=0.9;b.vy*=0.9;
+  b.x+=b.vx*dt;b.y+=b.vy*dt;
+  if(b.cooldown>0)b.cooldown-=dt;
+  if(b.stunned>0)b.stunned-=dt;
+}
+
+function collide(){
+  const dx=ai.x-player.x,dy=ai.y-player.y;
+  const dist=Math.hypot(dx,dy)||0.001;
+  const minDist=player.r+ai.r;
+  if(dist<minDist){
+    const nx=dx/dist,ny=dy/dist;
+    const overlap=(minDist-dist)/2;
+    player.x-=nx*overlap;player.y-=ny*overlap;
+    ai.x+=nx*overlap;ai.y+=ny*overlap;
+    const pSpeed=Math.hypot(player.vx,player.vy);
+    const aSpeed=Math.hypot(ai.vx,ai.vy);
+    const totalP=pSpeed+aSpeed+1;
+    ai.vx+=nx*pSpeed*1.1;ai.vy+=ny*pSpeed*1.1;
+    player.vx-=nx*aSpeed*1.1;player.vy-=ny*aSpeed*1.1;
+    SFX.hit();
+  }
+}
+
+function checkOut(b){
+  const d=Math.hypot(b.x-cx,b.y-cy);
+  return d>ringR;
+}
+
+function endMatch(playerWon){
+  gameState='over';
+  if(playerWon){
+    wins++;round++;
+    if(wins>best){best=wins;localStorage.setItem(BEST_KEY,best);}
+    message=I18N.t('bb_win','You pushed it out! Round Won!');
+    SFX.win();
+  } else {
+    message=I18N.t('bb_lose','You got pushed out! Match Lost.');
+    SFX.lose();
+  }
+  document.getElementById('wins').textContent=wins;
+  document.getElementById('best').textContent=best;
+}
+
+function startNext(){
+  if(message.indexOf('Lost')>=0){round=1;wins=0;document.getElementById('wins').textContent=wins;}
+  resetMatch();
+  document.getElementById('round-label').textContent=I18N.t('bb_round','Round {r}').replace('{r}',round);
+}
+
+let last=null;
+function loop(ts){
+  const dt=last===null?1:Math.min((ts-last)/16.6667,3);
+  last=ts;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#2a1f14';ctx.fillRect(0,0,W,H);
+  ctx.save();
+  ctx.beginPath();ctx.arc(cx,cy,ringR+18,0,Math.PI*2);ctx.fillStyle='#5c4326';ctx.fill();
+  ctx.beginPath();ctx.arc(cx,cy,ringR,0,Math.PI*2);ctx.fillStyle='#8a6d3b';ctx.fill();
+  ctx.strokeStyle='#c9a227';ctx.lineWidth=4;ctx.stroke();
+  ctx.restore();
+
+  if(gameState==='playing'){
+    updatePlayer(dt);
+    updateAI(dt);
+    physics(player,dt);
+    physics(ai,dt);
+    collide();
+    if(checkOut(ai)){endMatch(true);}
+    else if(checkOut(player)){endMatch(false);}
+  }
+
+  drawBeetle(player);
+  drawBeetle(ai);
+
+  if(gameState==='over'){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(message,cx,cy-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('bb_continue','Tap or press Space to continue'),cx,cy+30);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+function drawBeetle(b){
+  ctx.save();
+  ctx.translate(b.x,b.y);
+  ctx.rotate(b.angle);
+  const glow=b.charge>0?1+b.charge*0.3:1;
+  ctx.fillStyle=b.color;
+  ctx.beginPath();ctx.ellipse(0,0,b.r*glow,b.r*0.72*glow,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='rgba(0,0,0,.25)';
+  ctx.beginPath();ctx.ellipse(-4,0,b.r*0.55,b.r*0.5,0,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#1a1a1a';ctx.lineWidth=5;
+  ctx.beginPath();
+  ctx.moveTo(b.r*0.6,-6);
+  ctx.lineTo(b.r*1.5+b.charge*14,0);
+  ctx.lineTo(b.r*0.6,6);
+  ctx.stroke();
+  ctx.fillStyle='#111';
+  ctx.beginPath();ctx.arc(-b.r*0.5,-b.r*0.4,4,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(-b.r*0.5,b.r*0.4,4,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,307 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Tank Battle</title><meta name="description" content="Play Tank Battle free online — Use WASD or Arrow Keys to drive your tank, aim with the mouse or a touch drag, and click or tap to fire at enemy tanks across a battlefield with destructible cover."><link rel="canonical" href="https://games.multiportllc.com/games/tankbattle"><meta property="og:title" content="Tank Battle - Multiport Games"><meta property="og:description" content="Play Tank Battle free online — Use WASD or Arrow Keys to drive your tank, aim with the mouse or a touch drag, and click or tap to fire at enemy tanks across a battlefield with destructible cover."><meta property="og:url" content="https://games.multiportllc.com/games/tankbattle"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Tank Battle","description":"Play Tank Battle free online instantly. Drive your tank with WASD or Arrow Keys, aim the turret with your mouse or a touch drag, and fire to destroy waves of AI tanks across a battlefield with destructible cover, managing your reload time between shots. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/tankbattle","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{display:flex;flex-direction:column;align-items:center;gap:8px;padding:8px}
+#hud{display:flex;gap:16px;color:#eee;font-weight:700;flex-wrap:wrap;justify-content:center}
+#hud span b{color:#8fd694}
+#c{background:#3a4a2e;border-radius:10px;touch-action:none}
+#reloadWrap{width:200px;height:10px;background:#222;border-radius:5px;overflow:hidden;border:1px solid #444}
+#reloadBar{height:100%;background:#8fd694;width:100%}
+#msg{min-height:1.4em;color:#ffd54f;font-weight:800;text-align:center}
+#restartBtn{padding:10px 22px;font-size:1rem;font-weight:700;border:none;border-radius:20px;background:#e94560;color:#fff;cursor:pointer;display:none}
+#dpad{display:none}
+@media(hover:none){
+  #dpad{display:grid;grid-template-columns:repeat(3,44px);grid-template-rows:repeat(3,44px);gap:4px;margin-top:6px}
+  #dpad button{font-size:1.2rem;border-radius:8px;border:none;background:#444;color:#fff}
+}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Tank Battle</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span>Wave: <b id="waveLbl">1</b></span>
+        <span>Destroyed: <b id="scoreLbl">0</b></span>
+        <span>Best: <b id="bestLbl">0</b></span>
+        <span>HP: <b id="hpLbl">100</b></span>
+      </div>
+      <div id="reloadWrap"><div id="reloadBar"></div></div>
+      <div id="msg"></div>
+      <canvas id="c" width="640" height="420"></canvas>
+      <button id="restartBtn">Restart</button>
+      <div id="dpad">
+        <div></div><button id="up">▲</button><div></div>
+        <button id="left">◀</button><div></div><button id="right">▶</button>
+        <div></div><button id="down">▼</button><div></div>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move with <b>WASD</b> or <b>Arrow Keys</b> (or the on-screen D-pad on touch). Aim the turret by moving the mouse, or by dragging on the battlefield on touch. <b>Click / tap</b> to fire — watch the reload bar between shots. Destroy enemy tanks and use the gray crates as destructible cover. Tougher waves follow!</div>
+</div>
+<script>
+const LS_KEY='tankbattle_best';
+let best=parseInt(localStorage.getItem(LS_KEY)||'0',10);
+document.getElementById('bestLbl').textContent=best;
+
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=640,H=420;
+const waveLbl=document.getElementById('waveLbl'),scoreLbl=document.getElementById('scoreLbl'),hpLbl=document.getElementById('hpLbl');
+const msg=document.getElementById('msg');
+const reloadBar=document.getElementById('reloadBar');
+const restartBtn=document.getElementById('restartBtn');
+
+let wave=1,score=0,gameOver=false;
+let player,bullets,enemies,cover,enemyBullets;
+let keys={};
+let mouse={x:W/2,y:H/2};
+let reload=0,reloadMax=32;
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function spawnCover(n){
+  const arr=[];
+  for(let i=0;i<n;i++){
+    let x,y,tries=0;
+    do{
+      x=60+Math.random()*(W-120);
+      y=60+Math.random()*(H-120);
+      tries++;
+    } while(dist({x,y},{x:W/2,y:H/2})<90 && tries<20);
+    arr.push({x,y,w:34,h:34,hp:3});
+  }
+  return arr;
+}
+
+function spawnEnemies(n){
+  const arr=[];
+  for(let i=0;i<n;i++){
+    let x,y,tries=0;
+    do{
+      x=30+Math.random()*(W-60);
+      y=30+Math.random()*(H-60);
+      tries++;
+    } while(dist({x,y},{x:W/2,y:H/2})<160 && tries<30);
+    arr.push({x,y,angle:Math.random()*Math.PI*2,turretAngle:0,hp:2+Math.floor(wave/3),speed:0.6+Math.random()*0.4+wave*0.05,reload:Math.random()*60,reloadMax:Math.max(40,90-wave*4),w:26,h:26,alive:true});
+  }
+  return arr;
+}
+
+function resetGame(){
+  player={x:W/2,y:H/2,angle:0,turretAngle:0,hp:100,w:28,h:28};
+  bullets=[];enemyBullets=[];
+  cover=spawnCover(5+Math.floor(wave/2));
+  enemies=spawnEnemies(2+wave);
+  reload=0;
+  gameOver=false;
+  msg.textContent='';
+  restartBtn.style.display='none';
+  waveLbl.textContent=wave;
+  scoreLbl.textContent=score;
+  hpLbl.textContent=player.hp;
+}
+
+document.addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true; if(e.key===' ')e.preventDefault();});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+c.addEventListener('mousemove',e=>{
+  const r=c.getBoundingClientRect();
+  mouse.x=(e.clientX-r.left)*(W/r.width);
+  mouse.y=(e.clientY-r.top)*(H/r.height);
+});
+c.addEventListener('click',()=>{fire();});
+
+let touchAimId=null;
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.touches[0];
+  const r=c.getBoundingClientRect();
+  mouse.x=(t.clientX-r.left)*(W/r.width);
+  mouse.y=(t.clientY-r.top)*(H/r.height);
+  fire();
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  const t=e.touches[0];
+  const r=c.getBoundingClientRect();
+  mouse.x=(t.clientX-r.left)*(W/r.width);
+  mouse.y=(t.clientY-r.top)*(H/r.height);
+},{passive:false});
+
+// dpad
+function bindHold(id,key){
+  const el=document.getElementById(id);
+  el.addEventListener('touchstart',e=>{e.preventDefault();keys[key]=true;},{passive:false});
+  el.addEventListener('touchend',e=>{e.preventDefault();keys[key]=false;},{passive:false});
+  el.addEventListener('mousedown',()=>keys[key]=true);
+  el.addEventListener('mouseup',()=>keys[key]=false);
+}
+bindHold('up','w');bindHold('down','s');bindHold('left','a');bindHold('right','d');
+
+function fire(){
+  if(gameOver){resetGame();return;}
+  if(reload>0)return;
+  reload=reloadMax;
+  const a=player.turretAngle;
+  bullets.push({x:player.x+Math.cos(a)*22,y:player.y+Math.sin(a)*22,vx:Math.cos(a)*7,vy:Math.sin(a)*7,life:80,fromPlayer:true});
+  SFX.hit();
+}
+
+restartBtn.addEventListener('click',()=>{wave=1;score=0;resetGame();});
+
+function rectHit(x,y,r){
+  return cover.find(cr=>cr.hp>0 && x>cr.x-r&&x<cr.x+cr.w+r&&y>cr.y-r&&y<cr.y+cr.h+r);
+}
+
+function update(){
+  if(gameOver)return;
+  // player movement
+  let mvx=0,mvy=0;
+  if(keys['w']||keys['arrowup'])mvy-=1;
+  if(keys['s']||keys['arrowdown'])mvy+=1;
+  if(keys['a']||keys['arrowleft'])mvx-=1;
+  if(keys['d']||keys['arrowright'])mvx+=1;
+  if(mvx||mvy){
+    const len=Math.hypot(mvx,mvy);
+    mvx/=len;mvy/=len;
+    player.angle=Math.atan2(mvy,mvx);
+    const nx=player.x+mvx*3, ny=player.y+mvy*3;
+    if(!rectHit(nx,player.y,14) && nx>16 && nx<W-16) player.x=nx;
+    if(!rectHit(player.x,ny,14) && ny>16 && ny<H-16) player.y=ny;
+  }
+  player.turretAngle=Math.atan2(mouse.y-player.y,mouse.x-player.x);
+
+  if(reload>0)reload--;
+  reloadBar.style.width=(100-(reload/reloadMax*100))+'%';
+
+  // bullets
+  bullets.forEach(b=>{b.x+=b.vx;b.y+=b.vy;b.life--;});
+  enemyBullets.forEach(b=>{b.x+=b.vx;b.y+=b.vy;b.life--;});
+  bullets=bullets.filter(b=>b.life>0 && b.x>0&&b.x<W&&b.y>0&&b.y<H);
+  enemyBullets=enemyBullets.filter(b=>b.life>0 && b.x>0&&b.x<W&&b.y>0&&b.y<H);
+
+  // bullet vs cover
+  [bullets,enemyBullets].forEach(arr=>{
+    arr.forEach(b=>{
+      const cr=cover.find(cr2=>cr2.hp>0 && b.x>cr2.x&&b.x<cr2.x+cr2.w&&b.y>cr2.y&&b.y<cr2.y+cr2.h);
+      if(cr){cr.hp--;b.life=0;}
+    });
+  });
+
+  // player bullets vs enemies
+  bullets.forEach(b=>{
+    enemies.forEach(en=>{
+      if(en.alive && dist(b,en)<16){
+        en.hp--;b.life=0;
+        if(en.hp<=0){en.alive=false;score++;scoreLbl.textContent=score;SFX.success();}
+        else SFX.tick();
+      }
+    });
+  });
+
+  // enemy AI
+  enemies.forEach(en=>{
+    if(!en.alive)return;
+    const a=Math.atan2(player.y-en.y,player.x-en.x);
+    en.turretAngle=a;
+    const d=dist(en,player);
+    if(d>140){
+      en.x+=Math.cos(a)*en.speed;
+      en.y+=Math.sin(a)*en.speed;
+    } else if(d<80){
+      en.x-=Math.cos(a)*en.speed*0.6;
+      en.y-=Math.sin(a)*en.speed*0.6;
+    }
+    en.x=Math.max(16,Math.min(W-16,en.x));
+    en.y=Math.max(16,Math.min(H-16,en.y));
+    en.reload--;
+    if(en.reload<=0 && d<320){
+      en.reload=en.reloadMax;
+      enemyBullets.push({x:en.x+Math.cos(a)*18,y:en.y+Math.sin(a)*18,vx:Math.cos(a)*5,vy:Math.sin(a)*5,life:90});
+    }
+  });
+
+  // enemy bullets vs player
+  enemyBullets.forEach(b=>{
+    if(!gameOver && dist(b,player)<16){
+      b.life=0;
+      player.hp-=10;
+      hpLbl.textContent=Math.max(0,player.hp);
+      SFX.hurt();
+      if(player.hp<=0){
+        gameOver=true;
+        msg.textContent='Tank destroyed! Final score: '+score;
+        restartBtn.style.display='inline-block';
+        SFX.lose();
+        if(score>best){best=score;localStorage.setItem(LS_KEY,String(best));document.getElementById('bestLbl').textContent=best;}
+      }
+    }
+  });
+
+  enemies=enemies.filter(en=>en.alive || true); // keep dead briefly not needed; just filter alive for logic use
+  const aliveCount=enemies.filter(en=>en.alive).length;
+  if(aliveCount===0 && !gameOver){
+    wave++;
+    setTimeout(()=>{ if(!gameOver) resetGame(); },900);
+    gameOver=true; // pause updates until reset
+    msg.textContent='Wave cleared! Next wave incoming...';
+  }
+}
+
+function drawTank(t,color,turColor){
+  ctx.save();
+  ctx.translate(t.x,t.y);
+  ctx.rotate(t.angle);
+  ctx.fillStyle=color;
+  ctx.fillRect(-t.w/2,-t.h/2,t.w,t.h);
+  ctx.fillStyle='#222';
+  ctx.fillRect(-t.w/2-3,-t.h/2-4,t.w+6,4);
+  ctx.fillRect(-t.w/2-3,t.h/2,t.w+6,4);
+  ctx.restore();
+  ctx.save();
+  ctx.translate(t.x,t.y);
+  ctx.rotate(t.turretAngle);
+  ctx.fillStyle=turColor;
+  ctx.beginPath();ctx.arc(0,0,10,0,7);ctx.fill();
+  ctx.fillRect(0,-3,20,6);
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#3a4a2e';ctx.fillRect(0,0,W,H);
+  // grid texture
+  ctx.strokeStyle='rgba(0,0,0,.08)';
+  for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+  cover.forEach(cr=>{
+    if(cr.hp<=0)return;
+    ctx.fillStyle=cr.hp===3?'#8a7355':cr.hp===2?'#71604a':'#584a3a';
+    ctx.fillRect(cr.x,cr.y,cr.w,cr.h);
+    ctx.strokeStyle='#3a2f22';ctx.strokeRect(cr.x,cr.y,cr.w,cr.h);
+  });
+
+  enemies.forEach(en=>{ if(en.alive) drawTank(en,'#c0392b','#7a231b'); });
+  drawTank(player,'#3f7fd6','#254e85');
+
+  ctx.fillStyle='#ffd54f';
+  bullets.forEach(b=>{ctx.beginPath();ctx.arc(b.x,b.y,3,0,7);ctx.fill();});
+  ctx.fillStyle='#ff6b6b';
+  enemyBullets.forEach(b=>{ctx.beginPath();ctx.arc(b.x,b.y,3,0,7);ctx.fill();});
+}
+
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+resetGame();
+loop();
+</script></body></html>

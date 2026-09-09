@@ -1,0 +1,208 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Leather Tooling</title><meta name="description" content="Play Leather Tooling free online — Click or tap the glowing guide point to line up your stamp, then click/tap again (or press Space) to strike right as the mallet meter hits the sweet spot. Tool the whole pattern for a clean finished piece!"><link rel="canonical" href="https://games.multiportllc.com/games/leathertooling"><meta property="og:title" content="Leather Tooling - Multiport Games"><meta property="og:description" content="Play Leather Tooling free online — Click or tap the glowing guide point to line up your stamp, then click/tap again (or press Space) to strike right as the mallet meter hits the sweet spot. Tool the whole pattern for a clean finished piece!"><meta property="og:url" content="https://games.multiportllc.com/games/leathertooling"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Leather Tooling","description":"Play Leather Tooling free online instantly. Click or tap the glowing guide point to line up your stamp, then click/tap again (or press Space) to strike right as the mallet meter hits the sweet spot. Tool the whole pattern for a clean finished piece! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/leathertooling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#b8875a;display:block;border-radius:8px;cursor:crosshair;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#f0e0c8;font-weight:700;padding:6px 4px;font-size:1rem;flex-wrap:wrap;gap:4px 14px}
+#hud span b{color:#ffd54f}
+#msg{text-align:center;color:#ffd54f;font-weight:800;min-height:1.4em;font-size:1.05rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Leather Tooling</div>
+  <div class="game-frame">
+    <div id="hud"><span>Pattern: <b id="round">1</b></span><span>Score: <b id="score">0</b></span><span>Best: <b id="best">0</b></span></div>
+    <div id="msg">Click the glowing point to begin</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click or tap the glowing guide point to line up your stamp, then click/tap again (or press <b>Space</b>) to strike right as the mallet meter hits the sweet spot. Perfect strikes score the most — tool the whole pattern to move on, with more stamps and tighter timing every round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const roundEl=document.getElementById('round'),scoreEl=document.getElementById('score'),bestEl=document.getElementById('best'),msgEl=document.getElementById('msg');
+let best=parseInt(localStorage.getItem('leathertooling_best')||'0',10);
+bestEl.textContent=best;
+
+let round=1,score=0,points=[],stamped=[],idx=0;
+let state='aim'; // aim | swing | done
+let swingT=0,swingSpeed=0,sweetCenter=0.5,sweetHalf=0.12,lastTime=null;
+
+function setMsg(t){msgEl.textContent=t;}
+
+function genPattern(r){
+  const n=Math.min(6+r*2,22);
+  const pts=[];
+  const shape=r%3;
+  const cx=W/2,cy=H/2-10;
+  if(shape===1){ // circle rosette
+    const rad=110+Math.min(r*3,60);
+    for(let i=0;i<n;i++){
+      const a=(i/n)*Math.PI*2;
+      pts.push({x:cx+Math.cos(a)*rad,y:cy+Math.sin(a)*rad*0.75});
+    }
+  }else if(shape===2){ // wave border
+    const margin=90;
+    for(let i=0;i<n;i++){
+      const t=i/(n-1);
+      const x=margin+t*(W-2*margin);
+      const y=cy+Math.sin(t*Math.PI*4)*70;
+      pts.push({x,y});
+    }
+  }else{ // flower / spiral
+    for(let i=0;i<n;i++){
+      const a=(i/n)*Math.PI*2*2.3;
+      const rad=30+ (i/n)*140;
+      pts.push({x:cx+Math.cos(a)*rad,y:cy+Math.sin(a)*rad*0.8});
+    }
+  }
+  return pts;
+}
+
+function startRound(){
+  points=genPattern(round);
+  stamped=points.map(()=>null);
+  idx=0;
+  state='aim';
+  swingSpeed=0.018+round*0.0022;
+  sweetHalf=Math.max(0.05,0.16-round*0.008);
+  sweetCenter=0.35+Math.random()*0.3;
+  roundEl.textContent=round;
+  setMsg(I18N.t('lt_aim','Click the glowing guide point to begin'));
+}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function tryAim(px,py){
+  if(state!=='aim')return;
+  const target=points[idx];
+  if(dist({x:px,y:py},target)<38){
+    state='swing';
+    swingT=0;
+    SFX.click();
+    setMsg(I18N.t('lt_swing','Click again (or Space) when the needle hits the bright zone!'));
+  }
+}
+
+function keyboardAim(){
+  // Accessibility: acts as if clicking correct target
+  if(state==='aim'){
+    const t=points[idx];
+    tryAim(t.x,t.y);
+  }else if(state==='swing'){
+    strike();
+  }
+}
+
+function strike(){
+  if(state!=='swing')return;
+  const pos=(Math.sin(swingT)+1)/2; // 0..1
+  const d=Math.abs(pos-sweetCenter);
+  let quality;
+  if(d<sweetHalf*0.5){quality='perfect';score+=100;SFX.success();}
+  else if(d<sweetHalf){quality='good';score+=55;SFX.coin();}
+  else if(d<sweetHalf*2.2){quality='ok';score+=20;SFX.point();}
+  else{quality='miss';score+=2;SFX.error();}
+  stamped[idx]=quality;
+  scoreEl.textContent=score;
+  idx++;
+  if(idx>=points.length){
+    state='done';
+    const good=stamped.filter(q=>q==='perfect'||q==='good').length;
+    setMsg(I18N.t('lt_complete','Pattern tooled! {g}/{n} clean stamps — next pattern...').replace('{g}',good).replace('{n}',points.length));
+    SFX.levelup();
+    if(score>best){best=score;localStorage.setItem('leathertooling_best',best);bestEl.textContent=best;}
+    setTimeout(()=>{round++;startRound();},1600);
+  }else{
+    state='aim';
+    setMsg(quality==='miss'?I18N.t('lt_miss','Rough strike! Click the next glowing point.'):I18N.t('lt_next','Nice! Click the next glowing point.'));
+  }
+}
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+c.addEventListener('pointerdown',e=>{
+  const p=pointerPos(e);
+  if(state==='aim')tryAim(p.x,p.y);
+  else if(state==='swing')strike();
+});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='Enter'){e.preventDefault();keyboardAim();}
+});
+
+function drawStampMark(p,quality){
+  ctx.save();
+  ctx.translate(p.x,p.y);
+  if(quality==='perfect'){ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;}
+  else if(quality==='good'){ctx.strokeStyle='#e0e0e0';ctx.lineWidth=3;}
+  else if(quality==='ok'){ctx.strokeStyle='#c98a3f';ctx.lineWidth=2.5;}
+  else{ctx.strokeStyle='#5a3a20';ctx.lineWidth=2;}
+  ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.arc(0,0,7,0,Math.PI*2);ctx.stroke();
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#c99764');g.addColorStop(1,'#a3713f');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // leather grain texture
+  ctx.strokeStyle='rgba(90,58,32,0.12)';
+  for(let i=0;i<40;i++){
+    ctx.beginPath();
+    const yy=(i*37)%H;
+    ctx.moveTo(0,yy);ctx.lineTo(W,(yy+20)%H);
+    ctx.stroke();
+  }
+  // guide points
+  points.forEach((p,i)=>{
+    if(stamped[i]){drawStampMark(p,stamped[i]);return;}
+    ctx.save();
+    ctx.globalAlpha=i===idx?1:0.28;
+    ctx.strokeStyle=i===idx?'#fff7d6':'#5a3a20';
+    ctx.lineWidth=i===idx?3:1.5;
+    ctx.setLineDash(i===idx?[]:[4,4]);
+    ctx.beginPath();ctx.arc(p.x,p.y,i===idx?(16+Math.sin(performance.now()/180)*4):14,0,Math.PI*2);ctx.stroke();
+    ctx.restore();
+  });
+
+  if(state==='swing'){
+    const bw=380,bh=26,bx=W/2-bw/2,by=H-64;
+    ctx.fillStyle='rgba(30,18,8,0.55)';ctx.fillRect(bx,by,bw,bh);
+    // sweet zone
+    const sx=bx+(sweetCenter-sweetHalf)*bw;
+    ctx.fillStyle='rgba(255,213,79,0.85)';
+    ctx.fillRect(sx,by,sweetHalf*2*bw,bh);
+    ctx.fillStyle='rgba(255,213,79,0.4)';
+    const okHalf=sweetHalf*2.2;
+    ctx.fillRect(bx+(sweetCenter-okHalf)*bw,by,Math.min(okHalf*2*bw,bw),bh);
+    ctx.fillStyle='rgba(255,213,79,0.85)';
+    ctx.fillRect(sx,by,sweetHalf*2*bw,bh);
+    const pos=(Math.sin(swingT)+1)/2;
+    ctx.fillStyle='#ff5252';
+    ctx.fillRect(bx+pos*bw-2,by-6,4,bh+12);
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.strokeRect(bx,by,bw,bh);
+  }
+}
+
+function loop(ts){
+  const dt=lastTime===null?16:Math.min(ts-lastTime,40);
+  lastTime=ts;
+  if(state==='swing')swingT+=swingSpeed*dt;
+  draw();
+  requestAnimationFrame(loop);
+}
+startRound();
+requestAnimationFrame(loop);
+</script></body></html>

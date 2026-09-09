@@ -1,0 +1,293 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Jewelry Polishing</title><meta name="description" content="Play Jewelry Polishing free online — Drag the polishing cloth across the jewelry to build even shine everywhere without wearing through the delicate fragile zones."><link rel="canonical" href="https://games.multiportllc.com/games/jewelrypolishing"><meta property="og:title" content="Jewelry Polishing - Multiport Games"><meta property="og:description" content="Play Jewelry Polishing free online — Drag the polishing cloth across the jewelry to build even shine everywhere without wearing through the delicate fragile zones."><meta property="og:url" content="https://games.multiportllc.com/games/jewelrypolishing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Jewelry Polishing","description":"Play Jewelry Polishing free online instantly. Drag the polishing cloth across each piece of jewelry to build an even shine everywhere, tracked live on a heatmap, while avoiding over-polishing the delicate fragile zones that can wear through. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/jewelrypolishing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px}
+#hud{display:flex;gap:18px;color:#eee;font-weight:700;flex-wrap:wrap;justify-content:center}
+#hud span b{color:#7ec8ff}
+#timeBarWrap{width:280px;height:10px;background:#222;border-radius:5px;overflow:hidden;border:1px solid #444}
+#timeBar{height:100%;background:linear-gradient(90deg,#7ec8ff,#ffd54f);width:100%}
+#canvasWrap{position:relative;border-radius:14px;overflow:hidden;background:#1a1a2e;touch-action:none}
+#msg{min-height:1.5em;color:#ffd54f;font-weight:800;text-align:center}
+#cloth{position:absolute;width:46px;height:46px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.85),rgba(255,255,255,.15));pointer-events:none;transform:translate(-50%,-50%);display:none;box-shadow:0 0 12px rgba(255,255,255,.6)}
+#startBtn{padding:10px 24px;font-size:1rem;font-weight:700;border:none;border-radius:20px;background:#e94560;color:#fff;cursor:pointer;margin-top:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Jewelry Polishing</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span>Round: <b id="roundLbl">1</b></span>
+        <span>Polished: <b id="scoreLbl">0</b></span>
+        <span>Best: <b id="bestLbl">0</b></span>
+      </div>
+      <div id="timeBarWrap"><div id="timeBar"></div></div>
+      <div id="msg">Click Start to begin polishing!</div>
+      <div id="canvasWrap">
+        <canvas id="c" width="320" height="320"></canvas>
+        <div id="cloth"></div>
+      </div>
+      <button id="startBtn">Start Round</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the <b>polishing cloth</b> across the jewelry (mouse or touch) in overlapping strokes to build even shine everywhere, tracked by the glow heatmap. Watch out for the red-outlined <b>fragile zones</b> — polishing them too much wears them through and costs points. Finish with high, even coverage before time runs out!</div>
+</div>
+<script>
+const LS_KEY='jewelrypolishing_best';
+let best=parseInt(localStorage.getItem(LS_KEY)||'0',10);
+document.getElementById('bestLbl').textContent=best;
+
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=320,H=320;
+const cloth=document.getElementById('cloth');
+const canvasWrap=document.getElementById('canvasWrap');
+const msg=document.getElementById('msg');
+const startBtn=document.getElementById('startBtn');
+const timeBar=document.getElementById('timeBar');
+const roundLbl=document.getElementById('roundLbl');
+const scoreLbl=document.getElementById('scoreLbl');
+
+let round=1,score=0;
+let running=false;
+let shapeMask=null; // Uint8Array 1 = jewelry pixel
+let polish=null; // Float32Array 0..1 shine amount
+let fragileMask=null; // 1 = fragile
+let worn=null; // Float32Array wear amount for fragile cells
+let cellSize=8, cols=W/cellSize, rows=H/cellSize;
+let timeLeft=25,timeTotal=25;
+let timerId=null;
+let brushRadius=26;
+let failed=false;
+
+function setMsg(t){msg.textContent=t;}
+
+function buildShape(){
+  cols=Math.floor(W/cellSize);rows=Math.floor(H/cellSize);
+  shapeMask=new Uint8Array(cols*rows);
+  fragileMask=new Uint8Array(cols*rows);
+  polish=new Float32Array(cols*rows);
+  worn=new Float32Array(cols*rows);
+  const cx=cols/2, cy=rows/2;
+  const shapeType=round%3;
+  for(let y=0;y<rows;y++){
+    for(let x=0;x<cols;x++){
+      const dx=(x-cx),dy=(y-cy);
+      let inShape=false;
+      if(shapeType===1){ // ring (pendant/ring shape)
+        const d=Math.sqrt(dx*dx+dy*dy);
+        inShape = d< (cols*0.42) && d>(cols*0.20);
+      } else if(shapeType===2){ // star-ish (bracelet with links) — use diamond lobes
+        const d=Math.sqrt(dx*dx+dy*dy);
+        const ang=Math.atan2(dy,dx);
+        const lobed = cols*0.30 + Math.sin(ang*6)*cols*0.06;
+        inShape = d<lobed && d>cols*0.05;
+      } else { // gem/oval pendant
+        inShape = (dx*dx)/((cols*0.34)*(cols*0.34)) + (dy*dy)/((rows*0.30)*(rows*0.30)) <=1;
+      }
+      if(inShape) shapeMask[y*cols+x]=1;
+    }
+  }
+  // fragile zones: a few small random blobs inside the shape, more with higher rounds
+  const numFragile=Math.min(4,1+Math.floor(round/2));
+  let placed=0,attempts=0;
+  while(placed<numFragile&&attempts<200){
+    attempts++;
+    const fx=Math.floor(Math.random()*cols), fy=Math.floor(Math.random()*rows);
+    if(!shapeMask[fy*cols+fx])continue;
+    const r=2+Math.random()*1.5;
+    let any=false;
+    for(let y=Math.max(0,fy-r|0);y<Math.min(rows,fy+r);y++){
+      for(let x=Math.max(0,fx-r|0);x<Math.min(cols,fx+r);x++){
+        if(!shapeMask[y*cols+x])continue;
+        const d=Math.hypot(x-fx,y-fy);
+        if(d<=r){fragileMask[y*cols+x]=1;any=true;}
+      }
+    }
+    if(any)placed++;
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // base metal background for shape
+  for(let y=0;y<rows;y++){
+    for(let x=0;x<cols;x++){
+      const i=y*cols+x;
+      if(!shapeMask[i])continue;
+      const shine=polish[i];
+      let r,g,b;
+      if(fragileMask[i] && worn[i]>0.6){
+        // worn through - dark damaged
+        r=60;g=30;b=30;
+      } else {
+        const base=90,top=255;
+        const v=base+(top-base)*shine;
+        r=Math.min(255,v*1.0);
+        g=Math.min(255,v*0.95+shine*20);
+        b=Math.min(255,v*0.75+shine*10);
+      }
+      ctx.fillStyle=`rgb(${r|0},${g|0},${b|0})`;
+      ctx.fillRect(x*cellSize,y*cellSize,cellSize,cellSize);
+    }
+  }
+  // fragile zone outlines
+  ctx.strokeStyle='rgba(255,80,80,.8)';
+  ctx.lineWidth=1;
+  for(let y=0;y<rows;y++){
+    for(let x=0;x<cols;x++){
+      const i=y*cols+x;
+      if(fragileMask[i]&&shapeMask[i]){
+        ctx.strokeRect(x*cellSize+0.5,y*cellSize+0.5,cellSize-1,cellSize-1);
+      }
+    }
+  }
+}
+
+function coverageStats(){
+  let total=0,shone=0,wornOut=0,fragTotal=0;
+  for(let i=0;i<shapeMask.length;i++){
+    if(!shapeMask[i])continue;
+    total++;
+    if(polish[i]>0.75)shone++;
+    if(fragileMask[i]){fragTotal++; if(worn[i]>0.6)wornOut++;}
+  }
+  return {total,shone,wornOut,fragTotal,pct: total? shone/total:0};
+}
+
+function applyBrush(px,py){
+  const gx=px/cellSize, gy=py/cellSize;
+  const rad=brushRadius/cellSize;
+  for(let y=Math.max(0,Math.floor(gy-rad));y<Math.min(rows,Math.ceil(gy+rad));y++){
+    for(let x=Math.max(0,Math.floor(gx-rad));x<Math.min(cols,Math.ceil(gx+rad));x++){
+      const i=y*cols+x;
+      if(!shapeMask[i])continue;
+      const d=Math.hypot(x-gx,y-gy);
+      if(d>rad)continue;
+      const strength=(1-d/rad)*0.09;
+      polish[i]=Math.min(1,polish[i]+strength);
+      if(fragileMask[i]){
+        worn[i]=Math.min(1,worn[i]+strength*1.4);
+        if(worn[i]>0.6 && !fragileWarned){
+          fragileWarned=true;
+          setMsg('Careful! A fragile zone is wearing through!');
+          SFX.error();
+        }
+      }
+    }
+  }
+}
+let fragileWarned=false;
+
+function endRound(success){
+  running=false;
+  clearInterval(timerId);
+  cloth.style.display='none';
+  startBtn.style.display='inline-block';
+  startBtn.textContent='Next Round';
+  if(success){
+    score++;
+    scoreLbl.textContent=score;
+    if(score>best){best=score;localStorage.setItem(LS_KEY,String(best));document.getElementById('bestLbl').textContent=best;}
+    setMsg(I18N.t('polished_evenly','Polished evenly! Pieces done: {n}').replace('{n}',score));
+    SFX.win();
+    round++;
+  } else {
+    setMsg('Not quite even enough, or too much wear — try again!');
+    SFX.fail();
+  }
+}
+
+function startRound(){
+  startBtn.style.display='none';
+  buildShape();
+  fragileWarned=false;
+  timeTotal=Math.max(14,26-round);
+  timeLeft=timeTotal;
+  timeBar.style.width='100%';
+  running=true;
+  draw();
+  setMsg('Polish it evenly! Avoid the red fragile zones.');
+  roundLbl.textContent=round;
+  clearInterval(timerId);
+  timerId=setInterval(()=>{
+    timeLeft-=0.1;
+    timeBar.style.width=Math.max(0,(timeLeft/timeTotal*100))+'%';
+    if(timeLeft<=0){
+      clearInterval(timerId);
+      const st=coverageStats();
+      endRound(st.pct>=0.82 && st.wornOut===0);
+    }
+  },100);
+}
+
+startBtn.addEventListener('click',startRound);
+
+function getPos(e,touch){
+  const r=c.getBoundingClientRect();
+  const cx=touch? e.touches[0].clientX : e.clientX;
+  const cy=touch? e.touches[0].clientY : e.clientY;
+  return {x:(cx-r.left)*(W/r.width), y:(cy-r.top)*(H/r.height), cx,cy,r};
+}
+
+let dragging=false;
+function moveCloth(clientX,clientY){
+  const r=canvasWrap.getBoundingClientRect();
+  cloth.style.left=(clientX-r.left)+'px';
+  cloth.style.top=(clientY-r.top)+'px';
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(!running)return;
+  dragging=true;
+  cloth.style.display='block';
+  const p=getPos(e,false);
+  moveCloth(e.clientX,e.clientY);
+  applyBrush(p.x,p.y);
+  draw();
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging||!running)return;
+  const p=getPos(e,false);
+  moveCloth(e.clientX,e.clientY);
+  applyBrush(p.x,p.y);
+  draw();
+  const st=coverageStats();
+  if(st.wornOut>0){
+    endRound(false);
+  }
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+c.addEventListener('touchstart',e=>{
+  if(!running)return;
+  e.preventDefault();
+  dragging=true;
+  cloth.style.display='block';
+  const p=getPos(e,true);
+  moveCloth(e.touches[0].clientX,e.touches[0].clientY);
+  applyBrush(p.x,p.y);
+  draw();
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  if(!dragging||!running)return;
+  e.preventDefault();
+  const p=getPos(e,true);
+  moveCloth(e.touches[0].clientX,e.touches[0].clientY);
+  applyBrush(p.x,p.y);
+  draw();
+  const st=coverageStats();
+  if(st.wornOut>0){
+    endRound(false);
+  }
+},{passive:false});
+c.addEventListener('touchend',()=>{dragging=false;});
+
+buildShape();
+draw();
+</script></body></html>

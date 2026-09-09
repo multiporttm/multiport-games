@@ -1,0 +1,315 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Vacuuming</title><meta name="description" content="Play Vacuuming free online — Drag the vacuum across the room in overlapping passes to clean every tile, dodge furniture and cords, and empty the bag before it loses suction."><link rel="canonical" href="https://games.multiportllc.com/games/vacuuming"><meta property="og:title" content="Vacuuming - Multiport Games"><meta property="og:description" content="Play Vacuuming free online — Drag the vacuum across the room in overlapping passes to clean every tile, dodge furniture and cords, and empty the bag before it loses suction."><meta property="og:url" content="https://games.multiportllc.com/games/vacuuming"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Vacuuming","description":"Play Vacuuming free online instantly. Drag the vacuum across the room in overlapping passes to cover the entire floor, tracked on a coverage heatmap, while avoiding furniture legs and tangling cords, and emptying the vacuum bag before it loses suction. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/vacuuming","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{display:flex;flex-direction:column;align-items:center;gap:8px;padding:8px}
+#hud{display:flex;gap:16px;color:#eee;font-weight:700;flex-wrap:wrap;justify-content:center}
+#hud span b{color:#7ec8ff}
+#timeBarWrap{width:280px;height:10px;background:#222;border-radius:5px;overflow:hidden;border:1px solid #444}
+#timeBar{height:100%;background:linear-gradient(90deg,#7ec8ff,#ffd54f);width:100%}
+#bagWrap{width:160px;height:14px;background:#222;border-radius:7px;overflow:hidden;border:1px solid #444}
+#bagBar{height:100%;background:linear-gradient(90deg,#8fd694,#e94560);width:0%}
+#canvasWrap{position:relative;border-radius:12px;overflow:hidden;touch-action:none}
+#msg{min-height:1.4em;color:#ffd54f;font-weight:800;text-align:center}
+#startBtn{padding:10px 24px;font-size:1rem;font-weight:700;border:none;border-radius:20px;background:#e94560;color:#fff;cursor:pointer;margin-top:4px}
+#emptyBtn{padding:6px 16px;font-size:.85rem;font-weight:700;border:none;border-radius:14px;background:#8fd694;color:#123;cursor:pointer}
+#emptyBtn:disabled{opacity:.4;cursor:not-allowed}
+#tangleFlash{position:absolute;inset:0;background:rgba(255,60,60,.25);display:none;pointer-events:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Vacuuming</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span>Room: <b id="roundLbl">1</b></span>
+        <span>Cleaned: <b id="scoreLbl">0</b></span>
+        <span>Best: <b id="bestLbl">0</b></span>
+      </div>
+      <div id="timeBarWrap"><div id="timeBar"></div></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="color:#ccc;font-size:.8rem">Bag:</span>
+        <div id="bagWrap"><div id="bagBar"></div></div>
+        <button id="emptyBtn">Empty Bag</button>
+      </div>
+      <div id="msg">Click Start to clean the room!</div>
+      <div id="canvasWrap">
+        <canvas id="c" width="340" height="300"></canvas>
+        <div id="tangleFlash"></div>
+      </div>
+      <button id="startBtn">Start Room</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the <b>vacuum</b> across the floor (mouse or touch) in overlapping passes to clean every tile, tracked by the coverage heatmap. Avoid the brown <b>furniture legs</b> and don't drag over a <b>cord</b> too long or you'll tangle and stall. Watch the <b>bag meter</b> — click <b>Empty Bag</b> before it's full or you'll lose suction. Clean the room thoroughly before time runs out!</div>
+</div>
+<script>
+const LS_KEY='vacuuming_best';
+let best=parseInt(localStorage.getItem(LS_KEY)||'0',10);
+document.getElementById('bestLbl').textContent=best;
+
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=340,H=300;
+const canvasWrap=document.getElementById('canvasWrap');
+const msg=document.getElementById('msg');
+const startBtn=document.getElementById('startBtn');
+const emptyBtn=document.getElementById('emptyBtn');
+const timeBar=document.getElementById('timeBar');
+const bagBar=document.getElementById('bagBar');
+const tangleFlash=document.getElementById('tangleFlash');
+const roundLbl=document.getElementById('roundLbl');
+const scoreLbl=document.getElementById('scoreLbl');
+
+let round=1,score=0,running=false;
+let cellSize=10,cols=W/cellSize,rows=H/cellSize;
+let floorMask=null,coverage=null,obstacles=[],cords=[];
+let timeLeft=30,timeTotal=30,timerId=null;
+let bag=0,bagMax=100,stalled=false,tangleTimer=0;
+let vac={x:W/2,y:H/2};
+let dragging=false;
+
+function setMsg(t){msg.textContent=t;}
+
+function buildRoom(){
+  cols=Math.floor(W/cellSize);rows=Math.floor(H/cellSize);
+  floorMask=new Uint8Array(cols*rows).fill(1);
+  coverage=new Float32Array(cols*rows);
+  obstacles=[];
+  cords=[];
+  const numFurn=Math.min(6,2+Math.floor(round/1.5));
+  for(let i=0;i<numFurn;i++){
+    const fx=2+Math.random()*(cols-4);
+    const fy=2+Math.random()*(rows-4);
+    obstacles.push({gx:fx,gy:fy,r:1.1+Math.random()*0.6});
+  }
+  const numCords=Math.min(3,1+Math.floor(round/2));
+  for(let i=0;i<numCords;i++){
+    // a cord: a wavy line of points across part of the room
+    const pts=[];
+    const startX=Math.random()*cols, startY=Math.random()*rows;
+    let x=startX,y=startY;
+    const len=8+Math.floor(Math.random()*10);
+    let dir=Math.random()*Math.PI*2;
+    for(let k=0;k<len;k++){
+      pts.push({x,y});
+      dir+=(Math.random()-0.5)*0.9;
+      x+=Math.cos(dir)*1.3;
+      y+=Math.sin(dir)*1.3;
+      x=Math.max(1,Math.min(cols-1,x));
+      y=Math.max(1,Math.min(rows-1,y));
+    }
+    cords.push(pts);
+  }
+}
+
+function nearObstacle(gx,gy){
+  return obstacles.find(o=>Math.hypot(o.gx-gx,o.gy-gy)<o.r);
+}
+function nearCord(gx,gy){
+  for(const cord of cords){
+    for(const p of cord){
+      if(Math.hypot(p.x-gx,p.y-gy)<0.9)return true;
+    }
+  }
+  return false;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#5a4632';ctx.fillRect(0,0,W,H);
+  for(let y=0;y<rows;y++){
+    for(let x=0;x<cols;x++){
+      const i=y*cols+x;
+      const cov=coverage[i];
+      const base=90,top=210;
+      const v=base+(top-base)*Math.min(1,cov);
+      ctx.fillStyle=`rgb(${v*0.5|0},${v*0.75|0},${v|0})`;
+      ctx.fillRect(x*cellSize,y*cellSize,cellSize,cellSize);
+    }
+  }
+  // cords
+  ctx.strokeStyle='#222';
+  ctx.lineWidth=3;
+  cords.forEach(cord=>{
+    ctx.beginPath();
+    cord.forEach((p,i)=>{
+      const px=p.x*cellSize,py=p.y*cellSize;
+      if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+    });
+    ctx.stroke();
+  });
+  ctx.strokeStyle='#caa24a';
+  ctx.lineWidth=1;
+  cords.forEach(cord=>{
+    ctx.beginPath();
+    cord.forEach((p,i)=>{
+      const px=p.x*cellSize,py=p.y*cellSize;
+      if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+    });
+    ctx.stroke();
+  });
+  // furniture
+  obstacles.forEach(o=>{
+    ctx.fillStyle='#3d2b1a';
+    ctx.beginPath();
+    ctx.arc(o.gx*cellSize,o.gy*cellSize,o.r*cellSize,0,7);
+    ctx.fill();
+    ctx.strokeStyle='#20140b';ctx.stroke();
+  });
+  // vacuum
+  ctx.save();
+  ctx.translate(vac.x,vac.y);
+  ctx.fillStyle=stalled?'#888':'#e94560';
+  ctx.beginPath();ctx.arc(0,0,14,0,7);ctx.fill();
+  ctx.fillStyle='#333';
+  ctx.fillRect(-4,-30,8,20);
+  ctx.restore();
+}
+
+function coverageStats(){
+  let total=0,done=0;
+  for(let i=0;i<floorMask.length;i++){
+    total++;
+    if(coverage[i]>=0.7)done++;
+  }
+  return {total,done,pct: total? done/total:0};
+}
+
+function applyVac(px,py){
+  if(stalled)return;
+  const gx=px/cellSize, gy=py/cellSize;
+  if(nearCord(gx,gy)){
+    tangleTimer+=1;
+    if(tangleTimer>10){
+      stalled=true;
+      tangleFlash.style.display='block';
+      setMsg('Tangled in the cord! Move away to free it.');
+      SFX.error();
+      setTimeout(()=>{stalled=false;tangleTimer=0;tangleFlash.style.display='none';setMsg('Freed! Keep cleaning.');},1500);
+    }
+  } else {
+    tangleTimer=Math.max(0,tangleTimer-0.5);
+  }
+  if(nearObstacle(gx,gy))return;
+  const rad=1.6;
+  for(let y=Math.max(0,Math.floor(gy-rad));y<Math.min(rows,Math.ceil(gy+rad));y++){
+    for(let x=Math.max(0,Math.floor(gx-rad));x<Math.min(cols,Math.ceil(gx+rad));x++){
+      const d=Math.hypot(x-gx,y-gy);
+      if(d>rad)continue;
+      if(nearObstacle(x,y))continue;
+      const i=y*cols+x;
+      const strength=(1-d/rad)*0.12;
+      if(coverage[i]<1){
+        coverage[i]=Math.min(1,coverage[i]+strength);
+        bag=Math.min(bagMax,bag+strength*0.35);
+      }
+    }
+  }
+  bagBar.style.width=(bag/bagMax*100)+'%';
+  if(bag>=bagMax && !stalled){
+    stalled=true;
+    setMsg('Bag is full! Suction lost — click Empty Bag!');
+    SFX.fail();
+  }
+}
+
+emptyBtn.addEventListener('click',()=>{
+  bag=0;
+  bagBar.style.width='0%';
+  if(stalled){stalled=false;setMsg('Bag emptied — back to cleaning!');}
+});
+
+function endRound(success){
+  running=false;
+  clearInterval(timerId);
+  startBtn.style.display='inline-block';
+  startBtn.textContent='Next Room';
+  if(success){
+    score++;
+    scoreLbl.textContent=score;
+    if(score>best){best=score;localStorage.setItem(LS_KEY,String(best));document.getElementById('bestLbl').textContent=best;}
+    setMsg(I18N.t('rooms_cleaned','Room cleaned! Rooms done: {n}').replace('{n}',score));
+    SFX.win();
+    round++;
+  } else {
+    setMsg('Room not clean enough — try again!');
+    SFX.fail();
+  }
+}
+
+function startRound(){
+  startBtn.style.display='none';
+  buildRoom();
+  bag=0;bagBar.style.width='0%';
+  stalled=false;tangleTimer=0;
+  timeTotal=Math.max(18,32-round);
+  timeLeft=timeTotal;
+  timeBar.style.width='100%';
+  running=true;
+  vac.x=W/2;vac.y=H/2;
+  draw();
+  setMsg('Clean the whole floor before time runs out!');
+  roundLbl.textContent=round;
+  clearInterval(timerId);
+  timerId=setInterval(()=>{
+    timeLeft-=0.1;
+    timeBar.style.width=Math.max(0,(timeLeft/timeTotal*100))+'%';
+    if(timeLeft<=0){
+      clearInterval(timerId);
+      const st=coverageStats();
+      endRound(st.pct>=0.85);
+    }
+  },100);
+}
+startBtn.addEventListener('click',startRound);
+
+function getPos(clientX,clientY){
+  const r=c.getBoundingClientRect();
+  return {x:(clientX-r.left)*(W/r.width), y:(clientY-r.top)*(H/r.height)};
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(!running)return;
+  dragging=true;
+  const p=getPos(e.clientX,e.clientY);
+  vac.x=p.x;vac.y=p.y;
+  applyVac(p.x,p.y);
+  draw();
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging||!running)return;
+  const p=getPos(e.clientX,e.clientY);
+  vac.x=p.x;vac.y=p.y;
+  applyVac(p.x,p.y);
+  draw();
+});
+window.addEventListener('pointerup',()=>dragging=false);
+
+c.addEventListener('touchstart',e=>{
+  if(!running)return;
+  e.preventDefault();
+  dragging=true;
+  const t=e.touches[0];
+  const p=getPos(t.clientX,t.clientY);
+  vac.x=p.x;vac.y=p.y;
+  applyVac(p.x,p.y);
+  draw();
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  if(!dragging||!running)return;
+  e.preventDefault();
+  const t=e.touches[0];
+  const p=getPos(t.clientX,t.clientY);
+  vac.x=p.x;vac.y=p.y;
+  applyVac(p.x,p.y);
+  draw();
+},{passive:false});
+c.addEventListener('touchend',()=>dragging=false);
+
+buildRoom();
+draw();
+</script></body></html>

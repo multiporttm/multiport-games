@@ -1,0 +1,297 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Gutter Cleaning</title><meta name="description" content="Play Gutter Cleaning free online — Climb the ladder with Up/Down (or drag on mobile), scoop debris from each gutter section by clicking/dragging across it, and keep your balance from tipping too far. Clear the whole roofline before time runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/guttercleaning"><meta property="og:title" content="Gutter Cleaning - Multiport Games"><meta property="og:description" content="Play Gutter Cleaning free online — Climb the ladder with Up/Down (or drag on mobile), scoop debris from each gutter section by clicking/dragging across it, and keep your balance from tipping too far. Clear the whole roofline before time runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/guttercleaning"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Gutter Cleaning","description":"Play Gutter Cleaning free online instantly. Climb the ladder with Up/Down (or drag on mobile), scoop debris from each gutter section by clicking/dragging across it, and keep your balance from tipping too far. Clear the whole roofline before time runs out! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/guttercleaning","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:700;padding:8px 14px;font-size:.95rem;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffd54f}
+#wobbleWrap{width:100%;max-width:900px;padding:0 14px 6px}
+#wobbleBar{height:10px;border-radius:6px;background:#222;overflow:hidden;position:relative;border:1px solid rgba(255,255,255,.15)}
+#wobbleFill{position:absolute;top:0;bottom:0;left:50%;width:2px;background:#4caf50;transition:left .05s linear,width .05s linear,background .1s}
+#c{background:#1b2a4a;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#msg{color:#ffd54f;text-align:center;font-weight:800;min-height:1.4em;padding-bottom:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Gutter Cleaning</div>
+  <div class="game-frame">
+    <div id="hud"><div>Round <span id="roundNum">1</span></div><div>Score: <span id="score">0</span></div><div>Time: <span id="timeLeft">45</span>s</div><div>Hi: <span id="hiScore">0</span></div></div>
+    <div id="wobbleWrap"><div id="wobbleBar"><div id="wobbleFill"></div></div></div>
+    <div id="msg">&nbsp;</div>
+    <canvas id="c" width="860" height="380"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Use <b>Up/Down arrows</b> (or drag/tap) to move the worker up and down the ladder. Move the ladder <b>Left/Right</b> (or tap the arrows) between roof sections. Once positioned at a gutter, <b>click-and-drag across the debris</b> to scoop it out. Don't lean too far — watch the <b>balance meter</b>, if it maxes out you'll wobble and lose time! Clear every section before the timer runs out to advance to a longer, dirtier roofline.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=860,H=380;
+const KEY='guttercleaning_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+document.getElementById('hiScore').textContent=hi;
+
+let round=1,score=0,timeLeft=45,gameOver=false,started=false;
+let sections=[];
+let ladderX=0; // index of section ladder is in front of
+let workerY=0; // 0=bottom of ladder,1=top
+let wobble=0; // 0..1
+let scoopX=0,scooping=false,lastScoopPt=null;
+let lastTime=null;
+let msgTimer=0;
+
+const GROUND=H-40;
+const ROOF_Y=90;
+
+function buildRound(){
+  const n=3+Math.min(5,round); // sections
+  sections=[];
+  const segW=(W-80)/n;
+  for(let i=0;i<n;i++){
+    const debrisCount=4+Math.floor(round*1.3)+Math.floor(Math.random()*2);
+    const debris=[];
+    for(let d=0;d<debrisCount;d++){
+      debris.push({x:Math.random()*0.86+0.07,cleaned:false});
+    }
+    sections.push({x0:40+i*segW,x1:40+(i+1)*segW,debris,cleared:false});
+  }
+  ladderX=0;
+  workerY=0;
+  wobble=0;
+  timeLeft=Math.max(25,45-round*1.5)+n*3;
+  document.getElementById('timeLeft').textContent=Math.ceil(timeLeft);
+  document.getElementById('roundNum').textContent=round;
+}
+
+function setMsg(t,dur){msgTimer=dur||90;document.getElementById('msg').textContent=t;}
+
+function reset(){
+  round=1;score=0;gameOver=false;started=false;
+  document.getElementById('score').textContent=0;
+  buildRound();
+  setMsg('Tap / press any key to start',9999);
+}
+reset();
+
+function currentSection(){return sections[ladderX];}
+
+function allCleared(){return sections.every(s=>s.debris.every(d=>d.cleaned));}
+
+// input
+let keys={};
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  if(!started){started=true;setMsg('',1);}
+  if(gameOver){reset();return;}
+  if(e.code==='ArrowLeft')moveLadder(-1);
+  if(e.code==='ArrowRight')moveLadder(1);
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function moveLadder(dir){
+  if(scooping)return;
+  const nx=ladderX+dir;
+  if(nx<0||nx>=sections.length)return;
+  ladderX=nx;
+  wobble=Math.min(1,wobble+0.08);
+  SFX.click();
+}
+
+function ladderScreenX(){
+  const s=currentSection();
+  return (s.x0+s.x1)/2;
+}
+
+function workerScreenPos(){
+  const lx=ladderScreenX();
+  const topY=ROOF_Y+10;
+  const botY=GROUND-10;
+  const y=botY-(botY-topY)*workerY;
+  return {x:lx,y};
+}
+
+function pointInWorkerReach(px,py){
+  const w=workerScreenPos();
+  const dx=px-w.x, dy=py-w.y;
+  return Math.sqrt(dx*dx+dy*dy)<70;
+}
+
+function handlePointer(px,py,dragging){
+  if(!started){started=true;setMsg('',1);return;}
+  if(gameOver){reset();return;}
+  const s=currentSection();
+  if(!s)return;
+  const gutterY=ROOF_Y;
+  if(py>gutterY-22&&py<gutterY+22&&px>=s.x0&&px<=s.x1&&workerY>0.55){
+    scooping=true;
+    s.debris.forEach(d=>{
+      const dx=s.x0+d.x*(s.x1-s.x0);
+      if(!d.cleaned&&Math.abs(dx-px)<26){
+        d.cleaned=true;
+        score+=10;
+        document.getElementById('score').textContent=score;
+        SFX.point();
+        wobble=Math.min(1,wobble+0.03);
+      }
+    });
+    if(s.debris.every(d=>d.cleaned)&&!s.cleared){
+      s.cleared=true;
+      score+=25;
+      document.getElementById('score').textContent=score;
+      SFX.success();
+      setMsg('Section clear!',60);
+    }
+  }
+}
+
+c.addEventListener('mousedown',e=>{const r=c.getBoundingClientRect();const sx=(e.clientX-r.left)*(W/r.width),sy=(e.clientY-r.top)*(H/r.height);handlePointer(sx,sy,true);});
+c.addEventListener('mousemove',e=>{if(!scooping)return;const r=c.getBoundingClientRect();const sx=(e.clientX-r.left)*(W/r.width),sy=(e.clientY-r.top)*(H/r.height);handlePointer(sx,sy,true);});
+window.addEventListener('mouseup',()=>{scooping=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[0];const r=c.getBoundingClientRect();const sx=(t.clientX-r.left)*(W/r.width),sy=(t.clientY-r.top)*(H/r.height);handlePointer(sx,sy,true);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(!scooping)return;const t=e.touches[0];const r=c.getBoundingClientRect();const sx=(t.clientX-r.left)*(W/r.width),sy=(t.clientY-r.top)*(H/r.height);handlePointer(sx,sy,true);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();scooping=false;},{passive:false});
+
+// mobile-friendly buttons overlay via canvas taps on edges
+c.addEventListener('click',e=>{
+  const r=c.getBoundingClientRect();
+  const sx=(e.clientX-r.left)*(W/r.width);
+  if(sx<40){moveLadder(-1);}
+  else if(sx>W-40){moveLadder(1);}
+});
+
+function updateWobbleUI(){
+  const fill=document.getElementById('wobbleFill');
+  const pct=wobble*100;
+  fill.style.left=(50-pct/2)+'%';
+  fill.style.width=Math.max(2,pct)+'%';
+  fill.style.background=wobble>0.75?'#e94560':wobble>0.45?'#ffb300':'#4caf50';
+}
+
+function drawRoofline(){
+  ctx.fillStyle='#0d1730';ctx.fillRect(0,0,W,H);
+  // sky gradient
+  const sky=ctx.createLinearGradient(0,0,0,ROOF_Y+20);
+  sky.addColorStop(0,'#2b3d66');sky.addColorStop(1,'#4a6da8');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,ROOF_Y+20);
+  // roof
+  ctx.fillStyle='#7a3b3b';
+  ctx.fillRect(30,ROOF_Y-30,W-60,30);
+  // house wall
+  ctx.fillStyle='#c9a876';
+  ctx.fillRect(30,ROOF_Y,W-60,GROUND-ROOF_Y);
+  // ground
+  ctx.fillStyle='#3d5a2f';
+  ctx.fillRect(0,GROUND,W,H-GROUND);
+
+  sections.forEach((s,i)=>{
+    // gutter trough
+    ctx.fillStyle=s.cleared?'#5aaa30':'#555';
+    ctx.fillRect(s.x0,ROOF_Y-6,s.x1-s.x0-6,14);
+    // debris
+    s.debris.forEach(d=>{
+      if(d.cleaned)return;
+      const dx=s.x0+d.x*(s.x1-s.x0);
+      ctx.fillStyle=['#8b5a2b','#a0522d','#6b8e23'][Math.floor(dx)%3];
+      ctx.beginPath();ctx.ellipse(dx,ROOF_Y,7,5,0,0,Math.PI*2);ctx.fill();
+    });
+    if(i===ladderX){
+      ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;
+      ctx.strokeRect(s.x0+2,ROOF_Y-10,s.x1-s.x0-10,20);
+    }
+  });
+}
+
+function drawLadder(){
+  const lx=ladderScreenX();
+  ctx.strokeStyle='#b08040';
+  ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(lx-14,GROUND);ctx.lineTo(lx-14,ROOF_Y-10);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(lx+14,GROUND);ctx.lineTo(lx+14,ROOF_Y-10);ctx.stroke();
+  for(let y=GROUND;y>ROOF_Y-10;y-=22){
+    ctx.beginPath();ctx.moveTo(lx-14,y);ctx.lineTo(lx+14,y);ctx.stroke();
+  }
+}
+
+function drawWorker(){
+  const w=workerScreenPos();
+  const lean=(wobble)*10*Math.sin(performance.now()/120);
+  ctx.save();
+  ctx.translate(w.x+lean,w.y);
+  ctx.fillStyle='#2d5a8a';
+  ctx.fillRect(-9,-10,18,26);
+  ctx.fillStyle='#f2c9a0';
+  ctx.beginPath();ctx.arc(0,-18,9,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#444';
+  ctx.fillRect(-9,-24,18,6);
+  if(scooping){
+    ctx.strokeStyle='#eee';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(9,-4);ctx.lineTo(20,-14);ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawRoofline();
+  drawLadder();
+  drawWorker();
+  updateWobbleUI();
+
+  if(msgTimer>0){msgTimer--; if(msgTimer===0)document.getElementById('msg').textContent=' ';}
+
+  if(!started){
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','TIME UP!'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap / press key to try again'),W/2,H/2+24);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  // keyboard vertical + horizontal continuous move
+  if(keys['ArrowUp']){workerY=Math.min(1,workerY+0.02*dt);}
+  if(keys['ArrowDown']){workerY=Math.max(0,workerY-0.02*dt);}
+
+  // wobble decay
+  wobble=Math.max(0,wobble-0.003*dt);
+  if(wobble>=1){
+    timeLeft=Math.max(0,timeLeft-3);
+    wobble=0.3;
+    setMsg('Whoa! Careful on the ladder!',60);
+    SFX.hurt();
+  }
+
+  timeLeft-=dt/60;
+  if(timeLeft<=0){
+    timeLeft=0;
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(KEY,hi);document.getElementById('hiScore').textContent=hi;}
+    SFX.lose();
+  }
+  document.getElementById('timeLeft').textContent=Math.ceil(timeLeft);
+
+  if(allCleared()&&!gameOver){
+    round++;
+    score+=50;
+    document.getElementById('score').textContent=score;
+    SFX.levelup();
+    setMsg('Roofline cleared! Next round...',80);
+    buildRound();
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

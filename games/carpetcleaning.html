@@ -1,0 +1,280 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Carpet Cleaning</title><meta name="description" content="Play Carpet Cleaning free online — Click each stain, pick the matching cleaning solution, then shampoo the whole carpet in overlapping passes tracked by a coverage heatmap. Pick the wrong solution and the stain sets permanently — clean carpets fast to beat the clock!"><link rel="canonical" href="https://games.multiportllc.com/games/carpetcleaning"><meta property="og:title" content="Carpet Cleaning - Multiport Games"><meta property="og:description" content="Play Carpet Cleaning free online — Click each stain, pick the matching cleaning solution, then shampoo the whole carpet in overlapping passes tracked by a coverage heatmap. Pick the wrong solution and the stain sets permanently — clean carpets fast to beat the clock!"><meta property="og:url" content="https://games.multiportllc.com/games/carpetcleaning"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Carpet Cleaning","description":"Play Carpet Cleaning free online instantly. Click each stain, pick the matching cleaning solution, then shampoo the whole carpet in overlapping passes tracked by a coverage heatmap. Pick the wrong solution and the stain sets permanently — clean carpets fast to beat the clock! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/carpetcleaning","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:700;padding:8px 14px;font-size:.95rem;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffd54f}
+#msg{color:#ffd54f;text-align:center;font-weight:800;min-height:1.4em;padding-bottom:4px}
+#c{background:#7a5c3e;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#solutionPanel{display:none;justify-content:center;gap:10px;padding:10px;flex-wrap:wrap}
+#solutionPanel.show{display:flex}
+#solutionPanel button{padding:9px 16px;border-radius:14px;border:2px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-weight:700;cursor:pointer;font-size:.9rem}
+#solutionPanel button:hover{background:rgba(255,255,255,.2)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Carpet Cleaning</div>
+  <div class="game-frame">
+    <div id="hud"><div>Round <span id="roundNum">1</span></div><div>Score: <span id="score">0</span></div><div>Time: <span id="timeLeft">50</span>s</div><div>Hi: <span id="hiScore">0</span></div></div>
+    <div id="msg">&nbsp;</div>
+    <canvas id="c" width="860" height="380"></canvas>
+    <div id="solutionPanel"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Click each stain on the carpet, then choose the matching cleaning solution from the popup (Enzyme Cleaner for organic stains, Solvent for oil/grease, Oxidizer for wine/juice/ink, Detergent for mud/dirt). Picking the <b>wrong solution sets the stain permanently</b> — it can no longer be removed this round. Once every stain is treated, click-and-drag the shampoo machine across the whole carpet in overlapping passes until the coverage heatmap shows full coverage. Finish before time runs out to move to a bigger carpet with trickier stains!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=860,H=380;
+const KEY='carpetcleaning_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+document.getElementById('hiScore').textContent=hi;
+
+const STAIN_TYPES=[
+  {type:'organic',color:'#5a3d1a',label:'Organic (food/pet)'},
+  {type:'oil',color:'#2b2b2b',label:'Oil / Grease'},
+  {type:'oxidize',color:'#7a1030',label:'Wine / Juice / Ink'},
+  {type:'mud',color:'#6b4a2b',label:'Mud / Dirt'}
+];
+const SOLUTIONS=[
+  {id:'enzyme',label:'Enzyme Cleaner',correctFor:'organic'},
+  {id:'solvent',label:'Solvent',correctFor:'oil'},
+  {id:'oxidizer',label:'Oxidizer',correctFor:'oxidize'},
+  {id:'detergent',label:'Detergent',correctFor:'mud'}
+];
+
+let round=1,score=0,timeLeft=50,gameOver=false,started=false;
+let stains=[];
+let phase='stains'; // stains, shampoo, done
+let activeStain=null;
+let heat=null,cellSize=20,cols=0,rows=0;
+let shampooPos=null,dragging=false;
+let lastTime=null;
+let msgTimer=0;
+
+const CARPET_X0=40,CARPET_Y0=30,CARPET_X1=W-40,CARPET_Y1=H-40;
+
+function setMsg(t,dur){msgTimer=dur||90;document.getElementById('msg').textContent=t;}
+
+function buildRound(){
+  const stainCount=3+round;
+  stains=[];
+  for(let i=0;i<stainCount;i++){
+    const st=STAIN_TYPES[Math.floor(Math.random()*STAIN_TYPES.length)];
+    stains.push({
+      x:CARPET_X0+30+Math.random()*(CARPET_X1-CARPET_X0-60),
+      y:CARPET_Y0+30+Math.random()*(CARPET_Y1-CARPET_Y0-60),
+      r:12+Math.random()*10,
+      type:st.type,color:st.color,
+      treated:false,set:false
+    });
+  }
+  cols=Math.ceil((CARPET_X1-CARPET_X0)/cellSize);
+  rows=Math.ceil((CARPET_Y1-CARPET_Y0)/cellSize);
+  heat=new Array(cols*rows).fill(0);
+  shampooPos=null;
+  phase='stains';
+  activeStain=null;
+  document.getElementById('solutionPanel').classList.remove('show');
+  timeLeft=Math.max(35,50-round)+round*5;
+  document.getElementById('timeLeft').textContent=Math.ceil(timeLeft);
+  document.getElementById('roundNum').textContent=round;
+}
+
+function reset(){
+  round=1;score=0;gameOver=false;started=false;
+  document.getElementById('score').textContent=0;
+  buildRound();
+  setMsg('Tap / press any key to start',9999);
+}
+reset();
+
+function coveragePct(){
+  let covered=0;
+  for(let i=0;i<heat.length;i++)if(heat[i]>0.6)covered++;
+  return covered/heat.length;
+}
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  return {x:(t.clientX-r.left)*(W/r.width),y:(t.clientY-r.top)*(H/r.height)};
+}
+
+function showSolutionPanel(stain){
+  activeStain=stain;
+  const panel=document.getElementById('solutionPanel');
+  panel.innerHTML='';
+  SOLUTIONS.forEach(sol=>{
+    const btn=document.createElement('button');
+    btn.textContent=sol.label;
+    btn.onclick=()=>chooseSolution(sol);
+    panel.appendChild(btn);
+  });
+  panel.classList.add('show');
+}
+
+function chooseSolution(sol){
+  if(!activeStain)return;
+  const s=activeStain;
+  document.getElementById('solutionPanel').classList.remove('show');
+  if(sol.correctFor===s.type){
+    s.treated=true;
+    score+=15;
+    document.getElementById('score').textContent=score;
+    SFX.success();
+    setMsg('Stain removed!',50);
+  } else {
+    s.set=true;
+    score=Math.max(0,score-5);
+    document.getElementById('score').textContent=score;
+    SFX.error();
+    setMsg('Wrong solution — the stain has set!',60);
+  }
+  activeStain=null;
+  if(stains.every(st=>st.treated||st.set)){
+    phase='shampoo';
+    setMsg('Now shampoo the whole carpet — drag across every area.',90);
+  }
+}
+
+function onDown(e){
+  if(!started){started=true;setMsg('',1);return;}
+  if(gameOver){reset();return;}
+  const p=pointerPos(e);
+  if(phase==='stains'){
+    if(activeStain)return;
+    for(const s of stains){
+      if(s.treated||s.set)continue;
+      if(Math.hypot(s.x-p.x,s.y-p.y)<s.r+8){
+        showSolutionPanel(s);
+        SFX.click();
+        return;
+      }
+    }
+  } else if(phase==='shampoo'){
+    dragging=true;
+    shampooPos=p;
+  }
+}
+function onMove(e){
+  if(phase!=='shampoo'||!dragging)return;
+  const p=pointerPos(e);
+  shampooPos=p;
+  const cx=Math.floor((p.x-CARPET_X0)/cellSize),cy=Math.floor((p.y-CARPET_Y0)/cellSize);
+  for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++){
+    const gx=cx+dx,gy=cy+dy;
+    if(gx>=0&&gx<cols&&gy>=0&&gy<rows){
+      const idx=gy*cols+gx;
+      heat[idx]=Math.min(1,heat[idx]+0.08);
+    }
+  }
+  if(coveragePct()>0.92 && phase==='shampoo'){
+    phase='done';
+    score+=40;
+    document.getElementById('score').textContent=score;
+    SFX.win();
+    setMsg('Carpet spotless!',90);
+  }
+}
+function onUp(){dragging=false;}
+
+c.addEventListener('mousedown',onDown);
+c.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();onDown(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();onMove(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();onUp();},{passive:false});
+
+document.addEventListener('keydown',()=>{
+  if(!started){started=true;setMsg('',1);}
+  else if(gameOver){reset();}
+});
+
+function drawCarpet(){
+  ctx.fillStyle='#3a2a1a';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#8a6a45';
+  ctx.fillRect(CARPET_X0,CARPET_Y0,CARPET_X1-CARPET_X0,CARPET_Y1-CARPET_Y0);
+  // texture lines
+  ctx.strokeStyle='rgba(0,0,0,0.06)';ctx.lineWidth=1;
+  for(let x=CARPET_X0;x<CARPET_X1;x+=10){ctx.beginPath();ctx.moveTo(x,CARPET_Y0);ctx.lineTo(x,CARPET_Y1);ctx.stroke();}
+  ctx.strokeStyle='#5a4530';ctx.lineWidth=6;
+  ctx.strokeRect(CARPET_X0,CARPET_Y0,CARPET_X1-CARPET_X0,CARPET_Y1-CARPET_Y0);
+
+  stains.forEach(s=>{
+    if(s.treated)return;
+    ctx.fillStyle=s.set?'#1a1a1a':s.color;
+    ctx.globalAlpha=s.set?0.9:0.75;
+    ctx.beginPath();ctx.ellipse(s.x,s.y,s.r,s.r*0.75,0,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+    if(!s.set){
+      ctx.strokeStyle='#ffd54f';ctx.lineWidth=1.5;
+      ctx.beginPath();ctx.ellipse(s.x,s.y,s.r+4,s.r*0.75+4,0,0,Math.PI*2);ctx.stroke();
+    }
+  });
+
+  if(phase==='shampoo'||phase==='done'){
+    for(let gy=0;gy<rows;gy++){
+      for(let gx=0;gx<cols;gx++){
+        const v=heat[gy*cols+gx];
+        if(v>0){
+          ctx.fillStyle=`rgba(100,180,255,${v*0.5})`;
+          ctx.fillRect(CARPET_X0+gx*cellSize,CARPET_Y0+gy*cellSize,cellSize,cellSize);
+        }
+      }
+    }
+    if(shampooPos){
+      ctx.fillStyle='#ddd';
+      ctx.fillRect(shampooPos.x-18,shampooPos.y-10,36,20);
+      ctx.strokeStyle='#2196f3';ctx.lineWidth=2;
+      ctx.strokeRect(shampooPos.x-18,shampooPos.y-10,36,20);
+    }
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawCarpet();
+
+  if(msgTimer>0){msgTimer--; if(msgTimer===0)document.getElementById('msg').textContent=' ';}
+
+  if(!started){requestAnimationFrame(loop);return;}
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','TIME UP!'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap / press key to try again'),W/2,H/2+24);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  timeLeft-=dt/60;
+  if(timeLeft<=0){
+    timeLeft=0;gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(KEY,hi);document.getElementById('hiScore').textContent=hi;}
+    SFX.lose();
+  }
+  document.getElementById('timeLeft').textContent=Math.ceil(timeLeft);
+
+  if(phase==='done'){
+    round++;
+    SFX.levelup();
+    setMsg('Carpet complete! Next room...',80);
+    buildRound();
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
