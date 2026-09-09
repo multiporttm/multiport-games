@@ -1,0 +1,302 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bocce</title><meta name="description" content="Play Bocce free online — Drag back from your ball to aim, release to roll. Land closest to the white pallino to win each end. Best of 5 ends wins the match!"><link rel="canonical" href="https://games.multiportllc.com/games/bocce"><meta property="og:title" content="Bocce - Multiport Games"><meta property="og:description" content="Play Bocce free online — Drag back from your ball to aim, release to roll. Land closest to the white pallino to win each end. Best of 5 ends wins the match!"><meta property="og:url" content="https://games.multiportllc.com/games/bocce"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bocce","description":"Play Bocce free online instantly. Drag back from your ball to aim, release to roll. Land closest to the white pallino to win each end. Best of 5 ends wins the match! No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/bocce","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{text-align:center}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;padding:8px;display:flex;justify-content:center;gap:22px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+#c{background:#2d7a2d;display:block;border-radius:10px;margin:0 auto;touch-action:none;max-width:100%;height:auto}
+#msg{color:#fff;min-height:1.6em;font-weight:700;padding:4px}
+#again{display:none;margin-top:6px;padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bocce</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="wrap">
+      <div id="hud">
+        <div>End <span id="endNum">1</span>/5</div>
+        <div>You <span id="pScore">0</span> — <span id="cScore">0</span> CPU</div>
+        <div>Balls left: <span id="ballsLeft">4</span></div>
+      </div>
+      <canvas id="c" width="760" height="420"></canvas>
+      <div id="msg">Drag back from the red ball to aim and set power, then release to roll.</div>
+      <button id="again">Play Again</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Drag backward from your ball (click/touch and hold, pull back, release) to aim and set power — a longer pull rolls farther. Land your ball closer to the white pallino than the CPU's balls to score points for the end. Terrain gets bumpier each end. Win the majority of 5 ends to win the match!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const COURT={x:40,y:30,w:W-80,h:H-60};
+let end=1,pScore=0,cScore=0,ballsLeft=4,turn='player'; // alternates, 4 balls each per end
+let pallino=null;
+let balls=[]; // {x,y,owner,r,vx,vy,settled}
+let bumps=[]; // terrain bumps for current end
+let rolling=false;
+let aiming=false,aimStart=null,aimCur=null;
+let gameOver=false;
+const R=13;
+
+function rnd(a,b){return a+Math.random()*(b-a);}
+
+function newEnd(){
+  bumps=[];
+  const n=1+end; // more terrain each end
+  for(let i=0;i<n;i++){
+    bumps.push({x:rnd(COURT.x+60,COURT.x+COURT.w-60),y:rnd(COURT.y+40,COURT.y+COURT.h-40),r:rnd(18,32),dx:rnd(-1,1)});
+  }
+  pallino={x:COURT.x+COURT.w/2+rnd(-60,60),y:COURT.y+70+rnd(-20,20)};
+  balls=[];
+  ballsLeft=4;
+  turn='player';
+  document.getElementById('endNum').textContent=end;
+  document.getElementById('ballsLeft').textContent=ballsLeft;
+  setMsg(I18N.t('bocce_your_turn','Your turn — drag back to roll toward the pallino.'));
+  draw();
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function terrainForceAt(x,y){
+  let fx=0,fy=0;
+  for(const b of bumps){
+    const dx=x-b.x,dy=y-b.y;
+    const d=Math.hypot(dx,dy);
+    if(d<b.r+20){
+      const strength=(1-d/(b.r+20))*0.35;
+      fx+=(dx/(d||1))*strength;
+      fy+=(dy/(d||1))*strength+b.dx*0.02;
+    }
+  }
+  return [fx,fy];
+}
+
+function stepPhysics(){
+  let anyMoving=false;
+  for(const ball of balls){
+    if(ball.settled)continue;
+    anyMoving=true;
+    const [fx,fy]=terrainForceAt(ball.x,ball.y);
+    ball.vx+=fx*0.6;ball.vy+=fy*0.6;
+    ball.x+=ball.vx;ball.y+=ball.vy;
+    const speed=Math.hypot(ball.vx,ball.vy);
+    const fric=0.985;
+    ball.vx*=fric;ball.vy*=fric;
+    // walls
+    if(ball.x<COURT.x+R){ball.x=COURT.x+R;ball.vx*=-0.5;}
+    if(ball.x>COURT.x+COURT.w-R){ball.x=COURT.x+COURT.w-R;ball.vx*=-0.5;}
+    let outOfPlay=false;
+    if(ball.y<COURT.y-40||ball.y>COURT.y+COURT.h+40)outOfPlay=true;
+    if(outOfPlay){ball.settled=true;ball.dead=true;continue;}
+    // ball collisions
+    for(const other of balls){
+      if(other===ball)continue;
+      const dx=other.x-ball.x,dy=other.y-ball.y;
+      const d=Math.hypot(dx,dy)||0.01;
+      if(d<R*2){
+        const overlap=(R*2-d)/2;
+        const nx=dx/d,ny=dy/d;
+        ball.x-=nx*overlap;ball.y-=ny*overlap;
+        if(!other.settled){other.x+=nx*overlap;other.y+=ny*overlap;}
+        const relvx=ball.vx-other.vx,relvy=ball.vy-other.vy;
+        const impact=(relvx*nx+relvy*ny);
+        if(impact>0){
+          ball.vx-=impact*nx;ball.vy-=impact*ny;
+          other.vx+=impact*nx*0.9;other.vy+=impact*ny*0.9;
+          other.settled=false;
+          SFX.hit();
+        }
+      }
+    }
+    if(speed<0.06){ball.vx=0;ball.vy=0;ball.settled=true;}
+  }
+  return anyMoving;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // grass
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#3a8f3a');g.addColorStop(1,'#256b25');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // court
+  ctx.fillStyle='#2d7a2d';
+  ctx.fillRect(COURT.x,COURT.y,COURT.w,COURT.h);
+  ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=3;
+  ctx.strokeRect(COURT.x,COURT.y,COURT.w,COURT.h);
+  // bumps
+  bumps.forEach(b=>{
+    ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,7);
+    ctx.fillStyle='rgba(120,80,30,0.35)';ctx.fill();
+  });
+  // pallino
+  if(pallino){
+    ctx.beginPath();ctx.arc(pallino.x,pallino.y,7,0,7);
+    ctx.fillStyle='#fff';ctx.fill();
+    ctx.strokeStyle='#ccc';ctx.stroke();
+  }
+  // balls
+  balls.forEach(b=>{
+    if(b.dead)return;
+    ctx.beginPath();ctx.arc(b.x,b.y+4,R,0,7);
+    ctx.fillStyle='rgba(0,0,0,0.25)';ctx.fill();
+    ctx.beginPath();ctx.arc(b.x,b.y,R,0,7);
+    ctx.fillStyle=b.owner==='player'?'#e94560':'#3fa7ff';
+    ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.3)';ctx.stroke();
+  });
+  // aim line
+  if(aiming&&aimStart&&aimCur){
+    const start=currentPlayerBallStart();
+    const dx=aimStart.x-aimCur.x,dy=aimStart.y-aimCur.y;
+    const power=Math.min(Math.hypot(dx,dy),140);
+    const ang=Math.atan2(dy,dx);
+    ctx.beginPath();
+    ctx.moveTo(start.x,start.y);
+    ctx.lineTo(start.x+Math.cos(ang)*power*1.3,start.y+Math.sin(ang)*power*1.3);
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;ctx.setLineDash([6,6]);
+    ctx.stroke();ctx.setLineDash([]);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(pScore>cScore?I18N.t('bocce_win','YOU WIN THE MATCH!'):I18N.t('bocce_lose','CPU WINS THE MATCH'),W/2,H/2-10);
+    ctx.font='20px Arial';
+    ctx.fillText(`${pScore} - ${cScore}`,W/2,H/2+26);
+  }
+}
+
+function currentPlayerBallStart(){
+  return {x:COURT.x+40,y:COURT.y+COURT.h-40};
+}
+
+function rollBall(owner,angle,power,startPos){
+  const speed=power*0.16;
+  balls.push({x:startPos.x,y:startPos.y,owner,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,settled:false});
+  SFX.swoosh();
+}
+
+function endBallTurn(){
+  ballsLeft--;
+  document.getElementById('ballsLeft').textContent=ballsLeft;
+  if(ballsLeft<=0){ finishEnd(); return; }
+  turn = turn==='player' ? 'cpu' : 'player';
+  if(turn==='cpu'){ setMsg(I18N.t('bocce_cpu_turn','CPU is rolling...')); setTimeout(cpuRoll,700); }
+  else { setMsg(I18N.t('bocce_your_turn2','Your turn!')); }
+}
+
+function afterSettle(){
+  rolling=false;
+  endBallTurn();
+  draw();
+}
+
+function animate(){
+  const moving=stepPhysics();
+  draw();
+  if(moving)requestAnimationFrame(animate);
+  else afterSettle();
+}
+
+function cpuRoll(){
+  if(gameOver)return;
+  const start={x:COURT.x+COURT.w-40,y:COURT.y+COURT.h-40};
+  // aim roughly at pallino with some error, power tuned to distance
+  const dx=pallino.x-start.x,dy=pallino.y-start.y;
+  const dist=Math.hypot(dx,dy);
+  const err=rnd(-0.12,0.12);
+  const ang=Math.atan2(dy,dx)+err;
+  const power=Math.min(140,dist*0.9+rnd(-15,15));
+  rolling=true;
+  rollBall('cpu',ang,power,start);
+  requestAnimationFrame(animate);
+}
+
+function finishEnd(){
+  // scoring: closest ball's owner gets 1 point per ball closer than opponent's closest
+  const live=balls.filter(b=>!b.dead);
+  if(live.length===0 || !pallino){ nextEnd(); return; }
+  live.sort((a,b)=>dist(a,pallino)-dist(b,pallino));
+  const winner=live[0].owner;
+  let pts=0;
+  for(const b of live){
+    if(b.owner===winner)pts++; else break;
+  }
+  if(winner==='player'){pScore+=pts;SFX.point();} else {cScore+=pts;}
+  document.getElementById('pScore').textContent=pScore;
+  document.getElementById('cScore').textContent=cScore;
+  setMsg(I18N.t('bocce_end_result','{w} scored {p} point(s) this end!').replace('{w}',winner==='player'?'You':'CPU').replace('{p}',pts));
+  setTimeout(nextEnd,1800);
+}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function nextEnd(){
+  end++;
+  if(end>5){
+    gameOver=true;
+    SFX[pScore>cScore?'win':'lose']();
+    document.getElementById('again').style.display='inline-block';
+    draw();
+    return;
+  }
+  newEnd();
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*(W/rect.width),y:(cy-rect.top)*(H/rect.height)};
+}
+
+function onDown(e){
+  if(gameOver||rolling||turn!=='player')return;
+  e.preventDefault();
+  aiming=true;
+  aimStart=pointerPos(e);
+  aimCur=aimStart;
+}
+function onMove(e){
+  if(!aiming)return;
+  e.preventDefault();
+  aimCur=pointerPos(e);
+  draw();
+}
+function onUp(e){
+  if(!aiming)return;
+  aiming=false;
+  const start=currentPlayerBallStart();
+  const dx=aimStart.x-aimCur.x,dy=aimStart.y-aimCur.y;
+  const power=Math.min(Math.hypot(dx,dy),140);
+  if(power<8){draw();return;}
+  const ang=Math.atan2(dy,dx);
+  rolling=true;
+  rollBall('player',ang,power,start);
+  requestAnimationFrame(animate);
+}
+
+c.addEventListener('mousedown',onDown);
+c.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+c.addEventListener('touchstart',onDown,{passive:false});
+c.addEventListener('touchmove',onMove,{passive:false});
+c.addEventListener('touchend',onUp);
+
+document.getElementById('again').onclick=()=>{
+  end=1;pScore=0;cScore=0;gameOver=false;
+  document.getElementById('pScore').textContent=0;
+  document.getElementById('cScore').textContent=0;
+  document.getElementById('again').style.display='none';
+  newEnd();
+};
+
+newEnd();
+</script></body></html>

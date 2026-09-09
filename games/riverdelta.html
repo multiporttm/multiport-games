@@ -1,0 +1,258 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>River Delta</title><meta name="description" content="Play River Delta free online — Click a channel piece from the palette, then click a grid tile to place it (click again to rotate). Route the river from its source to every ocean outlet before you run out of pieces!"><link rel="canonical" href="https://games.multiportllc.com/games/riverdelta"><meta property="og:title" content="River Delta - Multiport Games"><meta property="og:description" content="Play River Delta free online — Click a channel piece from the palette, then click a grid tile to place it (click again to rotate). Route the river from its source to every ocean outlet before you run out of pieces!"><meta property="og:url" content="https://games.multiportllc.com/games/riverdelta"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"River Delta","description":"Play River Delta free online instantly. Place and rotate channel pieces to route a river from its source to multiple ocean outlets within a limited piece budget. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/riverdelta","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#0b2b3d;border-radius:14px;padding:16px;text-align:center}
+#hud{display:flex;justify-content:space-between;max-width:560px;margin:0 auto 8px;color:#cdeaff;font-weight:800;font-size:.95rem}
+#hud span{color:#ffd54f}
+#grid{display:inline-grid;gap:2px;background:#06283d;padding:6px;border-radius:8px;margin:0 auto}
+.tile{width:44px;height:44px;background:#0e3a52;position:relative;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.tile.land{background:#1e4d2b;cursor:default}
+.tile svg{width:100%;height:100%}
+.tile.source{background:#164a63}
+.tile.outlet{background:#0a5c78}
+.tile.outlet.reached{box-shadow:inset 0 0 0 3px #7ec850}
+#palette{margin:12px 0;display:flex;justify-content:center;gap:8px;flex-wrap:wrap}
+.pal-item{width:46px;height:46px;background:#123;border-radius:8px;cursor:pointer;border:2px solid transparent;display:flex;align-items:center;justify-content:center;position:relative}
+.pal-item.selected{border-color:#ffd54f}
+.pal-item .count{position:absolute;bottom:-2px;right:-2px;background:#e94560;color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;display:flex;align-items:center;justify-content:center;font-weight:800}
+#msg{color:#ffd54f;min-height:1.6em;font-weight:700;margin-top:4px}
+button.actionbtn{padding:9px 22px;background:#4fc3f7;border:none;border-radius:20px;color:#052;font-weight:800;cursor:pointer;font-size:1rem;margin:8px 4px 0}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">River Delta</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <div>Round <span id="rnd">1</span></div>
+        <div>Score: <span id="scr">0</span></div>
+        <div>Pieces: <span id="budget">0</span></div>
+        <div>Hi: <span id="hiv">0</span></div>
+      </div>
+      <div id="grid"></div>
+      <div id="palette"></div>
+      <div id="msg">Select a piece, then click an empty water tile to place it. Click a placed piece to rotate it.</div>
+      <div>
+        <button class="actionbtn" onclick="checkFlow(true)">Test Flow</button>
+        <button class="actionbtn" id="nextBtn" style="display:none" onclick="startRound()">Next Delta →</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a channel piece from the palette, then click an empty grid tile to place it — click a placed piece again to rotate it 90°. Route water from the glowing source through the delta to reach every ocean outlet (🌊) before your piece budget runs out. Click <b>Test Flow</b> to check your routing. More outlets and trickier terrain appear each round!</div>
+</div>
+<script>
+const KEY='riverdelta_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,round=1;
+const COLS=7,ROWS=7;
+let grid=[]; // {type:'water'|'land', piece:null|{type,rot}}
+let source={r:0,c:0};
+let outlets=[];
+let budget=0;
+let selectedPal=null;
+let palette=[]; // {type,count}
+document.getElementById('hiv').textContent=hi;
+
+// piece types: 'straight','curve','tee'
+// connections defined per rotation (0,1,2,3 = 0,90,180,270 deg), as [N,E,S,W] booleans
+const PIECE_DEFS={
+  straight:[[1,0,1,0],[0,1,0,1],[1,0,1,0],[0,1,0,1]],
+  curve:[[0,1,1,0],[0,0,1,1],[1,1,0,0],[1,0,0,1]],
+  tee:[[1,1,1,0],[0,1,1,1],[1,0,1,1],[1,1,0,1]]
+};
+const PIECE_ICON={straight:'┃',curve:'┗',tee:'┣'};
+
+function inBounds(r,c){return r>=0&&r<ROWS&&c>=0&&c<COLS;}
+
+function makeGrid(landRatio){
+  grid=[];
+  for(let r=0;r<ROWS;r++){
+    const row=[];
+    for(let c=0;c<COLS;c++){
+      row.push({type: Math.random()<landRatio?'land':'water', piece:null});
+    }
+    grid.push(row);
+  }
+}
+
+function startRound(){
+  document.getElementById('nextBtn').style.display='none';
+  const nOutlets=Math.min(4,1+Math.floor(round/2));
+  const landRatio=Math.min(0.35,0.05+round*0.03);
+  makeGrid(landRatio);
+  source={r:Math.floor(ROWS/2),c:0};
+  grid[source.r][source.c]={type:'water',piece:null,isSource:true};
+  outlets=[];
+  const usedCols=new Set();
+  for(let i=0;i<nOutlets;i++){
+    let r,c;
+    let tries=0;
+    do{
+      r=Math.floor(Math.random()*ROWS);
+      c=COLS-1;
+      tries++;
+    }while(usedCols.has(r)&&tries<30);
+    usedCols.add(r);
+    grid[r][c]={type:'water',piece:null,isOutlet:true,reached:false};
+    outlets.push({r,c});
+  }
+  // ensure source/outlet tiles are water and reachable-ish; clear a rough band
+  for(let r=0;r<ROWS;r++){
+    grid[r][0].type='water';
+  }
+  budget=6+nOutlets*3+round;
+  palette=[
+    {type:'straight',count:Math.ceil(budget*0.4)},
+    {type:'curve',count:Math.ceil(budget*0.4)},
+    {type:'tee',count:Math.max(1,Math.floor(budget*0.2))}
+  ];
+  selectedPal=null;
+  renderPalette();
+  renderGrid();
+  setMsg('New delta! Route the water to all '+nOutlets+' outlets.');
+  updateHud();
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+function updateHud(){
+  document.getElementById('scr').textContent=Math.floor(score);
+  document.getElementById('rnd').textContent=round;
+  document.getElementById('budget').textContent=budget;
+  if(score>hi){hi=Math.floor(score);localStorage.setItem(KEY,hi);}
+  document.getElementById('hiv').textContent=hi;
+}
+
+function renderPalette(){
+  const pal=document.getElementById('palette');
+  pal.innerHTML='';
+  palette.forEach((p,i)=>{
+    const el=document.createElement('div');
+    el.className='pal-item'+(selectedPal===i?' selected':'');
+    el.innerHTML=`<span style="font-size:22px;color:#4fc3f7">${PIECE_ICON[p.type]}</span><span class="count">${p.count}</span>`;
+    el.onclick=()=>{ if(p.count<=0)return; selectedPal=(selectedPal===i?null:i); SFX.select(); renderPalette(); };
+    pal.appendChild(el);
+  });
+}
+
+function pieceSVG(type,rot){
+  const conns=PIECE_DEFS[type][rot];
+  const pts=[];
+  const cx=22,cy=22;
+  let path=`<circle cx="${cx}" cy="${cy}" r="6" fill="#4fc3f7"/>`;
+  const dirs=[[cx,0,'N'],[44,cy,'E'],[cx,44,'S'],[0,cy,'W']];
+  conns.forEach((on,i)=>{
+    if(on){
+      path+=`<line x1="${cx}" y1="${cy}" x2="${dirs[i][0]}" y2="${dirs[i][1]}" stroke="#4fc3f7" stroke-width="7" stroke-linecap="round"/>`;
+    }
+  });
+  return `<svg viewBox="0 0 44 44">${path}</svg>`;
+}
+
+function renderGrid(){
+  const g=document.getElementById('grid');
+  g.style.gridTemplateColumns=`repeat(${COLS},44px)`;
+  g.innerHTML='';
+  for(let r=0;r<ROWS;r++){
+    for(let c=0;c<COLS;c++){
+      const cell=grid[r][c];
+      const el=document.createElement('div');
+      el.className='tile '+(cell.type==='land'?'land':'');
+      if(cell.isSource)el.classList.add('source');
+      if(cell.isOutlet){el.classList.add('outlet'); if(cell.reached)el.classList.add('reached');}
+      if(cell.isSource)el.innerHTML='<span style="font-size:20px">💧</span>';
+      else if(cell.isOutlet)el.innerHTML='<span style="font-size:18px">🌊</span>';
+      else if(cell.type==='land')el.innerHTML='<span style="font-size:16px;opacity:.6">🌳</span>';
+      else if(cell.piece)el.innerHTML=pieceSVG(cell.piece.type,cell.piece.rot);
+      el.onclick=()=>tileClick(r,c);
+      g.appendChild(el);
+    }
+  }
+}
+
+function tileClick(r,c){
+  const cell=grid[r][c];
+  if(cell.type==='land')return;
+  if(cell.isSource||cell.isOutlet)return;
+  if(cell.piece){
+    cell.piece.rot=(cell.piece.rot+1)%4;
+    SFX.click();
+    renderGrid();
+    return;
+  }
+  if(selectedPal===null)return;
+  const p=palette[selectedPal];
+  if(p.count<=0)return;
+  cell.piece={type:p.type,rot:0};
+  p.count--;
+  budget--;
+  SFX.tick();
+  if(p.count<=0)selectedPal=null;
+  renderPalette();
+  renderGrid();
+  updateHud();
+  if(budget<=0)setMsg('Out of pieces! Click Test Flow to see your result.');
+}
+
+function getConns(r,c){
+  const cell=grid[r][c];
+  if(cell.isSource)return [1,1,1,1];
+  if(cell.isOutlet)return [1,1,1,1];
+  if(!cell.piece)return [0,0,0,0];
+  return PIECE_DEFS[cell.piece.type][cell.piece.rot];
+}
+
+function checkFlow(manual){
+  // BFS from source through connected water pieces
+  outlets.forEach(o=>grid[o.r][o.c].reached=false);
+  const visited=Array.from({length:ROWS},()=>new Array(COLS).fill(false));
+  const q=[[source.r,source.c]];
+  visited[source.r][source.c]=true;
+  const DIRS=[[-1,0],[0,1],[1,0],[0,-1]]; // N,E,S,W
+  while(q.length){
+    const [r,c]=q.shift();
+    const conns=getConns(r,c);
+    for(let i=0;i<4;i++){
+      if(!conns[i])continue;
+      const nr=r+DIRS[i][0],nc=c+DIRS[i][1];
+      if(!inBounds(nr,nc)||visited[nr][nc])continue;
+      const ncell=grid[nr][nc];
+      if(ncell.type==='land')continue;
+      const nconns=getConns(nr,nc);
+      const opp=(i+2)%4;
+      if(!nconns[opp])continue;
+      visited[nr][nc]=true;
+      q.push([nr,nc]);
+    }
+  }
+  let reachedCount=0;
+  outlets.forEach(o=>{ if(visited[o.r][o.c]){grid[o.r][o.c].reached=true;reachedCount++;} });
+  renderGrid();
+  if(!manual)return reachedCount;
+  if(reachedCount===outlets.length){
+    const bonus=100*round+budget*5;
+    score+=bonus;
+    SFX.win();
+    setMsg('All outlets reached! +'+bonus+' points. Great routing!');
+    round++;
+    document.getElementById('nextBtn').style.display='inline-block';
+  } else if(budget<=0){
+    score=Math.max(0,score-20);
+    SFX.fail();
+    setMsg(`Only ${reachedCount}/${outlets.length} outlets reached and no pieces left. Try Next Delta.`);
+    round=Math.max(1,round); // stay same difficulty tier, offer restart of round
+    document.getElementById('nextBtn').style.display='inline-block';
+  } else {
+    SFX.error();
+    setMsg(`${reachedCount}/${outlets.length} outlets reached so far. Keep placing pieces!`);
+  }
+  updateHud();
+}
+
+startRound();
+</script></body></html>

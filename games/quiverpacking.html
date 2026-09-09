@@ -1,0 +1,275 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Quiver Packing</title><meta name="description" content="Play Quiver Packing free online — Drag each arrow from the tray into the quiver. Longer arrows need more depth, and wide fletching needs side room — a red glow means it's colliding with a neighbor. Fit as many arrows as you can before moving to the next quiver."><link rel="canonical" href="https://games.multiportllc.com/games/quiverpacking"><meta property="og:title" content="Quiver Packing - Multiport Games"><meta property="og:description" content="Play Quiver Packing free online — Drag each arrow from the tray into the quiver. Longer arrows need more depth, and wide fletching needs side room — a red glow means it's colliding with a neighbor. Fit as many arrows as you can before moving to the next quiver."><meta property="og:url" content="https://games.multiportllc.com/games/quiverpacking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Quiver Packing","description":"Play Quiver Packing free online instantly. Pack arrows of different lengths and fletching types into a quiver, fitting as many as possible without overlapping fletching, within limited capacity. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/quiverpacking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#241a12;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:700;padding:8px 14px;font-size:.95rem;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffd54f}
+#controls{text-align:center;padding:10px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
+#controls button{padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Quiver Packing</div>
+  <div class="game-frame">
+    <div id="hud"><div>Quiver <span id="quiverNum">1</span></div><div>Packed: <span id="packed">0</span>/<span id="total">0</span> | Best Total: <span id="hi">0</span></div></div>
+    <canvas id="c" width="800" height="360"></canvas>
+    <div id="controls">
+      <button id="finishBtn">Finish Quiver</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag each arrow from the tray on the left into the quiver on the right (mouse, touch, or drag with keyboard <b>Tab</b>+<b>Arrows</b>+<b>Enter</b> to place the selected arrow). Longer arrows need more depth to fit and wide fletching needs side clearance — arrows glow <b>red</b> when their fletching would overlap a neighbor; release outside the quiver or on a collision to send it back to the tray. Click <b>Finish Quiver</b> once you've packed what you can (or when the quiver is full) to score and move to the next, trickier assortment of arrows.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=360;
+const QX=460,QY=40,QW=280,QH=300; // quiver area
+let round=1,totalPacked=0,hi=0,arrows,tray,placed,gameOver,dragging,dragArrow,dragOffset,message,msgTimer;
+
+hi=parseInt(localStorage.getItem('quiverpacking_hi')||'0',10);
+document.getElementById('hi').textContent=hi;
+
+const COLORS=['#ff6b35','#4a90c2','#7ec850','#e94560','#ffd54f','#a56cc1'];
+
+function makeArrows(n){
+  const arr=[];
+  for(let i=0;i<n;i++){
+    arr.push({
+      id:i,
+      len: 60+Math.random()*(70+round*3),
+      fletchW: 14+Math.random()*(10+round*1.5),
+      color: COLORS[i%COLORS.length],
+      x:0,y:0,placedX:null,placedY:null,angle:0,inQuiver:false
+    });
+  }
+  return arr;
+}
+
+function layoutTray(){
+  const cols=2;
+  tray.forEach((a,i)=>{
+    if(a.inQuiver)return;
+    const col=i%cols, row=Math.floor(i/cols);
+    a.x=60+col*90;
+    a.y=40+row*46;
+  });
+}
+
+function newQuiver(){
+  const n=4+Math.min(6,Math.floor(round/1)+2);
+  tray=makeArrows(n);
+  layoutTray();
+  gameOver=false;
+  message='';msgTimer=0;
+  document.getElementById('quiverNum').textContent=round;
+  document.getElementById('total').textContent=n;
+  document.getElementById('packed').textContent=0;
+}
+newQuiver();
+
+function setMsg(t){message=t;msgTimer=110;}
+
+function arrowRect(a){
+  // arrow occupies a vertical-ish slot when in quiver: width = fletchW, height = len (roughly)
+  return {x:a.placedX-a.fletchW/2, y:a.placedY-a.len, w:a.fletchW, h:a.len};
+}
+
+function collides(a,x,y){
+  const r1={x:x-a.fletchW/2,y:y-a.len,w:a.fletchW,h:a.len};
+  for(const o of tray){
+    if(o===a||!o.inQuiver)continue;
+    const r2=arrowRect(o);
+    if(r1.x<r2.x+r2.w&&r1.x+r1.w>r2.x&&r1.y<r2.y+r2.h&&r1.y+r1.h>r2.y)return true;
+  }
+  return false;
+}
+
+function inQuiverBounds(a,x,y){
+  return x-a.fletchW/2>=QX+8 && x+a.fletchW/2<=QX+QW-8 && y-a.len>=QY+8 && y<=QY+QH-8;
+}
+
+// pointer drag
+let selArrow=null;
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  return {x:(e.clientX-r.left)*(W/r.width), y:(e.clientY-r.top)*(H/r.height)};
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(gameOver){return;}
+  const p=getPos(e);
+  for(let i=tray.length-1;i>=0;i--){
+    const a=tray[i];
+    const ax=a.inQuiver?a.placedX:a.x;
+    const ay=a.inQuiver?a.placedY:a.y;
+    const hbx = a.inQuiver ? {x:ax-a.fletchW/2,y:ay-a.len,w:a.fletchW,h:a.len} : {x:ax-30,y:ay-14,w:60,h:28};
+    if(p.x>=hbx.x&&p.x<=hbx.x+hbx.w&&p.y>=hbx.y&&p.y<=hbx.y+hbx.h){
+      dragging=true;dragArrow=a;selArrow=a;
+      dragOffset={dx:p.x-ax,dy:p.y-ay};
+      if(a.inQuiver){a.inQuiver=false;}
+      SFX.click();
+      break;
+    }
+  }
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging||!dragArrow)return;
+  const p=getPos(e);
+  dragArrow.x=p.x-dragOffset.dx;
+  dragArrow.y=p.y-dragOffset.dy;
+});
+window.addEventListener('pointerup',e=>{
+  if(!dragging||!dragArrow)return;
+  const p=getPos(e);
+  const x=p.x-dragOffset.dx, y=p.y-dragOffset.dy;
+  tryPlace(dragArrow,x,y);
+  dragging=false;dragArrow=null;
+  layoutTray();
+});
+
+function tryPlace(a,x,y){
+  if(inQuiverBounds(a,x,y) && !collides(a,x,y)){
+    a.placedX=x;a.placedY=y;a.inQuiver=true;
+    SFX.point();
+  } else {
+    if(inQuiverBounds(a,x,y)){SFX.error();setMsg(I18N.t('collision_msg','Fletching collision! Find another spot.'));}
+    a.inQuiver=false;
+  }
+}
+
+// keyboard accessibility: Tab cycles selection via canvas focus not natural; use simple arrow-nudge for selArrow
+c.tabIndex=0;
+document.addEventListener('keydown',e=>{
+  if(!selArrow)return;
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter'].includes(e.code)){
+    e.preventDefault();
+    const step=8;
+    let x=selArrow.inQuiver?selArrow.placedX:selArrow.x+30;
+    let y=selArrow.inQuiver?selArrow.placedY:selArrow.y;
+    if(!selArrow.inQuiver){x=QX+QW/2;y=QY+QH/2;}
+    if(e.code==='ArrowLeft')x-=step;
+    if(e.code==='ArrowRight')x+=step;
+    if(e.code==='ArrowUp')y-=step;
+    if(e.code==='ArrowDown')y+=step;
+    if(e.code==='Enter'){tryPlace(selArrow,x,y);layoutTray();return;}
+    selArrow.inQuiver=false;
+    selArrow.x=x-30;selArrow.y=y;
+    // preview position stored for Enter
+    selArrow._px=x;selArrow._py=y;
+  }
+});
+
+document.getElementById('finishBtn').addEventListener('click',()=>{
+  if(gameOver)return;
+  finishQuiver();
+});
+
+function finishQuiver(){
+  gameOver=true;
+  const packedCount=tray.filter(a=>a.inQuiver).length;
+  totalPacked+=packedCount;
+  const full=packedCount===tray.length;
+  if(full){SFX.win();setMsg(I18N.t('full_quiver','Every arrow packed! +Bonus'));totalPacked+=5;}
+  else{SFX.success();setMsg(I18N.t('quiver_result','Packed {n}/{t} arrows.').replace('{n}',packedCount).replace('{t}',tray.length));}
+  if(totalPacked>hi){hi=totalPacked;localStorage.setItem('quiverpacking_hi',hi);}
+  round++;
+  setTimeout(()=>{newQuiver();},1600);
+}
+
+function drawArrow(a){
+  ctx.save();
+  const x=a.inQuiver?a.placedX:a.x, y=a.inQuiver?a.placedY:a.y;
+  if(a.inQuiver){
+    // shaft
+    ctx.strokeStyle='#c9a876';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x,y-a.len+16);ctx.stroke();
+    // fletching
+    const bad=collides(a,x,y)&&dragArrow!==a;
+    ctx.fillStyle=bad?'#e9456055':a.color+'99';
+    ctx.strokeStyle=bad?'#e94560':a.color;
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(x,y-a.len+16);
+    ctx.lineTo(x-a.fletchW/2,y-a.len+30);
+    ctx.lineTo(x+a.fletchW/2,y-a.len+30);
+    ctx.closePath();ctx.fill();ctx.stroke();
+    // arrowhead tip
+    ctx.fillStyle='#ccc';
+    ctx.beginPath();ctx.moveTo(x,y-a.len-6);ctx.lineTo(x-5,y-a.len+8);ctx.lineTo(x+5,y-a.len+8);ctx.closePath();ctx.fill();
+  } else {
+    // tray card: horizontal mini arrow
+    ctx.fillStyle='#3a2c1e';ctx.fillRect(x-32,y-16,64,32);
+    ctx.strokeStyle=a===selArrow?'#ffd54f':'#00000033';ctx.lineWidth=a===selArrow?3:1;
+    ctx.strokeRect(x-32,y-16,64,32);
+    ctx.strokeStyle='#c9a876';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(x-26,y);ctx.lineTo(x+16,y);ctx.stroke();
+    ctx.fillStyle=a.color;
+    ctx.beginPath();ctx.moveTo(x-26,y);ctx.lineTo(x-14,y-7);ctx.lineTo(x-14,y+7);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#ccc';
+    ctx.beginPath();ctx.moveTo(x+22,y);ctx.lineTo(x+14,y-5);ctx.lineTo(x+14,y+5);ctx.closePath();ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='10px Arial';ctx.textAlign='center';
+    ctx.fillText(Math.round(a.len)+'cm',x,y+26);
+  }
+  ctx.restore();
+}
+
+function loop(dt){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#241a12';ctx.fillRect(0,0,W,H);
+
+  // tray area
+  ctx.fillStyle='#2f2115';ctx.fillRect(10,10,QX-30,H-20);
+  ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('tray_label','TRAY'),20,26);
+
+  // quiver
+  ctx.fillStyle='#4a3520';
+  ctx.beginPath();
+  ctx.moveTo(QX,QY);
+  ctx.lineTo(QX+QW,QY);
+  ctx.lineTo(QX+QW-20,QY+QH);
+  ctx.lineTo(QX+20,QY+QH);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle='#7a5a35';ctx.lineWidth=4;ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('quiver_label','QUIVER'),QX+QW/2,QY-14);
+
+  tray.forEach(a=>{ if(!a.inQuiver && a!==dragArrow) drawArrow(a); });
+  tray.forEach(a=>{ if(a.inQuiver && a!==dragArrow) drawArrow(a); });
+  if(dragArrow)drawArrow(dragArrow);
+
+  const packedCount=tray.filter(a=>a.inQuiver).length;
+  document.getElementById('packed').textContent=packedCount;
+
+  if(msgTimer>0){
+    msgTimer-=dt;
+    ctx.fillStyle='#ffd54f';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(message,W/2,H-14);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.45)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(message,W/2,H/2);
+  }
+
+  document.getElementById('hi').textContent=hi;
+  requestAnimationFrame(step);
+}
+
+let last=null;
+function step(now){
+  if(last===null)last=now;
+  const dt=Math.min(3,(now-last)/16.6667);
+  last=now;
+  loop(dt);
+}
+requestAnimationFrame(step);
+</script></body></html>

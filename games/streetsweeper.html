@@ -1,0 +1,315 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Street Sweeper</title><meta name="description" content="Play Street Sweeper free online — Drive the sweeper truck with Arrow Keys / WASD or drag on mobile. Sweep every lane to clean litter and leaves, dodge parked cars and pedestrians, and empty your hopper at the dump zone when it's full."><link rel="canonical" href="https://games.multiportllc.com/games/streetsweeper"><meta property="og:title" content="Street Sweeper - Multiport Games"><meta property="og:description" content="Play Street Sweeper free online — Drive the sweeper truck with Arrow Keys / WASD or drag on mobile. Sweep every lane to clean litter and leaves, dodge parked cars and pedestrians, and empty your hopper at the dump zone when it's full."><meta property="og:url" content="https://games.multiportllc.com/games/streetsweeper"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Street Sweeper","description":"Play Street Sweeper free online instantly. Drive the sweeper truck with Arrow Keys / WASD or drag on mobile. Sweep every lane thoroughly to clean litter and leaves off the street, dodge parked cars and pedestrians, and empty your hopper at the dump zone when it's full. Score by how thoroughly you clean each busier street within the time limit. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/streetsweeper","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a3a3f;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#fff;font-weight:700;padding:6px;font-size:.95rem}
+#hud span{background:rgba(255,255,255,.08);padding:4px 10px;border-radius:8px}
+#hopperWrap{width:120px;height:14px;background:#222;border-radius:7px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+#hopperFill{height:100%;background:#8bc34a;width:0%;transition:width .15s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Street Sweeper</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span id="round-display">Street: 1</span>
+      <span id="time-display">Time: 60</span>
+      <span>Hopper<span id="hopperWrap"><span id="hopperFill"></span></span></span>
+    </div>
+    <canvas id="c" width="480" height="560"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>drag</b> to steer the sweeper truck. Drive over litter and leaves to clean them (watch the coverage trail) while avoiding parked cars and pedestrians. When your hopper is full, drive onto the yellow <b>DUMP</b> zone and click/tap it to empty. Clean each street thoroughly before time runs out — busier streets await!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=480,H=560;
+const LANES=4;
+const laneW=W/LANES;
+const HOPPER_MAX=100;
+let hi=parseInt(localStorage.getItem('streetsweeper_hi')||'0',10);
+
+let truck,litter,cars,peds,dumpZone,coverage,hopper,score,round,timeLeft,gameOver,started,lastTime,message,messageT;
+
+function newRound(rnd){
+  truck={x:W/2,y:H-90,w:40,h:64,vx:0,vy:0};
+  coverage=new Uint8Array(LANES*Math.ceil(H/12));
+  litter=[];
+  const litterCount=18+rnd*6;
+  for(let i=0;i<litterCount;i++){
+    litter.push({x:20+Math.random()*(W-40),y:20+Math.random()*(H-140),r:5+Math.random()*4,type:Math.random()<0.5?'trash':'leaf',alive:true});
+  }
+  cars=[];
+  const carCount=2+rnd;
+  for(let i=0;i<carCount;i++){
+    const lane=Math.floor(Math.random()*LANES);
+    cars.push({x:lane*laneW+laneW/2,y:40+Math.random()*(H-200),w:34,h:56});
+  }
+  peds=[];
+  const pedCount=1+Math.floor(rnd*0.7);
+  for(let i=0;i<pedCount;i++){
+    peds.push({x:30+Math.random()*(W-60),y:60+Math.random()*(H-220),vx:(Math.random()<0.5?1:-1)*(0.4+Math.random()*0.5),r:9});
+  }
+  dumpZone={x:W-70,y:H-40,w:60,h:30};
+  hopper=0;
+  timeLeft=60+rnd*5;
+  message='';messageT=0;
+}
+
+function resetGame(){
+  score=0;round=1;gameOver=false;started=false;lastTime=null;
+  newRound(round);
+}
+resetGame();
+
+function laneCellAt(x,y){
+  const lane=Math.max(0,Math.min(LANES-1,Math.floor(x/laneW)));
+  const row=Math.max(0,Math.min(Math.ceil(H/12)-1,Math.floor(y/12)));
+  return row*LANES+lane;
+}
+
+function coveragePct(){
+  let filled=0;
+  for(let i=0;i<coverage.length;i++)if(coverage[i])filled++;
+  return filled/coverage.length;
+}
+
+// Input
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(!started){started=true;}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let dragActive=false,dragTargetX=null,dragTargetY=null;
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  return {x:(t.clientX-rect.left)*(W/rect.width),y:(t.clientY-rect.top)*(H/rect.height)};
+}
+c.addEventListener('pointerdown',e=>{
+  if(!started){started=true;}
+  const p=pointerPos(e);
+  if(gameOver){resetAll();return;}
+  if(hopper>=HOPPER_MAX*0.999 && p.x>dumpZone.x-10&&p.x<dumpZone.x+dumpZone.w+10&&p.y>dumpZone.y-10&&p.y<dumpZone.y+dumpZone.h+10){
+    tryDump();
+  }
+  dragActive=true;dragTargetX=p.x;dragTargetY=p.y;
+});
+c.addEventListener('pointermove',e=>{ if(dragActive){const p=pointerPos(e);dragTargetX=p.x;dragTargetY=p.y;} });
+window.addEventListener('pointerup',()=>{dragActive=false;});
+
+function tryDump(){
+  const dx=truck.x-(dumpZone.x+dumpZone.w/2),dy=truck.y-(dumpZone.y+dumpZone.h/2);
+  if(Math.hypot(dx,dy)<70 && hopper>0){
+    score+=Math.floor(hopper*2);
+    hopper=0;
+    SFX.success();
+    message=I18N.t('hopper_emptied','Hopper emptied! +score');
+    messageT=90;
+  }
+}
+
+function resetAll(){
+  resetGame();
+}
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function update(dt){
+  if(!started||gameOver)return;
+  timeLeft-=dt/60;
+  if(timeLeft<=0){
+    timeLeft=0;
+    // round over -> evaluate
+    const pct=coveragePct();
+    score+=Math.floor(pct*300);
+    if(pct>0.6){
+      round++;
+      newRound(round);
+      started=true;
+      SFX.levelup();
+      message=I18N.t('street_clean','Street cleaned! Next street...');
+      messageT=100;
+    }else{
+      gameOver=true;
+      SFX.lose();
+      if(score>hi){hi=score;localStorage.setItem('streetsweeper_hi',String(hi));}
+    }
+    return;
+  }
+  // truck control
+  const accel=0.6,maxSpd=4.2,friction=0.88;
+  if(keys['ArrowUp']||keys['KeyW'])truck.vy-=accel;
+  if(keys['ArrowDown']||keys['KeyS'])truck.vy+=accel;
+  if(keys['ArrowLeft']||keys['KeyA'])truck.vx-=accel;
+  if(keys['ArrowRight']||keys['KeyD'])truck.vx+=accel;
+  if(dragActive&&dragTargetX!=null){
+    truck.vx+=(dragTargetX-truck.x)*0.02;
+    truck.vy+=(dragTargetY-truck.y)*0.02;
+  }
+  truck.vx*=friction;truck.vy*=friction;
+  truck.vx=Math.max(-maxSpd,Math.min(maxSpd,truck.vx));
+  truck.vy=Math.max(-maxSpd,Math.min(maxSpd,truck.vy));
+  truck.x+=truck.vx*dt;truck.y+=truck.vy*dt;
+  truck.x=Math.max(truck.w/2+2,Math.min(W-truck.w/2-2,truck.x));
+  truck.y=Math.max(truck.h/2+2,Math.min(H-truck.h/2-2,truck.y));
+
+  // mark coverage under truck (sweep area a bit wider than truck)
+  const sweepW=truck.w+10;
+  for(let yy=truck.y-truck.h/2;yy<truck.y+truck.h/2;yy+=10){
+    for(let xx=truck.x-sweepW/2;xx<truck.x+sweepW/2;xx+=10){
+      coverage[laneCellAt(xx,yy)]=1;
+    }
+  }
+
+  // litter pickup
+  if(hopper<HOPPER_MAX){
+    litter.forEach(l=>{
+      if(!l.alive)return;
+      const dx=l.x-truck.x,dy=l.y-truck.y;
+      if(Math.abs(dx)<sweepW/2&&Math.abs(dy)<truck.h/2){
+        l.alive=false;
+        hopper=Math.min(HOPPER_MAX,hopper+3);
+        score+=5;
+        SFX.point();
+      }
+    });
+  }
+  litter=litter.filter(l=>l.alive);
+
+  // pedestrians move
+  peds.forEach(p=>{
+    p.x+=p.vx*dt;
+    if(p.x<20||p.x>W-20)p.vx*=-1;
+  });
+
+  // collisions with cars/peds -> penalty & bounce
+  const truckRect={x:truck.x-truck.w/2,y:truck.y-truck.h/2,w:truck.w,h:truck.h};
+  cars.forEach(car=>{
+    const cr={x:car.x-car.w/2,y:car.y-car.h/2,w:car.w,h:car.h};
+    if(rectsOverlap(truckRect,cr)){
+      truck.x-=truck.vx*dt*2;truck.y-=truck.vy*dt*2;
+      truck.vx*=-0.4;truck.vy*=-0.4;
+      score=Math.max(0,score-1);
+      SFX.hit();
+    }
+  });
+  peds.forEach(p=>{
+    const dx=p.x-truck.x,dy=p.y-truck.y;
+    if(Math.hypot(dx,dy)<p.r+Math.min(truck.w,truck.h)/2){
+      score=Math.max(0,score-15);
+      truck.x-=truck.vx*dt*3;truck.y-=truck.vy*dt*3;
+      SFX.hurt();
+      p.x+=(p.x>W/2?1:-1)*40;
+    }
+  });
+
+  if(messageT>0)messageT-=dt;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // road base
+  ctx.fillStyle='#3a3a3f';ctx.fillRect(0,0,W,H);
+  // lane markers
+  ctx.strokeStyle='#565660';ctx.lineWidth=2;ctx.setLineDash([14,14]);
+  for(let i=1;i<LANES;i++){
+    ctx.beginPath();ctx.moveTo(i*laneW,0);ctx.lineTo(i*laneW,H);ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // coverage overlay (cleaned = lighter)
+  const cellH=12;
+  for(let row=0;row<Math.ceil(H/cellH);row++){
+    for(let lane=0;lane<LANES;lane++){
+      if(coverage[row*LANES+lane]){
+        ctx.fillStyle='rgba(139,195,74,0.28)';
+        ctx.fillRect(lane*laneW,row*cellH,laneW,cellH);
+      }
+    }
+  }
+
+  // dump zone
+  ctx.fillStyle=hopper>=HOPPER_MAX*0.999?'#ffd54f':'#8a7a3a';
+  ctx.fillRect(dumpZone.x,dumpZone.y,dumpZone.w,dumpZone.h);
+  ctx.fillStyle='#222';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('dump_label','DUMP'),dumpZone.x+dumpZone.w/2,dumpZone.y+dumpZone.h/2+4);
+
+  // litter
+  litter.forEach(l=>{
+    ctx.fillStyle=l.type==='leaf'?'#c9a227':'#ddd';
+    ctx.beginPath();ctx.arc(l.x,l.y,l.r,0,Math.PI*2);ctx.fill();
+  });
+
+  // parked cars
+  cars.forEach(car=>{
+    ctx.fillStyle='#5578c9';
+    ctx.fillRect(car.x-car.w/2,car.y-car.h/2,car.w,car.h);
+    ctx.fillStyle='#233a70';
+    ctx.fillRect(car.x-car.w/2+4,car.y-car.h/2+6,car.w-8,14);
+  });
+
+  // pedestrians
+  peds.forEach(p=>{
+    ctx.fillStyle='#ffb74d';
+    ctx.beginPath();ctx.arc(p.x,p.y-6,p.r*0.6,0,Math.PI*2);ctx.fill();
+    ctx.fillRect(p.x-4,p.y-2,8,14);
+  });
+
+  // truck
+  ctx.save();
+  ctx.translate(truck.x,truck.y);
+  ctx.fillStyle='#ff7043';
+  ctx.fillRect(-truck.w/2,-truck.h/2,truck.w,truck.h);
+  ctx.fillStyle='#c94a2b';
+  ctx.fillRect(-truck.w/2,-truck.h/2,truck.w,14);
+  ctx.fillStyle='#333';
+  ctx.fillRect(-truck.w/2-4,truck.h/2-14,6,10);
+  ctx.fillRect(truck.w/2-2,truck.h/2-14,6,10);
+  ctx.fillRect(-truck.w/2-4,-truck.h/2+4,6,10);
+  ctx.fillRect(truck.w/2-2,-truck.h/2+4,6,10);
+  ctx.restore();
+
+  if(message&&messageT>0){
+    ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(message,W/2,40);
+  }
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap, click or press a key to start'),W/2,H/2);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-16);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap / click to restart'),W/2,H/2+20);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('round-display').textContent=I18N.t('street_label','Street: {r}').replace('{r}',round);
+  document.getElementById('time-display').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+  document.getElementById('hopperFill').style.width=hopper+'%';
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min(3,(ts-lastTime)/16.6667);
+  lastTime=ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

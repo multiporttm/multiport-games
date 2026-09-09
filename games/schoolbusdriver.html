@@ -1,0 +1,314 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>School Bus Driver</title><meta name="description" content="Play School Bus Driver free online — Drive with Left/Right Arrows or A/D (or drag on mobile). Brake with Down/S. Slow into the yellow stopping zone at each bus stop, come to a full stop, then wait for the stop-arm to let kids cross safely before driving on."><link rel="canonical" href="https://games.multiportllc.com/games/schoolbusdriver"><meta property="og:title" content="School Bus Driver - Multiport Games"><meta property="og:description" content="Play School Bus Driver free online — Drive with Left/Right Arrows or A/D (or drag on mobile). Brake with Down/S. Slow into the yellow stopping zone at each bus stop, come to a full stop, then wait for the stop-arm to let kids cross safely before driving on."><meta property="og:url" content="https://games.multiportllc.com/games/schoolbusdriver"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"School Bus Driver","description":"Play School Bus Driver free online instantly. Drive a school bus down its route, braking precisely into each stopping zone, waiting for students to safely cross, then continuing on to the next stop before time runs out. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/schoolbusdriver","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a6b3a;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:700;padding:8px 14px;font-size:.95rem;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffd54f}
+#gaugeWrap{padding:0 14px 8px;display:flex;align-items:center;gap:8px;color:#fff;font-size:.8rem;font-weight:700}
+#gauge{flex:1;height:14px;border-radius:8px;background:#222;overflow:hidden;position:relative;border:1px solid rgba(255,255,255,.15)}
+#gaugeZone{position:absolute;top:0;bottom:0;background:rgba(255,213,79,.35);border-left:2px dashed #ffd54f;border-right:2px dashed #ffd54f}
+#gaugeFill{position:absolute;top:0;bottom:0;left:0;width:0;background:#4caf50}
+#gaugeFill.bad{background:#e94560}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">School Bus Driver</div>
+  <div class="game-frame">
+    <div id="hud"><div>Route <span id="routeNum">1</span> — Stop <span id="stopNum">1</span>/<span id="stopTotal">4</span></div><div>Score: <span id="score">0</span> | Hi: <span id="hi">0</span></div></div>
+    <div id="gaugeWrap"><span>SPEED</span><div id="gauge"><div id="gaugeZone"></div><div id="gaugeFill"></div></div></div>
+    <canvas id="c" width="800" height="260"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drive with <b>Left/Right Arrows</b> or <b>A/D</b> (or drag left/right on mobile). Brake with <b>Down Arrow/S</b> or tap the brake side of the screen. As you approach a bus stop, ease your speed into the yellow zone on the gauge and come to a full stop right at the sign — then hold still while the stop-arm swings out and students cross. Drive off too soon or slam on the brakes too hard and it's unsafe! Complete every stop on the route before time runs out to advance to a busier route.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=260,ROAD_Y=180;
+let bus,stops,route,stopIdx,score,hi,gameOver,started,timeLeft,routeLen,camX;
+let phase; // 'drive','waiting','done'
+let waitTimer,armAngle,kids,message,msgTimer,shakeT;
+
+hi=parseInt(localStorage.getItem('schoolbusdriver_hi')||'0',10);
+document.getElementById('hi').textContent=hi;
+
+function makeRoute(routeNum){
+  const n=3+Math.min(4,Math.floor(routeNum/1)); // grows
+  const stopsArr=[];
+  let x=900;
+  for(let i=0;i<n;i++){
+    x+=550+Math.random()*350-routeNum*8;
+    x=Math.max(x,i===0?900:stopsArr[i-1].x+420);
+    stopsArr.push({x,done:false,kids:2+Math.floor(Math.random()*3)});
+  }
+  routeLen=x+700;
+  return stopsArr;
+}
+
+function reset(fullRestart){
+  if(fullRestart){route=1;score=0;}
+  stops=makeRoute(route);
+  stopIdx=0;
+  bus={x:60,speed:0,maxSpeed:6.2+route*0.35};
+  camX=0;
+  phase='drive';
+  waitTimer=0;armAngle=0;kids=0;
+  timeLeft=22+stops.length*9;
+  message='';msgTimer=0;shakeT=0;
+  gameOver=false;
+  document.getElementById('routeNum').textContent=route;
+  document.getElementById('stopNum').textContent=1;
+  document.getElementById('stopTotal').textContent=stops.length;
+}
+reset(true);
+started=false;
+
+let keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowDown','KeyA','KeyD','KeyS','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(!started){started=true;}
+  if(gameOver&&(e.code==='Space')){reset(true);started=true;}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let touchState=null;
+c.addEventListener('pointerdown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver){reset(true);started=true;return;}
+  const r=c.getBoundingClientRect();
+  const px=(e.clientX-r.left)/r.width;
+  touchState=px<0.5?'brake':'gas';
+});
+window.addEventListener('pointerup',()=>{touchState=null;});
+c.addEventListener('contextmenu',e=>e.preventDefault());
+
+function accelInput(){
+  if(keys['ArrowRight']||keys['KeyD']||touchState==='gas')return 1;
+  return 0;
+}
+function brakeInput(){
+  if(keys['ArrowLeft']||keys['ArrowDown']||keys['KeyA']||keys['KeyS']||touchState==='brake')return 1;
+  return 0;
+}
+
+function currentStop(){return stops[stopIdx];}
+
+function stopZone(stop){
+  // stopping zone width shrinks each route -> tighter tolerance
+  const half=Math.max(26,55-route*3.5);
+  return {lo:stop.x-half,hi:stop.x+half};
+}
+
+function setMsg(t){message=t;msgTimer=90;}
+
+function loop(dt){
+  ctx.clearRect(0,0,W,H);
+  // sky
+  const sky=ctx.createLinearGradient(0,0,0,ROAD_Y);
+  sky.addColorStop(0,'#1a3a6b');sky.addColorStop(1,'#4a90c2');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,ROAD_Y);
+  // grass
+  ctx.fillStyle='#3a6b3a';ctx.fillRect(0,ROAD_Y,W,H-ROAD_Y);
+  // road
+  ctx.fillStyle='#444';ctx.fillRect(0,ROAD_Y-10,W,60);
+  ctx.fillStyle='#666';
+  for(let i=-1;i<20;i++){
+    const lx=((i*80)-(camX%80))+40;
+    ctx.fillRect(lx,ROAD_Y+15,36,6);
+  }
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start'),W/2,120);
+    drawBus(120,ROAD_Y-40);
+    requestAnimationFrame(step);return;
+  }
+
+  let shake=0;
+  if(shakeT>0){shakeT-=dt;shake=(Math.random()-0.5)*6*Math.min(1,shakeT/12);}
+  ctx.save();ctx.translate(shake,0);
+
+  if(!gameOver){
+    timeLeft-=dt/60;
+    if(timeLeft<=0){
+      gameOver=true;SFX.lose();
+      setMsg(I18N.t('out_of_time','Out of time!'));
+    }
+  }
+
+  if(!gameOver){
+    const stop=currentStop();
+    const zone=stop?stopZone(stop):null;
+
+    if(phase==='drive'){
+      const acc=accelInput(),brk=brakeInput();
+      bus.speed+=acc*0.09*dt;
+      bus.speed-=brk*0.16*dt;
+      bus.speed-=0.02*dt; // friction
+      bus.speed=Math.max(0,Math.min(bus.maxSpeed,bus.speed));
+      bus.x+=bus.speed*dt;
+      camX=Math.max(0,bus.x-120);
+
+      if(stop && bus.x>=stop.x-8 && bus.x<=stop.x+8 && Math.abs(bus.speed)<0.15){
+        // arrived precisely stopped
+        const inZone = bus.x>=zone.lo && bus.x<=zone.hi;
+        phase='waiting';
+        waitTimer=0;armAngle=0;kids=0;
+        stop._precise=inZone;
+      } else if(stop && bus.x>stop.x+zone.hi-zone.lo+40){
+        // drove past the stop without stopping
+        setMsg(I18N.t('missed_stop','Missed the stop! No pickup.'));
+        SFX.error();
+        stop.done=true;stop.missed=true;
+        advanceStop();
+      }
+    } else if(phase==='waiting'){
+      waitTimer+=dt;
+      armAngle=Math.min(90,armAngle+dt*2.2);
+      if(armAngle>=90 && kids<stop.kids && waitTimer%14<dt) kids++;
+      if(armAngle>=90 && kids>=stop.kids && waitTimer>60){
+        // done boarding, retract arm
+        const inZone=stop._precise;
+        const pts=inZone?100:40;
+        score+=pts;
+        if(inZone){SFX.success();setMsg(I18N.t('safe_stop','Safe & precise stop! +100'));}
+        else{SFX.point();setMsg(I18N.t('ok_stop','Stopped, but not in the zone. +40'));}
+        stop.done=true;
+        advanceStop();
+      }
+      // early departure check
+      if((accelInput())&&armAngle<90){
+        setMsg(I18N.t('too_early','Wait for the stop-arm and students!'));
+        SFX.error();shakeT=14;
+      }
+    }
+  }
+
+  ctx.strokeStyle='#ffd54f';
+  // draw stops (signs)
+  stops.forEach((s,i)=>{
+    const sx=s.x-camX;
+    if(sx<-40||sx>W+40)return;
+    const z=stopZone(s);
+    ctx.fillStyle='rgba(255,213,79,.25)';
+    ctx.fillRect(z.lo-camX,ROAD_Y-6,z.hi-z.lo,70);
+    // sign post
+    ctx.fillStyle='#8b5a2b';ctx.fillRect(sx-2,ROAD_Y-60,4,60);
+    ctx.fillStyle=s.done?(s.missed?'#e94560':'#4caf50'):'#ffcc00';
+    ctx.beginPath();ctx.arc(sx,ROAD_Y-64,12,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#222';ctx.font='bold 12px Arial';ctx.textAlign='center';
+    ctx.fillText((i+1),sx,ROAD_Y-60);
+    // waiting kids sprite at stop, before boarding
+    if(!s.done && i===stopIdx){
+      for(let k=0;k<s.kids;k++){
+        ctx.fillStyle='#f4b400';
+        ctx.fillRect(sx+30+k*14,ROAD_Y-24,8,14);
+        ctx.fillStyle='#333';ctx.beginPath();ctx.arc(sx+34+k*14,ROAD_Y-28,4,0,Math.PI*2);ctx.fill();
+      }
+    }
+  });
+
+  drawBus(bus.x-camX,ROAD_Y-40);
+
+  // stop arm
+  if(phase==='waiting'){
+    const bx=bus.x-camX;
+    ctx.save();
+    ctx.translate(bx+50,ROAD_Y-18);
+    ctx.rotate(-armAngle*Math.PI/180);
+    ctx.fillStyle='#e94560';ctx.fillRect(0,-3,34,6);
+    ctx.restore();
+    // kids crossing animation
+    for(let k=0;k<kids;k++){
+      ctx.fillStyle='#f4b400';ctx.fillRect(bx+70+k*10,ROAD_Y-24,8,14);
+    }
+  }
+
+  ctx.restore();
+
+  // gauge fill
+  const gEl=document.getElementById('gaugeFill'),gZ=document.getElementById('gaugeZone');
+  const pct=Math.min(1,bus.speed/bus.maxSpeed);
+  gEl.style.width=(pct*100)+'%';
+  const stop=currentStop();
+  if(stop && phase==='drive'){
+    const dist=stop.x-bus.x;
+    const nearing=dist<260&&dist>-100;
+    gZ.style.display=nearing?'block':'none';
+    if(nearing){gZ.style.left='0%';gZ.style.width='22%';}
+    gEl.classList.toggle('bad', nearing && pct>0.5);
+  } else {
+    gZ.style.display='none';
+    gEl.classList.remove('bad');
+  }
+
+  if(msgTimer>0){
+    msgTimer-=dt;
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.strokeStyle='#000';ctx.lineWidth=3;
+    ctx.strokeText(message,W/2,50);ctx.fillText(message,W/2,50);
+  }
+
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('time_label','Time: {t}s').replace('{t}',Math.max(0,Math.ceil(timeLeft))),12,24);
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,110);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),W/2,145);
+    ctx.fillText(I18N.t('restart_hint2','Tap or Space to try again'),W/2,175);
+  }
+
+  document.getElementById('score').textContent=score;
+  if(score>hi){hi=score;localStorage.setItem('schoolbusdriver_hi',hi);}
+  document.getElementById('hi').textContent=hi;
+  document.getElementById('stopNum').textContent=Math.min(stopIdx+1,stops.length);
+
+  requestAnimationFrame(step);
+}
+
+function advanceStop(){
+  stopIdx++;
+  phase='drive';
+  if(stopIdx>=stops.length){
+    // route complete
+    SFX.levelup();
+    setMsg(I18N.t('route_complete','Route complete! Next route...'));
+    route++;
+    timeLeft+=6;
+    setTimeout(()=>{ if(!gameOver){ const savedScore=score; reset(false); score=savedScore; started=true; } },10);
+  }
+}
+
+function drawBus(x,y){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle='#ffcc00';
+  ctx.fillRect(0,0,90,40);
+  ctx.fillStyle='#222';
+  ctx.fillRect(6,6,20,14);
+  ctx.fillRect(30,6,20,14);
+  ctx.fillRect(54,6,20,14);
+  ctx.fillStyle='#e94560';ctx.fillRect(0,0,90,4);
+  ctx.fillStyle='#111';
+  ctx.beginPath();ctx.arc(18,42,8,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(72,42,8,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+let last=null;
+function step(now){
+  if(last===null)last=now;
+  const dt=Math.min(3,(now-last)/16.6667);
+  last=now;
+  loop(dt);
+}
+requestAnimationFrame(step);
+</script></body></html>

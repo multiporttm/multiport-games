@@ -1,0 +1,271 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Shuffleboard</title><meta name="description" content="Play Shuffleboard free online — Drag down from your disc to set power and angle, release to slide. Land in the high-value zones without sliding off the end. First to 15 points wins!"><link rel="canonical" href="https://games.multiportllc.com/games/shuffleboard"><meta property="og:title" content="Shuffleboard - Multiport Games"><meta property="og:description" content="Play Shuffleboard free online — Drag down from your disc to set power and angle, release to slide. Land in the high-value zones without sliding off the end. First to 15 points wins!"><meta property="og:url" content="https://games.multiportllc.com/games/shuffleboard"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Shuffleboard","description":"Play Shuffleboard free online instantly. Drag down from your disc to set power and angle, release to slide. Land in the high-value zones without sliding off the end. First to 15 points wins! No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/shuffleboard","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{text-align:center}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;padding:8px;display:flex;justify-content:center;gap:22px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+#c{background:#5c3a21;display:block;border-radius:10px;margin:0 auto;touch-action:none;max-width:100%;height:auto}
+#msg{color:#fff;min-height:1.6em;font-weight:700;padding:4px}
+#again{display:none;margin-top:6px;padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Shuffleboard</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="wrap">
+      <div id="hud">
+        <div>Round <span id="rNum">1</span></div>
+        <div>You <span id="pScore">0</span> — <span id="cScore">0</span> CPU</div>
+        <div>Discs left: <span id="ballsLeft">4</span></div>
+      </div>
+      <canvas id="c" width="820" height="360"></canvas>
+      <div id="msg">Drag down from your disc to aim, release to slide it up the table.</div>
+      <button id="again">Play Again</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Drag downward from your disc (click/touch, pull toward you, release) to set power and a slight angle, then slide it toward the scoring zones at the far end (10, 8, 7, off the edge = 0). Land in a zone to score, or slide into an opponent's disc to knock it out of a zone. Don't overshoot the edge! First to 15 points wins the match.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=820,H=360;
+const TABLE={x:30,y:H/2-40,w:W-60,h:80};
+const ZONES=[
+  {x0:TABLE.x+TABLE.w-70,x1:TABLE.x+TABLE.w-40,val:10,color:'#ffd54f'},
+  {x0:TABLE.x+TABLE.w-100,x1:TABLE.x+TABLE.w-70,val:8,color:'#4caf50'},
+  {x0:TABLE.x+TABLE.w-140,x1:TABLE.x+TABLE.w-100,val:7,color:'#3fa7ff'},
+];
+const EDGE=TABLE.x+TABLE.w-15; // sliding past this = off (0 pts / removed)
+let round=1,pScore=0,cScore=0,ballsLeft=4,turn='player';
+let discs=[]; // {x,y,owner,vx,vy,settled}
+let rolling=false;
+let aiming=false,aimStart=null,aimCur=null;
+let gameOver=false;
+const R=15;
+const TARGET=15;
+
+function rnd(a,b){return a+Math.random()*(b-a);}
+
+function newRound(){
+  discs=[];
+  ballsLeft=4;
+  turn='player';
+  document.getElementById('rNum').textContent=round;
+  document.getElementById('ballsLeft').textContent=ballsLeft;
+  setMsg(I18N.t('shuf_your_turn','Your turn — drag down to slide your disc.'));
+  draw();
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+function startPos(){return {x:TABLE.x+40,y:TABLE.y+TABLE.h/2};}
+
+function slideDisc(owner,vx,vy){
+  discs.push({x:startPos().x,y:startPos().y,owner,vx,vy,settled:false});
+  SFX.swoosh();
+}
+
+function stepPhysics(){
+  let moving=false;
+  for(const d of discs){
+    if(d.settled)continue;
+    moving=true;
+    d.x+=d.vx;d.y+=d.vy;
+    d.vx*=0.975;d.vy*=0.975;
+    if(d.y<TABLE.y+R){d.y=TABLE.y+R;d.vy*=-0.4;}
+    if(d.y>TABLE.y+TABLE.h-R){d.y=TABLE.y+TABLE.h-R;d.vy*=-0.4;}
+    if(d.x>EDGE+30){d.settled=true;d.dead=true;}
+    if(Math.hypot(d.vx,d.vy)<0.05){d.vx=0;d.vy=0;d.settled=true;}
+  }
+  for(let i=0;i<discs.length;i++){
+    const a=discs[i]; if(a.dead)continue;
+    for(let j=i+1;j<discs.length;j++){
+      const b=discs[j]; if(b.dead)continue;
+      const dx=b.x-a.x,dy=b.y-a.y;
+      const dd=Math.hypot(dx,dy)||0.01;
+      if(dd<R*2){
+        SFX.hit();
+        const nx=dx/dd,ny=dy/dd;
+        const overlap=(R*2-dd)/2;
+        a.x-=nx*overlap;a.y-=ny*overlap;
+        b.x+=nx*overlap;b.y+=ny*overlap;
+        const speedA=Math.hypot(a.vx,a.vy),speedB=Math.hypot(b.vx,b.vy);
+        const tmp={vx:a.vx,vy:a.vy};
+        a.vx=b.vx*0.5;a.vy=b.vy*0.5;
+        b.vx=tmp.vx*0.9+nx*speedA*0.5;
+        b.vy=tmp.vy*0.9+ny*speedA*0.5;
+        a.settled=false;b.settled=false;
+      }
+    }
+  }
+  return moving;
+}
+
+function zoneVal(x){
+  for(const z of ZONES)if(x>=z.x0&&x<z.x1)return z.val;
+  return 0;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#3a2414';ctx.fillRect(0,0,W,H);
+  // table wood
+  const g=ctx.createLinearGradient(0,TABLE.y,0,TABLE.y+TABLE.h);
+  g.addColorStop(0,'#8a5a30');g.addColorStop(0.5,'#6b431f');g.addColorStop(1,'#8a5a30');
+  ctx.fillStyle=g;ctx.fillRect(TABLE.x,TABLE.y,TABLE.w,TABLE.h);
+  // zones
+  ZONES.forEach(z=>{
+    ctx.fillStyle=z.color+'55';
+    ctx.fillRect(z.x0,TABLE.y,z.x1-z.x0,TABLE.h);
+    ctx.strokeStyle=z.color;ctx.lineWidth=2;
+    ctx.strokeRect(z.x0,TABLE.y,z.x1-z.x0,TABLE.h);
+    ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(z.val,(z.x0+z.x1)/2,TABLE.y+TABLE.h/2+6);
+  });
+  // edge marker
+  ctx.strokeStyle='#e94560';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(EDGE,TABLE.y-8);ctx.lineTo(EDGE,TABLE.y+TABLE.h+8);ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=2;
+  ctx.strokeRect(TABLE.x,TABLE.y,TABLE.w,TABLE.h);
+  discs.forEach(d=>{
+    if(d.dead)return;
+    ctx.beginPath();ctx.arc(d.x,d.y,R,0,7);
+    ctx.fillStyle=d.owner==='player'?'#e94560':'#3fa7ff';
+    ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.4)';ctx.lineWidth=2;ctx.stroke();
+  });
+  if(aiming&&aimStart&&aimCur){
+    const start=startPos();
+    const dx=aimStart.x-aimCur.x,dy=aimStart.y-aimCur.y;
+    const power=Math.min(Math.hypot(dx,dy),160);
+    const ang=Math.atan2(dy,dx);
+    ctx.beginPath();
+    ctx.moveTo(start.x,start.y);
+    ctx.lineTo(start.x+Math.cos(ang)*power,start.y+Math.sin(ang)*power);
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;ctx.setLineDash([6,6]);
+    ctx.stroke();ctx.setLineDash([]);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(pScore>=TARGET?I18N.t('shuf_win','YOU WIN THE MATCH!'):I18N.t('shuf_lose','CPU WINS THE MATCH'),W/2,H/2-10);
+    ctx.font='20px Arial';
+    ctx.fillText(`${pScore} - ${cScore}`,W/2,H/2+26);
+  }
+}
+
+function animate(){
+  const moving=stepPhysics();
+  draw();
+  if(moving)requestAnimationFrame(animate);
+  else afterSettle();
+}
+
+function afterSettle(){
+  rolling=false;
+  endTurn();
+  draw();
+}
+
+function endTurn(){
+  ballsLeft--;
+  document.getElementById('ballsLeft').textContent=ballsLeft;
+  if(ballsLeft<=0){ scoreRound(); return; }
+  turn=turn==='player'?'cpu':'player';
+  if(turn==='cpu'){ setMsg(I18N.t('shuf_cpu_turn','CPU is sliding...')); setTimeout(cpuSlide,700); }
+  else setMsg(I18N.t('shuf_your_turn2','Your turn!'));
+}
+
+function cpuSlide(){
+  if(gameOver)return;
+  const targetVal=[10,8,7][Math.floor(Math.random()*3)];
+  const zone=ZONES.find(z=>z.val===targetVal);
+  const targetX=(zone.x0+zone.x1)/2+rnd(-12,12);
+  const start=startPos();
+  const distX=targetX-start.x;
+  const vx=distX*0.028+rnd(-0.3,0.3);
+  const vy=rnd(-0.6,0.6);
+  rolling=true;
+  slideDisc('cpu',vx,vy);
+  requestAnimationFrame(animate);
+}
+
+function scoreRound(){
+  const live=discs.filter(d=>!d.dead);
+  // best disc per owner determines who scores (standard shuffleboard: only leading discs beyond opponent score)
+  const scored=live.filter(d=>zoneVal(d.x)>0);
+  scored.sort((a,b)=>b.x-a.x); // farthest first
+  if(scored.length===0){ setMsg(I18N.t('shuf_no_score','No discs scored this round.')); setTimeout(nextRound,1500); return; }
+  const leader=scored[0].owner;
+  let pts=0;
+  for(const d of scored){
+    if(d.owner===leader)pts+=zoneVal(d.x); else break;
+  }
+  if(leader==='player'){pScore+=pts;SFX.point();} else cScore+=pts;
+  document.getElementById('pScore').textContent=pScore;
+  document.getElementById('cScore').textContent=cScore;
+  setMsg(I18N.t('shuf_round_result','{w} scored {p} point(s) this round!').replace('{w}',leader==='player'?'You':'CPU').replace('{p}',pts));
+  setTimeout(()=>{
+    if(pScore>=TARGET||cScore>=TARGET){
+      gameOver=true;
+      SFX[pScore>cScore?'win':'lose']();
+      document.getElementById('again').style.display='inline-block';
+      draw();
+    } else nextRound();
+  },1800);
+}
+
+function nextRound(){ round++; newRound(); }
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*(W/rect.width),y:(cy-rect.top)*(H/rect.height)};
+}
+
+function onDown(e){
+  if(gameOver||rolling||turn!=='player')return;
+  e.preventDefault();
+  aiming=true;aimStart=pointerPos(e);aimCur=aimStart;
+}
+function onMove(e){
+  if(!aiming)return;
+  e.preventDefault();
+  aimCur=pointerPos(e);
+  draw();
+}
+function onUp(){
+  if(!aiming)return;
+  aiming=false;
+  const dx=aimStart.x-aimCur.x,dy=aimStart.y-aimCur.y;
+  const power=Math.min(Math.hypot(dx,dy),160);
+  if(power<8){draw();return;}
+  const ang=Math.atan2(dy,dx);
+  const speed=power*0.075;
+  rolling=true;
+  slideDisc('player',Math.cos(ang)*speed,Math.sin(ang)*speed);
+  requestAnimationFrame(animate);
+}
+
+c.addEventListener('mousedown',onDown);
+c.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+c.addEventListener('touchstart',onDown,{passive:false});
+c.addEventListener('touchmove',onMove,{passive:false});
+c.addEventListener('touchend',onUp);
+
+document.getElementById('again').onclick=()=>{
+  round=1;pScore=0;cScore=0;gameOver=false;
+  document.getElementById('pScore').textContent=0;
+  document.getElementById('cScore').textContent=0;
+  document.getElementById('again').style.display='none';
+  newRound();
+};
+
+newRound();
+</script></body></html>

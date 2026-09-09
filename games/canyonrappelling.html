@@ -1,0 +1,296 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Canyon Rappelling</title><meta name="description" content="Play Canyon Rappelling free online — Hold to feed rope and descend, release to brake. Keep your speed in the safe zone, dodge rock outcrops, and grab foothold rest points on your way down the canyon wall."><link rel="canonical" href="https://games.multiportllc.com/games/canyonrappelling"><meta property="og:title" content="Canyon Rappelling - Multiport Games"><meta property="og:description" content="Play Canyon Rappelling free online — Hold to feed rope and descend, release to brake. Keep your speed in the safe zone, dodge rock outcrops, and grab foothold rest points on your way down the canyon wall."><meta property="og:url" content="https://games.multiportllc.com/games/canyonrappelling"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Canyon Rappelling","description":"Play Canyon Rappelling free online instantly. Hold to feed rope and descend, release to brake. Keep your descent speed in the safe zone shown on the danger meter, dodge rock outcrops, and grab foothold rest points on the way down. Score by completing safe descents within the time limit, with taller and trickier canyon walls each round. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/canyonrappelling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#8d6748;display:block;border-radius:8px;touch-action:none;max-width:100%;cursor:pointer}
+#hud{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;color:#fff;font-weight:700;padding:6px;font-size:.95rem}
+#hud span{background:rgba(255,255,255,.08);padding:4px 10px;border-radius:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Canyon Rappelling</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span id="wall-display">Wall: 1</span>
+      <span id="time-display">Time: 60</span>
+    </div>
+    <canvas id="c" width="420" height="560"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>Hold</b> (mouse/finger/Space/Down) to feed rope and descend faster, <b>release</b> to brake. Keep your speed in the green zone of the danger meter — going too fast risks rope burn and falling! Steer left/right with Arrow Keys / A-D or by dragging to dodge rock outcrops, and pass through golden foothold rings to rest. Reach the bottom safely before time runs out — canyon walls get taller and trickier each round.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=420,H=560;
+let hi=parseInt(localStorage.getItem('canyonrappelling_hi')||'0',10);
+
+let player,wallHeight,depth,speed,danger,rocks,footholds,score,wallNum,timeLeft,gameOver,started,lastTime,won;
+let holding=false;
+let message='',messageT=0;
+let transitioning=false;
+
+const SAFE_MAX=4.2; // safe speed
+const DANGER_MAX=7.0; // instant-fail-ish speed
+
+function newWall(n){
+  wallHeight=1400+n*350;
+  depth=0;
+  speed=1.5;
+  danger=0;
+  player={x:W/2,vx:0};
+  rocks=[];
+  const rockCount=6+n*3;
+  for(let i=0;i<rockCount;i++){
+    rocks.push({y:200+Math.random()*(wallHeight-300),x:40+Math.random()*(W-80),w:34+Math.random()*20,side:Math.random()<0.5?-1:1});
+  }
+  footholds=[];
+  const fhCount=3+Math.floor(n*0.8);
+  for(let i=0;i<fhCount;i++){
+    footholds.push({y:250+ (i+1)*(wallHeight-300)/(fhCount+1),x:60+Math.random()*(W-120),used:false});
+  }
+  timeLeft=45+n*5;
+  won=false;
+}
+
+function resetGame(){
+  score=0;wallNum=1;gameOver=false;started=false;lastTime=null;
+  newWall(wallNum);
+}
+resetGame();
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowDown','KeyA','KeyD','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(!started)started=true;
+  if(e.code==='Space'||e.code==='ArrowDown')holding=true;
+});
+document.addEventListener('keyup',e=>{
+  keys[e.code]=false;
+  if(e.code==='Space'||e.code==='ArrowDown')holding=false;
+});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const t=e.changedTouches?e.changedTouches[0]:e;
+  return {x:(t.clientX-rect.left)*(W/rect.width)};
+}
+let dragX=null;
+c.addEventListener('pointerdown',e=>{
+  if(!started){started=true;}
+  if(gameOver){resetGame();return;}
+  holding=true;
+  dragX=pointerPos(e).x;
+});
+c.addEventListener('pointermove',e=>{ if(holding)dragX=pointerPos(e).x; });
+window.addEventListener('pointerup',()=>{holding=false;dragX=null;});
+
+function rectsCircleOverlap(px,py,pr,rx,ry,rw,rh){
+  const cx=Math.max(rx,Math.min(px,rx+rw));
+  const cy=Math.max(ry,Math.min(py,ry+rh));
+  const dx=px-cx,dy=py-cy;
+  return (dx*dx+dy*dy)<pr*pr;
+}
+
+function update(dt){
+  if(!started||gameOver||transitioning)return;
+  timeLeft-=dt/60;
+  if(timeLeft<=0){
+    timeLeft=0;gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('canyonrappelling_hi',String(hi));}
+    return;
+  }
+
+  // speed control: holding increases speed, releasing brakes
+  if(holding){speed+=0.09*dt;}else{speed-=0.16*dt;}
+  speed=Math.max(0.4,Math.min(DANGER_MAX+1.5,speed));
+
+  // danger accumulates while over safe speed
+  if(speed>SAFE_MAX){
+    danger+=(speed-SAFE_MAX)*0.9*dt;
+  }else{
+    danger-=1.2*dt;
+  }
+  danger=Math.max(0,Math.min(100,danger));
+  if(danger>=100){
+    gameOver=true;SFX.hurt();SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('canyonrappelling_hi',String(hi));}
+    return;
+  }
+
+  depth+=speed*dt*2.2;
+
+  // steering
+  const steerA=0.5;
+  if(keys['ArrowLeft']||keys['KeyA'])player.vx-=steerA;
+  if(keys['ArrowRight']||keys['KeyD'])player.vx+=steerA;
+  if(dragX!=null){
+    player.vx+=(dragX-player.x)*0.04;
+  }
+  player.vx*=0.85;
+  player.vx=Math.max(-5,Math.min(5,player.vx));
+  player.x+=player.vx*dt;
+  player.x=Math.max(24,Math.min(W-24,player.x));
+
+  // rock collisions (rocks positioned relative to depth window)
+  rocks.forEach(r=>{
+    if(r.hit)return;
+    const screenY=r.y-depth+H*0.35;
+    if(screenY>-40&&screenY<H+40){
+      const rw=r.w,rh=24;
+      const rx=r.side<0?0:W-rw;
+      if(rectsCircleOverlap(player.x,H*0.35,16,rx,screenY,rw,rh)){
+        r.hit=true;
+        speed=Math.max(0.6,speed*0.4);
+        danger=Math.min(100,danger+18);
+        score=Math.max(0,score-10);
+        SFX.hit();
+        message=I18N.t('rock_hit','Ouch! Hit a rock outcrop');messageT=50;
+      }
+    }
+  });
+
+  footholds.forEach(f=>{
+    if(f.used)return;
+    const screenY=f.y-depth+H*0.35;
+    if(screenY>-30&&screenY<H+30){
+      const dx=player.x-f.x,dy=H*0.35-screenY;
+      if(Math.hypot(dx,dy)<26){
+        f.used=true;
+        danger=Math.max(0,danger-25);
+        score+=15;
+        SFX.point();
+        message=I18N.t('foothold_rest','Foothold! Danger reduced. +15');messageT=50;
+      }
+    }
+  });
+
+  if(depth>=wallHeight&&!won){
+    won=true;
+    transitioning=true;
+    const bonus=Math.round(200+(100-danger)*3+timeLeft*4);
+    score+=bonus;
+    SFX.levelup();
+    message=I18N.t('wall_complete','Descent complete! +'+bonus);
+    messageT=90;
+    wallNum++;
+    setTimeout(()=>{ newWall(wallNum);started=true;transitioning=false; },1000);
+  }
+
+  if(messageT>0)messageT-=dt;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // canyon wall gradient
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#a9805a');g.addColorStop(1,'#6b4a30');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // rock texture stripes
+  ctx.strokeStyle='rgba(0,0,0,0.08)';
+  for(let i=0;i<10;i++){
+    ctx.beginPath();
+    const yy=((i*97-depth*0.5)%(H+100)+H+100)%(H+100)-50;
+    ctx.moveTo(0,yy);ctx.lineTo(W,yy+20);ctx.stroke();
+  }
+
+  // rope
+  ctx.strokeStyle='#f5deb3';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(player.x,0);ctx.lineTo(player.x,H*0.35);ctx.stroke();
+
+  // rocks
+  rocks.forEach(r=>{
+    const screenY=r.y-depth+H*0.35;
+    if(screenY>-40&&screenY<H+40){
+      const rw=r.w,rh=24;
+      const rx=r.side<0?0:W-rw;
+      ctx.fillStyle=r.hit?'#5d4037':'#4e3b31';
+      ctx.fillRect(rx,screenY,rw,rh);
+      ctx.fillStyle='rgba(255,255,255,0.15)';
+      ctx.fillRect(rx,screenY,rw,4);
+    }
+  });
+
+  // footholds
+  footholds.forEach(f=>{
+    const screenY=f.y-depth+H*0.35;
+    if(screenY>-30&&screenY<H+30){
+      ctx.strokeStyle=f.used?'rgba(255,213,79,0.25)':'#ffd54f';
+      ctx.lineWidth=4;
+      ctx.beginPath();ctx.arc(f.x,screenY,16,0,Math.PI*2);ctx.stroke();
+    }
+  });
+
+  // player
+  ctx.save();
+  ctx.translate(player.x,H*0.35);
+  ctx.fillStyle='#37474f';
+  ctx.fillRect(-10,-16,20,28);
+  ctx.fillStyle='#ffccbc';
+  ctx.beginPath();ctx.arc(0,-22,9,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#263238';ctx.lineWidth=3;
+  const legSwing=Math.sin(depth*0.05)*6;
+  ctx.beginPath();ctx.moveTo(-6,12);ctx.lineTo(-6+legSwing,26);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(6,12);ctx.lineTo(6-legSwing,26);ctx.stroke();
+  ctx.restore();
+
+  // depth progress bar (top)
+  const pct=Math.min(1,depth/wallHeight);
+  ctx.fillStyle='rgba(0,0,0,0.35)';ctx.fillRect(10,10,W-20,10);
+  ctx.fillStyle='#8bc34a';ctx.fillRect(10,10,(W-20)*pct,10);
+  ctx.strokeStyle='#fff';ctx.strokeRect(10,10,W-20,10);
+
+  // danger meter (right side)
+  const meterX=W-30,meterY=40,meterH=180;
+  ctx.fillStyle='rgba(0,0,0,0.35)';ctx.fillRect(meterX,meterY,16,meterH);
+  const safeH=(SAFE_MAX/(DANGER_MAX+1.5))*meterH;
+  ctx.fillStyle='rgba(76,175,80,0.5)';ctx.fillRect(meterX,meterY+meterH-safeH,16,safeH);
+  const dangerFillH=(danger/100)*meterH;
+  ctx.fillStyle=danger>70?'#e53935':danger>35?'#fb8c00':'#ffd54f';
+  ctx.fillRect(meterX,meterY+meterH-dangerFillH,16,dangerFillH);
+  ctx.strokeStyle='#fff';ctx.strokeRect(meterX,meterY,16,meterH);
+  ctx.fillStyle='#fff';ctx.font='bold 10px Arial';ctx.textAlign='center';
+  ctx.save();ctx.translate(meterX+8,meterY-8);ctx.fillText(I18N.t('danger_label','DANGER'),0,0);ctx.restore();
+
+  // speed readout
+  ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('speed_label','Speed: {s}').replace('{s}',speed.toFixed(1)),14,32);
+
+  if(message&&messageT>0){
+    ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(message,W/2,H-40);
+  }
+
+  if(!started&&depth===0){
+    ctx.fillStyle='rgba(0,0,0,0.45)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint4','Hold to descend, release to brake'),W/2,H/2);
+  }
+  if(gameOver&&!won){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-16);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap / click to restart'),W/2,H/2+20);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('wall-display').textContent=I18N.t('wall_label','Wall: {w}').replace('{w}',wallNum);
+  document.getElementById('time-display').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min(3,(ts-lastTime)/16.6667);
+  lastTime=ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

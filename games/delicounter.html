@@ -1,0 +1,232 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Deli Counter</title><meta name="description" content="Play Deli Counter free online — Read the customer's recipe card, slice the right amount of meat and cheese on the timing-based slicer, add the right bread, and assemble the order before their patience runs out."><link rel="canonical" href="https://games.multiportllc.com/games/delicounter"><meta property="og:title" content="Deli Counter - Multiport Games"><meta property="og:description" content="Play Deli Counter free online — Read the customer's recipe card, slice the right amount of meat and cheese on the timing-based slicer, add the right bread, and assemble the order before their patience runs out."><meta property="og:url" content="https://games.multiportllc.com/games/delicounter"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Deli Counter","description":"Play Deli Counter free online instantly. Read the customer's recipe card, slice the right amount of meat and cheese with a timing-based slicer, pick the right bread, and assemble the sandwich order before their patience runs out. Score by filling orders correctly, with more complex orders each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/delicounter","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#fff3e0;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#hud{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;color:#fff;font-weight:700;padding:6px;font-size:.95rem}
+#hud span{background:rgba(255,255,255,.08);padding:4px 10px;border-radius:8px}
+#patienceWrap{width:130px;height:14px;background:#222;border-radius:7px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+#patienceFill{height:100%;background:#4caf50;width:100%;transition:width .1s linear}
+#breadRow{display:flex;justify-content:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+#breadRow button{padding:8px 16px;border:none;border-radius:16px;background:#8d6e63;color:#fff;font-weight:700;cursor:pointer;font-size:.9rem}
+#breadRow button.active{background:#4e342e;outline:2px solid #ffd54f}
+#assembleBtn{display:block;margin:10px auto 0;padding:10px 26px;background:#2e7d32;border:none;border-radius:20px;color:#fff;font-size:1rem;font-weight:700;cursor:pointer}
+#assembleBtn:disabled{opacity:.35;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Deli Counter</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span id="order-display">Order: 1</span>
+      <span>Patience<span id="patienceWrap"><span id="patienceFill"></span></span></span>
+    </div>
+    <canvas id="c" width="480" height="360"></canvas>
+    <div id="breadRow"></div>
+    <button id="assembleBtn" onclick="assembleOrder()" disabled>Assemble Order</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Check the <b>recipe card</b> for the meat, cheese, amount, and bread needed. Click/tap the moving <b>slicer</b> when the needle lines up with the target zone to add a slice (repeat until you have the right amount of each). Pick the correct <b>bread</b> button. Then click <b>Assemble Order</b> before the customer's patience bar runs out!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=480,H=360;
+let hi=parseInt(localStorage.getItem('delicounter_hi')||'0',10);
+
+const MEATS=[{name:'Turkey',color:'#e8b98a'},{name:'Ham',color:'#e39aa0'},{name:'Salami',color:'#c1544a'},{name:'Roast Beef',color:'#8b3a2b'}];
+const CHEESES=[{name:'Swiss',color:'#fdf1b8'},{name:'Cheddar',color:'#f5a623'},{name:'Provolone',color:'#f7e7b4'}];
+const BREADS=['White','Wheat','Rye','Sourdough'];
+
+let order,score,orderNum,gameOver,started,lastTime;
+let meatCount,cheeseCount,selectedBread;
+let sliceMode='meat'; // meat|cheese|done
+let needleX=0,needleDir=1,needleSpeed=3;
+let patience,patienceMax,message='',messageT=0;
+
+function makeOrder(n){
+  const meat=MEATS[Math.floor(Math.random()*MEATS.length)];
+  const cheese=CHEESES[Math.floor(Math.random()*CHEESES.length)];
+  const bread=BREADS[Math.floor(Math.random()*BREADS.length)];
+  const meatTarget=2+Math.floor(Math.random()*2)+Math.min(3,Math.floor(n/2));
+  const cheeseTarget=1+Math.floor(Math.random()*2)+Math.min(2,Math.floor(n/3));
+  return {meat,cheese,bread,meatTarget,cheeseTarget};
+}
+
+function newOrder(n){
+  order=makeOrder(n);
+  meatCount=0;cheeseCount=0;selectedBread=null;
+  sliceMode='meat';
+  needleX=0;needleDir=1;needleSpeed=2.6+n*0.15;
+  patienceMax=16+Math.max(0,4-n*0.2);
+  patience=patienceMax;
+  renderBreadButtons();
+  document.getElementById('assembleBtn').disabled=true;
+}
+
+function resetGame(){
+  score=0;orderNum=1;gameOver=false;started=false;lastTime=null;
+  newOrder(orderNum);
+}
+resetGame();
+
+function renderBreadButtons(){
+  const row=document.getElementById('breadRow');
+  row.innerHTML='';
+  BREADS.forEach(b=>{
+    const btn=document.createElement('button');
+    btn.textContent=b;
+    if(selectedBread===b)btn.classList.add('active');
+    btn.onclick=()=>{selectedBread=b;renderBreadButtons();checkAssembleReady();SFX.select();};
+    row.appendChild(btn);
+  });
+}
+
+function checkAssembleReady(){
+  document.getElementById('assembleBtn').disabled=!(meatCount>=order.meatTarget&&cheeseCount>=order.cheeseTarget&&selectedBread);
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  return {x:(t.clientX-rect.left)*(W/rect.width),y:(t.clientY-rect.top)*(H/rect.height)};
+}
+
+const sliceZone={x:180,w:80,y:210,trackY:210,trackW:280,trackX:100};
+
+c.addEventListener('pointerdown',e=>{
+  if(!started){started=true;}
+  if(gameOver){resetGame();return;}
+  const p=pointerPos(e);
+  if(p.y>190&&p.y<250){
+    doSlice();
+  }
+});
+
+function doSlice(){
+  if(meatCount>=order.meatTarget&&cheeseCount>=order.cheeseTarget)return;
+  const target=meatCount<order.meatTarget?sliceZone:sliceZone; // same zone visual
+  const inZone=needleX>=sliceZone.x&&needleX<=sliceZone.x+sliceZone.w;
+  const curMeat=meatCount<order.meatTarget;
+  if(inZone){
+    SFX.click();
+    if(curMeat)meatCount++;else cheeseCount++;
+    message=I18N.t('nice_slice','Nice slice!');messageT=40;
+  }else{
+    SFX.error();
+    message=I18N.t('missed_slice','Missed the mark!');messageT=40;
+    patience-=1.5;
+  }
+  checkAssembleReady();
+}
+
+function assembleOrder(){
+  if(gameOver)return;
+  const correct = meatCount>=order.meatTarget && cheeseCount>=order.cheeseTarget && selectedBread===order.bread;
+  if(correct){
+    const pts=100+Math.round(patience*4);
+    score+=pts;
+    SFX.success();
+    message=I18N.t('order_correct','Order correct! +'+pts);
+  }else{
+    SFX.fail();
+    message=I18N.t('order_wrong','Order incorrect!');
+  }
+  messageT=70;
+  document.getElementById('assembleBtn').disabled=true;
+  setTimeout(()=>{
+    if(gameOver)return;
+    orderNum++;
+    newOrder(orderNum);
+  },900);
+}
+
+function update(dt){
+  if(!started||gameOver)return;
+  needleX+=needleDir*needleSpeed*dt;
+  if(needleX>sliceZone.trackX+sliceZone.trackW-6){needleX=sliceZone.trackX+sliceZone.trackW-6;needleDir=-1;}
+  if(needleX<sliceZone.trackX+6){needleX=sliceZone.trackX+6;needleDir=1;}
+
+  patience-=dt/60;
+  if(patience<=0){
+    patience=0;gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('delicounter_hi',String(hi));}
+  }
+  if(messageT>0)messageT-=dt;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#fff3e0';ctx.fillRect(0,0,W,H);
+
+  // recipe card
+  ctx.fillStyle='#fff';ctx.strokeStyle='#d7ccc8';ctx.lineWidth=2;
+  ctx.fillRect(20,16,W-40,90);ctx.strokeRect(20,16,W-40,90);
+  ctx.fillStyle='#4e342e';ctx.font='bold 15px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('order_title','ORDER'),34,36);
+  ctx.font='13px Arial';
+  ctx.fillText(`${order.meat.name} x${order.meatTarget}`,34,56);
+  ctx.fillText(`${order.cheese.name} x${order.cheeseTarget}`,34,74);
+  ctx.fillText(`${order.bread} bread`,34,92);
+
+  // meat/cheese swatches
+  ctx.fillStyle=order.meat.color;ctx.fillRect(W-140,34,20,20);
+  ctx.fillStyle=order.cheese.color;ctx.fillRect(W-110,34,20,20);
+  ctx.fillStyle='#4e342e';ctx.font='11px Arial';
+  ctx.fillText('meat',W-140,68);ctx.fillText('cheese',W-115,68);
+
+  // progress stacks
+  ctx.textAlign='left';
+  ctx.fillStyle='#333';ctx.font='bold 13px Arial';
+  ctx.fillText(I18N.t('meat_progress','Meat: {a}/{b}').replace('{a}',meatCount).replace('{b}',order.meatTarget),20,130);
+  ctx.fillText(I18N.t('cheese_progress','Cheese: {a}/{b}').replace('{a}',cheeseCount).replace('{b}',order.cheeseTarget),200,130);
+  ctx.fillText(I18N.t('bread_progress','Bread: {b}').replace('{b}',selectedBread||'—'),340,130);
+
+  // slicer track
+  ctx.fillStyle='#e0e0e0';ctx.fillRect(sliceZone.trackX,sliceZone.trackY,sliceZone.trackW,20);
+  ctx.fillStyle='rgba(76,175,80,0.4)';ctx.fillRect(sliceZone.x,sliceZone.trackY,sliceZone.w,20);
+  ctx.strokeStyle='#2e7d32';ctx.strokeRect(sliceZone.x,sliceZone.trackY,sliceZone.w,20);
+  const curType=meatCount<order.meatTarget?order.meat:order.cheese;
+  ctx.fillStyle=curType.color;
+  ctx.fillRect(needleX-4,sliceZone.trackY-8,8,36);
+  ctx.fillStyle='#333';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('slicer_label','Tap when needle is in the green zone'),W/2,sliceZone.trackY-16);
+  ctx.fillText((meatCount<order.meatTarget?order.meat.name:(cheeseCount<order.cheeseTarget?order.cheese.name:I18N.t('ready_label','READY'))),W/2,sliceZone.trackY+50);
+
+  if(message&&messageT>0){
+    ctx.fillStyle='#1b5e20';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(message,W/2,290);
+  }
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.45)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint3','Tap the slicer track to begin'),W/2,H/2);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-16);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap / click to restart'),W/2,H/2+20);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('order-display').textContent=I18N.t('order_label','Order: {o}').replace('{o}',orderNum);
+  document.getElementById('patienceFill').style.width=Math.max(0,(patience/patienceMax*100))+'%';
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min(3,(ts-lastTime)/16.6667);
+  lastTime=ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

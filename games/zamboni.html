@@ -1,0 +1,272 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Zamboni</title><meta name="description" content="Play Zamboni free online — Arrow keys/WASD or drag to drive. Resurface the whole rink in overlapping lanes before time runs out, avoiding rough patches!"><link rel="canonical" href="https://games.multiportllc.com/games/zamboni"><meta property="og:title" content="Zamboni - Multiport Games"><meta property="og:description" content="Play Zamboni free online — Arrow keys/WASD or drag to drive. Resurface the whole rink in overlapping lanes before time runs out, avoiding rough patches!"><meta property="og:url" content="https://games.multiportllc.com/games/zamboni"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Zamboni","description":"Play Zamboni free online instantly. Arrow keys/WASD or drag to drive. Resurface the whole rink in overlapping lanes before time runs out, avoiding rough patches! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/zamboni","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{text-align:center}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;padding:8px;display:flex;justify-content:center;gap:22px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+#c{background:#0d1b2a;display:block;border-radius:10px;margin:0 auto;touch-action:none;max-width:100%;height:auto}
+#msg{color:#fff;min-height:1.6em;font-weight:700;padding:4px}
+#again{display:none;margin-top:6px;padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Zamboni</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="wrap">
+      <div id="hud">
+        <div>Rink <span id="rinkNum">1</span></div>
+        <div>Coverage: <span id="coverage">0</span>%</div>
+        <div>Time: <span id="timeLeft">45</span>s</div>
+        <div>Score: <span id="score">0</span> | Hi: <span id="hiScore">0</span></div>
+      </div>
+      <canvas id="c" width="760" height="420"></canvas>
+      <div id="msg">Drive over the whole ice in overlapping passes to resurface it. Avoid the rough debris patches!</div>
+      <button id="again">Play Again</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Steer the Zamboni with <b>Arrow keys/WASD</b> (or drag/touch on the ice) to drive smooth overlapping lanes across the rink, resurfacing the ice as tracked by the coverage meter. Avoid the brown rough/debris patches — driving over them damages your blade and slows resurfacing. Reach 90%+ coverage before time runs out to advance to a bigger, tighter-timed rink!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const RINK={x:40,y:30,w:W-80,h:H-60};
+const CELL=10;
+let cols,rows,grid; // 0=unresurfaced,1=resurfaced
+let debris=[];
+let rink=1,score=0,hi=parseInt(localStorage.getItem('zamboni_hi')||'0',10);
+let timeLeft=45,timerId=null;
+let gameOver=false,started=false;
+let zam={x:0,y:0,angle:0,speed:0};
+const keys={};
+let dragTarget=null;
+
+document.getElementById('hiScore').textContent=hi;
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function setupRink(){
+  cols=Math.floor(RINK.w/CELL);
+  rows=Math.floor(RINK.h/CELL);
+  grid=new Array(cols*rows).fill(0);
+  debris=[];
+  const nDebris=3+rink; // tighter each rink
+  for(let i=0;i<nDebris;i++){
+    debris.push({
+      x:RINK.x+20+Math.random()*(RINK.w-40),
+      y:RINK.y+20+Math.random()*(RINK.h-40),
+      r:14+Math.random()*10
+    });
+  }
+  zam={x:RINK.x+RINK.w/2,y:RINK.y+RINK.h/2,angle:-Math.PI/2,speed:0};
+  timeLeft=Math.max(20,45-(rink-1)*3);
+  document.getElementById('rinkNum').textContent=rink;
+  document.getElementById('timeLeft').textContent=timeLeft;
+  document.getElementById('coverage').textContent='0';
+  gameOver=false;started=false;
+  setMsg(I18N.t('zam_start','Drive onto the ice to start resurfacing!'));
+  clearInterval(timerId);
+}
+
+function cellIndex(px,py){
+  const cx=Math.floor((px-RINK.x)/CELL),cy=Math.floor((py-RINK.y)/CELL);
+  if(cx<0||cy<0||cx>=cols||cy>=rows)return -1;
+  return cy*cols+cx;
+}
+
+function resurfaceAt(px,py){
+  const radius=16;
+  for(let dy=-radius;dy<=radius;dy+=CELL/2){
+    for(let dx=-radius;dx<=radius;dx+=CELL/2){
+      if(dx*dx+dy*dy>radius*radius)continue;
+      const idx=cellIndex(px+dx,py+dy);
+      if(idx>=0)grid[idx]=1;
+    }
+  }
+}
+
+function coveragePct(){
+  const total=grid.length;
+  const done=grid.reduce((a,b)=>a+b,0);
+  return Math.round(done/total*100);
+}
+
+function inDebris(px,py){
+  return debris.some(d=>Math.hypot(px-d.x,py-d.y)<d.r);
+}
+
+function startTimer(){
+  clearInterval(timerId);
+  timerId=setInterval(()=>{
+    if(gameOver)return;
+    timeLeft--;
+    document.getElementById('timeLeft').textContent=timeLeft;
+    if(timeLeft<=0){
+      clearInterval(timerId);
+      finishRink(false);
+    }
+  },1000);
+}
+
+function finishRink(success){
+  gameOver=true;
+  clearInterval(timerId);
+  const pct=coveragePct();
+  if(success){
+    const bonus=Math.round(pct*10+timeLeft*5);
+    score+=bonus;
+    SFX.win();
+    setMsg(I18N.t('zam_success','Rink resurfaced! +{b} points. Next rink is bigger & tighter!').replace('{b}',bonus));
+    if(score>hi){hi=score;localStorage.setItem('zamboni_hi',hi);}
+    document.getElementById('score').textContent=score;
+    document.getElementById('hiScore').textContent=hi;
+    setTimeout(()=>{ rink++; setupRink(); draw(); },1800);
+  } else {
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('zamboni_hi',hi);}
+    document.getElementById('hiScore').textContent=hi;
+    setMsg(I18N.t('zam_fail','Time ran out at {p}% coverage! Final score: {s}').replace('{p}',pct).replace('{s}',score));
+    document.getElementById('again').style.display='inline-block';
+  }
+  draw();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0d1b2a';ctx.fillRect(0,0,W,H);
+  // rink base (rough ice)
+  ctx.fillStyle='#b9c9d6';
+  ctx.fillRect(RINK.x,RINK.y,RINK.w,RINK.h);
+  // grid cells
+  for(let cy=0;cy<rows;cy++){
+    for(let cx=0;cx<cols;cx++){
+      if(grid[cy*cols+cx]===1){
+        ctx.fillStyle='#eaf6ff';
+        ctx.fillRect(RINK.x+cx*CELL,RINK.y+cy*CELL,CELL,CELL);
+      }
+    }
+  }
+  // rink border / faceoff circle for flavor
+  ctx.strokeStyle='#e94560';ctx.lineWidth=3;
+  ctx.strokeRect(RINK.x,RINK.y,RINK.w,RINK.h);
+  ctx.beginPath();ctx.arc(RINK.x+RINK.w/2,RINK.y+RINK.h/2,40,0,7);
+  ctx.strokeStyle='rgba(233,69,96,0.5)';ctx.lineWidth=2;ctx.stroke();
+  // debris
+  debris.forEach(d=>{
+    ctx.beginPath();ctx.arc(d.x,d.y,d.r,0,7);
+    ctx.fillStyle='rgba(110,75,40,0.55)';ctx.fill();
+    ctx.strokeStyle='rgba(80,50,20,0.7)';ctx.stroke();
+  });
+  // zamboni
+  ctx.save();
+  ctx.translate(zam.x,zam.y);
+  ctx.rotate(zam.angle+Math.PI/2);
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(-12,-18,24,36);
+  ctx.fillStyle='#fff';
+  ctx.fillRect(-8,-14,16,10);
+  ctx.fillStyle='#222';
+  ctx.fillRect(-12,14,8,6);
+  ctx.fillRect(4,14,8,6);
+  ctx.restore();
+  if(!started&&!gameOver){
+    ctx.fillStyle='rgba(255,255,255,0.85)';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('zam_hint','Arrow keys/WASD or drag to drive'),W/2,H-14);
+  }
+}
+
+function update(dt){
+  if(gameOver)return;
+  let turning=0,accel=0;
+  if(keys['ArrowLeft']||keys['a'])turning-=1;
+  if(keys['ArrowRight']||keys['d'])turning+=1;
+  if(keys['ArrowUp']||keys['w'])accel+=1;
+  if(keys['ArrowDown']||keys['s'])accel-=1;
+
+  if(dragTarget){
+    const dx=dragTarget.x-zam.x,dy=dragTarget.y-zam.y;
+    const targetAngle=Math.atan2(dy,dx);
+    let diff=targetAngle-zam.angle;
+    while(diff>Math.PI)diff-=Math.PI*2;
+    while(diff<-Math.PI)diff+=Math.PI*2;
+    turning=Math.max(-1,Math.min(1,diff*2));
+    if(Math.hypot(dx,dy)>10)accel=1;
+  }
+
+  if(accel!==0)started=true;
+
+  zam.angle+=turning*0.045*dt;
+  const maxSpeed=inDebris(zam.x,zam.y)?1.1:2.2;
+  zam.speed+=accel*0.12*dt;
+  zam.speed*=0.94;
+  zam.speed=Math.max(-maxSpeed,Math.min(maxSpeed,zam.speed));
+
+  const nx=zam.x+Math.cos(zam.angle)*zam.speed*dt;
+  const ny=zam.y+Math.sin(zam.angle)*zam.speed*dt;
+  zam.x=Math.max(RINK.x+14,Math.min(RINK.x+RINK.w-14,nx));
+  zam.y=Math.max(RINK.y+14,Math.min(RINK.y+RINK.h-14,ny));
+
+  if(started)resurfaceAt(zam.x,zam.y);
+
+  const pct=coveragePct();
+  document.getElementById('coverage').textContent=pct;
+  if(pct>=90&&!gameOver){finishRink(true);}
+}
+
+let lastTime=null;
+function loop(now){
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.code.replace('Key','')))e.preventDefault();
+  keys[e.key]=true;
+  if(!started&&!gameOver&&['ArrowUp','w','ArrowDown','s','ArrowLeft','a','ArrowRight','d'].includes(e.key)){startTimer();}
+});
+document.addEventListener('keyup',e=>{keys[e.key]=false;});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*(W/rect.width),y:(cy-rect.top)*(H/rect.height)};
+}
+function onDown(e){
+  e.preventDefault();
+  dragTarget=pointerPos(e);
+  if(!started&&!gameOver)startTimer();
+}
+function onMove(e){
+  if(!dragTarget)return;
+  e.preventDefault();
+  dragTarget=pointerPos(e);
+}
+function onUp(){dragTarget=null;}
+
+c.addEventListener('mousedown',onDown);
+c.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+c.addEventListener('touchstart',onDown,{passive:false});
+c.addEventListener('touchmove',onMove,{passive:false});
+c.addEventListener('touchend',onUp);
+
+document.getElementById('again').onclick=()=>{
+  rink=1;score=0;
+  document.getElementById('score').textContent=0;
+  document.getElementById('again').style.display='none';
+  setupRink();
+  draw();
+};
+
+setupRink();
+requestAnimationFrame(loop);
+</script></body></html>

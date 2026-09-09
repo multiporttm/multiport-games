@@ -1,0 +1,293 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Petanque</title><meta name="description" content="Play Petanque free online — Drag up to set arc and power, release to throw your boule. Land closest to the jack or knock the opponent's boule away for a carreau!"><link rel="canonical" href="https://games.multiportllc.com/games/petanque"><meta property="og:title" content="Petanque - Multiport Games"><meta property="og:description" content="Play Petanque free online — Drag up to set arc and power, release to throw your boule. Land closest to the jack or knock the opponent's boule away for a carreau!"><meta property="og:url" content="https://games.multiportllc.com/games/petanque"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Petanque","description":"Play Petanque free online instantly. Drag up to set arc and power, release to throw your boule. Land closest to the jack or knock the opponent's boule away for a carreau! No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/petanque","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{text-align:center}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;padding:8px;display:flex;justify-content:center;gap:22px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+#c{background:#c9a876;display:block;border-radius:10px;margin:0 auto;touch-action:none;max-width:100%;height:auto}
+#msg{color:#fff;min-height:1.6em;font-weight:700;padding:4px}
+#again{display:none;margin-top:6px;padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Petanque</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="wrap">
+      <div id="hud">
+        <div>Round <span id="endNum">1</span>/5</div>
+        <div>You <span id="pScore">0</span> — <span id="cScore">0</span> CPU</div>
+        <div>Boules left: <span id="ballsLeft">3</span></div>
+      </div>
+      <canvas id="c" width="760" height="420"></canvas>
+      <div id="msg">Drag up from your boule to set arc &amp; power, release to throw.</div>
+      <button id="again">Play Again</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Drag upward/backward from your boule (click/touch and hold, pull, release) to set trajectory arc and power — the shadow shows where it will land. Land closest to the wooden jack to score, or aim directly at an opponent's boule for a "carreau" strike to knock it away. Win the majority of 5 rounds to win the match!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const COURT={x:40,y:30,w:W-80,h:H-60};
+let round=1,pScore=0,cScore=0,ballsLeft=3,turn='player';
+let jack=null;
+let boules=[]; // {x,y,z,owner,vx,vy,vz,landed}
+let rolling=false;
+let aiming=false,aimStart=null,aimCur=null;
+let gameOver=false;
+const R=12;
+const GRAV=0.5;
+
+function rnd(a,b){return a+Math.random()*(b-a);}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function newRound(){
+  jack={x:COURT.x+COURT.w/2+rnd(-70,70),y:COURT.y+70+rnd(-20,20)};
+  boules=[];
+  ballsLeft=3;
+  turn='player';
+  document.getElementById('endNum').textContent=round;
+  document.getElementById('ballsLeft').textContent=ballsLeft;
+  setMsg(I18N.t('pet_your_turn','Your turn — drag up to throw toward the jack.'));
+  draw();
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function playerStart(){return {x:COURT.x+40,y:COURT.y+COURT.h-40};}
+function cpuStart(){return {x:COURT.x+COURT.w-40,y:COURT.y+COURT.h-40};}
+
+function throwBoule(owner,dx,dy,power,start){
+  // flight: parabola in z, moves in xy toward target proportional to power
+  const dist2=Math.hypot(dx,dy)||1;
+  const nx=dx/dist2,ny=dy/dist2;
+  const speed=power*0.9;
+  boules.push({
+    x:start.x,y:start.y,z:0,
+    vx:nx*speed*0.09,vy:ny*speed*0.09,
+    vz:power*0.09+3,
+    owner,landed:false,bounces:0
+  });
+  SFX.swoosh();
+}
+
+function stepPhysics(){
+  let anyMoving=false;
+  for(const b of boules){
+    if(b.landed)continue;
+    anyMoving=true;
+    b.x+=b.vx;b.y+=b.vy;
+    b.z+=b.vz;
+    b.vz-=GRAV;
+    if(b.z<=0){
+      b.z=0;
+      b.bounces++;
+      if(b.bounces>=2||Math.abs(b.vz)<2){
+        b.landed=true;b.vx=0;b.vy=0;b.vz=0;
+      } else {
+        b.vz=-b.vz*0.35;
+        b.vx*=0.6;b.vy*=0.6;
+      }
+    }
+    if(b.x<COURT.x+R){b.x=COURT.x+R;b.vx*=-0.4;}
+    if(b.x>COURT.x+COURT.w-R){b.x=COURT.x+COURT.w-R;b.vx*=-0.4;}
+    if(b.y<COURT.y-30||b.y>COURT.y+COURT.h+30){b.landed=true;b.dead=true;}
+  }
+  // collisions only when grounded (rolling low)
+  for(let i=0;i<boules.length;i++){
+    const b1=boules[i];
+    if(b1.dead)continue;
+    for(let j=i+1;j<boules.length;j++){
+      const b2=boules[j];
+      if(b2.dead)continue;
+      if(b1.z>10||b2.z>10)continue;
+      const dx=b2.x-b1.x,dy=b2.y-b1.y;
+      const d=Math.hypot(dx,dy)||0.01;
+      if(d<R*2){
+        SFX.hit();
+        const speed1=Math.hypot(b1.vx,b1.vy);
+        const nx=dx/d,ny=dy/d;
+        if(!b1.landed && speed1>2){
+          // carreau-style knock
+          b2.vx=nx*speed1*0.8;b2.vy=ny*speed1*0.8;b2.landed=false;b2.z=1;
+          const overlap=(R*2-d);
+          b2.x+=nx*overlap;b2.y+=ny*overlap;
+        } else {
+          const overlap=(R*2-d)/2;
+          b1.x-=nx*overlap;b1.y-=ny*overlap;
+          b2.x+=nx*overlap;b2.y+=ny*overlap;
+        }
+      }
+    }
+  }
+  return anyMoving;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#d8bd8f');g.addColorStop(1,'#b89a68');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#c9a876';
+  ctx.fillRect(COURT.x,COURT.y,COURT.w,COURT.h);
+  ctx.strokeStyle='rgba(255,255,255,0.4)';ctx.lineWidth=3;
+  ctx.strokeRect(COURT.x,COURT.y,COURT.w,COURT.h);
+  // gravel texture dots
+  ctx.fillStyle='rgba(120,95,60,0.25)';
+  for(let i=0;i<40;i++){
+    const gx=COURT.x+ (i*53.7)%COURT.w, gy=COURT.y+(i*97.3)%COURT.h;
+    ctx.fillRect(gx,gy,2,2);
+  }
+  if(jack){
+    ctx.beginPath();ctx.arc(jack.x,jack.y,6,0,7);
+    ctx.fillStyle='#7a4a1a';ctx.fill();
+    ctx.strokeStyle='#4a2a08';ctx.stroke();
+  }
+  boules.slice().sort((a,b)=>a.z-b.z).forEach(b=>{
+    if(b.dead)return;
+    // shadow
+    ctx.beginPath();ctx.ellipse(b.x,b.y,R*0.9,R*0.4,0,0,7);
+    ctx.fillStyle='rgba(0,0,0,0.3)';ctx.fill();
+    ctx.beginPath();ctx.arc(b.x,b.y-b.z,R,0,7);
+    ctx.fillStyle=b.owner==='player'?'#e94560':'#3fa7ff';
+    ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.35)';ctx.stroke();
+  });
+  if(aiming&&aimStart&&aimCur){
+    const start=playerStart();
+    const dx=aimCur.x-aimStart.x,dy=aimCur.y-aimStart.y;
+    const power=Math.min(Math.hypot(dx,dy),150);
+    const ang=Math.atan2(-dy,dx);
+    ctx.beginPath();
+    ctx.moveTo(start.x,start.y);
+    ctx.lineTo(start.x+Math.cos(ang)*power,start.y-Math.sin(ang)*power);
+    ctx.strokeStyle='#2d5a27';ctx.lineWidth=3;ctx.setLineDash([6,6]);
+    ctx.stroke();ctx.setLineDash([]);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(pScore>cScore?I18N.t('pet_win','YOU WIN THE MATCH!'):I18N.t('pet_lose','CPU WINS THE MATCH'),W/2,H/2-10);
+    ctx.font='20px Arial';
+    ctx.fillText(`${pScore} - ${cScore}`,W/2,H/2+26);
+  }
+}
+
+function afterSettle(){
+  rolling=false;
+  endTurn();
+  draw();
+}
+
+function animate(){
+  const moving=stepPhysics();
+  draw();
+  if(moving)requestAnimationFrame(animate);
+  else afterSettle();
+}
+
+function endTurn(){
+  ballsLeft--;
+  document.getElementById('ballsLeft').textContent=ballsLeft;
+  if(ballsLeft<=0){finishRound();return;}
+  turn=turn==='player'?'cpu':'player';
+  if(turn==='cpu'){setMsg(I18N.t('pet_cpu_turn','CPU is throwing...'));setTimeout(cpuThrow,700);}
+  else setMsg(I18N.t('pet_your_turn2','Your turn!'));
+}
+
+function cpuThrow(){
+  if(gameOver)return;
+  const start=cpuStart();
+  const dx0=jack.x-start.x,dy0=jack.y-start.y;
+  const distToJack=Math.hypot(dx0,dy0);
+  const err=rnd(-14,14);
+  const ang=Math.atan2(dy0,dx0);
+  const dx=Math.cos(ang)*distToJack+rnd(-err,err);
+  const dy=Math.sin(ang)*distToJack;
+  const power=Math.min(150,distToJack*1.05+rnd(-10,10));
+  rolling=true;
+  throwBoule('cpu',dx,dy,power,start);
+  requestAnimationFrame(animate);
+}
+
+function finishRound(){
+  const live=boules.filter(b=>!b.dead);
+  if(live.length===0||!jack){nextRound();return;}
+  live.sort((a,b)=>dist(a,jack)-dist(b,jack));
+  const winner=live[0].owner;
+  let pts=0;
+  for(const b of live){ if(b.owner===winner)pts++; else break; }
+  if(winner==='player'){pScore+=pts;SFX.point();} else cScore+=pts;
+  document.getElementById('pScore').textContent=pScore;
+  document.getElementById('cScore').textContent=cScore;
+  setMsg(I18N.t('pet_round_result','{w} scored {p} point(s) this round!').replace('{w}',winner==='player'?'You':'CPU').replace('{p}',pts));
+  setTimeout(nextRound,1800);
+}
+
+function nextRound(){
+  round++;
+  if(round>5){
+    gameOver=true;
+    SFX[pScore>cScore?'win':'lose']();
+    document.getElementById('again').style.display='inline-block';
+    draw();
+    return;
+  }
+  newRound();
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-rect.left)*(W/rect.width),y:(cy-rect.top)*(H/rect.height)};
+}
+
+function onDown(e){
+  if(gameOver||rolling||turn!=='player')return;
+  e.preventDefault();
+  aiming=true;
+  aimStart=pointerPos(e);
+  aimCur=aimStart;
+}
+function onMove(e){
+  if(!aiming)return;
+  e.preventDefault();
+  aimCur=pointerPos(e);
+  draw();
+}
+function onUp(){
+  if(!aiming)return;
+  aiming=false;
+  const start=playerStart();
+  const dx=aimCur.x-aimStart.x,dy=aimCur.y-aimStart.y;
+  const power=Math.min(Math.hypot(dx,dy),150);
+  if(power<8){draw();return;}
+  rolling=true;
+  throwBoule('player',dx,-dy,power,start);
+  requestAnimationFrame(animate);
+}
+
+c.addEventListener('mousedown',onDown);
+c.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+c.addEventListener('touchstart',onDown,{passive:false});
+c.addEventListener('touchmove',onMove,{passive:false});
+c.addEventListener('touchend',onUp);
+
+document.getElementById('again').onclick=()=>{
+  round=1;pScore=0;cScore=0;gameOver=false;
+  document.getElementById('pScore').textContent=0;
+  document.getElementById('cScore').textContent=0;
+  document.getElementById('again').style.display='none';
+  newRound();
+};
+
+newRound();
+</script></body></html>
