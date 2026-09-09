@@ -1,0 +1,285 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Funhouse Mirror</title><meta name="description" content="Play Funhouse Mirror free online — Drag your stick figure's joints to match the wobbly target pose shown in the mirror. Hold the pose steady to score it. Poses get trickier each round!"><link rel="canonical" href="https://games.multiportllc.com/games/funhousemirror"><meta property="og:title" content="Funhouse Mirror - Multiport Games"><meta property="og:description" content="Play Funhouse Mirror free online — Drag your stick figure's joints to match the wobbly target pose shown in the mirror. Hold the pose steady to score it. Poses get trickier each round!"><meta property="og:url" content="https://games.multiportllc.com/games/funhousemirror"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Funhouse Mirror","description":"Play Funhouse Mirror free online instantly. Drag stick-figure joints to contort into poses that match a distorted funhouse-mirror reflection, holding each pose steady to score it. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/funhousemirror","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#fm-wrap{padding:16px;max-width:680px;margin:0 auto;text-align:center}
+#fm-hud{display:flex;justify-content:space-between;color:#ffd9f5;font-weight:700;font-size:.95rem;margin-bottom:10px;flex-wrap:wrap;gap:6px}
+#fm-hud span{background:rgba(220,80,180,.2);padding:4px 10px;border-radius:8px}
+#fm-stage{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.fm-panel{background:#1a1024;border-radius:12px;border:2px solid #4a2a5a;padding:8px}
+.fm-panel-label{color:#e0a8e8;font-weight:700;font-size:.85rem;margin-bottom:4px}
+canvas.fm-c{display:block;background:#241432;border-radius:8px;touch-action:none}
+#fm-match{color:#ffd54f;font-weight:800;font-size:1.3rem;margin:10px 0 4px}
+#fm-holdbar{width:220px;height:12px;background:#241432;border-radius:6px;margin:6px auto;overflow:hidden;border:1px solid #4a2a5a}
+#fm-holdfill{height:100%;width:0%;background:linear-gradient(90deg,#ff6ec7,#ffd54f);transition:width .05s linear}
+#fm-msg{color:#e0a8e8;font-weight:700;min-height:1.4em;margin-top:8px}
+#fm-endcard{display:none;color:#fff;padding:10px}
+#fm-endcard button{margin-top:10px;padding:9px 22px;background:#d6549f;border:none;border-radius:20px;color:#fff;font-weight:700;cursor:pointer}
+#fm-next{margin-top:10px;padding:8px 20px;background:#d6549f;border:none;border-radius:20px;color:#fff;font-weight:700;cursor:pointer;display:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Funhouse Mirror</div>
+  <div class="game-frame">
+    <div id="fm-wrap">
+      <div id="fm-hud"><span id="fm-round">Round: 1</span><span id="fm-score">Matched: 0</span><span id="fm-hi">Best: 0</span></div>
+      <div id="fm-stage">
+        <div class="fm-panel"><div class="fm-panel-label">Target Reflection</div><canvas class="fm-c" id="fm-target" width="220" height="260"></canvas></div>
+        <div class="fm-panel"><div class="fm-panel-label">Your Pose (drag joints)</div><canvas class="fm-c" id="fm-player" width="220" height="260"></canvas></div>
+      </div>
+      <div id="fm-match">Match: 0%</div>
+      <div id="fm-holdbar"><div id="fm-holdfill"></div></div>
+      <div id="fm-msg">Drag the pink joints to contort your pose!</div>
+      <button id="fm-next">Next Pose ▶</button>
+      <div id="fm-endcard">
+        <div id="fm-endtitle" style="font-size:1.3rem;font-weight:800"></div>
+        <div id="fm-endstats" style="margin-top:6px;color:#ffd9f5"></div>
+        <button id="fm-restart">Play Again</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the pink <b>joint handles</b> (or use <b>Arrow Keys</b> after clicking/tapping a joint to select it) on your stick figure to match the wobbly target pose shown in the mirror. Get your match percentage high and <b>hold the pose steady</b> to lock in a score. Poses get trickier each round!</div>
+</div>
+<script>
+(function(){
+const HI_KEY='funhousemirror_hiscore';
+const targetCanvas=document.getElementById('fm-target'), tctx=targetCanvas.getContext('2d');
+const playerCanvas=document.getElementById('fm-player'), pctx=playerCanvas.getContext('2d');
+
+// Joint model: torso fixed at center-top; joints are angles at each limb segment.
+// Skeleton: head(fixed offset), torso(fixed), then shoulders->elbows->hands, hips->knees->feet.
+const JOINT_KEYS=['leftShoulder','leftElbow','rightShoulder','rightElbow','leftHip','leftKnee','rightHip','rightKnee'];
+const LIMB_LEN=38;
+
+function defaultPose(){
+  return {
+    leftShoulder:-40, leftElbow:-20,
+    rightShoulder:40, rightElbow:20,
+    leftHip:-20, leftKnee:10,
+    rightHip:20, rightKnee:-10
+  };
+}
+
+let round=1, matched=0, hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let targetPose, playerPose, selectedJoint=null, dragging=null;
+let holdProgress=0, holding=false, locked=false, gameOver=false, wobble=0;
+let animId=null;
+
+function randomPose(complexity){
+  const p={};
+  JOINT_KEYS.forEach(k=>{
+    const range=40+Math.min(complexity*8,80);
+    p[k]=(Math.random()*2-1)*range;
+  });
+  return p;
+}
+
+function newRound(fresh){
+  if(fresh){round=1;matched=0;gameOver=false;}
+  targetPose=randomPose(round);
+  playerPose=defaultPose();
+  holdProgress=0; holding=false; locked=false;
+  document.getElementById('fm-next').style.display='none';
+  document.getElementById('fm-endcard').style.display='none';
+  document.getElementById('fm-msg').textContent=I18N.t('drag_hint','Drag the pink joints to contort your pose!');
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('fm-round').textContent=I18N.t('round_label','Round: {r}').replace('{r}',round);
+  document.getElementById('fm-score').textContent=I18N.t('matched_label','Matched: {n}').replace('{n}',matched);
+  document.getElementById('fm-hi').textContent=I18N.t('best_label','Best: {n}').replace('{n}',hi);
+}
+
+// Compute joint world positions for a pose, with an optional wobble distortion function applied to points (funhouse effect on TARGET only, visual)
+function computeSkeleton(pose, cx, cy){
+  const shoulderY=cy-40, hipY=cy+10;
+  const pts={
+    head:{x:cx,y:shoulderY-30},
+    neck:{x:cx,y:shoulderY},
+    leftShoulderPt:{x:cx-18,y:shoulderY},
+    rightShoulderPt:{x:cx+18,y:shoulderY},
+    hip:{x:cx,y:hipY},
+    leftHipPt:{x:cx-12,y:hipY},
+    rightHipPt:{x:cx+12,y:hipY}
+  };
+  function ang(deg){return deg*Math.PI/180;}
+  pts.leftElbowPt={x:pts.leftShoulderPt.x+LIMB_LEN*Math.sin(ang(pose.leftShoulder)),y:pts.leftShoulderPt.y+LIMB_LEN*Math.cos(ang(pose.leftShoulder))};
+  pts.leftHandPt={x:pts.leftElbowPt.x+LIMB_LEN*0.85*Math.sin(ang(pose.leftShoulder+pose.leftElbow)),y:pts.leftElbowPt.y+LIMB_LEN*0.85*Math.cos(ang(pose.leftShoulder+pose.leftElbow))};
+  pts.rightElbowPt={x:pts.rightShoulderPt.x+LIMB_LEN*Math.sin(ang(pose.rightShoulder)),y:pts.rightShoulderPt.y+LIMB_LEN*Math.cos(ang(pose.rightShoulder))};
+  pts.rightHandPt={x:pts.rightElbowPt.x+LIMB_LEN*0.85*Math.sin(ang(pose.rightShoulder+pose.rightElbow)),y:pts.rightElbowPt.y+LIMB_LEN*0.85*Math.cos(ang(pose.rightShoulder+pose.rightElbow))};
+  pts.leftKneePt={x:pts.leftHipPt.x+LIMB_LEN*Math.sin(ang(pose.leftHip)),y:pts.leftHipPt.y+LIMB_LEN*Math.cos(ang(pose.leftHip))};
+  pts.leftFootPt={x:pts.leftKneePt.x+LIMB_LEN*0.85*Math.sin(ang(pose.leftHip+pose.leftKnee)),y:pts.leftKneePt.y+LIMB_LEN*0.85*Math.cos(ang(pose.leftHip+pose.leftKnee))};
+  pts.rightKneePt={x:pts.rightHipPt.x+LIMB_LEN*Math.sin(ang(pose.rightHip)),y:pts.rightHipPt.y+LIMB_LEN*Math.cos(ang(pose.rightHip))};
+  pts.rightFootPt={x:pts.rightKneePt.x+LIMB_LEN*0.85*Math.sin(ang(pose.rightHip+pose.rightKnee)),y:pts.rightKneePt.y+LIMB_LEN*0.85*Math.cos(ang(pose.rightHip+pose.rightKnee))};
+  return pts;
+}
+
+function wobbleXY(x,y,cx,cy,t){
+  // funhouse mirror distortion: sinusoidal warp based on distance from center
+  const dx=x-cx, dy=y-cy;
+  const dist=Math.sqrt(dx*dx+dy*dy);
+  const factor=1+0.18*Math.sin(dist*0.05+t);
+  return {x:cx+dx*factor, y:cy+dy*(1+0.1*Math.cos(dist*0.04+t*1.3))};
+}
+
+function drawSkeleton(ctx, pts, color, cx, cy, warp, t){
+  ctx.strokeStyle=color; ctx.lineWidth=5; ctx.lineCap='round';
+  const W = warp ? (p)=>wobbleXY(p.x,p.y,cx,cy,t) : (p)=>p;
+  function seg(a,b){const pa=W(a),pb=W(b);ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);ctx.stroke();}
+  seg(pts.neck,pts.hip);
+  seg(pts.leftShoulderPt,pts.leftElbowPt); seg(pts.leftElbowPt,pts.leftHandPt);
+  seg(pts.rightShoulderPt,pts.rightElbowPt); seg(pts.rightElbowPt,pts.rightHandPt);
+  seg(pts.leftHipPt,pts.leftKneePt); seg(pts.leftKneePt,pts.leftFootPt);
+  seg(pts.rightHipPt,pts.rightKneePt); seg(pts.rightKneePt,pts.rightFootPt);
+  const headP=W(pts.head);
+  ctx.fillStyle=color;
+  ctx.beginPath(); ctx.arc(headP.x,headP.y,16,0,Math.PI*2); ctx.fill();
+}
+
+function drawJointHandles(ctx, pts){
+  const jointMap={leftElbowPt:'leftElbow',rightElbowPt:'rightElbow',leftKneePt:'leftKnee',rightKneePt:'rightKnee',
+    leftHandPt:'leftShoulder-drag',rightHandPt:'rightShoulder-drag',leftFootPt:'leftHip-drag',rightFootPt:'rightHip-drag'};
+  Object.keys(jointMap).forEach(k=>{
+    const p=pts[k];
+    ctx.fillStyle= selectedJoint && jointMap[k].startsWith(selectedJoint) ? '#fff' : '#ff6ec7';
+    ctx.beginPath(); ctx.arc(p.x,p.y,7,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.stroke();
+  });
+}
+
+function render(t){
+  wobble=t/300;
+  // Target panel
+  tctx.clearRect(0,0,220,260);
+  tctx.fillStyle='#2a1a3a'; tctx.fillRect(0,0,220,260);
+  const tpts=computeSkeleton(targetPose,110,140);
+  drawSkeleton(tctx,tpts,'#ffb3e6',110,140,true,wobble);
+
+  // Player panel
+  pctx.clearRect(0,0,220,260);
+  pctx.fillStyle='#241432'; pctx.fillRect(0,0,220,260);
+  const ppts=computeSkeleton(playerPose,110,140);
+  drawSkeleton(pctx,ppts,'#7ecbff',110,140,false,0);
+  drawJointHandles(pctx,ppts);
+
+  const pct=computeMatch();
+  document.getElementById('fm-match').textContent=I18N.t('match_pct_label','Match: {p}%').replace('{p}',pct);
+
+  if(!locked && !gameOver){
+    if(pct>=78){
+      holding=true;
+      holdProgress=Math.min(100,holdProgress+1.6);
+      if(holdProgress>=100){ lockInScore(pct); }
+    } else {
+      holding=false;
+      holdProgress=Math.max(0,holdProgress-2.2);
+    }
+    document.getElementById('fm-holdfill').style.width=holdProgress+'%';
+  }
+
+  animId=requestAnimationFrame(render);
+}
+
+function computeMatch(){
+  let diff=0;
+  JOINT_KEYS.forEach(k=>{
+    let d=Math.abs(targetPose[k]-playerPose[k])%360;
+    if(d>180)d=360-d;
+    diff+=d;
+  });
+  const avg=diff/JOINT_KEYS.length; // 0..180
+  const pct=Math.max(0,Math.round(100-(avg/90)*100));
+  return pct;
+}
+
+function lockInScore(pct){
+  locked=true;
+  matched++;
+  if(matched>hi){hi=matched;localStorage.setItem(HI_KEY,String(hi));}
+  SFX.win();
+  document.getElementById('fm-msg').textContent=I18N.t('pose_locked_msg','✨ Pose matched at {p}%! Nice contortion.').replace('{p}',pct);
+  document.getElementById('fm-next').style.display='inline-block';
+  round++;
+  updateHud();
+}
+
+document.getElementById('fm-next').onclick=()=>{ newRound(false); SFX.click(); };
+document.getElementById('fm-restart').onclick=()=>{ newRound(true); document.getElementById('fm-endcard').style.display='none'; };
+
+// Dragging logic on player canvas
+function getJointFromPos(x,y){
+  const ppts=computeSkeleton(playerPose,110,140);
+  const candidates={leftElbowPt:'leftElbow',rightElbowPt:'rightElbow',leftKneePt:'leftKnee',rightKneePt:'rightKnee',
+    leftHandPt:'leftShoulder',rightHandPt:'rightShoulder',leftFootPt:'leftHip',rightFootPt:'rightHip'};
+  let best=null,bestDist=18;
+  Object.keys(candidates).forEach(k=>{
+    const p=ppts[k];
+    const d=Math.hypot(p.x-x,p.y-y);
+    if(d<bestDist){bestDist=d;best=candidates[k];}
+  });
+  return best;
+}
+
+function canvasPos(e,canvas){
+  const r=canvas.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(canvas.width/r.width), y:cy*(canvas.height/r.height)};
+}
+
+function startDrag(e){
+  if(locked||gameOver)return;
+  const pos=canvasPos(e,playerCanvas);
+  const j=getJointFromPos(pos.x,pos.y);
+  if(j){dragging=j; selectedJoint=j; e.preventDefault();}
+}
+function moveDrag(e){
+  if(!dragging)return;
+  e.preventDefault();
+  const pos=canvasPos(e,playerCanvas);
+  // Determine angle from the appropriate pivot point
+  const ppts=computeSkeleton(playerPose,110,140);
+  const pivotMap={leftShoulder:'leftShoulderPt',rightShoulder:'rightShoulderPt',leftElbow:'leftElbowPt',rightElbow:'rightElbowPt',
+    leftHip:'leftHipPt',rightHip:'rightHipPt',leftKnee:'leftKneePt',rightKnee:'rightKneePt'};
+  const pivot=ppts[pivotMap[dragging]];
+  const dx=pos.x-pivot.x, dy=pos.y-pivot.y;
+  let deg=Math.atan2(dx,dy)*180/Math.PI;
+  if(dragging==='leftElbow'||dragging==='rightElbow'||dragging==='leftKnee'||dragging==='rightKnee'){
+    // elbow/knee angle relative to parent segment
+    const parentKey=dragging.replace('Elbow','Shoulder').replace('Knee','Hip');
+    deg=deg-playerPose[parentKey];
+  }
+  playerPose[dragging]=deg;
+}
+function endDrag(){ dragging=null; }
+
+playerCanvas.addEventListener('mousedown',startDrag);
+playerCanvas.addEventListener('touchstart',startDrag,{passive:false});
+window.addEventListener('mousemove',moveDrag);
+window.addEventListener('touchmove',moveDrag,{passive:false});
+window.addEventListener('mouseup',endDrag);
+window.addEventListener('touchend',endDrag);
+
+// Keyboard nudge for selected joint (accessibility / desktop precision)
+document.addEventListener('keydown',e=>{
+  if(!selectedJoint||locked||gameOver)return;
+  if(e.code==='ArrowLeft'){playerPose[selectedJoint]-=6;e.preventDefault();}
+  else if(e.code==='ArrowRight'){playerPose[selectedJoint]+=6;e.preventDefault();}
+});
+
+playerCanvas.addEventListener('click',(e)=>{
+  const pos=canvasPos(e,playerCanvas);
+  const j=getJointFromPos(pos.x,pos.y);
+  if(j)selectedJoint=j;
+});
+
+newRound(true);
+animId=requestAnimationFrame(render);
+})();
+</script></body></html>

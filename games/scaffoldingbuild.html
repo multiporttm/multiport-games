@@ -1,0 +1,271 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Scaffolding Build</title><meta name="description" content="Play Scaffolding Build free online — Click the highlighted bay to add the next piece in load-bearing order: base frames first, then platforms, then guardrails, then diagonal braces. Skip a brace and the tower may collapse in the test! Complete each level's blueprint to move on to a taller build."><link rel="canonical" href="https://games.multiportllc.com/games/scaffoldingbuild"><meta property="og:title" content="Scaffolding Build - Multiport Games"><meta property="og:description" content="Play Scaffolding Build free online — Click the highlighted bay to add the next piece in load-bearing order: base frames first, then platforms, then guardrails, then diagonal braces. Skip a brace and the tower may collapse in the test! Complete each level's blueprint to move on to a taller build."><meta property="og:url" content="https://games.multiportllc.com/games/scaffoldingbuild"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Scaffolding Build","description":"Play Scaffolding Build free online instantly. Assemble scaffolding around a blueprint building in correct load-bearing order — frames, then platforms, then guardrails, then diagonal braces — and pass the stability test to complete each level. Score points for correctly built scaffolds across taller, more complex structures. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/scaffoldingbuild","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0e1830;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#ffd54f;font-size:1.05rem;font-weight:700;text-align:center;padding:6px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#fff}
+#legend{display:flex;justify-content:center;gap:14px;margin-top:8px;flex-wrap:wrap;color:#ccc;font-size:.85rem}
+#legend .sw{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:5px;vertical-align:middle}
+#testBtn{display:block;margin:10px auto 0;padding:10px 24px;border-radius:20px;border:none;background:linear-gradient(135deg,#ffb300,#f57c00);color:#fff;font-weight:900;cursor:pointer;font-size:1rem}
+#testBtn:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Scaffolding Build</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>Level: <b id="lvlVal">1</b></span>
+      <span>Score: <b id="scoreVal">0</b></span>
+      <span>Stage: <b id="stageVal">Frames</b></span>
+      <span>Hi: <b id="hiVal">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+    <div id="legend">
+      <span><i class="sw" style="background:#8d6e63"></i>Frame</span>
+      <span><i class="sw" style="background:#90caf9"></i>Platform</span>
+      <span><i class="sw" style="background:#ffca28"></i>Guardrail</span>
+      <span><i class="sw" style="background:#ef5350"></i>Diagonal Brace</span>
+    </div>
+    <button id="testBtn">🔧 Test Stability</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Build the scaffold around the blueprint building, one bay at a time, in the correct load-bearing order: click a bay to place its <b>Frame</b>, then its <b>Platform</b>, then its <b>Guardrail</b>, then finally its diagonal <b>Brace</b> — braces can only be added between two neighboring bays that already have frames. Only the currently-legal pieces (highlighted) can be placed. When every bay is complete, click <b>Test Stability</b>: any bay missing a brace may sway and collapse! Pass the test to advance to a taller structure.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+let hi=+(localStorage.getItem('scaffoldingbuild_hi')||0);
+document.getElementById('hiVal').textContent=hi;
+
+const STAGE_NAMES=['frame','platform','guardrail','brace'];
+const STAGE_LABELS={frame:'Frames',platform:'Platforms',guardrail:'Guardrails',brace:'Braces'};
+const COLORS={frame:'#8d6e63',platform:'#90caf9',guardrail:'#ffca28',brace:'#ef5350'};
+
+let level,score,bays,collapseAnim,testing,levelComplete,failMsg,failTimer;
+
+function buildLevel(n){
+  const bayCount=3+Math.min(n,5);
+  const bayW=Math.min(120,(W-140)/bayCount);
+  const startX=(W-bayW*bayCount)/2;
+  const list=[];
+  for(let i=0;i<bayCount;i++){
+    list.push({
+      x:startX+i*bayW,w:bayW,
+      frame:false,platform:false,guardrail:false,
+      collapsed:false,sway:0
+    });
+  }
+  return list;
+}
+
+function reset(){
+  level=1;score=score||0;
+  startLevel();
+}
+function startLevel(){
+  bays=buildLevel(level);
+  collapseAnim=null;testing=false;levelComplete=false;
+  failMsg='';failTimer=0;
+  document.getElementById('lvlVal').textContent=level;
+  document.getElementById('testBtn').disabled=false;
+  updateStage();
+}
+function fullReset(){score=0;level=1;startLevel();}
+fullReset();
+
+function updateStage(){
+  // determine current global stage: all bays need frame before any platform, etc. — enforced per-bay progression
+  document.getElementById('stageVal').textContent=STAGE_LABELS[STAGE_NAMES.find(s=>bays.some(b=>!b[s+ (s==='brace'?'':'')]))]||'Ready';
+}
+
+function bayNextNeed(b){
+  if(!b.frame)return 'frame';
+  if(!b.platform)return 'platform';
+  if(!b.guardrail)return 'guardrail';
+  return null; // brace handled between bays separately
+}
+
+function bracesArr(){
+  // one brace slot between each adjacent pair of bays
+  const arr=[];
+  for(let i=0;i<bays.length-1;i++)arr.push(false);
+  return arr;
+}
+let braces;
+function ensureBraces(){ if(!braces||braces.length!==bays.length-1)braces=bracesArr(); }
+ensureBraces();
+
+function allBaysBasicsDone(){ return bays.every(b=>b.frame&&b.platform&&b.guardrail); }
+
+function handleClick(mx,my){
+  if(testing)return;
+  // check brace hit zones first (between bays), only clickable when both neighbor frames exist
+  ensureBraces();
+  for(let i=0;i<braces.length;i++){
+    if(braces[i])continue;
+    const bx=(bays[i].x+bays[i].w+bays[i+1].x)/2;
+    const zoneTop=H-40, zoneBot=H-260;
+    if(mx>bx-16&&mx<bx+16&&my<zoneTop&&my>zoneBot&&bays[i].frame&&bays[i+1].frame){
+      braces[i]=true;SFX.click();
+      checkLevelReady();
+      return;
+    }
+  }
+  for(const b of bays){
+    if(mx>=b.x&&mx<=b.x+b.w){
+      const need=bayNextNeed(b);
+      if(need){
+        b[need]=true;
+        SFX.click();
+      } else {
+        SFX.error();
+      }
+      updateStage();
+      checkLevelReady();
+      return;
+    }
+  }
+}
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  const mx=(e.clientX-r.left)*(W/r.width);
+  const my=(e.clientY-r.top)*(H/r.height);
+  handleClick(mx,my);
+});
+
+function checkLevelReady(){
+  document.getElementById('testBtn').disabled=!allBaysBasicsDone();
+}
+
+document.getElementById('testBtn').addEventListener('click',()=>{
+  if(!allBaysBasicsDone()||testing)return;
+  testing=true;
+  ensureBraces();
+  let anyCollapse=false;
+  bays.forEach((b,i)=>{
+    const leftBrace=i>0?braces[i-1]:true;
+    const rightBrace=i<braces.length?braces[i]:true;
+    const supported=leftBrace||rightBrace;
+    b.collapsed=!supported;
+    if(!supported)anyCollapse=true;
+  });
+  if(anyCollapse){
+    SFX.lose();
+    failMsg=I18N.t('scaffold_collapse','COLLAPSE! Missing diagonal braces caused a failure.');
+    failTimer=180;
+    setTimeout(()=>{ startLevel(); },1900);
+  } else {
+    SFX.win();
+    score+=100*level+bays.length*20;
+    if(score>hi){hi=score;localStorage.setItem('scaffoldingbuild_hi',Math.floor(hi));}
+    levelComplete=true;
+    setTimeout(()=>{ level++; startLevel(); },1400);
+  }
+});
+
+function drawBlueprintBuilding(){
+  ctx.save();
+  ctx.strokeStyle='rgba(120,170,255,0.35)';
+  ctx.lineWidth=1;
+  const bx0=bays[0].x-10,bx1=bays[bays.length-1].x+bays[bays.length-1].w+10;
+  const topY=H-40-260;
+  ctx.strokeRect(bx0,topY,bx1-bx0,260);
+  for(let y=topY;y<H-40;y+=30){ ctx.beginPath();ctx.moveTo(bx0,y);ctx.lineTo(bx1,y);ctx.stroke(); }
+  ctx.restore();
+}
+
+function drawBay(b,i){
+  const baseY=H-40;
+  const topY=baseY-260;
+  ctx.save();
+  if(b.collapsed){
+    ctx.translate((Math.random()-0.5)*6,0);
+  }
+  // frame poles
+  if(b.frame){
+    ctx.fillStyle=COLORS.frame;
+    ctx.fillRect(b.x+6,topY,6,260);
+    ctx.fillRect(b.x+b.w-12,topY,6,260);
+    // horizontal cross bars
+    for(let y=topY;y<baseY;y+=52){
+      ctx.fillRect(b.x+6,y,b.w-12,5);
+    }
+  }
+  // platform
+  if(b.platform){
+    ctx.fillStyle=COLORS.platform;
+    ctx.fillRect(b.x+2,baseY-52,b.w-4,8);
+  }
+  // guardrail
+  if(b.guardrail){
+    ctx.fillStyle=COLORS.guardrail;
+    ctx.fillRect(b.x+2,baseY-92,b.w-4,4);
+    ctx.fillRect(b.x+4,baseY-92,3,44);
+    ctx.fillRect(b.x+b.w-7,baseY-92,3,44);
+  }
+  // highlight next-needed piece zone
+  const need=bayNextNeed(b);
+  if(!testing && need){
+    ctx.strokeStyle='#7ec850';ctx.lineWidth=3;
+    ctx.strokeRect(b.x+2,topY-2,b.w-4,264);
+  }
+  if(b.collapsed){
+    ctx.fillStyle='rgba(239,83,80,0.35)';
+    ctx.fillRect(b.x,topY,b.w,260);
+  }
+  ctx.restore();
+}
+
+function drawBraces(){
+  ensureBraces();
+  for(let i=0;i<braces.length;i++){
+    const x=(bays[i].x+bays[i].w+bays[i+1].x)/2;
+    const baseY=H-40, topY=baseY-260;
+    const ready=bays[i].frame&&bays[i+1].frame;
+    ctx.save();
+    if(braces[i]){
+      ctx.strokeStyle=COLORS.brace;ctx.lineWidth=6;
+      ctx.beginPath();ctx.moveTo(bays[i].x+bays[i].w-12,topY+20);ctx.lineTo(bays[i+1].x+12,baseY-20);ctx.stroke();
+    } else if(ready && !testing){
+      ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=2;ctx.setLineDash([6,6]);
+      ctx.strokeRect(x-16,baseY-260,32,220);
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0e1830');sky.addColorStop(1,'#1c2b4a');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#28304a';ctx.fillRect(0,H-40,W,40);
+
+  drawBlueprintBuilding();
+  bays.forEach((b,i)=>drawBay(b,i));
+  drawBraces();
+
+  if(failMsg&&failTimer>0){
+    failTimer--;
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff8a80';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(failMsg,W/2,H/2);
+  }
+  if(levelComplete){
+    ctx.fillStyle='rgba(0,0,0,0.35)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#a5d6a7';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('scaffold_stable','STABLE! Scaffold complete.'),W/2,H/2);
+  }
+
+  document.getElementById('scoreVal').textContent=Math.floor(score);
+  document.getElementById('hiVal').textContent=Math.floor(hi);
+  requestAnimationFrame(draw);
+}
+draw();
+</script></body></html>

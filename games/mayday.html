@@ -1,0 +1,289 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>May Day</title><meta name="description" content="Play May Day free online — Weave the maypole ribbon! When a note reaches the target ring, press the matching direction: Up Arrow (or tap OVER) for over, Down Arrow (or tap UNDER) for under. Match the beat to keep the pattern clean."><link rel="canonical" href="https://games.multiportllc.com/games/mayday"><meta property="og:title" content="May Day - Multiport Games"><meta property="og:description" content="Play May Day free online — Weave the maypole ribbon! When a note reaches the target ring, press the matching direction: Up Arrow (or tap OVER) for over, Down Arrow (or tap UNDER) for under. Match the beat to keep the pattern clean."><meta property="og:url" content="https://games.multiportllc.com/games/mayday"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"May Day","description":"Play May Day free online instantly. Weave a maypole ribbon in time with the music — press Up for over and Down for under (or tap the OVER/UNDER buttons) as each beat note reaches the target ring, following the reference pattern among the other automatically-dancing ribbon holders. Wrong weaves tangle the ribbon; clear each round to face more dancers and a faster tempo. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/mayday","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:12px}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:700;font-size:.95rem;padding:0 4px 8px;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffd54f}
+#c{background:#1b3a2b;display:block;border-radius:10px;max-width:100%;touch-action:none}
+#meters{margin-top:8px}
+.meter-label{color:rgba(255,255,255,.6);font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
+.meter-bar{height:14px;border-radius:7px;background:rgba(255,255,255,.1);overflow:hidden}
+.meter-fill{height:100%;border-radius:7px;background:linear-gradient(90deg,#e94560,#ff8fa3);transition:width .15s}
+#controls{display:flex;gap:10px;margin-top:10px;justify-content:center;flex-wrap:wrap}
+.weavebtn{flex:1;min-width:120px;max-width:220px;padding:20px 10px;border-radius:14px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.09);color:#fff;font-weight:800;font-size:1.1rem;cursor:pointer;user-select:none;touch-action:manipulation}
+#overBtn:active,#overBtn.flash{background:rgba(94,114,235,.4)}
+#underBtn:active,#underBtn.flash{background:rgba(233,69,96,.4)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">May Day</div>
+  <div class="game-frame" id="wrap">
+    <div id="hud">
+      <div id="roundLabel">Round 1</div>
+      <div>Score: <span id="scoreVal">0</span> | Best: <span id="bestVal">0</span></div>
+    </div>
+    <canvas id="c" width="800" height="320"></canvas>
+    <div id="meters">
+      <div class="meter-label" id="ribbonLbl">Ribbon Integrity</div>
+      <div class="meter-bar"><div class="meter-fill" id="ribbonFill" style="width:100%"></div></div>
+    </div>
+    <div id="controls">
+      <button class="weavebtn" id="overBtn">▲ OVER</button>
+      <button class="weavebtn" id="underBtn">▼ UNDER</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Weave the maypole ribbon in time with the beat! Watch the notes fall toward the target ring — when one arrives, press <b>Up Arrow</b> (or tap <b>OVER</b>) for an over-weave or <b>Down Arrow</b> (or tap <b>UNDER</b>) for an under-weave, matching the symbol shown. A wrong direction or a missed beat tangles the ribbon and drains its integrity. Clear each round's pattern to move on to more dancers and a faster tempo — score is kept for correct weaves across rounds, with a running best score.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320;
+const TARGET_Y=250;
+const SPAWN_Y=-20;
+
+let best=parseInt(localStorage.getItem('mayday_best')||'0',10)||0;
+document.getElementById('bestVal').textContent=best;
+
+let round=1, score=0, ribbon=100, notes=[], noteIdx=0, pattern=[], travelTime, spawnInterval, nextSpawnAt=0, clock=0;
+let started=false, roundOver=false, gameOver=false, dancers=4;
+let flashOver=0, flashUnder=0;
+let combo=0;
+
+function genPattern(len){
+  // mostly alternating over/under, but with occasional repeats as challenge in later rounds
+  const p=[]; let last=Math.random()<0.5?'over':'under';
+  p.push(last);
+  for(let i=1;i<len;i++){
+    let next = last==='over'?'under':'over';
+    if(round>=3 && Math.random()<0.18) next=last; // curveball repeat
+    p.push(next); last=next;
+  }
+  return p;
+}
+
+function newRound(){
+  dancers=3+round;
+  const len=6+round*2;
+  pattern=genPattern(len);
+  notes=[];
+  travelTime = Math.max(55,105-round*7); // frames to travel from spawn to target
+  spawnInterval = Math.max(50,95-round*6);
+  noteIdx=0;
+  nextSpawnAt=30;
+  clock=0;
+  roundOver=false;
+  ribbon=100;
+  document.getElementById('roundLabel').textContent=I18N.t('may_round','Round {r}').replace('{r}',round);
+  document.getElementById('ribbonFill').style.width='100%';
+  started=false;
+}
+
+function spawnNext(){
+  if(noteIdx>=pattern.length)return;
+  notes.push({dir:pattern[noteIdx], y:SPAWN_Y, hit:false, t:0});
+  noteIdx++;
+}
+
+function attemptHit(dir){
+  if(!started||roundOver||gameOver)return;
+  if(dir==='over'){flashOver=8;}else{flashUnder=8;}
+  // find nearest unresolved note within hit window
+  let best=null,bestDist=999;
+  notes.forEach(n=>{
+    if(n.hit)return;
+    const d=Math.abs(n.y-TARGET_Y);
+    if(d<bestDist){bestDist=d;best=n;}
+  });
+  if(!best || bestDist>55){
+    tangle();
+    return;
+  }
+  if(best.dir===dir){
+    best.hit=true; best.good=true;
+    score+=10+combo*2;
+    combo++;
+    document.getElementById('scoreVal').textContent=score;
+    SFX.point();
+  } else {
+    best.hit=true; best.good=false;
+    tangle();
+  }
+}
+
+function tangle(){
+  combo=0;
+  ribbon=Math.max(0,ribbon-20);
+  document.getElementById('ribbonFill').style.width=ribbon+'%';
+  SFX.error();
+  if(ribbon<=0){
+    gameOver=true;
+    if(score>best){
+      best=score;
+      localStorage.setItem('mayday_best',best);
+      document.getElementById('bestVal').textContent=best;
+    }
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowUp'){e.preventDefault(); if(!started&&!gameOver){started=true;return;} if(gameOver){restart();return;} attemptHit('over');}
+  else if(e.code==='ArrowDown'){e.preventDefault(); if(!started&&!gameOver){started=true;return;} if(gameOver){restart();return;} attemptHit('under');}
+});
+document.getElementById('overBtn').addEventListener('pointerdown',e=>{e.preventDefault(); if(!started&&!gameOver){started=true;return;} if(gameOver){restart();return;} attemptHit('over');});
+document.getElementById('underBtn').addEventListener('pointerdown',e=>{e.preventDefault(); if(!started&&!gameOver){started=true;return;} if(gameOver){restart();return;} attemptHit('under');});
+c.addEventListener('pointerdown',()=>{ if(!started&&!gameOver)started=true; else if(gameOver) restart(); });
+
+function restart(){
+  round=1; score=0; combo=0; gameOver=false;
+  document.getElementById('scoreVal').textContent=score;
+  newRound();
+}
+
+function drawMaypole(){
+  const cx=W/2, poleTop=20, poleBottom=TARGET_Y+30;
+  ctx.strokeStyle='#c9a24b'; ctx.lineWidth=8;
+  ctx.beginPath(); ctx.moveTo(cx,poleTop); ctx.lineTo(cx,poleBottom); ctx.stroke();
+  ctx.fillStyle='#e94560';
+  ctx.beginPath(); ctx.arc(cx,poleTop,10,0,Math.PI*2); ctx.fill();
+  // dancers rotating around base
+  const t=clock*0.02;
+  for(let i=0;i<dancers;i++){
+    const a=t+i*(Math.PI*2/dancers);
+    const rx=cx+Math.cos(a)*90, ry=poleBottom+10+Math.sin(a)*14;
+    ctx.font='22px serif'; ctx.textAlign='center';
+    ctx.fillText('💃',rx,ry);
+    // ribbon line from top to dancer
+    ctx.strokeStyle='rgba(255,213,79,0.35)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(cx,poleTop+15); ctx.lineTo(rx,ry-10); ctx.stroke();
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#123825'); g.addColorStop(1,'#0b2417');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+
+  drawMaypole();
+
+  // two lanes for over/under falling notes
+  const laneX={over:W/2-90, under:W/2+90};
+  ['over','under'].forEach(dir=>{
+    ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=40;
+    ctx.beginPath(); ctx.moveTo(laneX[dir],0); ctx.lineTo(laneX[dir],H); ctx.stroke();
+  });
+
+  // target ring
+  ['over','under'].forEach(dir=>{
+    ctx.strokeStyle= dir==='over' ? (flashOver>0?'#5e72eb':'rgba(94,114,235,0.6)') : (flashUnder>0?'#e94560':'rgba(233,69,96,0.6)');
+    ctx.lineWidth=4;
+    ctx.beginPath(); ctx.arc(laneX[dir],TARGET_Y,26,0,Math.PI*2); ctx.stroke();
+    ctx.font='20px Arial'; ctx.fillStyle='#fff'; ctx.textAlign='center';
+    ctx.fillText(dir==='over'?'▲':'▼', laneX[dir], TARGET_Y+7);
+  });
+
+  notes.forEach(n=>{
+    const x=laneX[n.dir];
+    ctx.save();
+    if(n.hit){
+      ctx.globalAlpha=Math.max(0,1-n.fadeT/15);
+      ctx.fillStyle=n.good?'#7ec850':'#ff5252';
+    } else {
+      ctx.fillStyle=n.dir==='over'?'#5e72eb':'#e94560';
+    }
+    ctx.beginPath(); ctx.arc(x,n.y,16,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#fff'; ctx.font='bold 14px Arial'; ctx.textAlign='center';
+    ctx.fillText(n.dir==='over'?'▲':'▼', x, n.y+5);
+    ctx.restore();
+  });
+
+  ctx.textAlign='left';
+}
+
+let lastT=null;
+function loop(t){
+  if(lastT===null)lastT=t;
+  const dt=Math.min((t-lastT)/16.6667,3);
+  lastT=t;
+
+  if(flashOver>0)flashOver-=dt;
+  if(flashUnder>0)flashUnder-=dt;
+  document.getElementById('overBtn').classList.toggle('flash',flashOver>0);
+  document.getElementById('underBtn').classList.toggle('flash',flashUnder>0);
+
+  if(!started){
+    draw();
+    ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff'; ctx.font='bold 24px Arial'; ctx.textAlign='center';
+    ctx.fillText(I18N.t('may_ready','Tap / Press ▲ or ▼ to begin weaving!'),W/2,H/2);
+    ctx.textAlign='left';
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(!roundOver&&!gameOver){
+    clock+=dt;
+    if(clock>=nextSpawnAt && noteIdx<pattern.length){
+      spawnNext();
+      nextSpawnAt=clock+spawnInterval;
+    }
+    const speed=(TARGET_Y-SPAWN_Y)/travelTime;
+    notes.forEach(n=>{
+      if(!n.hit){
+        n.y+=speed*dt;
+        if(n.y-TARGET_Y>55 && !n.hit){ n.hit=true; n.good=false; n.fadeT=0; tangle(); }
+      } else {
+        n.fadeT=(n.fadeT||0)+dt;
+      }
+    });
+    notes=notes.filter(n=>!(n.hit && n.fadeT>15));
+
+    if(noteIdx>=pattern.length && notes.every(n=>n.hit) && !gameOver){
+      roundOver=true;
+      SFX.levelup();
+    }
+  }
+
+  draw();
+
+  if(roundOver){
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffd54f'; ctx.font='bold 26px Arial'; ctx.textAlign='center';
+    ctx.fillText(I18N.t('may_clear','Pattern woven! Score: {s}').replace('{s}',score), W/2,H/2-14);
+    ctx.font='18px Arial'; ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('may_next','Tap / Press ▲ or ▼ for next round'), W/2,H/2+20);
+    ctx.textAlign='left';
+    if(!roundOver._bound){
+      // one-shot listener trick avoided; handled via started flag reuse below
+    }
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff5252'; ctx.font='bold 28px Arial'; ctx.textAlign='center';
+    ctx.fillText(I18N.t('may_tangled','TANGLED!'), W/2,H/2-20);
+    ctx.font='18px Arial'; ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('may_final','Final score: {s} (Best: {b})').replace('{s}',score).replace('{b}',best), W/2,H/2+10);
+    ctx.fillText(I18N.t('may_restart','Tap / Press ▲ or ▼ to try again'), W/2,H/2+38);
+    ctx.textAlign='left';
+  }
+
+  requestAnimationFrame(loop);
+}
+
+// advance to next round when player presses after roundOver
+function proceedIfRoundOver(){
+  if(roundOver && !gameOver){ round++; newRound(); started=true; }
+}
+document.addEventListener('keydown',e=>{ if((e.code==='ArrowUp'||e.code==='ArrowDown')) proceedIfRoundOver(); });
+document.getElementById('overBtn').addEventListener('pointerdown',proceedIfRoundOver);
+document.getElementById('underBtn').addEventListener('pointerdown',proceedIfRoundOver);
+c.addEventListener('pointerdown',proceedIfRoundOver);
+
+newRound();
+requestAnimationFrame(loop);
+</script></body></html>

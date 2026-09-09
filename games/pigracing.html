@@ -1,0 +1,312 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Pig Racing</title><meta name="description" content="Play Pig Racing free online — Alternate Z and X (or tap the two paddles) rapidly to build your pig's speed chasing the treat lure. Watch for mud patches — mash the RUN button fast to escape a slip! Race across multiple muddy heats."><link rel="canonical" href="https://games.multiportllc.com/games/pigracing"><meta property="og:title" content="Pig Racing - Multiport Games"><meta property="og:description" content="Play Pig Racing free online — Alternate Z and X (or tap the two paddles) rapidly to build your pig's speed chasing the treat lure. Watch for mud patches — mash the RUN button fast to escape a slip! Race across multiple muddy heats."><meta property="og:url" content="https://games.multiportllc.com/games/pigracing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Pig Racing","description":"Play Pig Racing free online instantly. Alternate Z and X (or tap the two paddles) rapidly to build your racing pig's speed chasing the treat lure around a muddy track. Watch for slippery mud patches — mash the RUN button quickly to recover before the pack passes you! Race across multiple heats to post the best combined finish. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/pigracing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:12px}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:700;font-size:.95rem;padding:0 4px 8px;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffd54f}
+#c{background:#7a5230;display:block;border-radius:10px;max-width:100%;touch-action:none}
+#meters{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}
+.meter{flex:1;min-width:130px}
+.meter-label{color:rgba(255,255,255,.6);font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
+.meter-bar{height:12px;border-radius:6px;background:rgba(255,255,255,.1);overflow:hidden}
+.meter-fill{height:100%;border-radius:6px;transition:width .1s linear}
+#speedFill{background:linear-gradient(90deg,#ff9800,#ffd54f)}
+#mashFill{background:linear-gradient(90deg,#8d6e63,#d7ccc8)}
+#controls{display:flex;gap:10px;margin-top:10px;justify-content:center;flex-wrap:wrap}
+.padbtn{flex:1;min-width:110px;max-width:220px;padding:18px 10px;border-radius:14px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.09);color:#fff;font-weight:800;font-size:1rem;cursor:pointer;user-select:none;touch-action:manipulation}
+.padbtn:active{background:rgba(233,69,96,.35)}
+.padbtn.mash{background:rgba(233,69,96,.25);animation:pulse 0.5s infinite alternate}
+@keyframes pulse{from{box-shadow:0 0 0 0 rgba(233,69,96,.5)}to{box-shadow:0 0 0 10px rgba(233,69,96,0)}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Pig Racing</div>
+  <div class="game-frame" id="wrap">
+    <div id="hud">
+      <div id="heatLabel">Heat 1 / 3</div>
+      <div>Best Total Time: <span id="bestTime">--</span></div>
+    </div>
+    <canvas id="c" width="800" height="320"></canvas>
+    <div id="meters">
+      <div class="meter"><div class="meter-label" id="speedLbl">Speed</div><div class="meter-bar"><div class="meter-fill" id="speedFill" style="width:0%"></div></div></div>
+    </div>
+    <div id="controls">
+      <button class="padbtn" id="padZ">Z ↞ RUN</button>
+      <button class="padbtn" id="padX">RUN ↠ X</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Alternate <b>Z</b> and <b>X</b> (or tap the two RUN paddles) rapidly to build your pig's speed chasing the treat lure around the muddy track. Hit a <b>mud patch</b> and you'll slip — mash <b>Z/X</b> or the paddles as fast as you can to fill the recovery meter before the pack trots by! Race across multiple heats; your total finish time and placings are scored, with a running best-total-time record.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320;
+const LANES=5, laneH=44, trackTop=40;
+const DIST=2400;
+const NUM_PIGS=6;
+const HEAT_COUNT=3;
+const MUD_COUNT=4;
+
+let heatNum=1, heatResults=[], totalTime=0;
+let bestTotal = parseFloat(localStorage.getItem('pigracing_best')||'0') || 0;
+document.getElementById('bestTime').textContent = bestTotal>0 ? bestTotal.toFixed(2)+'s' : '--';
+
+let pigs, playerIdx=0, raceTime=0, finished=false, raceOver=false, started=false;
+let lastPress=null, pressWindow=0;
+let camDist=0, mudPatches=[];
+
+const NAMES=['You','Hamlet','Bacon','Truffle','Porkchop','Wilbur'];
+const COLORS=['#ffd54f','#ff8fa3','#e94560','#5e72eb','#7ec850','#00bcd4'];
+
+function genMud(){
+  const arr=[];
+  for(let i=0;i<MUD_COUNT;i++){
+    arr.push({start: 300+i*(DIST-500)/MUD_COUNT + Math.random()*80, len:60+Math.random()*40, lane: Math.floor(Math.random()*LANES)});
+  }
+  return arr;
+}
+
+function newHeat(){
+  pigs=[];
+  mudPatches=genMud();
+  for(let i=0;i<NUM_PIGS;i++){
+    pigs.push({
+      name:NAMES[i], color:COLORS[i], lane:i%LANES, dist:0, speed:0,
+      isPlayer:i===playerIdx, aiKick: 0.7+Math.random()*0.6, finished:false, place:0,
+      aiWobble:Math.random()*1000, stuck:false, mashMeter:0, stuckTimer:0
+    });
+  }
+  raceTime=0; finished=false; raceOver=false; started=false; camDist=0;
+  lastPress=null; pressWindow=0;
+  document.getElementById('heatLabel').textContent=I18N.t('pig_heat_label','Heat {n} / {t}').replace('{n}',heatNum).replace('{t}',HEAT_COUNT);
+}
+
+function inMud(dist,lane){
+  return mudPatches.some(m=> Math.abs(lane - m.lane)<0.5 && dist>=m.start && dist<=m.start+m.len);
+}
+
+function press(key){
+  if(raceOver){ nextAfterFinish(); return; }
+  if(!started||finished)return;
+  const p=pigs[playerIdx];
+  if(p.stuck){
+    if(lastPress===key)return; // must alternate to mash effectively
+    lastPress=key; pressWindow=0.2;
+    p.mashMeter=Math.min(100,p.mashMeter+14);
+    SFX.tick();
+    if(p.mashMeter>=100){
+      p.stuck=false; p.mashMeter=0; p.speed=2; SFX.success();
+    }
+    return;
+  }
+  if(lastPress===key){ pressWindow=0.15; return; }
+  lastPress=key;
+  p.speed=Math.min(p.speed+2.3,13);
+  SFX.tick();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='KeyZ'){e.preventDefault();press('z');}
+  else if(e.code==='KeyX'){e.preventDefault();press('x');}
+  else if(e.code==='Space'){e.preventDefault(); if(!started){started=true;} else if(raceOver){nextAfterFinish();} }
+});
+
+function bindPad(id,key){
+  const el=document.getElementById(id);
+  const go=(ev)=>{ev.preventDefault(); if(!started){started=true;} press(key);};
+  el.addEventListener('pointerdown',go);
+}
+bindPad('padZ','z'); bindPad('padX','x');
+c.addEventListener('pointerdown',()=>{ if(!started)started=true; else if(raceOver) nextAfterFinish(); });
+
+function nextAfterFinish(){
+  if(heatNum<HEAT_COUNT){
+    heatNum++;
+    newHeat();
+  } else {
+    if(totalTime>0 && (bestTotal===0 || totalTime<bestTotal)){
+      bestTotal=totalTime;
+      localStorage.setItem('pigracing_best',bestTotal.toFixed(2));
+      document.getElementById('bestTime').textContent=bestTotal.toFixed(2)+'s';
+    }
+    heatNum=1; heatResults=[]; totalTime=0;
+    newHeat();
+  }
+}
+
+function updateAI(pig,dt){
+  pig.aiWobble+=dt;
+  if(pig.stuck){
+    pig.stuckTimer-=dt;
+    if(pig.stuckTimer<=0){pig.stuck=false;pig.speed=2;}
+    return;
+  }
+  if(inMud(pig.dist,pig.lane) && Math.random()<0.03*dt){
+    pig.stuck=true; pig.stuckTimer=40+Math.random()*30; pig.speed=0.5;
+    return;
+  }
+  const base=5.2*pig.aiKick;
+  const wobble=Math.sin(pig.aiWobble*0.05)*1.3;
+  const target=base+wobble;
+  pig.speed += (target-pig.speed)*0.05*dt;
+}
+
+function pigY(lane){ return trackTop+lane*laneH+laneH/2; }
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#8a6440'); g.addColorStop(1,'#5c3f22');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  for(let i=0;i<LANES;i++){
+    ctx.fillStyle= i%2===0? 'rgba(255,255,255,0.04)':'rgba(0,0,0,0.06)';
+    ctx.fillRect(0,trackTop+i*laneH,W,laneH);
+  }
+  for(let i=0;i<=LANES;i++){
+    ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.setLineDash([10,8]); ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(0,trackTop+i*laneH); ctx.lineTo(W,trackTop+i*laneH); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  const viewSpan=850;
+  const viewStart=camDist-120;
+  function xFor(d){ return (d-viewStart)/viewSpan*W; }
+
+  // mud patches
+  mudPatches.forEach(m=>{
+    const x1=xFor(m.start), x2=xFor(m.start+m.len);
+    if(x2<0||x1>W)return;
+    ctx.fillStyle='rgba(60,40,20,0.75)';
+    ctx.beginPath();
+    ctx.ellipse((x1+x2)/2, pigY(m.lane), Math.max(10,(x2-x1)/2), laneH*0.4, 0,0,Math.PI*2);
+    ctx.fill();
+  });
+
+  const fx=xFor(DIST);
+  if(fx>-40&&fx<W+40){
+    for(let i=0;i<8;i++){
+      ctx.fillStyle = i%2===0?'#fff':'#222';
+      ctx.fillRect(fx-3,trackTop+i*(H-trackTop-20)/8,6,(H-trackTop-20)/8);
+    }
+  }
+
+  const leadDist=Math.max(...pigs.map(d=>d.dist));
+  const lureDist=Math.min(DIST+40,leadDist+55);
+  const lx=xFor(lureDist);
+  ctx.font='24px serif'; ctx.textAlign='center';
+  ctx.fillText('🍎',lx, trackTop-8);
+
+  pigs.forEach(d=>{
+    const x=xFor(d.dist);
+    const y=pigY(d.lane);
+    if(x<-30||x>W+30)return;
+    ctx.save();
+    ctx.translate(x,y);
+    if(d.stuck){ ctx.rotate(Math.sin(performance.now()/60)*0.25); }
+    ctx.font='28px serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText('🐖',0,0);
+    ctx.restore();
+    ctx.fillStyle=d.color; ctx.font='bold 11px Arial'; ctx.textAlign='center';
+    ctx.fillText(d.name, x, y-20);
+    if(d.stuck){
+      ctx.fillStyle='#fff'; ctx.font='10px Arial';
+      ctx.fillText('STUCK!', x, y+22);
+    }
+  });
+  ctx.textAlign='left';
+}
+
+function computePlaces(){
+  const order=[...pigs].sort((a,b)=>b.dist-a.dist);
+  order.forEach((d,i)=>d.place=i+1);
+}
+
+let lastT=null;
+function loop(t){
+  if(lastT===null)lastT=t;
+  let dt=Math.min((t-lastT)/16.6667,3);
+  lastT=t;
+
+  if(pressWindow>0){pressWindow-=dt*16.6667/1000; if(pressWindow<=0)lastPress=null;}
+
+  const p=pigs[playerIdx];
+  document.getElementById('padZ').classList.toggle('mash', !!(p&&p.stuck));
+  document.getElementById('padX').classList.toggle('mash', !!(p&&p.stuck));
+  document.getElementById('speedLbl').textContent = (p&&p.stuck) ? I18N.t('pig_mash','MASH TO ESCAPE MUD!') : I18N.t('pig_speed','Speed');
+  document.getElementById('speedFill').style.background = (p&&p.stuck) ? 'linear-gradient(90deg,#8d6e63,#d7ccc8)' : 'linear-gradient(90deg,#ff9800,#ffd54f)';
+
+  if(!started){
+    draw();
+    ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff'; ctx.font='bold 26px Arial'; ctx.textAlign='center';
+    ctx.fillText(I18N.t('pig_ready','Tap / Press Z or X to start!'),W/2,H/2);
+    ctx.textAlign='left';
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(!raceOver){
+    raceTime+=dt/60;
+    pigs.forEach(d=>{ if(!d.isPlayer) updateAI(d,dt); });
+
+    if(!p.stuck){
+      p.speed=Math.max(0,p.speed-0.08*dt);
+      if(inMud(p.dist,p.lane) && !p._muddedRecent && Math.random()<0.05*dt){
+        p.stuck=true; p.mashMeter=0; p.speed=0.5; SFX.hurt();
+      }
+    }
+    document.getElementById('speedFill').style.width = p.stuck ? p.mashMeter+'%' : Math.min(100,p.speed/13*100)+'%';
+
+    pigs.forEach(d=>{
+      if(!d.finished){
+        const s = d.stuck ? 0.4 : d.speed;
+        d.dist+=s*dt*0.6;
+        if(d.dist>=DIST){ d.dist=DIST; d.finished=true; }
+      }
+    });
+    camDist=p.dist;
+    computePlaces();
+
+    if(p.finished && !finished){
+      finished=true; raceOver=true;
+      const place=p.place;
+      totalTime+=raceTime;
+      heatResults.push({place,time:raceTime});
+      if(place===1)SFX.win(); else SFX.point();
+    }
+  }
+
+  draw();
+
+  if(raceOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffd54f'; ctx.font='bold 30px Arial'; ctx.textAlign='center';
+    const r=heatResults[heatResults.length-1];
+    const ord=r.place===1?'1st':r.place===2?'2nd':r.place===3?'3rd':r.place+'th';
+    ctx.fillText(I18N.t('pig_finish','Finished {p}!').replace('{p}',ord), W/2, H/2-30);
+    ctx.font='20px Arial'; ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('pig_time','Time: {t}s').replace('{t}',r.time.toFixed(2)), W/2, H/2+4);
+    if(heatNum<HEAT_COUNT){
+      ctx.fillText(I18N.t('pig_next','Tap / Press Space for next heat'), W/2, H/2+36);
+    } else {
+      ctx.font='bold 22px Arial';
+      ctx.fillText(I18N.t('pig_total','Total time: {t}s').replace('{t}',totalTime.toFixed(2)), W/2, H/2+34);
+      ctx.font='16px Arial';
+      ctx.fillText(I18N.t('pig_restart','Tap / Press Space to race again'), W/2, H/2+62);
+    }
+    ctx.textAlign='left';
+  }
+
+  requestAnimationFrame(loop);
+}
+
+newHeat();
+requestAnimationFrame(loop);
+</script></body></html>

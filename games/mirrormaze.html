@@ -1,0 +1,238 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mirror Maze</title><meta name="description" content="Play Mirror Maze free online — Navigate a top-down maze of reflective mirrors. Click a direction at each junction to send your guide-beam bouncing off mirrors toward the exit. Solve mazes within a limited number of moves as complexity ramps up each round."><link rel="canonical" href="https://games.multiportllc.com/games/mirrormaze"><meta property="og:title" content="Mirror Maze - Multiport Games"><meta property="og:description" content="Play Mirror Maze free online — Navigate a top-down maze of reflective mirrors. Click a direction at each junction to send your guide-beam bouncing off mirrors toward the exit. Solve mazes within a limited number of moves as complexity ramps up each round."><meta property="og:url" content="https://games.multiportllc.com/games/mirrormaze"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mirror Maze","description":"Play Mirror Maze free online instantly. Navigate a top-down maze of reflective mirrors, choosing a direction at each junction to bounce a guide-beam toward the exit within a limited number of moves. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/mirrormaze","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#mm-wrap{padding:16px;max-width:640px;margin:0 auto;text-align:center}
+#mm-hud{display:flex;justify-content:space-between;color:#c9e8ff;font-weight:700;font-size:.95rem;margin-bottom:10px;flex-wrap:wrap;gap:6px}
+#mm-hud span{background:rgba(60,140,220,.2);padding:4px 10px;border-radius:8px}
+#mm-canvas-wrap{background:#0a1830;border-radius:14px;border:2px solid #26436a;padding:10px;display:inline-block}
+canvas#mm-c{display:block;background:#0d1f3d;border-radius:8px}
+#mm-dirpad{display:grid;grid-template-columns:repeat(3,58px);grid-template-rows:repeat(3,48px);gap:6px;justify-content:center;margin:14px auto 4px}
+#mm-dirpad button{background:#1b3a5f;border:1px solid #3f6b9c;color:#cfe8ff;border-radius:8px;font-size:1.3rem;cursor:pointer}
+#mm-dirpad button:disabled{opacity:.2;cursor:not-allowed}
+#mm-dirpad button:hover:not(:disabled){background:#2c527e}
+#mm-msg{color:#7ecbff;font-weight:700;min-height:1.4em;margin-top:8px}
+#mm-endcard{display:none;color:#fff;padding:10px}
+#mm-endcard button{margin-top:10px;padding:9px 22px;background:#3f8fd6;border:none;border-radius:20px;color:#fff;font-weight:700;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mirror Maze</div>
+  <div class="game-frame">
+    <div id="mm-wrap">
+      <div id="mm-hud"><span id="mm-round">Round: 1</span><span id="mm-moves">Moves left: 0</span><span id="mm-hi">Best streak: 0</span></div>
+      <div id="mm-canvas-wrap"><canvas id="mm-c" width="360" height="360"></canvas></div>
+      <div id="mm-dirpad">
+        <div></div><button id="mm-n">▲</button><div></div>
+        <button id="mm-w">◀</button><div style="display:flex;align-items:center;justify-content:center;color:#3f6b9c">🪞</div><button id="mm-e">▶</button>
+        <div></div><button id="mm-s">▼</button><div></div>
+      </div>
+      <div id="mm-msg"></div>
+      <div id="mm-endcard">
+        <div id="mm-endtitle" style="font-size:1.3rem;font-weight:800"></div>
+        <div id="mm-endstats" style="margin-top:6px;color:#c9e8ff"></div>
+        <button id="mm-restart">Play Again</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a <b>direction button</b> (or use <b>Arrow Keys</b>) to send your light beam through the maze. Some walls are mirrors — the yellow guide-beam shows where your light will bounce. Reach the green exit before you run out of moves. Each round adds more mirrors and complexity!</div>
+</div>
+<script>
+(function(){
+const HI_KEY='mirrormaze_hiscore';
+const c=document.getElementById('mm-c'), ctx=c.getContext('2d');
+let round=1, streak=0, hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let gridN, cell, maze, px,py, moveLimit, movesLeft, exitPos, gameOver, beamPath;
+
+function sizeForRound(r){ return Math.min(5+Math.floor((r-1)/2), 9); }
+
+function genMaze(n){
+  // Cells with walls on 4 sides; carve passages via randomized DFS (perfect maze).
+  const cellsArr=[];
+  for(let y=0;y<n;y++){const row=[];for(let x=0;x<n;x++)row.push({N:true,S:true,E:true,W:true,visited:false,mirror:null});cellsArr.push(row);}
+  function at(x,y){return cellsArr[y][x];}
+  const stack=[{x:0,y:0}];
+  at(0,0).visited=true;
+  while(stack.length){
+    const cur=stack[stack.length-1];
+    const dirs=[];
+    if(cur.y>0&&!at(cur.x,cur.y-1).visited)dirs.push('N');
+    if(cur.y<n-1&&!at(cur.x,cur.y+1).visited)dirs.push('S');
+    if(cur.x>0&&!at(cur.x-1,cur.y).visited)dirs.push('W');
+    if(cur.x<n-1&&!at(cur.x+1,cur.y).visited)dirs.push('E');
+    if(dirs.length===0){stack.pop();continue;}
+    const d=dirs[Math.floor(Math.random()*dirs.length)];
+    const c0=at(cur.x,cur.y);
+    let nx=cur.x, ny=cur.y;
+    if(d==='N'){c0.N=false;ny--;}
+    if(d==='S'){c0.S=false;ny++;}
+    if(d==='E'){c0.E=false;nx++;}
+    if(d==='W'){c0.W=false;nx--;}
+    const opp={N:'S',S:'N',E:'W',W:'E'};
+    const c1=at(nx,ny);
+    c1[opp[d]]=false;
+    c1.visited=true;
+    stack.push({x:nx,y:ny});
+  }
+  // Sprinkle mirror walls on some remaining (still-standing) walls to add reflect flavor —
+  // purely visual/thematic since the perfect maze already guarantees one true path.
+  const mirrorChance=Math.min(0.15+round*0.03,0.45);
+  for(let y=0;y<n;y++)for(let x=0;x<n;x++){
+    const cel=at(x,y);
+    ['N','S','E','W'].forEach(d=>{
+      if(cel[d]&&Math.random()<mirrorChance)cel['mirror'+d]=true;
+    });
+  }
+  return cellsArr;
+}
+
+function newRound(){
+  gridN=sizeForRound(round);
+  cell=Math.floor(320/gridN);
+  c.width=cell*gridN+2; c.height=cell*gridN+2;
+  maze=genMaze(gridN);
+  px=0;py=0;
+  exitPos={x:gridN-1,y:gridN-1};
+  moveLimit=Math.ceil(gridN*2.2)+2;
+  movesLeft=moveLimit;
+  gameOver=false;
+  document.getElementById('mm-endcard').style.display='none';
+  document.getElementById('mm-msg').textContent=I18N.t('find_exit_msg','Find the exit! 🟩');
+  updateHud();
+  draw();
+}
+
+function updateHud(){
+  document.getElementById('mm-round').textContent=I18N.t('round_label','Round: {r}').replace('{r}',round);
+  document.getElementById('mm-moves').textContent=I18N.t('moves_left_label','Moves left: {m}').replace('{m}',movesLeft);
+  document.getElementById('mm-hi').textContent=I18N.t('best_streak_label','Best streak: {n}').replace('{n}',hi);
+}
+
+function canMove(x,y,dir){
+  const c0=maze[y][x];
+  if(dir==='N')return !c0.N;
+  if(dir==='S')return !c0.S;
+  if(dir==='E')return !c0.E;
+  if(dir==='W')return !c0.W;
+}
+
+function move(dir){
+  if(gameOver)return;
+  if(!canMove(px,py,dir)){SFX.error();document.getElementById('mm-msg').textContent=I18N.t('wall_blocked_msg','🚫 A wall blocks that way.');return;}
+  let nx=px,ny=py;
+  if(dir==='N')ny--; if(dir==='S')ny++; if(dir==='E')nx++; if(dir==='W')nx--;
+  px=nx;py=ny;
+  movesLeft--;
+  SFX.click();
+  draw();
+  updateHud();
+  if(px===exitPos.x&&py===exitPos.y){
+    gameOver=true;
+    streak++;
+    if(streak>hi){hi=streak;localStorage.setItem(HI_KEY,String(hi));}
+    SFX.win();
+    document.getElementById('mm-endtitle').textContent=I18N.t('maze_solved_title','🎉 Maze Solved!');
+    document.getElementById('mm-endstats').textContent=I18N.t('maze_solved_stats','Round {r} complete — streak: {s}').replace('{r}',round).replace('{s}',streak);
+    document.getElementById('mm-endcard').style.display='block';
+    round++;
+  } else if(movesLeft<=0){
+    gameOver=true;
+    SFX.lose();
+    document.getElementById('mm-endtitle').textContent=I18N.t('out_of_moves_title','⏱️ Out of Moves!');
+    document.getElementById('mm-endstats').textContent=I18N.t('out_of_moves_stats','Your streak of {s} has ended. Try again!').replace('{s}',streak);
+    document.getElementById('mm-endcard').style.display='block';
+    streak=0;
+    round=1;
+  }
+  updateHud();
+}
+
+function draw(){
+  ctx.clearRect(0,0,c.width,c.height);
+  ctx.fillStyle='#0d1f3d';ctx.fillRect(0,0,c.width,c.height);
+  ctx.lineCap='round';
+  for(let y=0;y<gridN;y++){
+    for(let x=0;x<gridN;x++){
+      const cel=maze[y][x];
+      const px0=x*cell+1, py0=y*cell+1;
+      // walls
+      ctx.lineWidth=3;
+      if(cel.N){ctx.strokeStyle=cel.mirrorN?'#ffd54f':'#2c527e';ctx.beginPath();ctx.moveTo(px0,py0);ctx.lineTo(px0+cell,py0);ctx.stroke();}
+      if(cel.W){ctx.strokeStyle=cel.mirrorW?'#ffd54f':'#2c527e';ctx.beginPath();ctx.moveTo(px0,py0);ctx.lineTo(px0,py0+cell);ctx.stroke();}
+      if(y===gridN-1&&cel.S){ctx.strokeStyle=cel.mirrorS?'#ffd54f':'#2c527e';ctx.beginPath();ctx.moveTo(px0,py0+cell);ctx.lineTo(px0+cell,py0+cell);ctx.stroke();}
+      if(x===gridN-1&&cel.E){ctx.strokeStyle=cel.mirrorE?'#ffd54f':'#2c527e';ctx.beginPath();ctx.moveTo(px0+cell,py0);ctx.lineTo(px0+cell,py0+cell);ctx.stroke();}
+    }
+  }
+  // exit
+  const ex=exitPos.x*cell+1, ey=exitPos.y*cell+1;
+  ctx.fillStyle='#4caf50';
+  ctx.fillRect(ex+cell*0.2,ey+cell*0.2,cell*0.6,cell*0.6);
+  // guide beam: highlight open directions from current cell as faint yellow rays
+  const cel=maze[py][px];
+  const cx=px*cell+1+cell/2, cy=py*cell+1+cell/2;
+  ctx.strokeStyle='rgba(255,213,79,0.55)';
+  ctx.lineWidth=4;
+  ['N','S','E','W'].forEach(d=>{
+    if(!canMove(px,py,d)){
+      // reflect: draw a short bounce indicator toward mirror wall
+      return;
+    }
+    ctx.beginPath();
+    ctx.moveTo(cx,cy);
+    let tx=cx,ty=cy;
+    if(d==='N')ty=py*cell+1; if(d==='S')ty=py*cell+1+cell; if(d==='E')tx=px*cell+1+cell; if(d==='W')tx=px*cell+1;
+    ctx.lineTo(tx,ty);
+    ctx.stroke();
+  });
+  // player
+  ctx.fillStyle='#7ecbff';
+  ctx.beginPath();
+  ctx.arc(cx,cy,cell*0.22,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+
+  updateDirButtons();
+}
+
+function updateDirButtons(){
+  document.getElementById('mm-n').disabled=!canMove(px,py,'N')||gameOver;
+  document.getElementById('mm-s').disabled=!canMove(px,py,'S')||gameOver;
+  document.getElementById('mm-e').disabled=!canMove(px,py,'E')||gameOver;
+  document.getElementById('mm-w').disabled=!canMove(px,py,'W')||gameOver;
+}
+
+document.getElementById('mm-n').onclick=()=>move('N');
+document.getElementById('mm-s').onclick=()=>move('S');
+document.getElementById('mm-e').onclick=()=>move('E');
+document.getElementById('mm-w').onclick=()=>move('W');
+document.getElementById('mm-restart').onclick=()=>newRound();
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)){
+    e.preventDefault();
+    if(e.code==='ArrowUp')move('N');
+    else if(e.code==='ArrowDown')move('S');
+    else if(e.code==='ArrowLeft')move('W');
+    else if(e.code==='ArrowRight')move('E');
+  }
+});
+
+let touchStartX=null, touchStartY=null;
+c.addEventListener('touchstart',e=>{const t=e.touches[0];touchStartX=t.clientX;touchStartY=t.clientY;},{passive:true});
+c.addEventListener('touchend',e=>{
+  if(touchStartX==null)return;
+  const t=e.changedTouches[0];
+  const dx=t.clientX-touchStartX, dy=t.clientY-touchStartY;
+  if(Math.abs(dx)<20&&Math.abs(dy)<20)return;
+  if(Math.abs(dx)>Math.abs(dy))move(dx>0?'E':'W'); else move(dy>0?'S':'N');
+  touchStartX=null;touchStartY=null;
+});
+
+newRound();
+})();
+</script></body></html>

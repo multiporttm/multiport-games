@@ -1,0 +1,244 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Baton Twirling</title><meta name="description" content="Play Baton Twirling free online — Hold to charge your toss, release when the needle lands in the highlighted zone matching the target spin count, then tap Catch at the right instant as the baton falls."><link rel="canonical" href="https://games.multiportllc.com/games/batontwirling"><meta property="og:title" content="Baton Twirling - Multiport Games"><meta property="og:description" content="Play Baton Twirling free online — Hold to charge your toss, release when the needle lands in the highlighted zone matching the target spin count, then tap Catch at the right instant as the baton falls."><meta property="og:url" content="https://games.multiportllc.com/games/batontwirling"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Baton Twirling","description":"Play Baton Twirling free online instantly. Hold to charge your toss, release when the needle lands in the highlighted zone matching the target spin count, then tap Catch at the right instant as the baton falls. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/batontwirling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#stage{background:linear-gradient(180deg,#0d2b4a,#1b5e8f);border-radius:14px;padding:16px;text-align:center;max-width:640px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;font-size:.95rem;padding:0 6px 6px}
+#hud b{color:#ffd54f}
+#c{background:#123a5c;border-radius:10px;display:block;margin:0 auto;max-width:100%}
+#meterWrap{max-width:460px;margin:12px auto 4px;position:relative}
+#meterBar{height:34px;border-radius:8px;background:#0a2438;display:flex;overflow:hidden;border:2px solid rgba(255,255,255,.2)}
+.seg{flex:1;border-right:1px solid rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;font-size:.75rem;color:#7fb8e0;font-weight:800}
+.seg.target{background:#ffd54f55;color:#ffd54f}
+#needle{position:absolute;top:-4px;width:3px;height:42px;background:#ff5252;left:0;box-shadow:0 0 8px #ff5252}
+#msg{color:#fff;font-weight:900;font-size:1.25rem;min-height:2.2rem;margin:8px 0 2px}
+#targetLine{color:#ffd54f;font-weight:800;font-size:1.05rem;margin-bottom:4px}
+#controls{margin-top:10px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.actBtn{padding:14px 30px;border-radius:24px;border:none;font-weight:900;font-size:1.05rem;cursor:pointer;touch-action:manipulation}
+#throwBtn{background:#ffd54f;color:#0d2b4a}
+#throwBtn:active{transform:scale(.95)}
+#catchBtn{background:#4caf50;color:#fff;display:none}
+#catchBtn.ready{animation:pulse .35s infinite alternate}
+@keyframes pulse{from{transform:scale(1)}to{transform:scale(1.1)}}
+#catchBtn:active{transform:scale(.95)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Baton Twirling</div>
+  <div class="game-frame">
+    <div id="stage">
+      <div id="hud"><span data-i18n-skip>Round: <b id="roundNum">1</b></span><span data-i18n-skip>Score: <b id="scoreNum">0</b></span><span data-i18n-skip>Hi: <b id="hiNum">0</b></span></div>
+      <canvas id="c" width="600" height="240"></canvas>
+      <div id="targetLine">Target: 3 spins</div>
+      <div id="meterWrap">
+        <div id="meterBar"></div>
+        <div id="needle"></div>
+      </div>
+      <div id="msg">Hold Throw to charge!</div>
+      <div id="controls">
+        <button id="throwBtn" class="actBtn">Hold to Charge / Release to Throw</button>
+        <button id="catchBtn" class="actBtn">🖐 Catch!</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press and hold <b>Throw</b> (mouse, tap, or Space) — the needle swings across the meter. Release when it lands in the highlighted zone matching the target spin count shown above. The baton flies up spinning; tap <b>Catch</b> (or press Enter) right as it drops into your hand. Wrong spin count or a mistimed catch drops the baton!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=600,H=240,GROUND=210,HANDX=300;
+let round=1,score=0,hi=parseInt(localStorage.getItem('batontwirling_hi')||'0',10);
+document.getElementById('hiNum').textContent=hi;
+
+const MAXSPIN=8;
+let target=3;
+let state='idle'; // idle, charging, flight, resolved
+let needleT=0, needleDir=1, needleSpeed=1.6;
+let chosenSpins=0;
+let flightStart=0, flightDur=0, catchWinStart=0, catchWinEnd=0, caught=false, batonRot=0;
+let raf=null;
+
+function buildMeter(){
+  const bar=document.getElementById('meterBar');
+  bar.innerHTML='';
+  target=Math.min(2+Math.floor((round-1)/1.5),MAXSPIN);
+  // vary target a bit for unpredictability but generally increases
+  target=Math.max(2,Math.min(MAXSPIN,target+(Math.random()<0.3?1:0)));
+  document.getElementById('targetLine').textContent=I18N.t('baton_target','Target: {n} spins').replace('{n}',target);
+  for(let i=1;i<=MAXSPIN;i++){
+    const seg=document.createElement('div');
+    seg.className='seg'+(i===target?' target':'');
+    seg.textContent=i;
+    bar.appendChild(seg);
+  }
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function drawBatonAt(x,y,rot){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(rot);
+  ctx.fillStyle='#eee';
+  ctx.fillRect(-45,-4,90,8);
+  ctx.fillStyle='#ff5252';
+  ctx.beginPath();ctx.arc(-45,0,9,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(45,0,9,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawScene(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#1b5e8f');sky.addColorStop(1,'#0d2b4a');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#0a2438';ctx.fillRect(0,GROUND,W,H-GROUND);
+  // performer
+  ctx.font='54px serif';ctx.textAlign='center';
+  ctx.fillText('🤾‍♀️',HANDX,GROUND+38);
+}
+
+function idleFrame(){
+  drawScene();
+  drawBatonAt(HANDX,GROUND-14,0);
+}
+idleFrame();
+
+function startCharging(){
+  if(state!=='idle'&&state!=='resolved')return;
+  state='charging';
+  needleT=0;needleDir=1;
+  needleSpeed=1.4+round*0.08;
+  setMsg(I18N.t('baton_charging','Release in the target zone!'));
+  document.getElementById('catchBtn').style.display='none';
+  tickCharge();
+}
+
+function tickCharge(){
+  if(state!=='charging')return;
+  needleT+=needleDir*needleSpeed*0.016;
+  if(needleT>=1){needleT=1;needleDir=-1;}
+  if(needleT<=0){needleT=0;needleDir=1;}
+  const bar=document.getElementById('meterBar');
+  const pct=needleT*100;
+  document.getElementById('needle').style.left=`calc(${pct}% - 2px)`;
+  raf=requestAnimationFrame(tickCharge);
+}
+
+function releaseCharge(){
+  if(state!=='charging')return;
+  cancelAnimationFrame(raf);
+  state='resolved-check';
+  const segIdx=Math.min(MAXSPIN-1,Math.floor(needleT*MAXSPIN));
+  chosenSpins=segIdx+1;
+  if(chosenSpins!==target){
+    SFX.error();
+    setMsg(I18N.t('baton_wrongspin','Wrong spin count! You threw {c}, needed {t}. Baton dropped!').replace('{c}',chosenSpins).replace('{t}',target));
+    endRound(false);
+    return;
+  }
+  SFX.swoosh();
+  launchBaton();
+}
+
+function launchBaton(){
+  state='flight';
+  flightDur=900+chosenSpins*160;
+  flightStart=performance.now();
+  const winLen=Math.max(160,320-round*8);
+  catchWinEnd=flightDur-40;
+  catchWinStart=catchWinEnd-winLen;
+  caught=false;
+  setMsg(I18N.t('baton_watch','Watch it spin... get ready to catch!'));
+  document.getElementById('catchBtn').style.display='inline-block';
+  animateFlight();
+}
+
+function animateFlight(){
+  const now=performance.now();
+  const t=now-flightStart;
+  const p=Math.min(1,t/flightDur);
+  // parabolic height: peak in middle
+  const peakH=90+chosenSpins*8;
+  const y=(GROUND-14)-Math.sin(p*Math.PI)*peakH;
+  batonRot=p*chosenSpins*Math.PI*2;
+  drawScene();
+  drawBatonAt(HANDX,y,batonRot);
+  const inWindow = t>=catchWinStart && t<=catchWinEnd;
+  document.getElementById('catchBtn').classList.toggle('ready',inWindow);
+  if(t>flightDur){
+    if(!caught){
+      SFX.error();
+      setMsg(I18N.t('baton_missed','You missed the catch! Baton dropped.'));
+      endRound(false);
+    }
+    return;
+  }
+  raf=requestAnimationFrame(animateFlight);
+}
+
+function attemptCatch(){
+  if(state!=='flight'||caught)return;
+  const t=performance.now()-flightStart;
+  if(t>=catchWinStart&&t<=catchWinEnd){
+    caught=true;
+    cancelAnimationFrame(raf);
+    SFX.catch();
+    const bonus=chosenSpins*10;
+    score+=bonus;
+    if(score>hi){hi=score;localStorage.setItem('batontwirling_hi',hi);}
+    document.getElementById('scoreNum').textContent=score;
+    document.getElementById('hiNum').textContent=hi;
+    setMsg(I18N.t('baton_caught','Caught it! +{b}').replace('{b}',bonus));
+    SFX.success();
+    endRound(true);
+  } else {
+    caught=true;
+    cancelAnimationFrame(raf);
+    SFX.error();
+    setMsg(I18N.t('baton_mistimed','Mistimed catch! Baton dropped.'));
+    endRound(false);
+  }
+}
+
+function endRound(success){
+  document.getElementById('catchBtn').style.display='none';
+  document.getElementById('catchBtn').classList.remove('ready');
+  if(!success){
+    SFX.lose();
+    round=1;score=0;
+    document.getElementById('scoreNum').textContent=score;
+  } else {
+    round++;
+  }
+  document.getElementById('roundNum').textContent=round;
+  state='idle';
+  document.getElementById('needle').style.left='0%';
+  setTimeout(()=>{buildMeter();idleFrame();setMsg(I18N.t('baton_ready','Hold Throw to charge!'));},1300);
+}
+
+const throwBtn=document.getElementById('throwBtn');
+throwBtn.addEventListener('pointerdown',e=>{e.preventDefault();startCharging();});
+throwBtn.addEventListener('pointerup',e=>{e.preventDefault();releaseCharge();});
+throwBtn.addEventListener('pointerleave',()=>{ if(state==='charging')releaseCharge(); });
+throwBtn.addEventListener('touchstart',e=>{e.preventDefault();startCharging();},{passive:false});
+throwBtn.addEventListener('touchend',e=>{e.preventDefault();releaseCharge();},{passive:false});
+
+const catchBtn=document.getElementById('catchBtn');
+catchBtn.addEventListener('click',attemptCatch);
+catchBtn.addEventListener('touchstart',e=>{e.preventDefault();attemptCatch();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault(); if(state==='idle'||state==='resolved')startCharging();}
+  else if(e.code==='Enter'){e.preventDefault(); if(state==='flight')attemptCatch();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){e.preventDefault(); if(state==='charging')releaseCharge();}
+});
+
+buildMeter();
+</script></body></html>

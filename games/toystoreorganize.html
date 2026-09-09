@@ -1,0 +1,258 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Toy Store Organize</title><meta name="description" content="Play Toy Store Organize free online — Toys drop into the stockroom cart one at a time. Click the shelf labeled with the matching category (Dolls, Blocks, Games, Plush) before the cart overflows. Correct shelving scores points; wrong shelf costs points. Clear toys fast as the pace and categories get trickier!"><link rel="canonical" href="https://games.multiportllc.com/games/toystoreorganize"><meta property="og:title" content="Toy Store Organize - Multiport Games"><meta property="og:description" content="Play Toy Store Organize free online — Toys drop into the stockroom cart one at a time. Click the shelf labeled with the matching category (Dolls, Blocks, Games, Plush) before the cart overflows. Correct shelving scores points; wrong shelf costs points. Clear toys fast as the pace and categories get trickier!"><meta property="og:url" content="https://games.multiportllc.com/games/toystoreorganize"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Toy Store Organize","description":"Play Toy Store Organize free online instantly. Toys of different categories appear one at a time in a stockroom cart — click them onto the correct labeled shelf (Dolls, Blocks, Games, Plush) before the cart overflows. Score points for toys shelved correctly within a time limit across faster pace and trickier categories. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/toystoreorganize","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#fef6e4;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#ff8fa3;font-size:1.05rem;font-weight:700;text-align:center;padding:6px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#fff}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Toy Store Organize</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>Score: <b id="scoreVal">0</b></span>
+      <span>Time: <b id="timeVal">60</b></span>
+      <span>Cart: <b id="cartVal">0/8</b></span>
+      <span>Hi: <b id="hiVal">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Toys pile into the stockroom cart one at a time. Click (or tap) the shelf labeled with the matching category — <b>Dolls</b>, <b>Blocks</b>, <b>Games</b>, or <b>Plush</b> — before the cart fills up and overflows. Shelving a toy correctly scores points; the wrong shelf costs points and rejects the toy back to the cart. Shelve as many toys as you can before time runs out — the pace and toy variety pick up as you go!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+let hi=+(localStorage.getItem('toystoreorganize_hi')||0);
+document.getElementById('hiVal').textContent=hi;
+
+const CATS=[
+  {key:'dolls',label:'Dolls',color:'#f48fb1',emoji:'🪆'},
+  {key:'blocks',label:'Blocks',color:'#90caf9',emoji:'🧱'},
+  {key:'games',label:'Games',color:'#a5d6a7',emoji:'🎲'},
+  {key:'plush',label:'Plush',color:'#ffcc80',emoji:'🧸'}
+];
+const TOY_EMOJI={dolls:['🪆','👸'],blocks:['🧱','🔲'],games:['🎲','🃏'],plush:['🧸','🐻']};
+
+const SHELF_W=170,SHELF_H=90,SHELF_Y=30,SHELF_GAP=18;
+const shelves=CATS.map((cat,i)=>({
+  cat,
+  x: (W-(SHELF_W*4+SHELF_GAP*3))/2 + i*(SHELF_W+SHELF_GAP),
+  y: SHELF_Y, w:SHELF_W, h:SHELF_H,
+  flashTimer:0,flashOk:false
+}));
+
+const CART_MAX=8;
+let cart,score,timeLeft,gameState,spawnTimer,spawnInterval,activeToy,dragPos,dragging,combo,shakeTimer;
+let lastTime=null;
+
+function reset(){
+  cart=[];score=0;timeLeft=60;gameState='play';
+  spawnTimer=0;spawnInterval=95;activeToy=null;combo=0;shakeTimer=0;
+  spawnToy();
+}
+reset();
+
+function randCat(){ return CATS[Math.floor(Math.random()*CATS.length)]; }
+
+function spawnToy(){
+  if(cart.length>=CART_MAX)return;
+  const cat=randCat();
+  const emojis=TOY_EMOJI[cat.key];
+  const emoji=emojis[Math.floor(Math.random()*emojis.length)];
+  const idx=cart.length;
+  cart.push({
+    cat,emoji,
+    x: 90+ (idx%4)*70 + Math.random()*10,
+    y: H-70- Math.floor(idx/4)*70,
+    scale:0,removed:false,dragging:false
+  });
+  SFX.click();
+}
+
+function cartAreaBox(){ return {x:20,y:H-160,w:W-40,h:150}; }
+
+function pointInRect(px,py,r){ return px>=r.x&&px<=r.x+r.w&&py>=r.y&&py<=r.y+r.h; }
+
+function handlePointer(px,py){
+  if(gameState!=='play')return;
+  // check shelf hit
+  for(const s of shelves){
+    if(pointInRect(px,py,s)){
+      if(activeToy){
+        resolveShelf(activeToy,s);
+      } else {
+        // pick nearest un-removed cart toy to shelf-click, treat as "send top toy"
+        const t=cart.find(t=>!t.removed);
+        if(t)resolveShelf(t,s);
+      }
+      return;
+    }
+  }
+  // otherwise pick a toy in the cart to make it "active" (selected, highlighted)
+  for(let i=cart.length-1;i>=0;i--){
+    const t=cart[i];
+    if(t.removed)continue;
+    const dx=px-t.x,dy=py-t.y;
+    if(dx*dx+dy*dy<32*32){ activeToy=t; SFX.select(); return; }
+  }
+}
+
+function resolveShelf(toy,shelf){
+  if(toy.removed)return;
+  if(toy.cat.key===shelf.cat.key){
+    toy.removed=true;
+    combo++;
+    const pts=10+Math.min(combo,10)*2;
+    score+=pts;
+    shelf.flashTimer=20;shelf.flashOk=true;
+    SFX.success();
+  } else {
+    combo=0;
+    score=Math.max(0,score-8);
+    shelf.flashTimer=20;shelf.flashOk=false;
+    shakeTimer=12;
+    SFX.error();
+  }
+  if(activeToy===toy)activeToy=null;
+  cart=cart.filter(t=>!t.removed);
+  repackCart();
+}
+
+function repackCart(){
+  cart.forEach((t,idx)=>{
+    t.x=90+(idx%4)*70;
+    t.y=H-70-Math.floor(idx/4)*70;
+  });
+}
+
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  const px=(e.clientX-r.left)*(W/r.width);
+  const py=(e.clientY-r.top)*(H/r.height);
+  if(gameState==='over'){ reset(); return; }
+  handlePointer(px,py);
+});
+
+document.addEventListener('keydown',e=>{
+  if(gameState==='over'&&e.code==='Space'){reset();return;}
+  const num=parseInt(e.key);
+  if(num>=1&&num<=4){
+    const shelf=shelves[num-1];
+    const t=activeToy||cart.find(t=>!t.removed);
+    if(t)resolveShelf(t,shelf);
+  }
+});
+
+function drawShelves(){
+  shelves.forEach(s=>{
+    ctx.save();
+    if(s.flashTimer>0){
+      ctx.fillStyle=s.flashOk?'rgba(120,220,120,0.55)':'rgba(230,90,90,0.55)';
+      s.flashTimer--;
+    } else {
+      ctx.fillStyle='#fffaf0';
+    }
+    ctx.fillRect(s.x,s.y,s.w,s.h);
+    ctx.strokeStyle=s.cat.color;ctx.lineWidth=5;
+    ctx.strokeRect(s.x,s.y,s.w,s.h);
+    // shelf boards
+    ctx.fillStyle=s.cat.color;
+    ctx.fillRect(s.x,s.y+s.h-14,s.w,14);
+    ctx.fillStyle='#3e2723';
+    ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('toystore_'+s.cat.key,s.cat.label),s.x+s.w/2,s.y+24);
+    ctx.font='30px Arial';
+    ctx.fillText(TOY_EMOJI[s.cat.key][0],s.x+s.w/2,s.y+58);
+    ctx.restore();
+  });
+}
+
+function drawCart(){
+  const box=cartAreaBox();
+  let shakeX=0;
+  if(shakeTimer>0){ shakeX=(Math.random()-0.5)*10; shakeTimer--; }
+  ctx.save();
+  ctx.translate(shakeX,0);
+  ctx.fillStyle='#d7ccc8';
+  ctx.fillRect(box.x,box.y+40,box.w,box.h-40);
+  ctx.strokeStyle='#8d6e63';ctx.lineWidth=4;
+  ctx.strokeRect(box.x,box.y+40,box.w,box.h-40);
+  ctx.fillStyle='#6d4c41';
+  ctx.font='bold 14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('toystore_cart_label','STOCKROOM CART'),box.x+8,box.y+34);
+
+  cart.forEach(t=>{
+    ctx.save();
+    ctx.translate(t.x,t.y);
+    if(t===activeToy){
+      ctx.fillStyle='rgba(255,255,255,0.6)';
+      ctx.beginPath();ctx.arc(0,0,28,0,7);ctx.fill();
+      ctx.strokeStyle='#333';ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(0,0,28,0,7);ctx.stroke();
+    }
+    ctx.font='34px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(t.emoji,0,2);
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#fff3e0');bg.addColorStop(1,'#ffe0b2');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  drawShelves();
+  drawCart();
+
+  if(gameState==='over'){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('toystore_closed','STORE CLOSED'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('toystore_restart_hint','Tap / Space to reopen'),W/2,H/2+15);
+  } else if(cart.length>=CART_MAX){
+    ctx.fillStyle='#c62828';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('toystore_overflow','CART OVERFLOWING! Shelve toys fast!'),W/2,SHELF_Y+SHELF_H+40);
+  }
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(gameState==='play'){
+    timeLeft-=dt/60;
+    spawnTimer+=dt;
+    spawnInterval=Math.max(35,95-score/6);
+    if(spawnTimer>=spawnInterval){
+      spawnTimer-=spawnInterval;
+      spawnToy();
+    }
+    if(cart.length>=CART_MAX){
+      // overflow penalty tick
+      if(Math.floor(timeLeft*10)%10===0)score=Math.max(0,score-1);
+    }
+    if(timeLeft<=0){
+      timeLeft=0;gameState='over';
+      if(score>hi){hi=score;localStorage.setItem('toystoreorganize_hi',Math.floor(hi));}
+      SFX.lose();
+    }
+  }
+
+  draw();
+  document.getElementById('scoreVal').textContent=Math.floor(score);
+  document.getElementById('hiVal').textContent=Math.floor(hi);
+  document.getElementById('timeVal').textContent=Math.ceil(timeLeft);
+  document.getElementById('cartVal').textContent=cart.length+'/'+CART_MAX;
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

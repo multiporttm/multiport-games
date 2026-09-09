@@ -1,0 +1,316 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Greyhound Race</title><meta name="description" content="Play Greyhound Race free online — Alternate Z and X (or tap the two paddles) rapidly to build speed. Use Up/Down arrows to weave lanes and dodge slower dogs. Watch your stamina meter for a late burst!"><link rel="canonical" href="https://games.multiportllc.com/games/greyhoundrace"><meta property="og:title" content="Greyhound Race - Multiport Games"><meta property="og:description" content="Play Greyhound Race free online — Alternate Z and X (or tap the two paddles) rapidly to build speed. Use Up/Down arrows to weave lanes and dodge slower dogs. Watch your stamina meter for a late burst!"><meta property="og:url" content="https://games.multiportllc.com/games/greyhoundrace"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Greyhound Race","description":"Play Greyhound Race free online instantly. Alternate Z and X (or tap the two paddles) rapidly to build your greyhound's speed chasing the mechanical lure around the oval track. Use Up/Down arrows to weave between lanes and dodge slower dogs, and manage your stamina meter for a late-race burst. Race across multiple heats to post the best combined finish. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/greyhoundrace","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{padding:12px}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:700;font-size:.95rem;padding:0 4px 8px;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffd54f}
+#c{background:#3a6b2e;display:block;border-radius:10px;max-width:100%;touch-action:none}
+#meters{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}
+.meter{flex:1;min-width:130px}
+.meter-label{color:rgba(255,255,255,.6);font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px}
+.meter-bar{height:12px;border-radius:6px;background:rgba(255,255,255,.1);overflow:hidden}
+.meter-fill{height:100%;border-radius:6px;transition:width .1s linear}
+#stamFill{background:linear-gradient(90deg,#4caf50,#8bc34a)}
+#speedFill{background:linear-gradient(90deg,#ff9800,#ffd54f)}
+#controls{display:flex;gap:10px;margin-top:10px;justify-content:center;flex-wrap:wrap}
+.padbtn{flex:1;min-width:90px;max-width:160px;padding:16px 10px;border-radius:14px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.09);color:#fff;font-weight:800;font-size:1rem;cursor:pointer;user-select:none;touch-action:manipulation}
+.padbtn:active{background:rgba(233,69,96,.35)}
+.lanebtn{padding:16px 14px;border-radius:14px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.09);color:#fff;font-weight:800;font-size:1.1rem;cursor:pointer;user-select:none;touch-action:manipulation}
+.lanebtn:active{background:rgba(94,114,235,.35)}
+#overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Greyhound Race</div>
+  <div class="game-frame" id="wrap">
+    <div id="hud">
+      <div id="raceLabel">Race 1 / 3</div>
+      <div>Best Total Time: <span id="bestTime">--</span></div>
+    </div>
+    <canvas id="c" width="800" height="320"></canvas>
+    <div id="meters">
+      <div class="meter"><div class="meter-label">Stamina</div><div class="meter-bar"><div class="meter-fill" id="stamFill" style="width:100%"></div></div></div>
+      <div class="meter"><div class="meter-label">Speed</div><div class="meter-bar"><div class="meter-fill" id="speedFill" style="width:0%"></div></div></div>
+    </div>
+    <div id="controls">
+      <button class="padbtn" id="padZ">Z ↞ RUN</button>
+      <button class="lanebtn" id="laneUp">▲ Lane</button>
+      <button class="lanebtn" id="laneDown">▼ Lane</button>
+      <button class="padbtn" id="padX">RUN ↠ X</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Alternate <b>Z</b> and <b>X</b> (or tap the two RUN paddles) rapidly to build your greyhound's speed chasing the mechanical lure. Use <b>Up/Down Arrow</b> (or the Lane buttons) to weave between lanes and dodge slower dogs ahead of you. Sprinting drains your <b>stamina</b> meter — ease off to recover it for a strong late-race burst. Race across multiple heats; your total finish time and placings are scored, with a running best-total-time record.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320;
+const LANES=5, laneH=44, trackTop=40;
+const DIST=2600; // total race distance
+const NUM_DOGS=6; // 1 player + 5 AI
+const RACE_COUNT=3;
+
+let raceNum=1, raceResults=[], totalTime=0;
+let bestTotal = parseFloat(localStorage.getItem('greyhoundrace_best')||'0') || 0;
+document.getElementById('bestTime').textContent = bestTotal>0 ? bestTotal.toFixed(2)+'s' : '--';
+
+let dogs, playerIdx=0, raceTime=0, finished=false, raceOver=false, countdown=3, started=false;
+let lastPress=null, pressWindow=0;
+let camDist=0;
+
+const NAMES=['You','Rex','Blaze','Nova','Dash','Zippy'];
+const COLORS=['#ffd54f','#e94560','#5e72eb','#7ec850','#ff8fa3','#00bcd4'];
+
+function newRace(){
+  dogs=[];
+  for(let i=0;i<NUM_DOGS;i++){
+    dogs.push({
+      name:NAMES[i], color:COLORS[i], lane:i%LANES, dist:0, speed:0,
+      isPlayer:i===playerIdx, stamina:100, aiTargetLane:i%LANES,
+      aiKick: 0.7+Math.random()*0.6, finished:false, place:0,
+      aiWobble:Math.random()*1000
+    });
+  }
+  raceTime=0; finished=false; raceOver=false; countdown=3; started=false; camDist=0;
+  lastPress=null; pressWindow=0;
+  document.getElementById('raceLabel').textContent=I18N.t('race_label','Race {n} / {t}').replace('{n}',raceNum).replace('{t}',RACE_COUNT);
+}
+
+function press(key){
+  if(raceOver){ nextAfterFinish(); return; }
+  if(!started||finished)return;
+  const p=dogs[playerIdx];
+  if(lastPress===key){ pressWindow=0.15; return; } // same key twice = no gain, small penalty avoided by ignoring
+  lastPress=key;
+  if(p.stamina>2){
+    p.speed=Math.min(p.speed+2.4,14);
+    p.stamina=Math.max(0,p.stamina-1.6);
+    SFX.tick();
+  } else {
+    p.speed=Math.min(p.speed+0.6,8);
+  }
+}
+function changeLane(dir){
+  if(!started||finished||raceOver)return;
+  const p=dogs[playerIdx];
+  const nl=p.lane+dir;
+  if(nl>=0&&nl<LANES){p.lane=nl;SFX.click();}
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='KeyZ'){e.preventDefault();press('z');}
+  else if(e.code==='KeyX'){e.preventDefault();press('x');}
+  else if(e.code==='ArrowUp'){e.preventDefault(); if(raceOver)nextAfterFinish(); else changeLane(-1);}
+  else if(e.code==='ArrowDown'){e.preventDefault(); if(raceOver)nextAfterFinish(); else changeLane(1);}
+  else if(e.code==='Space'){e.preventDefault(); if(!started){started=true;} else if(raceOver){nextAfterFinish();} }
+});
+
+function bindPad(id,key){
+  const el=document.getElementById(id);
+  const go=(ev)=>{ev.preventDefault(); if(!started){started=true;} press(key);};
+  el.addEventListener('pointerdown',go);
+}
+bindPad('padZ','z'); bindPad('padX','x');
+document.getElementById('laneUp').addEventListener('pointerdown',e=>{e.preventDefault(); if(raceOver)nextAfterFinish(); else{if(!started)started=true; changeLane(-1);}});
+document.getElementById('laneDown').addEventListener('pointerdown',e=>{e.preventDefault(); if(raceOver)nextAfterFinish(); else{if(!started)started=true; changeLane(1);}});
+c.addEventListener('pointerdown',()=>{ if(!started)started=true; else if(raceOver) nextAfterFinish(); });
+
+function nextAfterFinish(){
+  if(raceNum<RACE_COUNT){
+    raceNum++;
+    newRace();
+  } else {
+    // full session done, restart series
+    if(totalTime>0 && (bestTotal===0 || totalTime<bestTotal)){
+      bestTotal=totalTime;
+      localStorage.setItem('greyhoundrace_best',bestTotal.toFixed(2));
+      document.getElementById('bestTime').textContent=bestTotal.toFixed(2)+'s';
+    }
+    raceNum=1; raceResults=[]; totalTime=0;
+    newRace();
+  }
+}
+
+function updateAI(dog,dt){
+  // AI speed oscillates with a kick pattern, plus fatigue and rubber-banding toward player
+  dog.aiWobble+=dt;
+  const base=5.6*dog.aiKick;
+  const wobble=Math.sin(dog.aiWobble*0.05)*1.4;
+  let target=base+wobble;
+  if(dog.stamina<25) target*=0.7;
+  dog.speed += (target-dog.speed)*0.05*dt;
+  dog.stamina=Math.max(15,dog.stamina-0.05*dt*(dog.speed>7?1.5:0.6));
+  if(dog.stamina<40 && Math.random()<0.002*dt) dog.stamina=Math.min(60,dog.stamina+8); // brief recovery
+  // occasional lane changes for visual weaving
+  if(Math.random()<0.003*dt){
+    const nl=dog.lane+(Math.random()<0.5?-1:1);
+    if(nl>=0&&nl<LANES) dog.aiTargetLane=nl;
+  }
+  dog.lane += Math.sign(dog.aiTargetLane-dog.lane)*Math.min(0.02*dt,Math.abs(dog.aiTargetLane-dog.lane));
+}
+
+function dogY(lane){ return trackTop+lane*laneH+laneH/2; }
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // track background
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#4b7a3a'); g.addColorStop(1,'#2f5324');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // lane stripes
+  for(let i=0;i<LANES;i++){
+    ctx.fillStyle= i%2===0? 'rgba(255,255,255,0.05)':'rgba(0,0,0,0.05)';
+    ctx.fillRect(0,trackTop+i*laneH,W,laneH);
+  }
+  for(let i=0;i<=LANES;i++){
+    ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.setLineDash([10,8]); ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(0,trackTop+i*laneH); ctx.lineTo(W,trackTop+i*laneH); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // finish line marker position based on camera
+  const finishX = 700 - (camDist - dogs[playerIdx].dist)*0; // finish drawn relative using lure/track scale below
+
+  // scale: map dist [camDist-100, camDist+700] -> [0,W]
+  const viewSpan=900;
+  const viewStart=camDist-120;
+  function xFor(d){ return (d-viewStart)/viewSpan*W; }
+
+  // draw finish line
+  const fx=xFor(DIST);
+  if(fx>-40&&fx<W+40){
+    ctx.fillStyle='#fff';
+    for(let i=0;i<8;i++){
+      ctx.fillStyle = i%2===0?'#fff':'#222';
+      ctx.fillRect(fx-3,trackTop+i*(H-trackTop-20)/8,6,(H-trackTop-20)/8);
+    }
+  }
+
+  // draw lure (mechanical rabbit) slightly ahead of leader
+  const leadDist=Math.max(...dogs.map(d=>d.dist));
+  const lureDist=Math.min(DIST+40,leadDist+60);
+  const lx=xFor(lureDist);
+  ctx.font='26px serif'; ctx.textAlign='center';
+  ctx.fillText('🐇',lx, trackTop-8);
+
+  // draw dogs sorted by lane for overlap sanity
+  dogs.forEach(d=>{
+    const x=xFor(d.dist);
+    const y=dogY(d.lane);
+    if(x<-30||x>W+30)return;
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.font='28px serif';
+    ctx.textAlign='center';
+    ctx.textBaseline='middle';
+    ctx.fillText('🐕',0,0);
+    ctx.restore();
+    ctx.fillStyle=d.color; ctx.font='bold 11px Arial'; ctx.textAlign='center';
+    ctx.fillText(d.name, x, y-20);
+  });
+
+  ctx.textAlign='left';
+}
+
+function computePlaces(){
+  const order=[...dogs].sort((a,b)=>b.dist-a.dist);
+  order.forEach((d,i)=>d.place=i+1);
+}
+
+let lastT=null;
+function loop(t){
+  if(lastT===null)lastT=t;
+  let dt=Math.min((t-lastT)/16.6667,3);
+  lastT=t;
+
+  if(pressWindow>0){pressWindow-=dt*16.6667/1000; if(pressWindow<=0)lastPress=null;}
+
+  if(!started){
+    draw();
+    ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff'; ctx.font='bold 26px Arial'; ctx.textAlign='center';
+    ctx.fillText(I18N.t('gh_ready','Tap / Press Z or X to start!'),W/2,H/2);
+    ctx.textAlign='left';
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(!raceOver){
+    raceTime+=dt/60;
+    const p=dogs[playerIdx];
+    // speed decay
+    dogs.forEach(d=>{ if(!d.isPlayer) updateAI(d,dt); });
+    p.speed=Math.max(0,p.speed-0.09*dt);
+    p.stamina=Math.min(100,p.stamina+0.06*dt*(p.speed<3?1:0.15));
+
+    // slow-dog blocking: if player shares lane closely behind a slower dog, small drag unless recently changed lane
+    dogs.forEach(d=>{
+      if(d===dogs[playerIdx])return;
+      const dl=Math.abs(d.lane-dogs[playerIdx].lane);
+      const ahead=d.dist-dogs[playerIdx].dist;
+      if(dl<0.4 && ahead>0 && ahead<25 && d.speed<dogs[playerIdx].speed){
+        dogs[playerIdx].speed=Math.max(0,dogs[playerIdx].speed-0.15*dt);
+      }
+    });
+
+    dogs.forEach(d=>{
+      if(!d.finished){
+        d.dist+=d.speed*dt*0.6;
+        if(d.dist>=DIST){ d.dist=DIST; d.finished=true; }
+      }
+    });
+    camDist=dogs[playerIdx].dist;
+
+    computePlaces();
+
+    document.getElementById('stamFill').style.width=dogs[playerIdx].stamina+'%';
+    document.getElementById('speedFill').style.width=Math.min(100,dogs[playerIdx].speed/14*100)+'%';
+
+    if(dogs[playerIdx].finished && !finished){
+      finished=true;
+      raceOver=true;
+      const place=dogs[playerIdx].place;
+      const timeStr=raceTime.toFixed(2);
+      totalTime+=raceTime;
+      raceResults.push({place,time:raceTime});
+      if(place===1)SFX.win(); else SFX.point();
+    } else if(!dogs.some(d=>!d.finished) && !finished){
+      // player never finished but all others did (shouldn't happen since player controls needed) - safety
+      finished=true; raceOver=true;
+      totalTime+=raceTime;
+      raceResults.push({place:dogs[playerIdx].place||NUM_DOGS,time:raceTime});
+    }
+  }
+
+  draw();
+
+  if(raceOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffd54f'; ctx.font='bold 30px Arial'; ctx.textAlign='center';
+    const r=raceResults[raceResults.length-1];
+    const ord=r.place===1?'1st':r.place===2?'2nd':r.place===3?'3rd':r.place+'th';
+    ctx.fillText(I18N.t('gh_finish','Finished {p}!').replace('{p}',ord), W/2, H/2-30);
+    ctx.font='20px Arial'; ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('gh_time','Time: {t}s').replace('{t}',r.time.toFixed(2)), W/2, H/2+4);
+    if(raceNum<RACE_COUNT){
+      ctx.fillText(I18N.t('gh_next','Tap / Press Space for next race'), W/2, H/2+36);
+    } else {
+      ctx.font='bold 22px Arial';
+      ctx.fillText(I18N.t('gh_total','Total time: {t}s').replace('{t}',totalTime.toFixed(2)), W/2, H/2+34);
+      ctx.font='16px Arial';
+      ctx.fillText(I18N.t('gh_restart','Tap / Press Space to race again'), W/2, H/2+62);
+    }
+    ctx.textAlign='left';
+  }
+
+  requestAnimationFrame(loop);
+}
+
+newRace();
+requestAnimationFrame(loop);
+</script></body></html>

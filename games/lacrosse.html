@@ -1,0 +1,309 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Lacrosse</title><meta name="description" content="Play Lacrosse free online — Control the attacker with WASD/arrows or drag to move, click/tap to shoot. Dodge defenders and beat the goalie before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/lacrosse"><meta property="og:title" content="Lacrosse - Multiport Games"><meta property="og:description" content="Play Lacrosse free online — Control the attacker with WASD/arrows or drag to move, click/tap to shoot. Dodge defenders and beat the goalie before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/lacrosse"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Lacrosse","description":"Play Lacrosse free online instantly. Control the attacker with WASD/arrows or drag to move, click/tap to shoot. Dodge defenders and beat the goalie before time runs out. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/lacrosse","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#07110a}
+#c{background:#2e7d32;display:block;border-radius:8px;touch-action:none;margin:0 auto}
+#hud{color:#d9ffd9;font-size:1.1rem;font-weight:800;text-align:center;padding:8px}
+#hud b{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Lacrosse</div>
+  <div class="game-frame">
+    <div id="hud">Goals: <b id="goalsNum">0</b> | Time: <b id="timeNum">60</b> | Round <b id="roundNum">1</b></div>
+    <canvas id="c" width="800" height="450"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move your attacker (green, with the ball) using <b>WASD</b> / <b>Arrow Keys</b>, or <b>drag</b> on touch. Click or tap anywhere on the field to <b>shoot</b> toward that spot when you have a clear lane. Avoid the red defenders — if one catches you while you're carrying the ball, they'll <b>check</b> it away. Beat the goalkeeper and find the open net to score. Score as many goals as you can before time runs out — defenders get tougher each round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=450;
+const goalsNumEl=document.getElementById('goalsNum');
+const timeNumEl=document.getElementById('timeNum');
+const roundNumEl=document.getElementById('roundNum');
+
+let hi=parseInt(localStorage.getItem('lacrosse_hi')||'0',10);
+let goals=0,round=1,timeLeft=60,gameOver=false,started=false,paused=false;
+let ball=null; // {x,y,vx,vy} when shot free
+let hasBall=true;
+let attacker={x:120,y:H/2,r:16,speed:3.2,moveDX:0,moveDY:0};
+let defenders=[];
+let goalie={x:W-40,y:H/2,r:16,dir:1};
+const GOAL_X=W-20,GOAL_Y1=H/2-45,GOAL_Y2=H/2+45;
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(!started){startGame();}
+});
+document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+let dragging=false,dragStart=null;
+c.addEventListener('pointerdown',e=>{
+  if(!started){startGame();return;}
+  const rect=c.getBoundingClientRect();
+  const px=(e.clientX-rect.left)*(W/rect.width);
+  const py=(e.clientY-rect.top)*(H/rect.height);
+  dragStart={x:px,y:py,ax:attacker.x,ay:attacker.y,t:performance.now()};
+  dragging=true;
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging||!hasBall)return;
+  const rect=c.getBoundingClientRect();
+  const px=(e.clientX-rect.left)*(W/rect.width);
+  const py=(e.clientY-rect.top)*(H/rect.height);
+  // treat as joystick-drag movement
+  const dx=px-dragStart.x,dy=py-dragStart.y;
+  attacker.moveDX=dx;attacker.moveDY=dy;
+});
+c.addEventListener('pointerup',e=>{
+  if(!dragging)return;
+  dragging=false;
+  const rect=c.getBoundingClientRect();
+  const px=(e.clientX-rect.left)*(W/rect.width);
+  const py=(e.clientY-rect.top)*(H/rect.height);
+  const dt=performance.now()-dragStart.t;
+  const dist=Math.hypot(px-dragStart.x,py-dragStart.y);
+  attacker.moveDX=0;attacker.moveDY=0;
+  // short tap/click => shoot toward point; long drag already moved
+  if(dt<220||dist<10){
+    tryShoot(px,py);
+  } else if(hasBall){
+    tryShoot(px,py);
+  }
+});
+
+function tryShoot(tx,ty){
+  if(!hasBall||gameOver||!started)return;
+  const dx=tx-attacker.x,dy=ty-attacker.y;
+  const d=Math.hypot(dx,dy)||1;
+  const speed=9;
+  ball={x:attacker.x,y:attacker.y,vx:dx/d*speed,vy:dy/d*speed,shotFromX:attacker.x};
+  hasBall=false;
+  SFX.swoosh&&SFX.swoosh();
+}
+
+function resetPositions(){
+  attacker.x=120;attacker.y=H/2;
+  hasBall=true;ball=null;
+  const n=Math.min(2+Math.floor(round/1),6);
+  defenders=[];
+  for(let i=0;i<n;i++){
+    defenders.push({
+      x:300+Math.random()*350,
+      y:60+Math.random()*(H-120),
+      r:15,
+      speed:1.2+round*0.28+Math.random()*0.4,
+    });
+  }
+  goalie.x=W-40;goalie.y=H/2;goalie.dir=1;
+}
+
+function startGame(){
+  goals=0;round=1;timeLeft=60;gameOver=false;started=true;
+  resetPositions();
+  updateHud();
+}
+
+function updateHud(){
+  goalsNumEl.textContent=goals;
+  timeNumEl.textContent=Math.ceil(timeLeft);
+  roundNumEl.textContent=round;
+}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+
+let lastTime=null;
+function update(dt){
+  if(!started||gameOver)return;
+  timeLeft-=dt/60;
+  if(timeLeft<=0){
+    timeLeft=0;
+    gameOver=true;
+    SFX.lose&&SFX.lose();
+  }
+
+  // attacker movement
+  if(hasBall){
+    let dx=0,dy=0;
+    if(keys['arrowup']||keys['w'])dy-=1;
+    if(keys['arrowdown']||keys['s'])dy+=1;
+    if(keys['arrowleft']||keys['a'])dx-=1;
+    if(keys['arrowright']||keys['d'])dx+=1;
+    if(attacker.moveDX||attacker.moveDY){
+      const md=Math.hypot(attacker.moveDX,attacker.moveDY)||1;
+      dx+=attacker.moveDX/md*1.4;
+      dy+=attacker.moveDY/md*1.4;
+    }
+    const m=Math.hypot(dx,dy);
+    if(m>0){
+      attacker.x+=(dx/m)*attacker.speed*dt;
+      attacker.y+=(dy/m)*attacker.speed*dt;
+    }
+    attacker.x=clamp(attacker.x,attacker.r,W-attacker.r);
+    attacker.y=clamp(attacker.y,attacker.r,H-attacker.r);
+  }
+
+  // defenders chase attacker (if attacker has ball) else drift toward ball/goal area
+  defenders.forEach(d=>{
+    const target=hasBall?attacker:(ball||{x:W/2,y:H/2});
+    const dx=target.x-d.x,dy=target.y-d.y;
+    const dd=Math.hypot(dx,dy)||1;
+    d.x+=(dx/dd)*d.speed*dt;
+    d.y+=(dy/dd)*d.speed*dt;
+    d.x=clamp(d.x,d.r,W-d.r);
+    d.y=clamp(d.y,d.r,H-d.r);
+  });
+
+  // check-away: if defender touches attacker carrying ball
+  if(hasBall){
+    for(const d of defenders){
+      if(dist(d,attacker)<d.r+attacker.r){
+        // knock ball loose in a random-ish direction away from defender
+        hasBall=false;
+        const dx=attacker.x-d.x,dy=attacker.y-d.y;
+        const dd=Math.hypot(dx,dy)||1;
+        ball={x:attacker.x,y:attacker.y,vx:dx/dd*4,vy:dy/dd*4};
+        SFX.hit&&SFX.hit();
+        break;
+      }
+    }
+  }
+
+  // goalie movement: track y of ball or attacker, biased toward goal line
+  const goalieTargetY=ball?ball.y:attacker.y;
+  goalie.y+=clamp(goalieTargetY-goalie.y,-2.6-round*0.2,2.6+round*0.2)*dt*0.5;
+  goalie.y=clamp(goalie.y,GOAL_Y1+10,GOAL_Y2-10);
+
+  // ball flight
+  if(ball){
+    ball.x+=ball.vx*dt;
+    ball.y+=ball.vy*dt;
+    ball.vx*=0.995;ball.vy*=0.995;
+    // wall bounce top/bottom
+    if(ball.y<8){ball.y=8;ball.vy*=-0.6;}
+    if(ball.y>H-8){ball.y=H-8;ball.vy*=-0.6;}
+    // goalie save
+    if(dist(ball,goalie)<goalie.r+8){
+      SFX.hit&&SFX.hit();
+      ball.vx=-Math.abs(ball.vx)*0.8;
+      ball.vy=(Math.random()-0.5)*6;
+    }
+    // scoring check
+    if(ball.x>GOAL_X && ball.y>GOAL_Y1 && ball.y<GOAL_Y2){
+      goals++;
+      SFX.success&&SFX.success();
+      if(goals%3===0)round++;
+      updateHud();
+      resetPositions();
+      return;
+    }
+    // out of bounds / stopped -> attacker or defender can pick up if close, else respawn
+    if(ball.x>W+20||ball.x<-20){
+      hasBall=true;ball=null;attacker.x=120;attacker.y=H/2;
+      return;
+    }
+    const speed=Math.hypot(ball.vx,ball.vy);
+    if(speed<0.4){
+      // loose ball on field — whoever's near picks it up
+      if(dist(ball,attacker)<attacker.r+10){
+        hasBall=true;ball=null;
+      } else {
+        for(const d of defenders){
+          if(dist(ball,d)<d.r+10){
+            // defender picks up -> ball resets to attacker after a short delay for playability
+            hasBall=false;
+            ball=null;
+            setTimeout(()=>{ if(started&&!gameOver){hasBall=true;attacker.x=120;attacker.y=H/2;} },600);
+            SFX.error&&SFX.error();
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  updateHud();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // field
+  ctx.fillStyle='#2e7d32';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,.5)';ctx.lineWidth=3;
+  ctx.strokeRect(10,10,W-20,H-20);
+  ctx.beginPath();ctx.arc(W/2,H/2,50,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(W/2,10);ctx.lineTo(W/2,H-10);ctx.stroke();
+
+  // goal
+  ctx.fillStyle='#ddd';
+  ctx.fillRect(GOAL_X,GOAL_Y1,8,GOAL_Y2-GOAL_Y1);
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;
+  ctx.strokeRect(GOAL_X,GOAL_Y1,60,GOAL_Y2-GOAL_Y1);
+
+  // goalie
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(goalie.x,goalie.y,goalie.r,0,Math.PI*2);ctx.fill();
+
+  // defenders
+  ctx.fillStyle='#e53935';
+  defenders.forEach(d=>{
+    ctx.beginPath();ctx.arc(d.x,d.y,d.r,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#7f0000';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(d.x,d.y);ctx.lineTo(d.x+14,d.y-14);ctx.stroke();
+  });
+
+  // attacker
+  ctx.fillStyle='#7ec850';
+  ctx.beginPath();ctx.arc(attacker.x,attacker.y,attacker.r,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#2d5a1f';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(attacker.x,attacker.y);ctx.lineTo(attacker.x+16,attacker.y-16);ctx.stroke();
+  if(hasBall){
+    ctx.fillStyle='#fff9c4';
+    ctx.beginPath();ctx.arc(attacker.x+16,attacker.y-16,5,0,Math.PI*2);ctx.fill();
+  }
+
+  // free ball
+  if(ball){
+    ctx.fillStyle='#fff9c4';
+    ctx.beginPath();ctx.arc(ball.x,ball.y,6,0,Math.PI*2);ctx.fill();
+  }
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,.45)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('tap_start','Tap, click, or press a move key to start'),W/2,H/2);
+  } else if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-30);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('final_goals','Goals: {g} (Best: {h})').replace('{g}',goals).replace('{h}',hi),W/2,H/2+6);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap or click to play again'),W/2,H/2+40);
+  }
+}
+
+c.addEventListener('pointerdown',()=>{
+  if(gameOver){startGame();}
+});
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+  update(dt);
+  if(goals>hi){hi=goals;localStorage.setItem('lacrosse_hi',String(hi));}
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,231 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Antlion Pit</title><meta name="description" content="Play Antlion Pit free online — Drag to dig a conical sand trap, then click at the right moment to flick sand and knock passing ants into your pit before time runs out. Miss the timing and the ant escapes!"><link rel="canonical" href="https://games.multiportllc.com/games/antlionpit"><meta property="og:title" content="Antlion Pit - Multiport Games"><meta property="og:description" content="Play Antlion Pit free online — Drag to dig a conical sand trap, then click at the right moment to flick sand and knock passing ants into your pit before time runs out. Miss the timing and the ant escapes!"><meta property="og:url" content="https://games.multiportllc.com/games/antlionpit"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Antlion Pit","description":"Play Antlion Pit free online instantly. Drag to dig a conical sand trap, then click at the right moment to flick sand and knock passing ants into your pit before time runs out. Miss the timing and the ant escapes! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/antlionpit","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#2b1d0f;border-radius:14px;padding:16px;max-width:660px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#fff;font-weight:800;font-size:1rem;margin-bottom:8px;flex-wrap:wrap;gap:6px}
+#hud span{color:#ffcf7a}
+#scene{position:relative;height:320px;background:linear-gradient(#e8c28a,#d8a75f);border-radius:10px;overflow:hidden;touch-action:none;cursor:crosshair}
+#digHint{position:absolute;top:6px;left:0;right:0;text-align:center;color:#5a3a12;font-size:.8rem;font-weight:700;pointer-events:none}
+#msg{text-align:center;color:#ffcf7a;font-weight:800;min-height:1.6em;margin-top:8px}
+#startBtn{display:block;margin:10px auto 0;padding:9px 26px;background:#b5651d;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;font-weight:700}
+.ant{position:absolute;font-size:1.4rem;user-select:none;pointer-events:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Antlion Pit</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud">
+        <div>Trapped: <span id="score">0</span></div>
+        <div>Time: <span id="time">50</span>s</div>
+        <div>Hi: <span id="hi">0</span></div>
+      </div>
+      <div id="scene">
+        <canvas id="c" width="620" height="320" style="position:absolute;left:0;top:0"></canvas>
+        <div id="digHint">Drag anywhere to dig a pit trap</div>
+      </div>
+      <div id="msg">Dig a pit, then click near the rim just as an ant passes to flick it in!</div>
+      <button id="startBtn">Start</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>Drag</b> across the sand to dig a conical pit trap — a bigger, deeper pit catches ants more easily. Ants wander across the scene; <b>click near the rim</b> at the right moment (just as an ant nears the edge) to flick sand and knock it in. Click too early, too late, or too far away and the ant escapes. Trap as many ants as you can before time runs out — later ants get more cautious and quicker!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=620,H=320;
+let score=0,hi=parseInt(localStorage.getItem('antlionpit_hi')||'0',10),timeLeft=50;
+let running=false,round=1,timerId=null,ants=[],spawnTimer=null;
+let pit={x:310,y:180,r:0,depth:0}; // r = rim radius
+document.getElementById('hi').textContent=hi;
+
+const scoreEl=document.getElementById('score');
+const timeEl=document.getElementById('time');
+const hiEl=document.getElementById('hi');
+const msgEl=document.getElementById('msg');
+const startBtn=document.getElementById('startBtn');
+const digHint=document.getElementById('digHint');
+
+function setMsg(t){msgEl.textContent=t;}
+function updateHud(){
+  scoreEl.textContent=score;
+  timeEl.textContent=Math.max(0,Math.ceil(timeLeft));
+}
+
+// Digging: drag builds pit radius centered near drag centroid
+let dragging=false,dragPts=[];
+function scenePos(e){
+  const r=c.getBoundingClientRect();
+  const p = e.touches? e.touches[0] : e;
+  return {x:(p.clientX-r.left)*(W/r.width), y:(p.clientY-r.top)*(H/r.height)};
+}
+c.addEventListener('pointerdown',e=>{
+  if(!running)return;
+  const p=scenePos(e);
+  // if clicking near rim (attempt flick), handled separately below in click check
+  const distToRim=Math.abs(Math.hypot(p.x-pit.x,p.y-pit.y)-pit.r);
+  if(pit.r>18 && distToRim<26){
+    attemptFlick(p);
+    return;
+  }
+  dragging=true;
+  dragPts=[p];
+  digHint.style.display='none';
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging||!running)return;
+  const p=scenePos(e);
+  dragPts.push(p);
+  if(dragPts.length>40)dragPts.shift();
+  // recompute pit center/radius from bounding box of recent points
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  dragPts.forEach(pt=>{minX=Math.min(minX,pt.x);maxX=Math.max(maxX,pt.x);minY=Math.min(minY,pt.y);maxY=Math.max(maxY,pt.y);});
+  pit.x=(minX+maxX)/2;
+  pit.y=(minY+maxY)/2;
+  pit.r=Math.min(90,Math.max(pit.r,Math.max(maxX-minX,maxY-minY)/2));
+  pit.depth=Math.min(1,pit.r/90);
+});
+window.addEventListener('pointerup',()=>{ dragging=false; });
+
+function attemptFlick(clickPos){
+  // find nearest ant within reasonable range of rim
+  let best=null,bestD=Infinity;
+  ants.forEach(a=>{
+    if(a.dead)return;
+    const d=Math.hypot(a.x-clickPos.x,a.y-clickPos.y);
+    if(d<bestD){bestD=d;best=a;}
+  });
+  if(!best){ SFX.click(); return; }
+  const distFromRim=Math.hypot(best.x-pit.x,best.y-pit.y)-pit.r;
+  // success window: ant must be near rim (-14..22 px) and click close to ant (<34px)
+  if(bestD<34 && distFromRim>-14 && distFromRim<26){
+    best.dead=true;
+    best.caught=true;
+    score+=1;
+    SFX.success();
+    setMsg(I18N.t('trapped_msg','Trapped! +1'));
+    updateHud();
+    if(score>hi){ hi=score; localStorage.setItem('antlionpit_hi',hi); hiEl.textContent=hi; }
+  } else {
+    SFX.error();
+    setMsg(I18N.t('missed_flick_msg','Missed the flick — too early or too far!'));
+  }
+}
+
+function spawnAnt(){
+  if(!running)return;
+  const edge=Math.floor(Math.random()*4);
+  let x,y,vx,vy;
+  const speed=0.35+round*0.05+Math.random()*0.2;
+  if(edge===0){x=-10;y=40+Math.random()*(H-80);}
+  else if(edge===1){x=W+10;y=40+Math.random()*(H-80);}
+  else if(edge===2){x=40+Math.random()*(W-80);y=-10;}
+  else {x=40+Math.random()*(W-80);y=H+10;}
+  // aim roughly toward pit area but with wander, more cautious (curving away) at higher rounds
+  const angleToPit=Math.atan2(pit.y-y,pit.x-x)+(Math.random()*0.8-0.4);
+  vx=Math.cos(angleToPit)*speed;
+  vy=Math.sin(angleToPit)*speed;
+  ants.push({x,y,vx,vy,dead:false,caught:false,wob:Math.random()*Math.PI*2,cautious:round>2});
+}
+
+function drawPit(){
+  ctx.save();
+  const grad=ctx.createRadialGradient(pit.x,pit.y,4,pit.x,pit.y,pit.r||1);
+  grad.addColorStop(0,'#3a2510');
+  grad.addColorStop(0.7,'#6b4a24');
+  grad.addColorStop(1,'#c99a5c');
+  ctx.beginPath();
+  ctx.ellipse(pit.x,pit.y,pit.r,pit.r*0.6,0,0,Math.PI*2);
+  ctx.fillStyle=pit.r>0?grad:'transparent';
+  ctx.fill();
+  ctx.strokeStyle='#7a5023';
+  ctx.lineWidth=3;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawAnt(a){
+  ctx.save();
+  ctx.translate(a.x,a.y);
+  ctx.rotate(Math.atan2(a.vy,a.vx));
+  ctx.fillStyle='#2a1a0a';
+  ctx.beginPath();ctx.ellipse(0,0,7,4,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(8,0,4,3,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(-8,0,4,3,0,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+let lastT=null,rafId=null;
+function loop(now){
+  if(!running)return;
+  if(lastT===null)lastT=now;
+  const dt=Math.min(now-lastT,50);
+  lastT=now;
+  ctx.clearRect(0,0,W,H);
+  // sand texture background already via CSS; draw pit
+  drawPit();
+  ants.forEach(a=>{
+    if(a.dead)return;
+    a.wob+=0.003*dt;
+    a.x+=a.vx*dt*0.06+Math.sin(a.wob)*0.15;
+    a.y+=a.vy*dt*0.06+Math.cos(a.wob*1.4)*0.15;
+    const distFromRim=Math.hypot(a.x-pit.x,a.y-pit.y)-pit.r;
+    // cautious ants veer away when very close to rim if pit is big
+    if(a.cautious && distFromRim<10 && distFromRim>-30 && Math.random()<0.04){
+      const away=Math.atan2(a.y-pit.y,a.x-pit.x);
+      a.vx=Math.cos(away)*Math.hypot(a.vx,a.vy);
+      a.vy=Math.sin(away)*Math.hypot(a.vx,a.vy);
+    }
+    // fall into pit if it wanders inside rim and pit deep enough
+    if(Math.hypot(a.x-pit.x,a.y-pit.y)<pit.r*0.5 && pit.depth>0.3 && Math.random()<0.02){
+      a.dead=true;a.caught=true;score++;SFX.success();updateHud();
+      if(score>hi){ hi=score; localStorage.setItem('antlionpit_hi',hi); hiEl.textContent=hi; }
+      setMsg(I18N.t('fell_in_msg','It wandered right in!'));
+    }
+    drawAnt(a);
+  });
+  ants=ants.filter(a=>{
+    if(a.dead)return false;
+    if(a.x<-30||a.x>W+30||a.y<-30||a.y>H+30)return false;
+    return true;
+  });
+  rafId=requestAnimationFrame(loop);
+}
+
+function startGame(){
+  score=0;timeLeft=50;running=true;round=1;pit={x:W/2,y:H/2+20,r:0,depth:0};ants=[];
+  digHint.style.display='block';
+  startBtn.disabled=true;
+  startBtn.textContent=I18N.t('running_label','Running...');
+  setMsg(I18N.t('go_ant_msg','Dig your pit, then flick ants in!'));
+  updateHud();
+  clearInterval(timerId);clearInterval(spawnTimer);
+  lastT=null;
+  rafId=requestAnimationFrame(loop);
+  timerId=setInterval(()=>{
+    timeLeft-=0.1;
+    round=1+Math.floor((50-timeLeft)/10);
+    if(timeLeft<=0){ endGame(); return; }
+    updateHud();
+  },100);
+  spawnTimer=setInterval(()=>{ if(running)spawnAnt(); },Math.max(700,1600-round*150));
+}
+
+function endGame(){
+  running=false;
+  clearInterval(timerId);clearInterval(spawnTimer);
+  cancelAnimationFrame(rafId);
+  startBtn.disabled=false;
+  startBtn.textContent=I18N.t('restart_label','Play Again');
+  setMsg(I18N.t('over_ant_msg','Time is up! Ants trapped: {s}').replace('{s}',score));
+  SFX.lose();
+}
+
+startBtn.addEventListener('click',startGame);
+updateHud();
+</script></body></html>

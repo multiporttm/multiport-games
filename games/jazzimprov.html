@@ -1,0 +1,240 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Jazz Improv</title><meta name="description" content="Play Jazz Improv free online — Listen to the jazz call, then click the lanes to improvise your response before time runs out. Loose, groovy scoring rewards any tasteful reply."><link rel="canonical" href="https://games.multiportllc.com/games/jazzimprov"><meta property="og:title" content="Jazz Improv - Multiport Games"><meta property="og:description" content="Play Jazz Improv free online — Listen to the jazz call, then click the lanes to improvise your response before time runs out. Loose, groovy scoring rewards any tasteful reply."><meta property="og:url" content="https://games.multiportllc.com/games/jazzimprov"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Jazz Improv","description":"Play Jazz Improv free online instantly. Listen to the jazz call, then click the lanes to improvise your response before time runs out. Loose, groovy scoring rewards any tasteful reply. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/jazzimprov","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0b0710}
+#stage{background:linear-gradient(160deg,#241226,#120a1f);border-radius:14px;padding:16px;max-width:640px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#f2d98a;font-weight:800;font-size:1rem;padding:0 4px 8px}
+#hud span b{color:#ff9f1c;font-size:1.15rem}
+#vibeWrap{background:#000;border-radius:20px;height:22px;overflow:hidden;margin:0 auto 12px;border:2px solid #5c3a6e}
+#vibeBar{height:100%;width:50%;background:linear-gradient(90deg,#ff5e5e,#ffd23f,#7dff7a);transition:width .25s}
+#phraseRow{display:flex;justify-content:center;gap:8px;min-height:64px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.note{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.3rem;background:#3a1f4d;border:2px solid #a56bd6;color:#fff;opacity:.35;transform:scale(.8);transition:all .15s}
+.note.active{opacity:1;transform:scale(1.15);box-shadow:0 0 14px #a56bd6}
+#status{text-align:center;color:#e8c9ff;font-weight:700;min-height:1.6em;margin-bottom:8px}
+#lanes{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;max-width:520px;margin:0 auto}
+.lane{aspect-ratio:1;border-radius:12px;background:#241537;border:2px solid #6b3f8c;color:#f2d98a;font-weight:900;font-size:1.4rem;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;transition:transform .08s,background .12s}
+.lane:active{transform:scale(.9)}
+.lane.hit{background:#3fae5a;border-color:#7dff7a}
+.lane.flash{background:#7a4bb0}
+#startBtn{display:block;margin:14px auto 0;padding:10px 26px;background:#ff9f1c;border:none;border-radius:22px;font-weight:800;font-size:1rem;color:#241226;cursor:pointer}
+@media(max-width:480px){.lane{font-size:1.1rem}.note{width:36px;height:36px;font-size:1.05rem}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Jazz Improv</div>
+  <div class="game-frame">
+    <div id="stage">
+      <div id="hud"><span>Round <b id="roundNum">1</b></span><span>Score <b id="scoreNum">0</b></span></div>
+      <div id="vibeWrap"><div id="vibeBar"></div></div>
+      <div id="phraseRow"></div>
+      <div id="status">Click Start Jamming to begin</div>
+      <div id="lanes"></div>
+      <button id="startBtn">Start Jamming</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Listen to the jazz <b>call</b> (the lit-up note lane sequence). When it's your turn, click the lanes to improvise a <b>response</b> — you don't have to match exactly, any tasteful reply that echoes the call's rhythm and range keeps the vibe up. Respond before the timer runs out. The vibe meter tracks your set; keep it high across rounds as the calls get longer and trickier. Works with mouse, touch, or tapping the lane numbers 1-5 on your keyboard.</div>
+</div>
+<script>
+const LANE_COUNT=5;
+const LANE_ICONS=['♪','♫','♩','♬','𝄢'];
+const lanesEl=document.getElementById('lanes');
+const phraseRow=document.getElementById('phraseRow');
+const statusEl=document.getElementById('status');
+const vibeBar=document.getElementById('vibeBar');
+const startBtn=document.getElementById('startBtn');
+const scoreNumEl=document.getElementById('scoreNum');
+const roundNumEl=document.getElementById('roundNum');
+
+let score=0,round=1,vibe=60,hi=parseInt(localStorage.getItem('jazzimprov_hi')||'0',10);
+let phase='idle'; // idle, calling, waiting, responding, done
+let callSeq=[],responseWindowMs=0,responseTimer=null,responseStart=0;
+let playerResponse=[];
+
+for(let i=0;i<LANE_COUNT;i++){
+  const l=document.createElement('div');
+  l.className='lane';
+  l.textContent=LANE_ICONS[i];
+  l.dataset.i=i;
+  l.addEventListener('pointerdown',()=>pressLane(i));
+  lanesEl.appendChild(l);
+}
+document.addEventListener('keydown',e=>{
+  const n=parseInt(e.key,10);
+  if(n>=1&&n<=5)pressLane(n-1);
+});
+
+function laneEls(){return Array.from(lanesEl.children);}
+
+function setStatus(t){statusEl.textContent=t;}
+function setVibe(v){vibe=Math.max(0,Math.min(100,v));vibeBar.style.width=vibe+'%';}
+function updateHud(){scoreNumEl.textContent=score;roundNumEl.textContent=round;}
+
+function randLane(exclude){
+  let n;
+  do{n=Math.floor(Math.random()*LANE_COUNT);}while(exclude!=null&&n===exclude&&LANE_COUNT>1);
+  return n;
+}
+
+function buildCall(len){
+  const seq=[];
+  let last=null;
+  for(let i=0;i<len;i++){
+    const n=randLane(last);
+    seq.push(n);
+    last=n;
+  }
+  return seq;
+}
+
+async function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+
+function noteFreq(lane){
+  const scale=[392,440,494,587,659]; // G major-ish pentatonic-ish for jazzy feel
+  return scale[lane]||440;
+}
+
+async function playCall(){
+  phase='calling';
+  const len=Math.min(3+Math.floor(round/2),8);
+  callSeq=buildCall(len);
+  phraseRow.innerHTML='';
+  callSeq.forEach(()=>{
+    const n=document.createElement('div');
+    n.className='note';
+    phraseRow.appendChild(n);
+  });
+  setStatus('Listen to the call...');
+  for(let i=0;i<callSeq.length;i++){
+    const lane=callSeq[i];
+    const noteEl=phraseRow.children[i];
+    noteEl.textContent=LANE_ICONS[lane];
+    noteEl.classList.add('active');
+    playNote(lane);
+    flashLane(lane);
+    await sleep(360);
+  }
+  startResponse();
+}
+
+function playNote(lane){
+  if(!window.SFX||SFX.isMuted())return;
+  const ctx=SFX.getContext&&SFX.getContext();
+  if(!ctx)return;
+  try{
+    const t0=ctx.currentTime;
+    const osc=ctx.createOscillator();
+    const gain=ctx.createGain();
+    osc.type='triangle';
+    osc.frequency.setValueAtTime(noteFreq(lane),t0);
+    gain.gain.setValueAtTime(0.14,t0);
+    gain.gain.exponentialRampToValueAtTime(0.0001,t0+0.3);
+    osc.connect(gain);gain.connect(ctx.destination);
+    osc.start(t0);osc.stop(t0+0.32);
+  }catch(e){}
+}
+
+function flashLane(i){
+  const el=laneEls()[i];
+  el.classList.add('flash');
+  setTimeout(()=>el.classList.remove('flash'),200);
+}
+
+function startResponse(){
+  phase='responding';
+  playerResponse=[];
+  responseWindowMs=Math.max(2200,4200-round*150);
+  responseStart=performance.now();
+  setStatus(I18N.t('your_turn','Your turn — improvise a response!'));
+  clearTimeout(responseTimer);
+  responseTimer=setTimeout(finishResponse,responseWindowMs);
+}
+
+function pressLane(i){
+  if(phase!=='responding')return;
+  const el=laneEls()[i];
+  el.classList.add('hit');
+  setTimeout(()=>el.classList.remove('hit'),180);
+  playNote(i);
+  SFX.click&&SFX.click();
+  playerResponse.push(i);
+  if(playerResponse.length>=callSeq.length){
+    finishResponse();
+  }
+}
+
+function finishResponse(){
+  if(phase!=='responding')return;
+  clearTimeout(responseTimer);
+  phase='scoring';
+  scoreResponse();
+}
+
+function scoreResponse(){
+  // Loose scoring: reward playing something, reward similar length, reward variety/contour,
+  // reward not just spamming one lane, small time bonus.
+  let gain=0;
+  if(playerResponse.length===0){
+    gain=-18;
+    setStatus(I18N.t('no_response','No response — the band waited on you...'));
+    SFX.fail&&SFX.fail();
+  } else {
+    const lenDiff=Math.abs(playerResponse.length-callSeq.length);
+    let lenScore=Math.max(0,10-lenDiff*3);
+    const uniqueLanes=new Set(playerResponse).size;
+    const varietyScore=Math.min(10,uniqueLanes*3);
+    const elapsed=performance.now()-responseStart;
+    const timeScore=elapsed<responseWindowMs?6:0;
+    // contour bonus: did response move around like a real phrase (not all one note)
+    let moveScore=0;
+    for(let i=1;i<playerResponse.length;i++){
+      if(playerResponse[i]!==playerResponse[i-1])moveScore+=1.5;
+    }
+    moveScore=Math.min(10,moveScore);
+    gain=Math.round(lenScore+varietyScore+timeScore+moveScore);
+    const totalPossible=36;
+    if(gain>=totalPossible*0.7){
+      setStatus(I18N.t('nice_riff','Nice riff! The band digs it.'));
+      SFX.success&&SFX.success();
+    } else if(gain>=totalPossible*0.35){
+      setStatus(I18N.t('decent_reply','Decent reply — keep the groove going.'));
+      SFX.point&&SFX.point();
+    } else {
+      setStatus(I18N.t('flat_reply','A little flat — try more movement next time.'));
+      SFX.error&&SFX.error();
+    }
+  }
+  score+=Math.max(0,gain);
+  setVibe(vibe+gain*0.9);
+  updateHud();
+  if(score>hi){hi=score;localStorage.setItem('jazzimprov_hi',String(hi));}
+  laneEls().forEach(el=>el.classList.remove('flash','hit'));
+  if(vibe<=0){
+    endSession();
+    return;
+  }
+  round++;
+  setTimeout(()=>{ if(phase==='scoring'){phase='idle';playCall();} },1400);
+}
+
+function endSession(){
+  phase='done';
+  setStatus(I18N.t('session_over','Set over! Final score: {s} (Best: {h})').replace('{s}',score).replace('{h}',hi));
+  startBtn.textContent=I18N.t('play_again','Play Again');
+  startBtn.style.display='block';
+  SFX.lose&&SFX.lose();
+}
+
+function startGame(){
+  score=0;round=1;setVibe(60);updateHud();
+  startBtn.style.display='none';
+  phase='idle';
+  playCall();
+}
+
+startBtn.addEventListener('click',startGame);
+</script></body></html>

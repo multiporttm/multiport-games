@@ -1,0 +1,319 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Plumbing Snake</title><meta name="description" content="Play Plumbing Snake free online — Feed the drain snake forward with the ADVANCE button or Up Arrow, and steer Left/Right at junctions to follow the pipe. Reach the clog and hold BREAK (Down Arrow) to grind it out without getting the snake stuck. Clear drains before the timer runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/plumbingsnake"><meta property="og:title" content="Plumbing Snake - Multiport Games"><meta property="og:description" content="Play Plumbing Snake free online — Feed the drain snake forward with the ADVANCE button or Up Arrow, and steer Left/Right at junctions to follow the pipe. Reach the clog and hold BREAK (Down Arrow) to grind it out without getting the snake stuck. Clear drains before the timer runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/plumbingsnake"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Plumbing Snake","description":"Play Plumbing Snake free online instantly. Feed a drain snake tool through a winding pipe cross-section, steering left or right at junctions, reach the clog at the end and break it up without the snake getting stuck. Score points for drains cleared within the time limit across longer, more winding pipes. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/plumbingsnake","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1f2b;display:block;border-radius:8px;touch-action:none}
+#hud{color:#7ee787;font-size:1.05rem;font-weight:700;text-align:center;padding:6px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#fff}
+#controls2{display:flex;justify-content:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+.tbtn{padding:14px 20px;border-radius:14px;border:none;font-weight:900;font-size:1rem;cursor:pointer;color:#fff;user-select:none;touch-action:none;min-width:70px}
+#leftBtn,#rightBtn{background:linear-gradient(135deg,#546e7a,#37474f)}
+#advBtn{background:linear-gradient(135deg,#43a047,#2e7d32)}
+#advBtn.active{filter:brightness(1.3)}
+#breakBtn{background:linear-gradient(135deg,#e53935,#b71c1c)}
+#breakBtn.active{filter:brightness(1.3)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Plumbing Snake</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>Drain: <b id="lvlVal">1</b></span>
+      <span>Score: <b id="scoreVal">0</b></span>
+      <span>Time: <b id="timeVal">45</b></span>
+      <span>Hi: <b id="hiVal">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <div id="controls2">
+      <button class="tbtn" id="leftBtn">◀ STEER</button>
+      <button class="tbtn" id="advBtn">▶ ADVANCE</button>
+      <button class="tbtn" id="rightBtn">STEER ▶</button>
+      <button class="tbtn" id="breakBtn">⚡ BREAK</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>ADVANCE</b> (or <b>Up Arrow</b>) to feed the drain snake forward through the pipe. At each junction, steer <b>Left</b>/<b>Right</b> (or Arrow keys) toward the open path — pick wrong and the snake jams, costing time. When the head reaches the clog, hold <b>BREAK</b> (or <b>Down Arrow</b>) steadily to grind through it — jerking the snake while breaking makes it kink and get stuck! Clear each drain before time runs out to move on to a longer, more winding pipe.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+let hi=+(localStorage.getItem('plumbingsnake_hi')||0);
+document.getElementById('hiVal').textContent=hi;
+
+let level,score,timeLeft,path,segIndex,segProgress,snakeLen,jammed,jamTimer,cleared,breaking,breakProgress,breakWiggle,gameState,advHeld,steerDir,stuckMsg,stuckTimer;
+let lastTime=null;
+
+// path is an array of {x,y} nodes; between consecutive nodes is a pipe segment.
+// junctions occur at nodes with >2 branch options: we generate a winding single corridor
+// with branch decoy dead-ends requiring correct steer input.
+function genPath(n){
+  const nodes=[{x:60,y:210}];
+  let x=60,y=210,dir=1;
+  const segCount=5+Math.min(n,7);
+  const junctions=[];
+  for(let i=0;i<segCount;i++){
+    const dx=70+Math.random()*40;
+    x+=dx;
+    const turn= i>0 && Math.random()<0.55+n*0.03;
+    if(turn){
+      dir = (Math.random()<0.5?1:-1);
+      y = Math.max(60,Math.min(360,y+dir*(70+Math.random()*50)));
+      junctions.push(nodes.length);
+    }
+    nodes.push({x,y});
+  }
+  nodes.push({x:x+90,y});
+  return {nodes,junctions,end:{x:x+90,y}};
+}
+
+function reset(){ level=1;score=score||0;startLevel(); }
+function startLevel(){
+  path=genPath(level);
+  segIndex=0;segProgress=0;
+  jammed=false;jamTimer=0;
+  cleared=false;breaking=false;breakProgress=0;breakWiggle=0;
+  gameState='navigate';
+  advHeld=false;steerDir=0;
+  stuckMsg='';stuckTimer=0;
+  timeLeft=45+level*3;
+  document.getElementById('lvlVal').textContent=level;
+}
+function fullReset(){score=0;level=1;startLevel();}
+fullReset();
+
+function currentDirVec(){
+  const a=path.nodes[segIndex],b=path.nodes[segIndex+1];
+  if(!b)return {x:1,y:0};
+  const dx=b.x-a.x,dy=b.y-a.y;
+  const len=Math.hypot(dx,dy)||1;
+  return {x:dx/len,y:dy/len};
+}
+
+function isJunctionAhead(){
+  return path.junctions.includes(segIndex+1) && segProgress>0.7;
+}
+
+function advance(dt){
+  if(gameState!=='navigate'||jammed)return;
+  const a=path.nodes[segIndex],b=path.nodes[segIndex+1];
+  if(!b)return;
+  const segLen=Math.hypot(b.x-a.x,b.y-a.y);
+  segProgress+=(2.6+level*0.15)*dt/segLen;
+  // steering requirement near junction: turning segments require correct arrow before reaching node
+  if(path.junctions.includes(segIndex+1) && segProgress>0.55 && segProgress<0.95){
+    const turnDir=Math.sign(b.y - (path.nodes[segIndex-1]?path.nodes[segIndex-1].y:a.y)) || Math.sign(b.y-a.y);
+    const nextTurn=Math.sign(b.y-a.y);
+    // require the player to hold the correct steer direction matching upcoming turn
+    if(nextTurn!==0){
+      const wanted = nextTurn>0?1:-1;
+      if(steerDir!==0 && steerDir!==wanted){
+        jammed=true;jamTimer=55;SFX.error();
+        stuckMsg=I18N.t('snake_jam','Jammed! Wrong turn — reversing a bit.');stuckTimer=70;
+        return;
+      }
+    }
+  }
+  if(segProgress>=1){
+    segProgress=0;segIndex++;
+    SFX.tick();
+    if(segIndex>=path.nodes.length-1){
+      gameState='atClog';
+      SFX.point();
+    }
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowUp'){e.preventDefault();advHeld=true;}
+  else if(e.code==='ArrowLeft'){e.preventDefault();steerDir=-1;}
+  else if(e.code==='ArrowRight'){e.preventDefault();steerDir=1;}
+  else if(e.code==='ArrowDown'){e.preventDefault();breaking=true;}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp'){advHeld=false;}
+  else if(e.code==='ArrowLeft'&&steerDir===-1){steerDir=0;}
+  else if(e.code==='ArrowRight'&&steerDir===1){steerDir=0;}
+  else if(e.code==='ArrowDown'){breaking=false;}
+});
+
+function bindHold(id,onDown,onUp){
+  const el=document.getElementById(id);
+  el.addEventListener('pointerdown',e=>{e.preventDefault();el.classList.add('active');onDown();});
+  ['pointerup','pointerleave','pointercancel'].forEach(ev=>el.addEventListener(ev,e=>{el.classList.remove('active');onUp();}));
+}
+bindHold('advBtn',()=>advHeld=true,()=>advHeld=false);
+bindHold('leftBtn',()=>steerDir=-1,()=>{if(steerDir===-1)steerDir=0;});
+bindHold('rightBtn',()=>steerDir=1,()=>{if(steerDir===1)steerDir=0;});
+bindHold('breakBtn',()=>breaking=true,()=>breaking=false);
+
+let lastBreakDir=0,wiggleTimer=0;
+function doBreak(dt){
+  if(gameState!=='atClog')return;
+  if(breaking){
+    // steady hold required; rapid alternating steer = wiggle = penalty
+    if(steerDir!==0 && steerDir!==lastBreakDir && lastBreakDir!==0){
+      breakWiggle+=1;
+      if(breakWiggle>3){
+        breakProgress=Math.max(0,breakProgress-18);
+        stuckMsg=I18N.t('snake_kink','Kinked! Hold steady while breaking the clog.');stuckTimer=60;
+        SFX.error();
+        breakWiggle=0;
+      }
+    }
+    lastBreakDir=steerDir;
+    breakProgress+=(1.1+level*0.08)*dt;
+    if(Math.random()<0.02)SFX.hit();
+    if(breakProgress>=100){
+      breakProgress=100;
+      cleared=true;
+      gameState='done';
+      const timeBonus=Math.floor(timeLeft*4);
+      score+=200+level*30+timeBonus;
+      if(score>hi){hi=score;localStorage.setItem('plumbingsnake_hi',Math.floor(hi));}
+      SFX.win();
+      setTimeout(()=>{ level++; startLevel(); },1500);
+    }
+  } else {
+    breakProgress=Math.max(0,breakProgress-0.3*dt);
+    lastBreakDir=0;
+  }
+}
+
+function drawPipe(){
+  ctx.strokeStyle='#37474f';
+  ctx.lineWidth=46;
+  ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();
+  path.nodes.forEach((n,i)=>{ if(i===0)ctx.moveTo(n.x,n.y); else ctx.lineTo(n.x,n.y); });
+  ctx.stroke();
+  ctx.strokeStyle='#1a1f2b';
+  ctx.lineWidth=38;
+  ctx.beginPath();
+  path.nodes.forEach((n,i)=>{ if(i===0)ctx.moveTo(n.x,n.y); else ctx.lineTo(n.x,n.y); });
+  ctx.stroke();
+  // grime texture
+  ctx.strokeStyle='rgba(90,60,30,0.5)';
+  ctx.lineWidth=6;
+  ctx.beginPath();
+  path.nodes.forEach((n,i)=>{ if(i===0)ctx.moveTo(n.x,n.y+14); else ctx.lineTo(n.x,n.y+14); });
+  ctx.stroke();
+}
+
+function snakeHeadPos(){
+  const a=path.nodes[Math.min(segIndex,path.nodes.length-1)];
+  const b=path.nodes[Math.min(segIndex+1,path.nodes.length-1)];
+  return {x:a.x+(b.x-a.x)*segProgress,y:a.y+(b.y-a.y)*segProgress};
+}
+
+function drawSnake(){
+  const head=snakeHeadPos();
+  // trailing coil back through visited nodes
+  ctx.strokeStyle='#8d6e63';
+  ctx.lineWidth=10;ctx.lineCap='round';
+  ctx.beginPath();
+  ctx.moveTo(20,210+ (path.nodes[0]?0:0));
+  ctx.moveTo(20,path.nodes[0].y);
+  for(let i=0;i<=segIndex;i++){
+    ctx.lineTo(path.nodes[i].x,path.nodes[i].y);
+  }
+  ctx.lineTo(head.x,head.y);
+  ctx.stroke();
+  // coil texture dashes
+  ctx.strokeStyle='#6d4c41';ctx.lineWidth=2;ctx.setLineDash([4,5]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // head
+  ctx.fillStyle= jammed?'#e53935':'#ffca28';
+  ctx.beginPath();ctx.arc(head.x,head.y,11,0,7);ctx.fill();
+  ctx.fillStyle='#333';
+  ctx.beginPath();ctx.arc(head.x,head.y,4,0,7);ctx.fill();
+}
+
+function drawClog(){
+  const end=path.end;
+  ctx.save();
+  const shrink=1-breakProgress/100;
+  ctx.fillStyle='#5d4037';
+  ctx.beginPath();ctx.arc(end.x,end.y,20*shrink+4,0,7);ctx.fill();
+  ctx.fillStyle='#3e2723';
+  ctx.beginPath();ctx.arc(end.x-6,end.y-4,7*shrink,0,7);ctx.fill();
+  ctx.restore();
+  if(gameState==='atClog'){
+    ctx.fillStyle='#1a1f2b';
+    ctx.fillRect(end.x-40,end.y-40,80,10);
+    ctx.fillStyle= breaking? '#7ee787':'#455a64';
+    ctx.fillRect(end.x-40,end.y-40,80*breakProgress/100,10);
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#10141c';ctx.fillRect(0,0,W,H);
+  drawPipe();
+  drawClog();
+  drawSnake();
+
+  if(stuckMsg&&stuckTimer>0){
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(stuckMsg,W/2,40);
+  }
+  if(cleared){
+    ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#a5d6a7';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('snake_cleared','DRAIN CLEARED!'),W/2,H/2);
+  }
+  if(gameState==='over'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-15);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('snake_restart_hint','Tap / Space to restart'),W/2,H/2+20);
+  }
+}
+
+function tapRestart(){
+  if(gameState==='over'){ fullReset(); }
+}
+c.addEventListener('pointerdown',tapRestart);
+document.addEventListener('keydown',e=>{ if(e.code==='Space'&&gameState==='over')fullReset(); });
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(gameState!=='over'){
+    if(jammed){
+      jamTimer-=dt;
+      // push snake back a little while jammed
+      segProgress=Math.max(0,segProgress-0.01*dt);
+      if(jamTimer<=0)jammed=false;
+    } else if(gameState==='navigate' && advHeld){
+      advance(dt);
+    }
+    if(gameState==='atClog'){
+      doBreak(dt);
+    }
+    if(stuckTimer>0)stuckTimer-=dt;
+
+    timeLeft-=dt/60;
+    if(timeLeft<=0){
+      timeLeft=0;
+      gameState='over';
+      if(score>hi){hi=score;localStorage.setItem('plumbingsnake_hi',Math.floor(hi));}
+      SFX.lose();
+    }
+  }
+
+  draw();
+  document.getElementById('scoreVal').textContent=Math.floor(score);
+  document.getElementById('hiVal').textContent=Math.floor(hi);
+  document.getElementById('timeVal').textContent=Math.ceil(timeLeft);
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
