@@ -1,0 +1,230 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Relay Race</title><meta name="description" content="Play Relay Race free online — Mash Left/Right (or tap Sprint) to build up speed on your leg, then hit Pass (Space) exactly when the moving marker is in the green handoff zone to hand the baton to your AI teammate. Race multiple rounds against rival teams for the best total time!"><link rel="canonical" href="https://games.multiportllc.com/games/relayrace"><meta property="og:title" content="Relay Race - Multiport Games"><meta property="og:description" content="Play Relay Race free online — Sprint your leg, then time your baton handoff to the AI teammate. Race multiple rounds against rival teams for the best total time!"><meta property="og:url" content="https://games.multiportllc.com/games/relayrace"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Relay Race","description":"Play Relay Race free online instantly. Sprint your leg of a 4-person relay and time a precise baton handoff to your AI teammate, then race repeatedly against rival AI teams for the best total time. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/relayrace","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#1a1206;border-radius:14px;padding:14px;text-align:center}
+#hud{display:flex;justify-content:space-between;color:#ffd23f;font-weight:800;padding:0 6px 8px;font-size:.95rem;flex-wrap:wrap;gap:6px}
+#c{background:linear-gradient(#3a2a10,#241a0a);display:block;border-radius:10px;max-width:100%;touch-action:none}
+#handoffBox{margin:10px auto;max-width:600px}
+#hbar{position:relative;height:30px;background:#0e0a04;border-radius:15px;overflow:hidden;border:2px solid #ff6b35}
+#hzone{position:absolute;top:0;bottom:0;background:rgba(76,201,84,.5);border-left:2px solid #4caf50;border-right:2px solid #4caf50}
+#hmarker{position:absolute;top:0;bottom:0;width:4px;background:#fff;box-shadow:0 0 6px #fff}
+#controls{margin-top:12px;display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
+.ctlbtn{padding:16px 26px;border-radius:14px;border:2px solid #ff6b35;background:#3a2510;color:#ffd23f;font-weight:900;font-size:1.1rem;cursor:pointer;user-select:none}
+.ctlbtn:active{background:#ff6b35;color:#241a0a}
+#passbtn{background:#4caf50;border-color:#8bd98f;color:#08240a}
+#msg{color:#ffd23f;font-weight:800;min-height:1.4em;margin-top:8px}
+#next{margin-top:10px;padding:10px 24px;border-radius:20px;border:2px solid #ffd23f;background:#ff6b35;color:#241a0a;font-weight:900;cursor:pointer;display:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Relay Race</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span id="raceDisp">Race: 1</span><span id="timeDisp">Time: 0.0s</span><span id="winsDisp">Wins: 0</span><span id="bestDisp">Best: --</span></div>
+      <canvas id="c" width="760" height="220"></canvas>
+      <div id="handoffBox" style="display:none">
+        <div id="hbar"><div id="hzone"></div><div id="hmarker"></div></div>
+      </div>
+      <div id="controls">
+        <button class="ctlbtn" id="leftbtn">◀ (Left)</button>
+        <button class="ctlbtn" id="rightbtn">▶ (Right)</button>
+        <button class="ctlbtn" id="passbtn" style="display:none">PASS (Space)</button>
+      </div>
+      <div id="msg">Get ready to sprint leg 1!</div>
+      <button id="next">Next Race →</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Alternate <b>Left / Right arrow keys</b> (or tap the ◀ ▶ buttons) as fast as you can to sprint your leg of the relay. When you reach the handoff zone, a marker sweeps across a bar — press <b>Space</b> (or the <b>PASS</b> button) the instant it's inside the green zone to hand the baton cleanly to your AI teammate. A late, early, or missed pass costs your team time. Your teammates run the rest of the leg automatically — race again and again to beat your best total team time against rival AI teams!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=220;
+const TRACK_Y=[60,100,140,180];
+const TRACK_LEN=680,TRACK_X0=30;
+const RIVAL_COUNT=3;
+const RIVAL_COLORS=['#4fc3f7','#e91e63','#8bc34a'];
+
+let raceNum=1,wins=0,bestTime=null;
+let state='sprint'; // sprint | handoff | running (auto) | done
+let playerX=0,speed=0;
+let mashLast='';
+let handoffMarkerPos=0,handoffDir=1,handoffZoneLo=0.55,handoffZoneHi=0.8,handoffSpeed=1.6;
+let legTime=0,totalTime=0,penaltyTime=0,handoffTimer=0;
+let rivals=[]; // {x, totalTime, finished}
+let raceStartPerf=0;
+let running=true;
+
+const HS_KEY='relayrace_best';
+bestTime=localStorage.getItem(HS_KEY)?parseFloat(localStorage.getItem(HS_KEY)):null;
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+function updateHud(){
+  document.getElementById('raceDisp').textContent=I18N.t('race_label','Race: {n}').replace('{n}',raceNum);
+  document.getElementById('timeDisp').textContent=I18N.t('time_label','Time: {t}s').replace('{t}',totalTime.toFixed(1));
+  document.getElementById('winsDisp').textContent=I18N.t('wins_label','Wins: {w}').replace('{w}',wins);
+  document.getElementById('bestDisp').textContent=I18N.t('best_label','Best: {b}').replace('{b}',bestTime!=null?bestTime.toFixed(1)+'s':'--');
+}
+
+function startRace(){
+  state='sprint';
+  playerX=0;speed=0;mashLast='';
+  legTime=0;totalTime=0;penaltyTime=0;handoffTimer=0;
+  handoffMarkerPos=0;handoffDir=1;
+  handoffZoneHi=Math.max(0.35,0.8-raceNum*0.03);
+  handoffZoneLo=Math.max(0.12,handoffZoneHi-0.22);
+  handoffSpeed=1.6+raceNum*0.12;
+  rivals=[];
+  for(let i=0;i<RIVAL_COUNT;i++){
+    rivals.push({x:0,speed:2.6+Math.random()*0.8,totalTime:0,finished:false});
+  }
+  raceStartPerf=performance.now();
+  document.getElementById('handoffBox').style.display='none';
+  document.getElementById('passbtn').style.display='none';
+  document.getElementById('leftbtn').style.display='';
+  document.getElementById('rightbtn').style.display='';
+  document.getElementById('next').style.display='none';
+  setMsg(I18N.t('sprint_msg','Sprint! Mash Left / Right!'));
+  updateHud();
+}
+
+function mash(side){
+  if(state!=='sprint')return;
+  if(side!==mashLast){
+    speed=Math.min(6,speed+0.9);
+    mashLast=side;
+    SFX.tick();
+  }
+}
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'){e.preventDefault();mash('L');}
+  else if(e.code==='ArrowRight'){e.preventDefault();mash('R');}
+  else if(e.code==='Space'){e.preventDefault();attemptPass();}
+});
+document.getElementById('leftbtn').addEventListener('click',()=>mash('L'));
+document.getElementById('rightbtn').addEventListener('click',()=>mash('R'));
+document.getElementById('passbtn').addEventListener('click',attemptPass);
+document.getElementById('next').addEventListener('click',()=>{raceNum++;startRace();});
+
+function attemptPass(){
+  if(state!=='handoff')return;
+  const pos=handoffMarkerPos;
+  const inZone=pos>=handoffZoneLo&&pos<=handoffZoneHi;
+  const center=(handoffZoneLo+handoffZoneHi)/2;
+  const dist=Math.abs(pos-center);
+  let penalty;
+  if(inZone&&dist<0.06){penalty=0;SFX.success();setMsg(I18N.t('pass_perfect','Perfect handoff!'));}
+  else if(inZone){penalty=0.4;SFX.point();setMsg(I18N.t('pass_good','Good handoff.'));}
+  else{penalty=1.8;SFX.error();setMsg(I18N.t('pass_bad','Baton bobbled! Time lost.'));}
+  penaltyTime+=penalty;
+  finishLegToAuto();
+}
+
+function missedHandoff(){
+  penaltyTime+=3.0;
+  SFX.lose();
+  setMsg(I18N.t('pass_dropped','Baton dropped! Big time penalty.'));
+  finishLegToAuto();
+}
+
+function finishLegToAuto(){
+  state='running';
+  document.getElementById('handoffBox').style.display='none';
+  document.getElementById('passbtn').style.display='none';
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  // track lanes
+  for(let i=0;i<4;i++){
+    ctx.strokeStyle='#5a3a1a';ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(TRACK_X0,TRACK_Y[i]+16);ctx.lineTo(TRACK_X0+TRACK_LEN,TRACK_Y[i]+16);ctx.stroke();
+  }
+  // finish line
+  ctx.strokeStyle='#fff';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(TRACK_X0+TRACK_LEN,10);ctx.lineTo(TRACK_X0+TRACK_LEN,H-10);ctx.stroke();
+
+  if(state==='sprint'){
+    speed=Math.max(0,speed-0.02);
+    playerX+=speed;
+    if(playerX>=TRACK_LEN*0.7){
+      playerX=TRACK_LEN*0.7;
+      state='handoff';
+      document.getElementById('handoffBox').style.display='';
+      document.getElementById('passbtn').style.display='';
+      setMsg(I18N.t('handoff_msg','Time the handoff — press PASS in the green zone!'));
+    }
+  } else if(state==='handoff'){
+    handoffMarkerPos+=handoffDir*handoffSpeed*0.01;
+    if(handoffMarkerPos>=1){handoffMarkerPos=1;handoffDir=-1;}
+    if(handoffMarkerPos<=0){handoffMarkerPos=0;handoffDir=1;}
+    handoffTimer++;
+    if(handoffTimer>420){missedHandoff();}
+  } else if(state==='running'){
+    // player's runner auto-continues to end of their leg segment quickly, then AI takes over visually
+    playerX+=4;
+    if(playerX>=TRACK_LEN){playerX=TRACK_LEN;checkAllFinished();}
+  }
+
+  // rivals move continuously
+  rivals.forEach(r=>{
+    if(!r.finished){
+      r.x+=r.speed;
+      if(r.x>=TRACK_LEN){r.x=TRACK_LEN;r.finished=true;r.totalTime=(performance.now()-raceStartPerf)/1000;}
+    }
+  });
+
+  if(state!=='sprint'&&state!=='done'){
+    totalTime=(performance.now()-raceStartPerf)/1000 + penaltyTime;
+  }
+
+  drawRunner(playerX,TRACK_Y[0],'#ffd23f','YOU');
+  rivals.forEach((r,i)=>drawRunner(r.x,TRACK_Y[i+1],RIVAL_COLORS[i],'CPU'+(i+1)));
+
+  document.getElementById('hzone').style.left=(handoffZoneLo*100)+'%';
+  document.getElementById('hzone').style.width=((handoffZoneHi-handoffZoneLo)*100)+'%';
+  document.getElementById('hmarker').style.left=(handoffMarkerPos*100)+'%';
+
+  if(state!=='sprint')updateHud();
+  requestAnimationFrame(loop);
+}
+
+function drawRunner(x,y,color,label){
+  const px=TRACK_X0+Math.min(x,TRACK_LEN);
+  ctx.fillStyle=color;
+  ctx.beginPath();ctx.arc(px,y,10,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText(label,px,y-16);
+}
+
+function checkAllFinished(){
+  if(state==='done')return;
+  state='done';
+  totalTime=(performance.now()-raceStartPerf)/1000+penaltyTime;
+  const rivalTimes=rivals.map(r=>r.totalTime||((performance.now()-raceStartPerf)/1000));
+  const allTimes=[totalTime,...rivalTimes].sort((a,b)=>a-b);
+  const placed=allTimes.indexOf(totalTime)+1;
+  if(placed===1){
+    wins++;
+    SFX.win();
+    setMsg(I18N.t('race_won','You finished 1st! Team time: {t}s').replace('{t}',totalTime.toFixed(1)));
+  } else {
+    SFX.fail();
+    setMsg(I18N.t('race_lost','You finished {p}. Team time: {t}s').replace('{p}',placed+'th').replace('{t}',totalTime.toFixed(1)));
+  }
+  if(bestTime===null||totalTime<bestTime){
+    bestTime=totalTime;
+    localStorage.setItem(HS_KEY,String(bestTime));
+  }
+  document.getElementById('next').style.display='';
+  updateHud();
+}
+
+startRace();
+loop();
+</script></body></html>

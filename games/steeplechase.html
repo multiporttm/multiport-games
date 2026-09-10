@@ -1,0 +1,336 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Steeplechase</title><meta name="description" content="Play Steeplechase free online — Mash Space or tap rapidly to build speed. Press Space/tap right before a hurdle to jump it. Hold to charge over the water jump, then release near the far edge to clear it. Race the AI runners across 3 laps and finish first!"><link rel="canonical" href="https://games.multiportllc.com/games/steeplechase"><meta property="og:title" content="Steeplechase - Multiport Games"><meta property="og:description" content="Play Steeplechase free online — Mash Space or tap rapidly to build speed. Press Space/tap right before a hurdle to jump it. Hold to charge over the water jump, then release near the far edge to clear it. Race the AI runners across 3 laps and finish first!"><meta property="og:url" content="https://games.multiportllc.com/games/steeplechase"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Steeplechase","description":"Play Steeplechase free online instantly. Mash Space or tap rapidly to build speed, time your jumps over hurdles and the water jump, and race AI runners around the track across multiple laps. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/steeplechase","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a6b2e;display:block;border-radius:8px;touch-action:none}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+#tapBtn{display:block;margin:10px auto 0;padding:14px 40px;background:#e94560;border:none;border-radius:24px;color:#fff;font-size:1.3rem;font-weight:900;cursor:pointer;user-select:none;touch-action:manipulation}
+#tapBtn:active{transform:scale(.95)}
+@media(max-width:480px){#hud{font-size:.85rem;gap:10px}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Steeplechase</div>
+  <div class="game-frame">
+    <div id="hud">Lap <span id="lapDisp">1/3</span> | Place <span id="placeDisp">1st</span> | Time <span id="timeDisp">0.0s</span> | Best <span id="bestDisp">--</span></div>
+    <canvas id="c" width="800" height="300"></canvas>
+    <button id="tapBtn">SPRINT!</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Mash <b>Space</b> or tap the <b>SPRINT</b> button rapidly to build speed. Press <b>Space</b>/tap right before a hurdle to jump it. For the water jump, <b>hold</b> Space/button to charge and <b>release</b> near the far edge to clear it. Race the AI runners around the track — finish 3 laps in 1st place for the best score!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const TRACK_LEN=2400; // total distance per lap (arbitrary units)
+const LAPS=3;
+const LANE_Y=[70,130,190,250];
+const HURDLE_POSITIONS=[400,900,1500,2000]; // per-lap distances where hurdles sit
+const WATER_POS=1200; // water jump position per lap
+
+let best=parseFloat(localStorage.getItem('steeplechase_best')||'0')||0;
+document.getElementById('bestDisp').textContent = best>0? best.toFixed(1)+'s' : '--';
+
+function makeRunner(lane,isPlayer,skill){
+  return {
+    lane, isPlayer, skill: skill||1,
+    dist:0, lap:0, speed:0, finished:false, finishTime:0,
+    jumpT:0, jumping:false, jumpKind:null, // 'hurdle'|'water'
+    charging:false, chargeAmt:0, stumbled:0,
+    aiPhase:Math.random()*10,
+  };
+}
+
+let runners, raceTime, running, countdown, results, tapPresses=0, lastTapTime=0, playerCharging=false;
+
+function reset(){
+  runners=[
+    makeRunner(0,true,1),
+    makeRunner(1,false,0.92+Math.random()*0.1),
+    makeRunner(2,false,0.90+Math.random()*0.12),
+    makeRunner(3,false,0.88+Math.random()*0.14),
+  ];
+  raceTime=0; running=false; countdown=3; results=null; tapPresses=0; playerCharging=false;
+  updateHud();
+}
+
+function player(){return runners[0];}
+
+function obstaclesForLap(){
+  return HURDLE_POSITIONS.map(p=>({pos:p,kind:'hurdle'})).concat([{pos:WATER_POS,kind:'water'}]).sort((a,b)=>a.pos-b.pos);
+}
+const OBS=obstaclesForLap();
+
+function nextObstacle(r){
+  const d=r.dist;
+  for(const o of OBS){ if(d < o.pos) return o; }
+  return null;
+}
+
+function doTap(){
+  if(!running){ if(countdown<=0){running=true;} return; }
+  const r=player();
+  if(r.finished)return;
+  const now=performance.now();
+  if(r.jumping)return;
+  const nxt=nextObstacle(r);
+  const distToNext = nxt? nxt.pos-r.dist : 9999;
+  if(nxt && distToNext<60){
+    // attempt jump
+    if(nxt.kind==='hurdle'){
+      startJump(r,'hurdle',distToNext);
+    } else {
+      // start charging water jump
+      if(!r.charging){ r.charging=true; r.chargeAmt=0; }
+    }
+    return;
+  }
+  // normal sprint tap
+  tapPresses++;
+  const dt=now-lastTapTime; lastTapTime=now;
+  r.speed=Math.min(r.speed+9,110);
+  SFX.click();
+}
+
+function releaseTap(){
+  const r=player();
+  if(r.charging){
+    const nxt=nextObstacle(r);
+    if(nxt&&nxt.kind==='water'){
+      startJump(r,'water',nxt.pos-r.dist,r.chargeAmt);
+    }
+    r.charging=false; r.chargeAmt=0;
+  }
+}
+
+function startJump(r,kind,distToNext,charge){
+  r.jumping=true; r.jumpKind=kind; r.jumpT=0;
+  if(kind==='hurdle'){
+    // good timing = close to obstacle
+    const good = distToNext<40;
+    r.jumpGood=good;
+    if(!good){r.stumbled=0.4;}
+    SFX.jump();
+  } else {
+    const good = (charge||0) > 12 && (charge||0) < 55;
+    r.jumpGood=good;
+    if(!good){r.stumbled = (charge||0)<=12 ? 0.7 : 0.5;}
+    SFX.swoosh();
+  }
+}
+
+function updateAI(r,dt){
+  r.aiPhase+=dt;
+  const nxt=nextObstacle(r);
+  const distToNext = nxt? nxt.pos-r.dist:9999;
+  if(!r.jumping){
+    if(nxt && distToNext<50 && distToNext>-5){
+      const chance = r.skill;
+      if(Math.random()<chance*0.9){
+        startJump(r, nxt.kind==='water'?'water':'hurdle', distToNext, nxt.kind==='water'?30:undefined);
+      } else {
+        r.stumbled=0.5;
+      }
+    } else {
+      const target=60*r.skill;
+      r.speed += (target-r.speed)*0.02*dt;
+      r.speed += (Math.sin(r.aiPhase*3)*3);
+    }
+  }
+}
+
+function updatePhysics(r,dt){
+  if(r.stumbled>0){
+    r.stumbled-=dt/60;
+    r.speed*=0.9;
+  }
+  if(r.jumping){
+    r.jumpT+=dt/60;
+    if(r.jumpT>0.5){
+      r.jumping=false;
+      r.dist += r.jumpGood? 60:30;
+      if(!r.jumpGood){r.stumbled=Math.max(r.stumbled,0.5);}
+      if(r.isPlayer)SFX[r.jumpGood?'success':'hurt']();
+    }
+    return;
+  }
+  if(r.charging){
+    r.chargeAmt+=dt*1.2;
+    r.speed*=0.97;
+  }
+  // friction/decay
+  r.speed*=0.985;
+  if(r.isPlayer && r.charging) r.speed*=0.5;
+  r.dist += r.speed*dt*0.06;
+  if(r.dist>=TRACK_LEN){
+    r.dist-=TRACK_LEN;
+    r.lap++;
+    if(r.lap>=LAPS && !r.finished){
+      r.finished=true;
+      r.finishTime=raceTime;
+    }
+  }
+}
+
+function totalProgress(r){ return r.lap*TRACK_LEN + r.dist; }
+
+function placements(){
+  return [...runners].sort((a,b)=>{
+    if(a.finished&&b.finished)return a.finishTime-b.finishTime;
+    if(a.finished)return -1;
+    if(b.finished)return 1;
+    return totalProgress(b)-totalProgress(a);
+  });
+}
+
+function ordinal(n){return n===1?'1st':n===2?'2nd':n===3?'3rd':n+'th';}
+
+function updateHud(){
+  const r=player();
+  document.getElementById('lapDisp').textContent=Math.min(r.lap+1,LAPS)+'/'+LAPS;
+  const place=placements().indexOf(r)+1;
+  document.getElementById('placeDisp').textContent=I18N.t('place_'+place, ordinal(place));
+  document.getElementById('timeDisp').textContent=raceTime.toFixed(1)+'s';
+}
+
+function colorFor(i){return ['#ffd54f','#5ac8fa','#ff6b6b','#a1e887'][i];}
+
+function draw(){
+  ctx.clearRect(0,0,800,300);
+  const sky=ctx.createLinearGradient(0,0,0,300);
+  sky.addColorStop(0,'#1c3d17');sky.addColorStop(1,'#3a6b2e');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,300);
+
+  // lanes
+  for(let i=0;i<4;i++){
+    ctx.fillStyle= i%2===0? '#3f7a30':'#457f34';
+    ctx.fillRect(0,LANE_Y[i]-28,800,56);
+  }
+  ctx.strokeStyle='rgba(255,255,255,.5)';
+  for(let i=1;i<4;i++){
+    ctx.beginPath();ctx.setLineDash([10,10]);
+    ctx.moveTo(0,LANE_Y[i]-28);ctx.lineTo(800,LANE_Y[i]-28);ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // camera centers on player
+  const camOffset = player().dist - 200;
+
+  // obstacles per lane (same layout each lap)
+  runners.forEach((r,i)=>{
+    OBS.forEach(o=>{
+      const sx = o.pos - camOffset;
+      if(sx<-40||sx>840)return;
+      const y=LANE_Y[i];
+      if(o.kind==='hurdle'){
+        ctx.fillStyle='#c9a24b';
+        ctx.fillRect(sx-4,y-24,8,48);
+        ctx.fillStyle='#e9c877';
+        ctx.fillRect(sx-14,y-24,28,6);
+      } else {
+        ctx.fillStyle='#2ea3d9';
+        ctx.fillRect(sx-30,y-22,60,44);
+        ctx.fillStyle='#7fd4f5';
+        for(let w=0;w<4;w++)ctx.fillRect(sx-26+w*15,y-18+((Math.floor(raceTime*4)+w)%2)*4,10,4);
+      }
+    });
+  });
+
+  // runners
+  runners.forEach((r,i)=>{
+    const sx = r.dist - camOffset;
+    const y=LANE_Y[i];
+    let jy=0;
+    if(r.jumping){ jy = -Math.sin(Math.min(r.jumpT/0.5,1)*Math.PI)*(r.jumpKind==='water'?28:20); }
+    ctx.fillStyle=colorFor(i);
+    ctx.beginPath();ctx.ellipse(sx,y+jy,12,16,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#222';
+    ctx.beginPath();ctx.arc(sx,y+jy-16,7,0,Math.PI*2);ctx.fill();
+    if(r.isPlayer){
+      ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+      ctx.fillText('YOU',sx,y+jy-26);
+    }
+    if(r.charging && r.isPlayer){
+      ctx.fillStyle='rgba(255,213,79,.9)';
+      ctx.fillRect(sx-20,y-40,Math.min(r.chargeAmt,40),5);
+      ctx.strokeStyle='#fff';ctx.strokeRect(sx-20,y-40,40,5);
+    }
+  });
+
+  if(countdown>0){
+    ctx.fillStyle='#fff';ctx.font='bold 60px Arial';ctx.textAlign='center';
+    ctx.fillText(Math.ceil(countdown),400,160);
+  }
+
+  if(results){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(150,60,500,180);
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('race_finished','Race Finished!'),400,100);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('your_place','You finished {p}').replace('{p}',ordinal(results.place)),400,140);
+    ctx.fillText(I18N.t('your_time','Time: {t}s').replace('{t}',results.time.toFixed(1)),400,170);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap SPRINT or Space to race again'),400,210);
+  }
+}
+
+let lastT=null;
+function loop(ts){
+  if(lastT===null)lastT=ts;
+  let dt=(ts-lastT)/16.6667; dt=Math.min(dt,3);
+  lastT=ts;
+
+  if(!results){
+    if(countdown>0 && running===false && runners){
+      // waiting for start tap; nothing to update besides render
+    }
+    if(countdown>0 && startedCountdown){
+      countdown-=dt/60;
+      if(countdown<=0){countdown=0;running=true;}
+    }
+    if(running){
+      raceTime+=dt/60;
+      runners.forEach(r=>{ if(r.finished)return; if(!r.isPlayer)updateAI(r,dt); updatePhysics(r,dt); });
+      updateHud();
+      if(player().finished){
+        const place=placements().indexOf(player())+1;
+        results={place,time:player().finishTime};
+        if(place===1){
+          if(best===0||player().finishTime<best){best=player().finishTime;localStorage.setItem('steeplechase_best',best.toString());}
+          SFX.win();
+        } else SFX.fail();
+        document.getElementById('bestDisp').textContent = best>0? best.toFixed(1)+'s':'--';
+      }
+    }
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+let startedCountdown=false;
+function pressStart(){
+  if(!startedCountdown){startedCountdown=true;}
+  if(results){reset();return;}
+  doTap();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();pressStart();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){releaseTap();}
+});
+const tapBtn=document.getElementById('tapBtn');
+tapBtn.addEventListener('pointerdown',e=>{e.preventDefault();pressStart();});
+tapBtn.addEventListener('pointerup',e=>{e.preventDefault();releaseTap();});
+tapBtn.addEventListener('pointerleave',e=>{releaseTap();});
+c.addEventListener('pointerdown',e=>{e.preventDefault();pressStart();});
+c.addEventListener('pointerup',e=>{releaseTap();});
+
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,232 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mission Control</title><meta name="description" content="Play Mission Control free online — Watch the spacecraft gauges. Click a system's CORRECT button when its needle drifts out of the safe green zone before it goes critical. More systems come online as the mission continues!"><link rel="canonical" href="https://games.multiportllc.com/games/missioncontrol"><meta property="og:title" content="Mission Control - Multiport Games"><meta property="og:description" content="Play Mission Control free online — Watch the spacecraft gauges. Click a system's CORRECT button when its needle drifts out of the safe green zone before it goes critical. More systems come online as the mission continues!"><meta property="og:url" content="https://games.multiportllc.com/games/missioncontrol"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mission Control","description":"Play Mission Control free online instantly. Watch several spacecraft system gauges drift out of their safe range over time and click CORRECT to fix each one before it goes critical. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/missioncontrol","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#0a0e1a;border-radius:14px;padding:16px;text-align:center;background-image:radial-gradient(1px 1px at 20% 30%,#fff,transparent),radial-gradient(1px 1px at 70% 60%,#fff,transparent),radial-gradient(1px 1px at 40% 80%,#fff,transparent),radial-gradient(1px 1px at 85% 15%,#fff,transparent);background-color:#0a0e1a}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#dff0ff;font-weight:700;max-width:640px;margin:0 auto 10px;flex-wrap:wrap;gap:6px}
+#hud .stat{background:rgba(255,255,255,.07);padding:5px 12px;border-radius:20px;font-size:.9rem}
+#missionBar{max-width:640px;margin:0 auto 12px;height:8px;background:rgba(255,255,255,.12);border-radius:6px;overflow:hidden}
+#missionFill{height:100%;background:linear-gradient(90deg,#4fc3f7,#7c4dff);width:100%;transition:width .2s linear}
+#panel{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;max-width:640px;margin:0 auto}
+@media(max-width:480px){#panel{grid-template-columns:1fr}}
+.sysCard{background:#111a2e;border:2px solid #223055;border-radius:12px;padding:10px 12px}
+.sysCard.warn{border-color:#ffb300;box-shadow:0 0 10px rgba(255,179,0,.4)}
+.sysCard.crit{border-color:#ff1744;box-shadow:0 0 14px rgba(255,23,68,.6);animation:shake .3s infinite}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-2px)}75%{transform:translateX(2px)}}
+.sysName{color:#cfe3ff;font-weight:800;font-size:.9rem;display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.gaugeTrack{position:relative;height:18px;background:#0c1120;border-radius:9px;overflow:hidden;border:1px solid #223055}
+.gaugeZone{position:absolute;top:0;bottom:0;background:rgba(76,175,80,.35)}
+.gaugeNeedle{position:absolute;top:-3px;width:4px;height:24px;background:#fff;border-radius:2px;box-shadow:0 0 6px #fff}
+.fixBtn{margin-top:8px;width:100%;padding:8px;background:#1565c0;border:none;border-radius:8px;color:#fff;font-weight:800;cursor:pointer;font-size:.85rem}
+.fixBtn:hover{background:#1976d2}
+.fixBtn:active{transform:scale(.97)}
+#msg{min-height:1.6em;color:#ffd54f;font-weight:800;margin-top:12px}
+#startBtn{margin-top:10px;padding:12px 28px;background:#7c4dff;border:none;border-radius:24px;color:#fff;font-weight:900;font-size:1.05rem;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mission Control</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span class="stat" id="scoreStat">Fixes: 0</span>
+        <span class="stat" id="waveStat">Wave: 1</span>
+        <span class="stat" id="hiStat">Best: 0</span>
+      </div>
+      <div id="missionBar"><div id="missionFill"></div></div>
+      <div id="panel"></div>
+      <div id="msg"></div>
+      <button id="startBtn">Start Mission</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch the spacecraft gauges. When a system's needle drifts out of the safe green zone, click that system's <b>CORRECT</b> button before it goes critical (red) and fails. More systems come online — and drift faster — as the mission continues!</div>
+</div>
+<script>
+const SYSTEM_DEFS = [
+  {key:'fuel', name:'⛽ Fuel'},
+  {key:'oxygen', name:'🫧 Oxygen'},
+  {key:'comms', name:'📡 Comms'},
+  {key:'trajectory', name:'🛰️ Trajectory'},
+  {key:'power', name:'🔋 Power'},
+  {key:'thermal', name:'🌡️ Thermal'}
+];
+
+let hi=parseInt(localStorage.getItem('missioncontrol_hi')||'0',10);
+document.getElementById('hiStat').textContent=I18N.t('best_label','Best: {n}').replace('{n}',hi);
+
+let started=false, loopId=null, lastT=0;
+let fixes=0, failures=0, wave=1, missionTime=0, missionLen=0, activeCount=2;
+let systems=[]; // {key,name,value(0-100),zoneLo,zoneHi,drift,state,el,needleEl}
+
+function sysLabel(key,fallback){return I18N.t('sys_'+key,fallback);}
+
+function newSystemState(def){
+  const zoneW=26+Math.random()*8;
+  const zoneLo=35+Math.random()*10;
+  return {
+    key:def.key, name:def.name,
+    value: zoneLo+zoneW/2,
+    zoneLo, zoneHi: zoneLo+zoneW,
+    drift:(Math.random()<0.5?-1:1)*(0.10+wave*0.03),
+    state:'ok', // ok, warn, crit
+  };
+}
+
+function buildPanel(){
+  const panel=document.getElementById('panel');
+  panel.innerHTML='';
+  systems.forEach((s,i)=>{
+    const card=document.createElement('div');
+    card.className='sysCard';
+    card.id='card_'+s.key;
+    const zoneLeft=s.zoneLo+'%';
+    const zoneWidth=(s.zoneHi-s.zoneLo)+'%';
+    card.innerHTML=`
+      <div class="sysName"><span>${sysLabel(s.key,s.name)}</span><span id="pct_${s.key}">--</span></div>
+      <div class="gaugeTrack">
+        <div class="gaugeZone" style="left:${zoneLeft};width:${zoneWidth}"></div>
+        <div class="gaugeNeedle" id="needle_${s.key}"></div>
+      </div>
+      <button class="fixBtn" id="fix_${s.key}">${I18N.t('correct_btn','CORRECT')}</button>
+    `;
+    panel.appendChild(card);
+    document.getElementById('fix_'+s.key).onclick=()=>fixSystem(s.key);
+  });
+}
+
+function fixSystem(key){
+  if(!started)return;
+  const s=systems.find(x=>x.key===key);
+  if(!s)return;
+  if(s.state==='ok')return; // nothing to fix
+  s.value=(s.zoneLo+s.zoneHi)/2;
+  s.drift=(Math.random()<0.5?-1:1)*(0.10+wave*0.03);
+  s.state='ok';
+  fixes++;
+  document.getElementById('scoreStat').textContent=I18N.t('fixes_label','Fixes: {n}').replace('{n}',fixes);
+  if(fixes>hi){hi=fixes;localStorage.setItem('missioncontrol_hi',hi);document.getElementById('hiStat').textContent=I18N.t('best_label','Best: {n}').replace('{n}',hi);}
+  SFX.success();
+  updateCard(s);
+}
+
+function updateCard(s){
+  const card=document.getElementById('card_'+s.key);
+  card.classList.remove('warn','crit');
+  if(s.state==='warn')card.classList.add('warn');
+  if(s.state==='crit')card.classList.add('crit');
+  document.getElementById('needle_'+s.key).style.left='calc('+Math.max(0,Math.min(100,s.value))+'% - 2px)';
+  document.getElementById('pct_'+s.key).textContent=Math.round(s.value)+'%';
+}
+
+function addSystemIfPossible(){
+  if(systems.length>=SYSTEM_DEFS.length)return;
+  const def=SYSTEM_DEFS[systems.length];
+  systems.push(newSystemState(def));
+  buildPanel();
+  systems.forEach(updateCard);
+}
+
+function tickPhysics(dt){
+  let anyCrit=false;
+  systems.forEach(s=>{
+    s.value+=s.drift*dt;
+    if(s.value<=0){s.value=0;s.drift=Math.abs(s.drift);}
+    if(s.value>=100){s.value=100;s.drift=-Math.abs(s.drift);}
+    const wasState=s.state;
+    if(s.value<s.zoneLo-16 || s.value>s.zoneHi+16){
+      s.state='crit';
+    } else if(s.value<s.zoneLo || s.value>s.zoneHi){
+      s.state='warn';
+    } else {
+      s.state='ok';
+    }
+    if(s.state==='warn'&&wasState==='ok')SFX.tick();
+    if(s.state==='crit'){
+      anyCrit=true;
+      if(wasState!=='crit'){
+        // grace already given via warn; start failure countdown implicitly by value continuing to drift
+      }
+    }
+    updateCard(s);
+  });
+  // A system that stays fully pinned at 0 or 100 while critical counts as failed
+  systems.forEach(s=>{
+    if(s.state==='crit' && (s.value<=2 || s.value>=98) && !s.failedFlag){
+      s.failedFlag=true;
+      failures++;
+      SFX.fail();
+      document.getElementById('msg').textContent=I18N.t('system_failed_msg','⚠️ {n} failed!').replace('{n}',sysLabel(s.key,s.name));
+      if(failures>=3){ setTimeout(endMission,600); }
+    }
+    if(s.state!=='crit')s.failedFlag=false;
+  });
+}
+
+function loop(ts){
+  if(!started)return;
+  if(!lastT)lastT=ts;
+  const dt=Math.min((ts-lastT)/1000,0.2);
+  lastT=ts;
+  missionTime+=dt;
+  tickPhysics(dt);
+
+  // wave progression: every 18s, add a system / bump difficulty
+  const targetWave=1+Math.floor(missionTime/18);
+  if(targetWave>wave){
+    wave=targetWave;
+    document.getElementById('waveStat').textContent=I18N.t('wave_label','Wave: {n}').replace('{n}',wave);
+    addSystemIfPossible();
+    systems.forEach(s=>{ s.drift = (s.drift<0?-1:1)*(Math.abs(s.drift)+0.03); });
+  }
+
+  const pct=Math.max(0,100-(missionTime/missionLen*100));
+  document.getElementById('missionFill').style.width=pct+'%';
+  if(missionTime>=missionLen){ endMission(true); return; }
+
+  loopId=requestAnimationFrame(loop);
+}
+
+function endMission(survived){
+  started=false;
+  cancelAnimationFrame(loopId);
+  const msgEl=document.getElementById('msg');
+  if(survived){
+    msgEl.textContent=I18N.t('mission_success_msg','🎉 Mission complete! Systems stabilized {n} times.').replace('{n}',fixes);
+    SFX.win();
+  } else {
+    msgEl.textContent=I18N.t('mission_failed_msg','💥 Mission failed — too many systems went critical. Fixes: {n}.').replace('{n}',fixes);
+    SFX.lose();
+  }
+  const startBtn=document.getElementById('startBtn');
+  startBtn.textContent=I18N.t('play_again_btn','Play Again');
+  startBtn.style.display='inline-block';
+}
+
+function startGame(){
+  started=true; fixes=0; failures=0; wave=1; missionTime=0; missionLen=150; lastT=0;
+  systems=[];
+  document.getElementById('scoreStat').textContent=I18N.t('fixes_label','Fixes: {n}').replace('{n}',0);
+  document.getElementById('waveStat').textContent=I18N.t('wave_label','Wave: {n}').replace('{n}',1);
+  document.getElementById('msg').textContent='';
+  document.getElementById('startBtn').style.display='none';
+  addSystemIfPossible();
+  addSystemIfPossible();
+  loopId=requestAnimationFrame(loop);
+}
+
+document.getElementById('startBtn').addEventListener('click',startGame);
+
+// keyboard: number keys 1-6 fix the corresponding system card in order shown
+document.addEventListener('keydown',e=>{
+  if(!started)return;
+  const idx=parseInt(e.key,10);
+  if(idx>=1&&idx<=systems.length){
+    fixSystem(systems[idx-1].key);
+  }
+});
+</script></body></html>
