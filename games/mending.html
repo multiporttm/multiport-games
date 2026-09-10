@@ -1,0 +1,321 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mending</title><meta name="description" content="Play Mending free online — Click stitch points in sequence along a tear, then pull each thread taut with perfect timing. Mend items cleanly before longer tears and finer stitching test your precision!"><link rel="canonical" href="https://games.multiportllc.com/games/mending"><meta property="og:title" content="Mending - Multiport Games"><meta property="og:description" content="Play Mending free online — Click stitch points in sequence along a tear, then pull each thread taut with perfect timing. Mend items cleanly before longer tears and finer stitching test your precision!"><meta property="og:url" content="https://games.multiportllc.com/games/mending"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mending","description":"Play Mending free online instantly. Click stitch points in sequence along a tear, then pull each thread taut with perfect timing. Mend items cleanly before longer tears and finer stitching test your precision. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/mending","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#mendWrap{background:linear-gradient(180deg,#2a1a1d,#160f10);border-radius:14px;padding:12px;user-select:none;-webkit-user-select:none;touch-action:none}
+#hud{display:flex;flex-wrap:wrap;justify-content:space-between;color:#ffe3e3;font-weight:800;padding:2px 8px 8px;font-size:.9rem;gap:6px}
+#hud span b{color:#ffd54f}
+#stage{position:relative;width:100%;max-width:560px;height:380px;margin:0 auto;background:#cbb392;border-radius:10px;overflow:hidden;border:3px solid #5c3a1c;cursor:pointer}
+#tensionBar{position:absolute;bottom:10px;left:10%;right:10%;height:20px;background:rgba(0,0,0,.25);border-radius:10px;overflow:hidden;display:none}
+#tensionZone{position:absolute;top:0;bottom:0;background:rgba(126,255,192,.5);border-left:2px solid #7effc0;border-right:2px solid #7effc0}
+#tensionMarker{position:absolute;top:-3px;width:6px;height:26px;background:#fff;border-radius:3px;box-shadow:0 0 6px #000}
+#tensionHint{position:absolute;bottom:36px;left:0;right:0;text-align:center;color:#3a2410;font-weight:900;font-size:.85rem;display:none;text-shadow:0 1px 2px rgba(255,255,255,.5)}
+#judge{position:absolute;top:8px;left:0;right:0;text-align:center;font-weight:900;font-size:1.3rem;pointer-events:none;opacity:0;transition:opacity .15s;z-index:6}
+#msgOverlay{position:absolute;inset:0;background:rgba(10,6,6,.85);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;text-align:center;padding:20px;z-index:10}
+#msgOverlay h2{color:#ffd54f;margin:0 0 8px}
+#msgOverlay button{margin-top:14px;padding:10px 26px;border:none;border-radius:22px;background:#ffd54f;color:#2a1a1d;font-weight:800;font-size:1rem;cursor:pointer}
+@media(max-width:480px){#stage{height:320px}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mending</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="mendWrap">
+      <div id="hud"><span>Score: <b id="scoreVal">0</b></span><span>Items: <b id="itemsVal">0</b></span><span>Quality: <b id="qualityVal">100%</b></span><span>Hi: <b id="hiVal">0</b></span></div>
+      <div id="stage">
+        <canvas id="c" width="560" height="380" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+        <div id="tensionHint">PULL! Click/Tap when the marker is in the green zone</div>
+        <div id="tensionBar"><div id="tensionZone"></div><div id="tensionMarker"></div></div>
+        <div id="judge"></div>
+        <div id="msgOverlay">
+          <h2 id="msgTitle">Mending</h2>
+          <p id="msgSub">Stitch the tear closed, point by point.</p>
+          <button id="startBtn">Start</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">A torn seam is marked with numbered stitch points. <b>Click/tap each glowing stitch point in order</b> along the tear. After each stitch, a tension bar appears — <b>click/tap (or press Space) right when the marker is inside the green zone</b> to pull the thread taut. Miss the order or the tension window and the mend weakens. Finish items for points — longer tears and finer stitch spacing follow each round.</div>
+</div>
+<script>
+const stage=document.getElementById('stage');
+const c=document.getElementById('c');
+const ctx=c.getContext('2d');
+const tensionBar=document.getElementById('tensionBar');
+const tensionZone=document.getElementById('tensionZone');
+const tensionMarker=document.getElementById('tensionMarker');
+const tensionHint=document.getElementById('tensionHint');
+const judgeEl=document.getElementById('judge');
+const scoreVal=document.getElementById('scoreVal');
+const itemsVal=document.getElementById('itemsVal');
+const qualityVal=document.getElementById('qualityVal');
+const hiVal=document.getElementById('hiVal');
+const msgOverlay=document.getElementById('msgOverlay');
+const msgTitle=document.getElementById('msgTitle');
+const msgSub=document.getElementById('msgSub');
+const startBtn=document.getElementById('startBtn');
+
+const HI_KEY='mending_hiscore';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+hiVal.textContent=hi;
+
+let score=0,itemsDone=0,running=false,round=1;
+let tearPoints=[]; // {x,y,done}
+let curIdx=0;
+let stitchedSegments=[]; // {x1,y1,x2,y2,quality}
+let quality=100;
+let phase='clicking'; // 'clicking' | 'tension'
+let tensionPos=0,tensionDir=1,tensionSpeed=0.02,tensionZoneStart=0.4,tensionZoneWidth=0.2;
+let tensionRAF=null;
+
+function genTear(){
+  const n=5+Math.min(6,round); // number of stitch points
+  const w=c.width,h=c.height;
+  const startX=w*0.15+Math.random()*w*0.1;
+  const startY=h*0.25+Math.random()*h*0.15;
+  const endX=w*0.85-Math.random()*w*0.1;
+  const endY=h*0.75-Math.random()*h*0.15;
+  const pts=[];
+  for(let i=0;i<n;i++){
+    const t=i/(n-1);
+    const jitter=(Math.random()-0.5)*40;
+    const x=startX+(endX-startX)*t+jitter*0.3;
+    const y=startY+(endY-startY)*t+jitter;
+    pts.push({x,y,done:false});
+  }
+  tearPoints=pts;
+  curIdx=0;
+  stitchedSegments=[];
+}
+
+function drawFabricTexture(){
+  ctx.fillStyle='#cbb392';
+  ctx.fillRect(0,0,c.width,c.height);
+  ctx.strokeStyle='rgba(120,95,60,.15)';
+  ctx.lineWidth=1;
+  for(let x=0;x<c.width;x+=14){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,c.height);ctx.stroke();}
+  for(let y=0;y<c.height;y+=14){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(c.width,y);ctx.stroke();}
+}
+
+function drawTear(){
+  // draw the raw tear line (jagged) faintly beneath
+  ctx.strokeStyle='rgba(60,30,15,.55)';
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  tearPoints.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+  ctx.stroke();
+
+  // stitched segments (thread)
+  stitchedSegments.forEach(seg=>{
+    ctx.strokeStyle=seg.quality>0.75?'#e94560':(seg.quality>0.4?'#e9a040':'#8a8a8a');
+    ctx.lineWidth=3.5;
+    ctx.beginPath();
+    // simple X stitch pattern
+    const mx=(seg.x1+seg.x2)/2, my=(seg.y1+seg.y2)/2;
+    const dx=seg.x2-seg.x1, dy=seg.y2-seg.y1;
+    const len=Math.hypot(dx,dy)||1;
+    const nx=-dy/len*6, ny=dx/len*6;
+    ctx.moveTo(seg.x1+nx,seg.y1+ny);ctx.lineTo(seg.x2-nx,seg.y2-ny);
+    ctx.moveTo(seg.x1-nx,seg.y1-ny);ctx.lineTo(seg.x2+nx,seg.y2+ny);
+    ctx.stroke();
+  });
+
+  // stitch points
+  tearPoints.forEach((p,i)=>{
+    if(p.done){
+      ctx.fillStyle='#e94560';
+      ctx.beginPath();ctx.arc(p.x,p.y,6,0,Math.PI*2);ctx.fill();
+    } else if(i===curIdx&&phase==='clicking'){
+      const pulse=6+Math.sin(performance.now()/150)*2.5;
+      ctx.fillStyle='#ffd54f';
+      ctx.beginPath();ctx.arc(p.x,p.y,pulse,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='#fff';ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(p.x,p.y,pulse+4,0,Math.PI*2);ctx.stroke();
+    } else {
+      ctx.fillStyle='rgba(255,255,255,.5)';
+      ctx.beginPath();ctx.arc(p.x,p.y,5,0,Math.PI*2);ctx.fill();
+    }
+  });
+}
+
+function renderLoop(){
+  if(!running)return;
+  drawFabricTexture();
+  drawTear();
+  requestAnimationFrame(renderLoop);
+}
+
+function judge(text,color){
+  judgeEl.textContent=text;
+  judgeEl.style.color=color;
+  judgeEl.style.opacity='1';
+  clearTimeout(judge._t);
+  judge._t=setTimeout(()=>{judgeEl.style.opacity='0';},300);
+}
+
+function dist(x1,y1,x2,y2){return Math.hypot(x1-x2,y1-y2);}
+
+function stagePos(clientX,clientY){
+  const r=c.getBoundingClientRect();
+  return {x:(clientX-r.left)/r.width*c.width,y:(clientY-r.top)/r.height*c.height};
+}
+
+function onStageClick(e){
+  if(!running)return;
+  if(phase==='tension'){
+    resolveTension();
+    return;
+  }
+  const clientX=e.clientX!==undefined?e.clientX:(e.touches&&e.touches[0].clientX);
+  const clientY=e.clientY!==undefined?e.clientY:(e.touches&&e.touches[0].clientY);
+  const p=stagePos(clientX,clientY);
+  const target=tearPoints[curIdx];
+  if(!target)return;
+  const d=dist(p.x,p.y,target.x,target.y);
+  const tol=Math.max(18,32-round*1.5);
+  if(d<=tol){
+    target.done=true;
+    startTension();
+  } else {
+    judge('Missed stitch point','#ff6b6b');
+    quality=Math.max(0,quality-6);
+    updateQuality();
+    SFX.error();
+  }
+}
+c.addEventListener('pointerdown',onStageClick);
+
+function startTension(){
+  phase='tension';
+  tensionBar.style.display='block';
+  tensionHint.style.display='block';
+  tensionPos=0;tensionDir=1;
+  tensionSpeed=0.018+round*0.003;
+  tensionZoneWidth=Math.max(0.14,0.32-round*0.02);
+  tensionZoneStart=0.3+Math.random()*(0.7-tensionZoneWidth-0.3);
+  tensionZone.style.left=(tensionZoneStart*100)+'%';
+  tensionZone.style.width=(tensionZoneWidth*100)+'%';
+  cancelAnimationFrame(tensionRAF);
+  tickTension();
+}
+
+function tickTension(){
+  if(phase!=='tension')return;
+  tensionPos+=tensionSpeed*tensionDir;
+  if(tensionPos>=1){tensionPos=1;tensionDir=-1;}
+  if(tensionPos<=0){tensionPos=0;tensionDir=1;}
+  tensionMarker.style.left=(tensionPos*100)+'%';
+  tensionRAF=requestAnimationFrame(tickTension);
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&phase==='tension'){e.preventDefault();resolveTension();}
+});
+
+function resolveTension(){
+  const inZone=tensionPos>=tensionZoneStart&&tensionPos<=tensionZoneStart+tensionZoneWidth;
+  const center=tensionZoneStart+tensionZoneWidth/2;
+  const distToCenter=Math.abs(tensionPos-center)/(tensionZoneWidth/2||1);
+  let segQuality;
+  if(inZone){
+    segQuality=1-distToCenter*0.4;
+    score+=Math.round(60+40*(1-distToCenter));
+    judge(distToCenter<0.3?'Perfect Pull!':'Good Pull','#7effc0');
+    SFX.success();
+  } else {
+    segQuality=0.25;
+    quality=Math.max(0,quality-10);
+    score=Math.max(0,score+10);
+    judge('Loose Thread!','#ff6b6b');
+    SFX.hurt();
+  }
+  const from=tearPoints[curIdx];
+  const prevIdx=curIdx>0?curIdx-1:0;
+  const to=tearPoints[curIdx];
+  if(curIdx>0){
+    const a=tearPoints[curIdx-1], b=tearPoints[curIdx];
+    stitchedSegments.push({x1:a.x,y1:a.y,x2:b.x,y2:b.y,quality:segQuality});
+  } else {
+    // first point: draw a small anchor stitch
+    stitchedSegments.push({x1:from.x-10,y1:from.y,x2:from.x+10,y2:from.y,quality:segQuality});
+  }
+  updateQuality();
+  scoreVal.textContent=score;
+  cancelAnimationFrame(tensionRAF);
+  tensionBar.style.display='none';
+  tensionHint.style.display='none';
+  phase='clicking';
+  curIdx++;
+  if(curIdx>=tearPoints.length){
+    finishItem();
+  }
+}
+
+function updateQuality(){
+  qualityVal.textContent=Math.round(quality)+'%';
+}
+
+function finishItem(){
+  itemsDone++;
+  itemsVal.textContent=itemsDone;
+  const bonus=Math.round(quality*2)+round*15;
+  score+=bonus;
+  scoreVal.textContent=score;
+  judge(quality>80?'Perfectly Mended!':(quality>50?'Mended!':'Mended (weak)'),quality>80?'#7effc0':'#ffd54f');
+  SFX.win();
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));hiVal.textContent=hi;}
+  round++;
+  setTimeout(()=>{
+    if(!running)return;
+    quality=100;updateQuality();
+    genTear();
+  },900);
+}
+
+function startGame(){
+  score=0;itemsDone=0;round=1;quality=100;
+  scoreVal.textContent='0';itemsVal.textContent='0';updateQuality();
+  running=true;phase='clicking';
+  msgOverlay.style.display='none';
+  genTear();
+  requestAnimationFrame(renderLoop);
+}
+
+const ITEM_TARGET=8;
+function checkGameEnd(){
+  if(itemsDone>=ITEM_TARGET&&running){
+    endGame();
+  }
+}
+
+function endGame(){
+  running=false;
+  cancelAnimationFrame(tensionRAF);
+  tensionBar.style.display='none';
+  tensionHint.style.display='none';
+  msgTitle.textContent=I18N.t('mending_game_over','Mending Complete!');
+  msgSub.textContent=I18N.t('mending_final_score','Items mended: {i} | Score: {s}').replace('{i}',itemsDone).replace('{s}',score);
+  startBtn.textContent=I18N.t('play_again','Play Again');
+  msgOverlay.style.display='flex';
+}
+
+const origFinish=finishItem;
+finishItem=function(){
+  origFinish();
+  checkGameEnd();
+};
+
+startBtn.addEventListener('click',()=>{
+  SFX.click();
+  startGame();
+});
+
+drawFabricTexture();
+genTear();
+drawTear();
+</script></body></html>

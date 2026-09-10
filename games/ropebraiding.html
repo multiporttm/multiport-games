@@ -1,0 +1,214 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rope Braiding</title><meta name="description" content="Play Rope Braiding free online — Follow the reference diagram and click the strand it tells you to cross next. Match every crossing in order to finish the braid before you run out of mistakes."><link rel="canonical" href="https://games.multiportllc.com/games/ropebraiding"><meta property="og:title" content="Rope Braiding - Multiport Games"><meta property="og:description" content="Play Rope Braiding free online — Follow the reference diagram and click the strand it tells you to cross next. Match every crossing in order to finish the braid before you run out of mistakes."><meta property="og:url" content="https://games.multiportllc.com/games/ropebraiding"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rope Braiding","description":"Play Rope Braiding free online instantly. Follow the reference diagram and click the strand it tells you to cross next, in the exact order shown, to braid three or more rope strands. A wrong crossing unravels the braid. Score points for every rope you braid correctly as strand counts and patterns grow more complex. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/ropebraiding","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#1c140d;border-radius:14px;padding:18px;text-align:center;max-width:640px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#f0d9b5;font-weight:800;font-size:.95rem;margin-bottom:8px;flex-wrap:wrap;gap:6px}
+#hud span{background:rgba(0,0,0,.3);padding:5px 10px;border-radius:8px}
+#status{color:#fff;min-height:1.6em;font-weight:700;margin:6px 0}
+canvas{background:#2a1d12;border-radius:10px;touch-action:none;max-width:100%}
+#refCanvas{background:#241a10;border-radius:10px;margin-top:8px;max-width:100%}
+#labels{color:#caa;font-size:.8rem;margin-top:4px}
+#stepBtns{display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap}
+#stepBtns button{padding:10px 16px;border:none;border-radius:20px;background:#8a5a2b;color:#fff;font-weight:800;cursor:pointer;font-size:1.5rem;min-width:56px}
+#stepBtns button:hover{background:#a5702f}
+#newBtn{margin-top:12px;padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rope Braiding</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span id="roundLbl">Round: 1</span><span id="scoreLbl">Score: 0</span><span id="hiLbl">Hi: 0</span><span id="mistakesLbl">Mistakes left: 3</span></div>
+      <div id="status">Watch the pattern, then click the strand it calls for.</div>
+      <canvas id="refCanvas" width="300" height="90"></canvas>
+      <div id="labels">Reference pattern (repeats)</div>
+      <canvas id="c" width="560" height="260"></canvas>
+      <div id="stepBtns"></div>
+      <button id="newBtn">New Braid</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A reference diagram at the top shows the repeating crossing pattern for this braid (e.g. Left-over-Center, Right-over-Center). Click the strand buttons below the braid in that exact order to cross them correctly. Each correct crossing extends your braid; a wrong crossing unravels a chunk of progress and costs a mistake. Run out of mistakes and the braid fails. Finish the braid's full length to score — more strands and longer, trickier patterns appear each round.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const rc=document.getElementById('refCanvas'),rctx=rc.getContext('2d');
+const COLORS=['#e94560','#4ecdc4','#ffd54f','#a29bfe','#7ec850'];
+let round=1,score=0,hi=parseInt(localStorage.getItem('ropebraiding_hi')||'0'),mistakesLeft=3;
+let strands=3,pattern=[],patternPos=0,targetLength=10,progress=0,history=[],state='play';
+
+function genPattern(n){
+  // pattern is a sequence of "which strand crosses" (0-indexed), cycles
+  const p=[];
+  if(n===3){
+    p.push(0,2,1); // left over center, right over center, repeat style (simplified: sequence of strand indices to move)
+  } else if(n===4){
+    p.push(0,3,1,2);
+  } else {
+    for(let i=0;i<n;i++)p.push(i%2===0?i:n-1-i);
+  }
+  return p;
+}
+
+function newBraid(){
+  strands=3+Math.min(2,Math.floor((round-1)/3));
+  pattern=genPattern(strands);
+  patternPos=0;
+  targetLength=8+round*2;
+  if(targetLength>26)targetLength=26;
+  progress=0;
+  history=[];
+  mistakesLeft=3;
+  state='play';
+  document.getElementById('mistakesLbl').textContent=I18N.t('mistakes_left','Mistakes left: {n}').replace('{n}',mistakesLeft);
+  document.getElementById('roundLbl').textContent=I18N.t('round_label','Round: {n}').replace('{n}',round);
+  setStatus(I18N.t('watch_pattern','Watch the pattern, then click the strand it calls for.'));
+  buildButtons();
+  drawRef();
+  drawBraid();
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function buildButtons(){
+  const box=document.getElementById('stepBtns');
+  box.innerHTML='';
+  const names=['A','B','C','D','E'];
+  for(let i=0;i<strands;i++){
+    const b=document.createElement('button');
+    b.textContent=names[i];
+    b.style.background=COLORS[i];
+    b.onclick=()=>tryStrand(i);
+    box.appendChild(b);
+  }
+}
+
+function drawRef(){
+  rctx.clearRect(0,0,300,90);
+  rctx.fillStyle='#1a120a';rctx.fillRect(0,0,300,90);
+  const n=strands;
+  const seq=pattern;
+  const stepW=280/(seq.length+1);
+  rctx.font='bold 13px Arial';rctx.textAlign='center';
+  for(let i=0;i<seq.length;i++){
+    const x=15+stepW*(i+0.5);
+    rctx.fillStyle=COLORS[seq[i]];
+    rctx.beginPath();rctx.arc(x,45,15,0,Math.PI*2);rctx.fill();
+    rctx.fillStyle='#111';
+    rctx.fillText(String.fromCharCode(65+seq[i]),x,50);
+    if(i<seq.length-1){
+      rctx.strokeStyle='#8a5a2b';rctx.lineWidth=2;
+      rctx.beginPath();rctx.moveTo(x+16,45);rctx.lineTo(x+stepW-16,45);rctx.stroke();
+      rctx.beginPath();rctx.moveTo(x+stepW-22,40);rctx.lineTo(x+stepW-16,45);rctx.lineTo(x+stepW-22,50);rctx.stroke();
+    }
+  }
+}
+
+function drawBraid(){
+  ctx.clearRect(0,0,560,260);
+  ctx.fillStyle='#241a10';ctx.fillRect(0,0,560,260);
+  const n=strands;
+  const baseX=[];
+  for(let i=0;i<n;i++)baseX.push(560/(n+1)*(i+1));
+  // draw woven history from bottom (start) going up as braid grows downward on screen: we draw top(start) to bottom(current)
+  const rowH=14;
+  const visibleRows=Math.min(history.length,17);
+  const startY=230;
+  let positions=baseX.slice();
+  const rows=[];
+  // recompute positions per history step for a simple swap-visual
+  let pos=baseX.slice();
+  const posLog=[pos.slice()];
+  history.forEach(h=>{
+    // swap crossing strand toward center conceptually: simple left-right undulation
+    pos=pos.slice();
+    posLog.push(pos.slice());
+  });
+  // Simple visual: each strand draws a wavy line down; color changes offset slightly per crossing at that height
+  for(let i=0;i<n;i++){
+    ctx.strokeStyle=COLORS[i];
+    ctx.lineWidth=8;
+    ctx.lineCap='round';
+    ctx.beginPath();
+    let x=baseX[i];
+    ctx.moveTo(x,30);
+    const totalSteps=Math.max(history.length,1);
+    for(let s=0;s<history.length;s++){
+      const y=30+(s+1)*((startY-30)/Math.max(targetLength,1));
+      const cross=history[s];
+      let dx=0;
+      if(cross===i)dx=(i%2===0?14:-14);
+      x=baseX[i]+dx*Math.sin((s+1)*0.8+i);
+      ctx.lineTo(x,y);
+    }
+    ctx.lineTo(baseX[i]+((n===3)?0:0), startY);
+    ctx.stroke();
+  }
+  ctx.fillStyle='#f0d9b5';
+  ctx.font='12px Arial';
+  ctx.textAlign='center';
+  for(let i=0;i<n;i++){
+    ctx.fillText(String.fromCharCode(65+i),baseX[i],20);
+  }
+  // progress bar
+  ctx.fillStyle='#3a2a18';ctx.fillRect(20,245,520,8);
+  ctx.fillStyle='#7ec850';ctx.fillRect(20,245,520*Math.min(1,progress/targetLength),8);
+}
+
+function tryStrand(i){
+  if(state!=='play')return;
+  const expected=pattern[patternPos%pattern.length];
+  if(i===expected){
+    history.push(i);
+    progress++;
+    patternPos++;
+    SFX.point();
+    drawBraid();
+    if(progress>=targetLength){
+      state='won';
+      score+=strands*10+targetLength;
+      if(score>hi){hi=score;localStorage.setItem('ropebraiding_hi',hi);}
+      document.getElementById('scoreLbl').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+      document.getElementById('hiLbl').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+      setStatus(I18N.t('braid_complete','Braid complete! Well done.'));
+      SFX.success();
+      round++;
+      setTimeout(newBraid,1400);
+    }
+  } else {
+    mistakesLeft--;
+    SFX.error();
+    const undo=Math.min(3,history.length);
+    for(let k=0;k<undo;k++){history.pop();progress--;}
+    patternPos=Math.max(0,patternPos-undo);
+    drawBraid();
+    document.getElementById('mistakesLbl').textContent=I18N.t('mistakes_left','Mistakes left: {n}').replace('{n}',mistakesLeft);
+    if(mistakesLeft<=0){
+      state='lost';
+      setStatus(I18N.t('braid_unraveled','The braid unraveled! Try again.'));
+      SFX.fail();
+      setTimeout(newBraid,1400);
+    } else {
+      setStatus(I18N.t('wrong_crossing','Wrong crossing — the braid slipped! Watch the pattern again.'));
+    }
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  const map={'1':0,'2':1,'3':2,'4':3,'5':4,'a':0,'b':1,'c':2,'d':3,'e':4};
+  const k=e.key.toLowerCase();
+  if(k in map && map[k]<strands){e.preventDefault();tryStrand(map[k]);}
+});
+
+document.getElementById('newBtn').onclick=()=>{round=1;score=0;document.getElementById('scoreLbl').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);newBraid();};
+
+document.getElementById('hiLbl').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+newBraid();
+</script></body></html>

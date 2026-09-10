@@ -1,0 +1,283 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Chainmail Weaving</title><meta name="description" content="Play Chainmail Weaving free online — Follow the European 4-in-1 reference weave: click a new ring, then click each highlighted existing ring it must link through. Finish every ring correctly and stress-test the sheet. Weave sheets correctly to score; each round adds more rings in a larger, trickier pattern."><link rel="canonical" href="https://games.multiportllc.com/games/chainmailweaving"><meta property="og:title" content="Chainmail Weaving - Multiport Games"><meta property="og:description" content="Play Chainmail Weaving free online — Follow the European 4-in-1 reference weave: click a new ring, then click each highlighted existing ring it must link through. Finish every ring correctly and stress-test the sheet. Weave sheets correctly to score; each round adds more rings in a larger, trickier pattern."><meta property="og:url" content="https://games.multiportllc.com/games/chainmailweaving"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Chainmail Weaving","description":"Play Chainmail Weaving free online instantly. Follow the European 4-in-1 reference weave and link each new ring through the correct existing rings to build a chainmail sheet. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/chainmailweaving","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{display:flex;flex-wrap:wrap;gap:22px;justify-content:center;align-items:flex-start;padding:10px}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;text-align:center;margin-bottom:8px}
+#hud span{color:#ffd54f}
+.panel{background:#16213e;border-radius:14px;padding:16px;text-align:center}
+.panel h3{color:#e94560;margin:0 0 8px;font-size:.9rem;letter-spacing:.03em;text-transform:uppercase}
+#refCanvas,#gameCanvas{background:#1a1a2e;border-radius:10px;display:block;touch-action:none}
+#status{color:#fff;min-height:2.4em;font-size:.92rem;margin-top:8px;max-width:320px}
+#stressBtn{margin-top:8px;padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;font-size:.95rem;cursor:pointer}
+#stressBtn:disabled{opacity:.35;cursor:not-allowed}
+.integrity{width:220px;height:10px;background:#333;border-radius:5px;margin:8px auto 0;overflow:hidden}
+.integrityfill{height:100%;background:linear-gradient(90deg,#e94560,#4caf50);width:100%;transition:width .3s}
+@media(max-width:480px){#refCanvas,#gameCanvas{width:170px;height:170px}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Chainmail Weaving</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="hud">Sheets woven: <span id="scoreVal">0</span> | Best: <span id="bestVal">0</span> | Round <span id="roundVal">1</span></div>
+    <div id="wrap">
+      <div class="panel">
+        <h3>Reference Weave (European 4-in-1)</h3>
+        <canvas id="refCanvas" width="200" height="200"></canvas>
+      </div>
+      <div class="panel">
+        <h3 id="workLabel">Your Sheet — link the glowing ring</h3>
+        <canvas id="gameCanvas" width="260" height="260"></canvas>
+        <div class="integrity"><div class="integrityfill" id="integrityFill"></div></div>
+        <div id="status">Click the glowing new ring, then click each ring it must pass through, in any order.</div>
+        <button id="stressBtn" disabled>Stress-Test Sheet</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> The reference panel shows the European 4-in-1 weave — every new ring links through 4 existing rings above it. On your sheet, the ring that needs linking pulses gold. Click it, then click each of the existing rings it should pass through (shown as targets) — order between the targets doesn't matter, but every target must be clicked before moving to the next new ring. Wrong or skipped links weaken the sheet's integrity. Once every ring is linked, click <b>Stress-Test Sheet</b> to see if it holds. Weave sheets correctly to score; each round adds more rings and a larger pattern.
+  </div>
+</div>
+<script>
+const scoreEl=document.getElementById('scoreVal'),bestEl=document.getElementById('bestVal'),roundEl=document.getElementById('roundVal');
+const refCanvas=document.getElementById('refCanvas'),refCtx=refCanvas.getContext('2d');
+const gameCanvas=document.getElementById('gameCanvas'),gameCtx=gameCanvas.getContext('2d');
+const statusEl=document.getElementById('status'),integrityFill=document.getElementById('integrityFill'),stressBtn=document.getElementById('stressBtn');
+
+const KEY_BEST='chainmailweaving_best';
+let score=0,best=parseInt(localStorage.getItem(KEY_BEST)||'0',10),round=1;
+bestEl.textContent=best;
+
+// Grid-based European 4-in-1: each ring at (col,row) links to (col-1,row),(col+1,row),(col,row-1) style neighbors from prior rows.
+// We build ring list in weave order; each ring (after the first row) must link through its designated set of existing rings.
+let cols,rows,rings,linkTasks,curTask,selectedNew,progress,integrity,gameOver,animT;
+
+function gridSize(r){
+  const c=3+Math.min(3,Math.floor((r-1)/2));
+  const rr=3+Math.min(2,Math.floor((r-1)/3));
+  return {cols:c,rows:rr};
+}
+
+function buildWeave(){
+  const g=gridSize(round);
+  cols=g.cols;rows=g.rows;
+  rings=[];
+  const idx=(c,r)=>r*cols+c;
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      rings.push({c,r,linked:false,x:0,y:0});
+    }
+  }
+  linkTasks=[];
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      if(r===0){ rings[idx(c,r)].linked=true; continue; } // base row pre-placed
+      const deps=[];
+      if(c>0)deps.push(idx(c-1,r));
+      if(c<cols-1)deps.push(idx(c+1,r));
+      deps.push(idx(c,r-1));
+      if(c>0)deps.push(idx(c-1,r-1));
+      linkTasks.push({ring:idx(c,r),deps});
+    }
+  }
+  curTask=0;
+  progress=new Set();
+  selectedNew=false;
+  integrity=100;
+  gameOver=false;
+  layoutRings();
+}
+
+function layoutRings(){
+  const pad=30;
+  const w=gameCanvas.width-pad*2,h=gameCanvas.height-pad*2;
+  rings.forEach(ring=>{
+    const offsetX = (ring.r%2===1)? (w/(cols-0.5))*0.5 : 0;
+    ring.x = pad+offsetX+ (ring.c/(Math.max(1,cols-1)))*w*(cols>1?(cols-1)/cols:1);
+    ring.x = pad + (ring.c+ (ring.r%2)*0.5) * (w/cols);
+    ring.y = pad + ring.r*(h/(Math.max(1,rows-1)||1));
+  });
+}
+
+function refDraw(){
+  refCtx.clearRect(0,0,refCanvas.width,refCanvas.height);
+  const pad=26,w=refCanvas.width-pad*2,h=refCanvas.height-pad*2;
+  const rc=3,rr=3;
+  const pos=(c,r)=>({x:pad+(c+(r%2)*0.5)*(w/rc), y:pad+r*(h/(rr-1))});
+  // draw links
+  refCtx.strokeStyle='#8899bb';
+  refCtx.lineWidth=2;
+  for(let r=1;r<rr;r++){
+    for(let c=0;c<rc;c++){
+      const p=pos(c,r);
+      const deps=[];
+      if(c>0)deps.push(pos(c-1,r));
+      if(c<rc-1)deps.push(pos(c+1,r));
+      deps.push(pos(c,r-1));
+      if(c>0)deps.push(pos(c-1,r-1));
+      deps.forEach(d=>{ refCtx.beginPath();refCtx.moveTo(p.x,p.y);refCtx.lineTo(d.x,d.y);refCtx.stroke(); });
+    }
+  }
+  for(let r=0;r<rr;r++)for(let c=0;c<rc;c++){
+    const p=pos(c,r);
+    refCtx.fillStyle= r===0? '#7a8bb0' : '#c0c8e0';
+    refCtx.beginPath();refCtx.arc(p.x,p.y,9,0,7);refCtx.fill();
+    refCtx.strokeStyle='#1a1a2e';refCtx.lineWidth=2;refCtx.stroke();
+  }
+}
+
+function ringRadius(){ return Math.max(8, 90/Math.max(cols,rows)); }
+
+function drawGame(t){
+  gameCtx.clearRect(0,0,gameCanvas.width,gameCanvas.height);
+  const R=ringRadius();
+  // draw completed links
+  gameCtx.strokeStyle='#5566aa';
+  gameCtx.lineWidth=2.5;
+  rings.forEach((ring,i)=>{
+    if(!ring.linked)return;
+    const deps=depsFor(i);
+    deps.forEach(d=>{
+      if(rings[d].linked){
+        gameCtx.beginPath();gameCtx.moveTo(ring.x,ring.y);gameCtx.lineTo(rings[d].x,rings[d].y);gameCtx.stroke();
+      }
+    });
+  });
+  const task=linkTasks[curTask];
+  rings.forEach((ring,i)=>{
+    const isTargetNew = task && task.ring===i && !selectedNew;
+    const isDepTarget = task && selectedNew && task.deps.includes(i) && !progress.has(i);
+    gameCtx.beginPath();
+    gameCtx.arc(ring.x,ring.y,R,0,7);
+    gameCtx.fillStyle = ring.linked? '#c0c8e0' : (i===task?.ring ? '#3a3a5a':'#2a2a45');
+    gameCtx.fill();
+    gameCtx.strokeStyle='#0d0d1a';gameCtx.lineWidth=2;gameCtx.stroke();
+    if(isTargetNew){
+      const pulse=0.6+0.4*Math.sin(t/150);
+      gameCtx.beginPath();gameCtx.arc(ring.x,ring.y,R+4+pulse*3,0,7);
+      gameCtx.strokeStyle=`rgba(255,213,79,${pulse})`;gameCtx.lineWidth=3;gameCtx.stroke();
+    }
+    if(isDepTarget){
+      const pulse=0.5+0.5*Math.sin(t/150);
+      gameCtx.beginPath();gameCtx.arc(ring.x,ring.y,R+3,0,7);
+      gameCtx.strokeStyle=`rgba(76,175,80,${pulse})`;gameCtx.lineWidth=3;gameCtx.stroke();
+    }
+    if(progress.has(i)){
+      gameCtx.beginPath();gameCtx.arc(ring.x,ring.y,R-3,0,7);
+      gameCtx.fillStyle='#4caf50';gameCtx.fill();
+    }
+  });
+}
+
+function depsFor(ringIdx){
+  const t=linkTasks.find(t=>t.ring===ringIdx);
+  return t?t.deps:[];
+}
+
+function animLoop(t){
+  if(gameOver)return;
+  drawGame(t);
+  animT=requestAnimationFrame(animLoop);
+}
+
+gameCanvas.addEventListener('click',e=>{
+  if(gameOver||!linkTasks[curTask])return;
+  const rect=gameCanvas.getBoundingClientRect();
+  const scaleX=gameCanvas.width/rect.width,scaleY=gameCanvas.height/rect.height;
+  const mx=(e.clientX-rect.left)*scaleX,my=(e.clientY-rect.top)*scaleY;
+  const R=ringRadius();
+  let hit=-1;
+  rings.forEach((ring,i)=>{ if(Math.hypot(ring.x-mx,ring.y-my)<R+6)hit=i; });
+  if(hit<0)return;
+  handleClick(hit);
+},{passive:true});
+
+function handleClick(i){
+  const task=linkTasks[curTask];
+  if(!selectedNew){
+    if(i===task.ring){
+      selectedNew=true;
+      progress=new Set();
+      SFX.click();
+      statusEl.textContent=I18N.t('cm_link_hint','Now click each green target ring to link through.');
+    } else {
+      integrity-=12; updateIntegrity();
+      SFX.error();
+      statusEl.textContent=I18N.t('cm_wrong_ring','That\'s not the ring being added — click the pulsing gold ring first.');
+      if(integrity<=0)return failSheet();
+    }
+    return;
+  }
+  if(task.deps.includes(i)){
+    if(progress.has(i)){return;}
+    progress.add(i);
+    SFX.click();
+    if(progress.size===task.deps.length){
+      rings[task.ring].linked=true;
+      SFX.success();
+      curTask++;
+      selectedNew=false;
+      progress=new Set();
+      if(curTask>=linkTasks.length){
+        statusEl.textContent=I18N.t('cm_all_linked','All rings linked! Stress-test the sheet.');
+        stressBtn.disabled=false;
+      } else {
+        statusEl.textContent=I18N.t('cm_next_ring','Ring linked! Click the next glowing ring.');
+      }
+    }
+  } else {
+    integrity-=15; updateIntegrity();
+    SFX.error();
+    statusEl.textContent=I18N.t('cm_wrong_link','Wrong ring — that link doesn\'t belong in the pattern.');
+    if(integrity<=0)return failSheet();
+  }
+}
+
+function updateIntegrity(){ integrityFill.style.width=Math.max(0,integrity)+'%'; }
+
+function failSheet(){
+  gameOver=true;
+  cancelAnimationFrame(animT);
+  SFX.lose();
+  statusEl.textContent=I18N.t('cm_sheet_failed','The sheet fell apart! Restarting round.');
+  setTimeout(startRound,1600);
+}
+
+stressBtn.addEventListener('click',()=>{
+  gameOver=true;
+  cancelAnimationFrame(animT);
+  stressBtn.disabled=true;
+  const pass = integrity>=40;
+  if(pass){
+    SFX.win();
+    score++;
+    scoreEl.textContent=score;
+    if(score>best){best=score;localStorage.setItem(KEY_BEST,best);bestEl.textContent=best;}
+    statusEl.textContent=I18N.t('cm_pass','The sheet holds strong! Sheet complete.');
+    round++;
+  } else {
+    SFX.lose();
+    statusEl.textContent=I18N.t('cm_fail_stress','The sheet is too weak and tears under stress!');
+  }
+  setTimeout(startRound,1700);
+});
+
+function startRound(){
+  buildWeave();
+  document.getElementById('workLabel').textContent=I18N.t('cm_work_label','Your Sheet — link the glowing ring ({n} rings)').replace('{n}',rings.length);
+  statusEl.textContent=I18N.t('cm_start_hint','Click the glowing new ring, then click each ring it must pass through.');
+  roundEl.textContent=round;
+  updateIntegrity();
+  stressBtn.disabled=true;
+  refDraw();
+  cancelAnimationFrame(animT);
+  animLoop(0);
+}
+
+startRound();
+</script></body></html>

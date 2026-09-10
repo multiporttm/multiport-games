@@ -1,0 +1,294 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Log Flume</title><meta name="description" content="Play Log Flume free online — Use Arrow Keys / A-D or drag on touch to steer your log left and right. Collect floating coins along the flume. Press Space (or tap the BRACE button) right before each splashdown to stay dry — miss the timing and your wetness meter rises. Stay dry and collect coins to reach the end of the course!"><link rel="canonical" href="https://games.multiportllc.com/games/logflume"><meta property="og:title" content="Log Flume - Multiport Games"><meta property="og:description" content="Play Log Flume free online — Use Arrow Keys / A-D or drag on touch to steer your log left and right. Collect floating coins along the flume. Press Space (or tap the BRACE button) right before each splashdown to stay dry — miss the timing and your wetness meter rises. Stay dry and collect coins to reach the end of the course!"><meta property="og:url" content="https://games.multiportllc.com/games/logflume"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Log Flume","description":"Play Log Flume free online instantly. Steer your log left and right, collect floating coins, and brace right before each splashdown to stay dry. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/logflume","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0a3050;display:block;border-radius:8px;touch-action:none}
+#hud{color:#cdeaff;font-size:1.05rem;font-weight:700;text-align:center;padding:6px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#fff}
+#wetwrap{width:180px;height:14px;background:rgba(255,255,255,.15);border-radius:8px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+#wetbar{height:100%;width:0%;background:linear-gradient(90deg,#4fc3f7,#0288d1);transition:width .15s}
+#braceBtn{display:block;margin:8px auto 0;padding:10px 26px;background:#e94560;border:none;border-radius:22px;color:#fff;font-weight:800;font-size:1rem;cursor:pointer}
+#braceBtn:active{transform:scale(.95)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Log Flume</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>Coins: <b id="coin-val">0</b></span>
+      <span>Wetness: <span id="wetwrap"><span id="wetbar"></span></span></span>
+      <span>Best: <b id="hi-val">0</b></span>
+    </div>
+    <canvas id="c" width="420" height="560"></canvas>
+    <button id="braceBtn">BRACE!</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / A-D</b> or drag on touch to steer your log left and right. Collect floating coins along the flume. Press <b>Space</b> (or tap the <b>BRACE</b> button) right before each splashdown to stay dry — miss the timing and your wetness meter rises. Stay dry and collect coins to reach the end of the course!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=420,H=560;
+const KEY='logflume_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+document.getElementById('hi-val').textContent=hi;
+
+function I(k,f){return I18N.t(k,f);}
+
+let state='idle'; // idle, playing, over
+let log={x:W/2,lane:0}; // x pos, target lane -1..1 continuous
+let scrollY=0, speed=3.2;
+let coins=[],drops=[],wallBumps=[];
+let wetness=0,coinCount=0,distance=0,courseLength=6000;
+let braced=false,braceFlashTimer=0;
+let keys={left:false,right:false};
+let dragging=false,dragStartX=0,dragStartLogX=0;
+let lastTime=null;
+let flashMsg='',flashTimer=0,flashColor='#fff';
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function genCourse(){
+  coins=[];drops=[];
+  let y=300;
+  while(y<courseLength){
+    // coin clusters
+    if(Math.random()<0.7){
+      const cx=rand(80,W-80);
+      const n=1+Math.floor(Math.random()*3);
+      for(let i=0;i<n;i++)coins.push({x:cx+i*30-((n-1)*15),y:y+i*10,r:10,got:false});
+    }
+    y+=rand(90,160);
+  }
+  // drops (splash zones) spaced along course
+  let dy=500;
+  while(dy<courseLength-200){
+    drops.push({y:dy,resolved:false,braceWindowStart:0});
+    dy+=rand(650,900);
+  }
+}
+
+function startGame(){
+  state='playing';
+  log.x=W/2;
+  scrollY=0;distance=0;
+  wetness=0;coinCount=0;
+  braced=false;braceFlashTimer=0;
+  courseLength=6000;
+  genCourse();
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('coin-val').textContent=coinCount;
+  document.getElementById('wetbar').style.width=Math.min(100,wetness)+'%';
+}
+
+function endGame(win){
+  state='over';
+  const score=coinCount*10+Math.max(0,Math.round(100-wetness));
+  if(score>hi){hi=score;localStorage.setItem(KEY,hi);document.getElementById('hi-val').textContent=hi;}
+  flashMsg=win?I('course_complete','COURSE COMPLETE!'):I('too_soaked','TOO SOAKED!');
+  flashColor=win?'#7ec850':'#ff6b6b';
+  if(win)SFX.win();else SFX.lose();
+}
+
+function brace(){
+  if(state!=='playing')return;
+  braced=true;
+  braceFlashTimer=20;
+  SFX.click();
+  setTimeout(()=>{braced=false;},350);
+}
+
+document.getElementById('braceBtn').addEventListener('pointerdown',e=>{e.preventDefault();brace();});
+window.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keys.left=true;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keys.right=true;
+  if(e.code==='Space'){e.preventDefault();
+    if(state==='idle'||state==='over')startGame();
+    else brace();
+  }
+});
+window.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keys.left=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keys.right=false;
+});
+c.addEventListener('pointerdown',e=>{
+  if(state==='idle'||state==='over'){startGame();return;}
+  dragging=true;
+  const r=c.getBoundingClientRect();
+  dragStartX=(e.clientX-r.left)*(W/r.width);
+  dragStartLogX=log.x;
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const r=c.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width);
+  log.x=Math.max(40,Math.min(W-40,dragStartLogX+(x-dragStartX)));
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+function update(dt){
+  if(state!=='playing')return;
+  distance+=speed*dt;
+  scrollY=distance;
+  if(keys.left)log.x-=4*dt;
+  if(keys.right)log.x+=4*dt;
+  log.x=Math.max(40,Math.min(W-40,log.x));
+
+  // check coins
+  coins.forEach(co=>{
+    if(!co.got){
+      const sy=co.y-scrollY+H*0.75;
+      if(sy>H*0.6&&sy<H*0.85){
+        const dx=Math.abs(co.x-log.x);
+        if(dx<30&&sy>0&&sy<H){
+          co.got=true;coinCount++;SFX.coin();updateHud();
+        }
+      }
+    }
+  });
+
+  // check drops (splashdown zones): when the drop's y crosses the log's screen position
+  drops.forEach(d=>{
+    if(!d.resolved){
+      const sy=d.y-scrollY+H*0.75;
+      if(sy<H*0.72){
+        d.resolved=true;
+        if(braced){
+          flashMsg=I('dry_msg','DRY!');flashColor='#7ec850';flashTimer=40;SFX.success();
+        } else {
+          const add=18+Math.random()*10;
+          wetness+=add;
+          flashMsg=I('splash_msg','SPLASH!');flashColor='#4fc3f7';flashTimer=40;SFX.hit();
+          updateHud();
+          if(wetness>=100){endGame(false);}
+        }
+      }
+    }
+  });
+
+  if(braceFlashTimer>0)braceFlashTimer-=dt;
+  if(flashTimer>0)flashTimer-=dt;
+
+  if(distance>=courseLength){endGame(true);}
+}
+
+function drawFlume(){
+  // water background gradient scroll effect via stripes
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#0a3050');grad.addColorStop(1,'#0e4a75');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+
+  // banks
+  ctx.fillStyle='#2d5a27';
+  ctx.fillRect(0,0,30,H);
+  ctx.fillRect(W-30,0,30,H);
+
+  // wavy water lines scrolling
+  ctx.strokeStyle='rgba(255,255,255,.12)';
+  ctx.lineWidth=2;
+  for(let i=0;i<8;i++){
+    const y=((i*80)-(scrollY*2)%80+H)%H;
+    ctx.beginPath();
+    for(let x=30;x<W-30;x+=20){
+      ctx.lineTo(x,y+Math.sin((x+scrollY)/30)*4);
+    }
+    ctx.stroke();
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  drawFlume();
+
+  if(state==='idle'){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I('start_hint','Tap / Click / Space to start'),W/2,H/2);
+    ctx.font='16px Arial';ctx.fillStyle='#cdeaff';
+    ctx.fillText(I('steer_hint','Steer with arrows or drag'),W/2,H/2+30);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // draw coins
+  coins.forEach(co=>{
+    if(co.got)return;
+    const sy=co.y-scrollY+H*0.75;
+    if(sy>-20&&sy<H+20){
+      ctx.fillStyle='#ffd54f';
+      ctx.beginPath();ctx.arc(co.x,sy,co.r,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='#c8961e';ctx.lineWidth=2;ctx.stroke();
+    }
+  });
+
+  // draw upcoming drop markers
+  drops.forEach(d=>{
+    const sy=d.y-scrollY+H*0.75;
+    if(sy>-20&&sy<H+20&&!d.resolved){
+      ctx.strokeStyle='rgba(255,107,107,.5)';
+      ctx.setLineDash([8,6]);ctx.lineWidth=3;
+      ctx.beginPath();ctx.moveTo(30,sy);ctx.lineTo(W-30,sy);ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle='rgba(255,107,107,.8)';ctx.font='bold 14px Arial';ctx.textAlign='center';
+      ctx.fillText('⚠ DROP',W/2,sy-8);
+    }
+  });
+
+  // log + rider
+  const ly=H*0.75;
+  ctx.save();
+  ctx.translate(log.x,ly);
+  ctx.fillStyle='#8b5a2b';
+  ctx.beginPath();ctx.ellipse(0,0,32,16,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#a3703f';
+  ctx.beginPath();ctx.ellipse(0,-4,26,10,0,0,Math.PI*2);ctx.fill();
+  // rider
+  ctx.fillStyle=braced?'#4fc3f7':'#e94560';
+  ctx.beginPath();ctx.arc(0,-18,10,0,Math.PI*2);ctx.fill();
+  if(braced){
+    ctx.strokeStyle='#4fc3f7';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(-14,-14);ctx.lineTo(-22,-24);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(14,-14);ctx.lineTo(22,-24);ctx.stroke();
+  }
+  ctx.restore();
+
+  // splash particles feedback
+  if(flashTimer>0){
+    ctx.fillStyle=flashColor;
+    ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.globalAlpha=Math.min(1,flashTimer/20);
+    ctx.fillText(flashMsg,W/2,H*0.5);
+    ctx.globalAlpha=1;
+  }
+
+  // progress bar
+  const prog=Math.min(1,distance/courseLength);
+  ctx.fillStyle='rgba(255,255,255,.2)';ctx.fillRect(30,10,W-60,8);
+  ctx.fillStyle='#ffd54f';ctx.fillRect(30,10,(W-60)*prog,8);
+
+  if(state==='over'){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle=flashColor;ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,H/2-30);
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';
+    ctx.fillText(I('final_stats','Coins: {c}  Wetness: {w}%').replace('{c}',coinCount).replace('{w}',Math.min(100,Math.round(wetness))),W/2,H/2+8);
+    ctx.font='16px Arial';ctx.fillStyle='#cdeaff';
+    ctx.fillText(I('restart_hint','Tap / Click / Space to ride again'),W/2,H/2+40);
+  }
+}
+
+function loop(t){
+  const now=t||performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

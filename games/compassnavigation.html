@@ -1,0 +1,199 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Compass Navigation</title><meta name="description" content="Play Compass Navigation free online — Follow the bearing sheet's legs (compass bearing + distance) from the starting flag, clicking each grid point that matches the current leg, to reach the hidden destination. Wrong bearings miss the target. Complete courses correctly to score; each round adds more legs and trickier bearings."><link rel="canonical" href="https://games.multiportllc.com/games/compassnavigation"><meta property="og:title" content="Compass Navigation - Multiport Games"><meta property="og:description" content="Play Compass Navigation free online — Follow the bearing sheet's legs (compass bearing + distance) from the starting flag, clicking each grid point that matches the current leg, to reach the hidden destination. Wrong bearings miss the target. Complete courses correctly to score; each round adds more legs and trickier bearings."><meta property="og:url" content="https://games.multiportllc.com/games/compassnavigation"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Compass Navigation","description":"Play Compass Navigation free online instantly. Follow a series of compass bearings and distances across a grid to plot the correct path from the start flag to the hidden destination. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/compassnavigation","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{display:flex;flex-wrap:wrap;gap:22px;justify-content:center;align-items:flex-start;padding:10px}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;text-align:center;margin-bottom:8px}
+#hud span{color:#ffd54f}
+.panel{background:#16213e;border-radius:14px;padding:16px;text-align:center}
+.panel h3{color:#e94560;margin:0 0 8px;font-size:.9rem;letter-spacing:.03em;text-transform:uppercase}
+#legSheet{width:200px;color:#cfe0ff;font-size:.8rem;text-align:left;background:#0d1a33;border-radius:10px;padding:10px;line-height:1.7}
+.legrow{padding:3px 6px;border-radius:6px}
+.legrow.done{color:#4caf50;text-decoration:line-through;opacity:.6}
+.legrow.current{background:#e9456033;color:#fff;font-weight:700}
+#mapCanvas{background:#0b2818;border-radius:10px;display:block;touch-action:none}
+#status{color:#fff;min-height:1.8em;font-size:.92rem;margin-top:8px;max-width:320px}
+#compassRing{width:120px;height:120px;margin:8px auto 0;position:relative}
+@media(max-width:480px){#mapCanvas{width:260px;height:260px}#legSheet{width:220px}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Compass Navigation</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="hud">Courses completed: <span id="scoreVal">0</span> | Best: <span id="bestVal">0</span> | Round <span id="roundVal">1</span></div>
+    <div id="wrap">
+      <div class="panel">
+        <h3>Bearing Sheet</h3>
+        <div id="legSheet"></div>
+      </div>
+      <div class="panel">
+        <h3>Map Grid</h3>
+        <canvas id="mapCanvas" width="320" height="320"></canvas>
+        <div id="status">Click the grid point that matches the current bearing and distance.</div>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> The bearing sheet lists each leg of the course as a compass bearing (0°=North, 90°=East, 180°=South, 270°=West) and a distance in grid squares, starting from the flag. Click the grid intersection that lies at the current leg's bearing and distance from your current position — a faint ring shows the correct distance and click-tolerance to help you sight the right point. Click the wrong point and you'll miss the leg, costing points, but you can try again. Complete every leg to reach the hidden destination marker and finish the course. Complete courses correctly to score; each round adds more legs and trickier bearing combinations.
+  </div>
+</div>
+<script>
+const scoreEl=document.getElementById('scoreVal'),bestEl=document.getElementById('bestVal'),roundEl=document.getElementById('roundVal');
+const legSheetEl=document.getElementById('legSheet'),statusEl=document.getElementById('status');
+const canvas=document.getElementById('mapCanvas'),ctx=canvas.getContext('2d');
+
+const KEY_BEST='compassnavigation_best';
+let score=0,best=parseInt(localStorage.getItem(KEY_BEST)||'0',10),round=1;
+bestEl.textContent=best;
+
+const GRID=10; // grid cells across
+let cellPx,legs,curLeg,pos,path,gameOver,misses;
+
+function bearingLabel(b){
+  const dirs=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  const idx=Math.round(b/22.5)%16;
+  return dirs[idx];
+}
+
+function legCount(r){ return Math.min(2+Math.floor((r-1)/1),6); }
+
+function genCourse(){
+  cellPx=canvas.width/GRID;
+  const n=legCount(round);
+  const bearingsSet=[0,45,90,135,180,225,270,315];
+  legs=[];
+  let x=Math.floor(GRID/2),y=GRID-1; // start bottom-center
+  const startPos={x,y};
+  let tries=0;
+  legs=[];
+  let cx=x,cy=y;
+  for(let i=0;i<n;i++){
+    let ok=false,b,dist,nx,ny;
+    let attempts=0;
+    while(!ok&&attempts<50){
+      attempts++;
+      b=bearingsSet[Math.floor(Math.random()*bearingsSet.length)];
+      dist=1+Math.floor(Math.random()*Math.min(3+Math.floor(round/2),4));
+      const rad=b*Math.PI/180;
+      nx=cx+Math.sin(rad)*dist;
+      ny=cy-Math.cos(rad)*dist;
+      if(nx>=0.5&&nx<=GRID-0.5&&ny>=0.5&&ny<=GRID-0.5){ ok=true; }
+    }
+    if(!ok){ // fallback small safe step
+      b=180;dist=1;
+      nx=Math.max(0.5,Math.min(GRID-0.5,cx));
+      ny=Math.max(0.5,Math.min(GRID-0.5,cy-1));
+    }
+    legs.push({bearing:b,dist,from:{x:cx,y:cy},to:{x:nx,y:ny}});
+    cx=nx;cy=ny;
+  }
+  return startPos;
+}
+
+function startRound(){
+  const start=genCourse();
+  pos={x:start.x,y:start.y};
+  curLeg=0;
+  path=[{x:pos.x,y:pos.y}];
+  gameOver=false;
+  misses=0;
+  renderSheet();
+  roundEl.textContent=round;
+  statusEl.textContent=I18N.t('cn_start_hint','Click the grid point matching the current bearing and distance.');
+  draw();
+}
+
+function renderSheet(){
+  legSheetEl.innerHTML='<b>Legs</b><br>'+legs.map((l,i)=>{
+    let cls='legrow';
+    if(i<curLeg)cls+=' done';else if(i===curLeg)cls+=' current';
+    return `<div class="${cls}">${i+1}. ${I18N.t('cn_bearing_dist','Bearing {b} ({d}) — {n} squares').replace('{b}',l.bearing+'°').replace('{d}',bearingLabel(l.bearing)).replace('{n}',l.dist)}</div>`;
+  }).join('')+ (curLeg>=legs.length? `<div style="margin-top:6px;color:#ffd54f">${I18N.t('cn_destination','🏁 Destination reached!')}</div>`:'');
+}
+
+function toPx(gx,gy){ return {x:gx*cellPx, y:gy*cellPx}; }
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle='#1e5c3a';ctx.lineWidth=1;
+  for(let i=0;i<=GRID;i++){
+    ctx.beginPath();ctx.moveTo(i*cellPx,0);ctx.lineTo(i*cellPx,canvas.height);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(0,i*cellPx);ctx.lineTo(canvas.width,i*cellPx);ctx.stroke();
+  }
+  // path so far
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+  ctx.beginPath();
+  path.forEach((p,i)=>{ const px=toPx(p.x,p.y); if(i===0)ctx.moveTo(px.x,px.y);else ctx.lineTo(px.x,px.y); });
+  ctx.stroke();
+  // start flag
+  const sp=toPx(path[0].x,path[0].y);
+  ctx.fillStyle='#4caf50';ctx.font='20px Arial';ctx.textAlign='center';ctx.fillText('🚩',sp.x,sp.y+7);
+  // current position marker
+  const cp=toPx(pos.x,pos.y);
+  ctx.beginPath();ctx.arc(cp.x,cp.y,7,0,7);ctx.fillStyle='#ffd54f';ctx.fill();
+  // hint ring for current leg
+  if(curLeg<legs.length){
+    const leg=legs[curLeg];
+    const r=leg.dist*cellPx;
+    ctx.beginPath();ctx.arc(cp.x,cp.y,r,0,7);
+    ctx.strokeStyle='rgba(233,69,96,0.4)';ctx.lineWidth=2;ctx.setLineDash([6,6]);ctx.stroke();ctx.setLineDash([]);
+  } else {
+    // destination marker
+    ctx.font='24px Arial';ctx.fillText('🏆',cp.x,cp.y-14);
+  }
+}
+
+canvas.addEventListener('click',e=>{
+  if(gameOver||curLeg>=legs.length)return;
+  const rect=canvas.getBoundingClientRect();
+  const scaleX=canvas.width/rect.width,scaleY=canvas.height/rect.height;
+  const mx=(e.clientX-rect.left)*scaleX,my=(e.clientY-rect.top)*scaleY;
+  const gx=Math.round(mx/cellPx),gy=Math.round(my/cellPx);
+  const leg=legs[curLeg];
+  const targetGx=Math.round(leg.to.x),targetGy=Math.round(leg.to.y);
+  if(gx===targetGx&&gy===targetGy){
+    pos={x:targetGx,y:targetGy};
+    path.push({x:pos.x,y:pos.y});
+    curLeg++;
+    SFX.success();
+    renderSheet();
+    if(curLeg>=legs.length){
+      finishCourse();
+    } else {
+      statusEl.textContent=I18N.t('cn_leg_hit','On course! Follow the next bearing.');
+    }
+  } else {
+    misses++;
+    SFX.error();
+    statusEl.textContent=I18N.t('cn_leg_miss','Off course! Recheck the bearing and distance, then click again.');
+    if(misses>=5){ return failCourse(); }
+  }
+  draw();
+},{passive:true});
+
+function finishCourse(){
+  gameOver=true;
+  score++;
+  scoreEl.textContent=score;
+  if(score>best){best=score;localStorage.setItem(KEY_BEST,best);bestEl.textContent=best;}
+  statusEl.textContent=I18N.t('cn_course_done','Destination reached! Course complete.');
+  SFX.win();
+  draw();
+  round++;
+  setTimeout(startRound,1800);
+}
+
+function failCourse(){
+  gameOver=true;
+  SFX.lose();
+  statusEl.textContent=I18N.t('cn_course_failed','Too many wrong turns — lost in the field! Restarting course.');
+  setTimeout(startRound,1700);
+}
+
+startRound();
+</script></body></html>

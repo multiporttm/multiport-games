@@ -1,0 +1,261 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Grasshopper Jump</title><meta name="description" content="Play Grasshopper Jump free online — Hold Space / the button to charge your jump, then release to leap onto the next leaf. Too weak or too strong and you'll miss! Land clean to keep your streak going as the leaves get farther apart."><link rel="canonical" href="https://games.multiportllc.com/games/grasshopperjump"><meta property="og:title" content="Grasshopper Jump - Multiport Games"><meta property="og:description" content="Play Grasshopper Jump free online — Hold Space / the button to charge your jump, then release to leap onto the next leaf. Too weak or too strong and you'll miss! Land clean to keep your streak going as the leaves get farther apart."><meta property="og:url" content="https://games.multiportllc.com/games/grasshopperjump"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Grasshopper Jump","description":"Play Grasshopper Jump free online instantly. Hold Space / the button to charge your jump, then release to leap onto the next leaf. Too weak or too strong and you'll miss! Land clean to keep your streak going as the leaves get farther apart. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/grasshopperjump","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#4fa8d8;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#7ec850;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#power-wrap{max-width:600px;margin:0 auto 8px;background:#0b2e1f;border-radius:8px;height:18px;overflow:hidden;position:relative}
+#power-bar{height:100%;width:0%;background:linear-gradient(90deg,#7ec850,#ffd54f,#e53935);transition:width .02s linear}
+#sweet-spot{position:absolute;top:0;bottom:0;background:rgba(255,255,255,0.55)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Grasshopper Jump</div>
+  <div class="game-frame">
+    <div id="score-display">Streak: 0 | Best: 0</div>
+    <div id="power-wrap"><div id="sweet-spot"></div><div id="power-bar"></div></div>
+    <canvas id="c" width="800" height="360"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Space</b> / <b>tap and hold</b> the button to charge your jump, then release to leap onto the next leaf. Too weak or too strong and you'll miss! Land clean to keep your streak going as the leaves get farther apart.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=360;
+const KEY='grasshopperjump_best';
+let best=parseInt(localStorage.getItem(KEY)||'0',10);
+let streak=0,round=0,state='ready'; // ready, charging, jumping, land-ok, land-fail, gameover
+let charging=false,power=0,powerDir=1;
+let leaves=[];
+let hopper={x:0,y:0,vy:0,startX:0,startY:0,targetX:0,targetY:0,t:0,jumpDur:0,onLeafIdx:0};
+let frame=0,lastTime=null;
+let missAnimTimer=0;
+
+const groundY=300;
+
+function leafGap(n){ return 110+Math.min(140,n*9)+Math.random()*20; }
+function leafSize(n){ return Math.max(34,60-n*1.2); }
+
+function newRound(resetStreak){
+  if(resetStreak){streak=0;round=0;}
+  leaves=[];
+  let x=90;
+  for(let i=0;i<6;i++){
+    const size=leafSize(round+i);
+    leaves.push({x,y:groundY+Math.sin(i*1.3)*20,r:size/2,bob:Math.random()*Math.PI*2});
+    x+=leafGap(round+i);
+  }
+  hopper.onLeafIdx=0;
+  hopper.x=leaves[0].x;hopper.y=leaves[0].y;
+  state='ready';power=0;charging=false;
+  updateHUD();
+}
+
+function updateHUD(){
+  document.getElementById('score-display').textContent=I18N.t('streak_best_label','Streak: {s} | Best: {b}').replace('{s}',streak).replace('{b}',best);
+}
+
+function startCharge(){
+  if(state==='ready'){
+    state='charging';charging=true;power=0;powerDir=1;
+    placeSweetSpot();
+  }
+}
+function placeSweetSpot(){
+  const idx=hopper.onLeafIdx;
+  const next=leaves[idx+1];
+  if(!next)return;
+  const dist=next.x-leaves[idx].x;
+  // ideal power scales with distance; sweet spot width shrinks as rounds progress
+  const ideal=Math.min(96,30+dist*0.28);
+  const width=Math.max(6,16-round*0.35);
+  window._sweetIdeal=ideal;window._sweetWidth=width;
+  const el=document.getElementById('sweet-spot');
+  const wrapW=document.getElementById('power-wrap').offsetWidth||600;
+  el.style.left=(Math.max(0,ideal-width/2))+'%';
+  el.style.width=width+'%';
+}
+
+function releaseCharge(){
+  if(state!=='charging')return;
+  charging=false;
+  const idx=hopper.onLeafIdx;
+  const next=leaves[idx+1];
+  if(!next){state='ready';return;}
+  const diff=Math.abs(power-window._sweetIdeal);
+  const success=diff<=window._sweetWidth/2;
+  hopper.startX=hopper.x;hopper.startY=hopper.y;
+  const overshoot=(power-window._sweetIdeal)/100;
+  hopper.targetX=next.x+overshoot*70;
+  hopper.targetY=next.y;
+  hopper.t=0;
+  hopper.jumpDur=32;
+  hopper.willLand=success;
+  hopper.landIdx=idx+1;
+  state='jumping';
+  SFX.jump();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault(); if(state==='gameover'){newRound(true);} else startCharge();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){e.preventDefault();releaseCharge();}
+});
+c.addEventListener('pointerdown',e=>{ if(state==='gameover'){newRound(true);} else startCharge(); });
+c.addEventListener('pointerup',releaseCharge);
+c.addEventListener('pointerleave',()=>{ if(state==='charging')releaseCharge(); });
+c.addEventListener('touchstart',e=>{e.preventDefault(); if(state==='gameover'){newRound(true);} else startCharge();},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();releaseCharge();},{passive:false});
+
+function drawWater(){
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#8fd3f4');grad.addColorStop(1,'#2378a8');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(255,255,255,0.15)';
+  for(let i=0;i<6;i++){
+    const y=(frame*0.5+i*60)%H;
+    ctx.fillRect(0,y,W,2);
+  }
+}
+
+function drawLeaf(l,scale){
+  ctx.save();
+  const by=l.y+Math.sin(frame*0.05+l.bob)*3;
+  ctx.translate(l.x,by);
+  ctx.scale(scale||1,scale||1);
+  ctx.fillStyle='#4caf50';
+  ctx.beginPath();
+  ctx.ellipse(0,0,l.r,l.r*0.75,0.3,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle='#2e7d32';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(-l.r*0.7,-l.r*0.3);ctx.lineTo(l.r*0.7,l.r*0.3);ctx.stroke();
+  ctx.restore();
+}
+
+function drawHopper(){
+  ctx.save();
+  ctx.translate(hopper.x,hopper.y-10);
+  const squish=state==='charging'?1-Math.min(0.3,power/300):1;
+  ctx.scale(1,squish);
+  ctx.fillStyle='#66bb6a';
+  ctx.beginPath();ctx.ellipse(0,-4,13,10,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#43a047';
+  ctx.beginPath();ctx.ellipse(8,-8,7,6,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#1a1a2e';
+  ctx.beginPath();ctx.arc(11,-10,2,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#2e7d32';ctx.lineWidth=3;
+  const legBend=charging?6+power/16:2;
+  ctx.beginPath();ctx.moveTo(-6,2);ctx.lineTo(-10,2+legBend);ctx.lineTo(-14,-2+legBend);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(4,4);ctx.lineTo(2,6+legBend);ctx.lineTo(-4,2+legBend);ctx.stroke();
+  ctx.restore();
+}
+
+function loop(){
+  frame++;
+  drawWater();
+
+  leaves.forEach((l,i)=>{
+    if(i===hopper.onLeafIdx&&(state==='ready'||state==='charging'))return;
+    drawLeaf(l);
+  });
+
+  if(state==='ready'||state==='land-ok'||state==='land-fail'||state==='gameover'){
+    drawLeaf(leaves[hopper.onLeafIdx]);
+  }
+  if(state==='charging'){
+    power+=powerDir*2.6;
+    if(power>=100){power=100;powerDir=-1;}
+    if(power<=0){power=0;powerDir=1;}
+    document.getElementById('power-bar').style.width=power+'%';
+    drawLeaf(leaves[hopper.onLeafIdx],1-Math.min(0.25,power/400));
+  }else{
+    document.getElementById('power-bar').style.width='0%';
+  }
+
+  if(state==='jumping'){
+    hopper.t++;
+    const p=Math.min(1,hopper.t/hopper.jumpDur);
+    hopper.x=hopper.startX+(hopper.targetX-hopper.startX)*p;
+    const arc=Math.sin(p*Math.PI)*70;
+    hopper.y=hopper.startY+(hopper.targetY-hopper.startY)*p-arc;
+    if(p>=1){
+      const targetLeaf=leaves[hopper.landIdx];
+      const dx=hopper.x-targetLeaf.x;
+      const landedOn=Math.abs(dx)<targetLeaf.r*0.9 && hopper.willLand;
+      if(landedOn){
+        state='land-ok';
+        streak++;round++;
+        if(streak>best){best=streak;localStorage.setItem(KEY,String(best));}
+        SFX.point();
+        hopper.onLeafIdx=hopper.landIdx;
+        hopper.x=targetLeaf.x;hopper.y=targetLeaf.y;
+        updateHUD();
+        setTimeout(()=>{
+          if(hopper.onLeafIdx>=leaves.length-2){
+            const extra=[];
+            let x=leaves[leaves.length-1].x;
+            for(let i=0;i<4;i++){
+              x+=leafGap(round+i);
+              extra.push({x,y:groundY+Math.sin((round+i)*1.3)*20,r:leafSize(round+i)/2,bob:Math.random()*Math.PI*2});
+            }
+            leaves=leaves.concat(extra);
+          }
+          state='ready';
+        },260);
+      }else{
+        state='land-fail';
+        SFX.fail();
+        missAnimTimer=40;
+        setTimeout(()=>{ state='gameover'; },500);
+      }
+    }
+  }
+
+  if(state==='land-fail'&&missAnimTimer>0){
+    hopper.y+=6;missAnimTimer--;
+  }
+
+  drawHopper();
+
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+  if(state==='ready'){
+    ctx.fillText(I18N.t('hopper_ready_hint','Hold to charge, release to jump!'),W/2,40);
+  }else if(state==='land-fail'){
+    ctx.fillStyle='#ff5252';
+    ctx.fillText(I18N.t('hopper_miss','Splash! Missed the leaf.'),W/2,40);
+  }else if(state==='gameover'){
+    ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('hopper_final',"Streak: {s} — Tap or Space to try again").replace('{s}',streak),W/2,H/2+16);
+  }
+
+  // camera follow: shift canvas view via translate trick using a container - simple approach: keep hopper in view by scrolling drawing origin
+  requestAnimationFrame(loop);
+}
+
+// Camera scroll: wrap draw calls in an offset so the hopper stays roughly centered horizontally
+const origDrawLeaf=drawLeaf, origDrawHopper=drawHopper;
+let camX=0;
+function updateCamera(){
+  camX=Math.max(0,hopper.x-260);
+}
+const rawLoop=loop;
+function cameraLoop(){
+  updateCamera();
+  ctx.save();
+  ctx.translate(-camX,0);
+  rawLoop._inner=true;
+  ctx.restore();
+}
+// Simpler: integrate camera translation directly into loop via wrapper below
+(function(){
+  const originalLoop=loop;
+})();
+</script></body></html>

@@ -1,0 +1,285 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Button Sewing</title><meta name="description" content="Play Button Sewing free online — Follow the reference pattern and click the buttonholes in order (X or square) to sew each stitch. Pull the needle at the right moment in the tension bar's green zone to keep the thread tight. Sew buttons correctly to score; each round adds more buttons and trickier hole patterns."><link rel="canonical" href="https://games.multiportllc.com/games/buttonsewing"><meta property="og:title" content="Button Sewing - Multiport Games"><meta property="og:description" content="Play Button Sewing free online — Follow the reference pattern and click the buttonholes in order (X or square) to sew each stitch. Pull the needle at the right moment in the tension bar's green zone to keep the thread tight. Sew buttons correctly to score; each round adds more buttons and trickier hole patterns."><meta property="og:url" content="https://games.multiportllc.com/games/buttonsewing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Button Sewing","description":"Play Button Sewing free online instantly. Follow the reference pattern and click the buttonholes in order (X or square) to sew each stitch, pulling the needle at the right moment to keep tension tight. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/buttonsewing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{display:flex;flex-wrap:wrap;gap:22px;justify-content:center;align-items:flex-start;padding:10px}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;text-align:center;margin-bottom:8px}
+#hud span{color:#ffd54f}
+.panel{background:#16213e;border-radius:14px;padding:16px;text-align:center}
+.panel h3{color:#e94560;margin:0 0 8px;font-size:.95rem;letter-spacing:.03em;text-transform:uppercase}
+#refCanvas,#gameCanvas{background:#e9dcc3;border-radius:10px;display:block;touch-action:none}
+#tensionWrap{margin-top:12px}
+#tensionBar{position:relative;width:260px;height:26px;background:#0b3d2e;border-radius:13px;margin:0 auto;overflow:hidden}
+#tensionZone{position:absolute;top:0;bottom:0;background:#4caf5077;border-left:2px solid #4caf50;border-right:2px solid #4caf50}
+#tensionNeedle{position:absolute;top:0;bottom:0;width:4px;background:#ffd54f;box-shadow:0 0 6px #ffd54f}
+#pullBtn{margin-top:10px;padding:10px 26px;background:#e94560;border:none;border-radius:20px;color:#fff;font-size:1rem;cursor:pointer}
+#pullBtn:disabled{opacity:.35;cursor:not-allowed}
+#status{color:#fff;min-height:1.6em;font-size:.95rem;margin-top:8px}
+#strength{color:#ddd;font-size:.85rem;margin-top:4px}
+.strengthbar{width:220px;height:10px;background:#333;border-radius:5px;margin:4px auto;overflow:hidden}
+.strengthfill{height:100%;background:linear-gradient(90deg,#e94560,#4caf50);width:100%;transition:width .2s}
+@media(max-width:480px){#refCanvas,#gameCanvas{width:160px;height:160px}#tensionBar{width:200px}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Button Sewing</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="hud">Buttons sewn: <span id="scoreVal">0</span> | Best: <span id="bestVal">0</span> | Round <span id="roundVal">1</span></div>
+    <div id="wrap">
+      <div class="panel">
+        <h3 id="refLabel">Reference Pattern</h3>
+        <canvas id="refCanvas" width="180" height="180"></canvas>
+      </div>
+      <div class="panel">
+        <h3 id="workLabel">Your Button — click holes in order</h3>
+        <canvas id="gameCanvas" width="260" height="260"></canvas>
+        <div id="tensionWrap" hidden>
+          <div id="tensionBar"><div id="tensionZone"></div><div id="tensionNeedle"></div></div>
+          <button id="pullBtn">Pull Needle</button>
+        </div>
+        <div id="status">Click the reference pattern's first hole to begin.</div>
+        <div id="strength"><div class="strengthbar"><div class="strengthfill" id="strengthFill"></div></div></div>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Study the reference pattern on the left — it shows an X or square stitch order for the button's holes. Click the holes on your button (right) in the same order to begin a stitch. After each pair of holes, a tension bar appears — click <b>Pull Needle</b> (or press <b>Space</b>) while the yellow needle marker is inside the green zone to keep the stitch tight. Complete every stitch in the pattern to sew the button. Wrong-order clicks or loose pulls weaken the button's attachment strength — if it drops to zero, the button falls off and the round ends. Sew buttons correctly to score; each round adds more holes and trickier patterns.
+  </div>
+</div>
+<script>
+const scoreEl=document.getElementById('scoreVal'),bestEl=document.getElementById('bestVal'),roundEl=document.getElementById('roundVal');
+const refCanvas=document.getElementById('refCanvas'),refCtx=refCanvas.getContext('2d');
+const gameCanvas=document.getElementById('gameCanvas'),gameCtx=gameCanvas.getContext('2d');
+const statusEl=document.getElementById('status'),strengthFill=document.getElementById('strengthFill');
+const tensionWrap=document.getElementById('tensionWrap'),tensionZone=document.getElementById('tensionZone'),tensionNeedle=document.getElementById('tensionNeedle'),pullBtn=document.getElementById('pullBtn');
+
+const KEY_BEST='buttonsewing_best';
+let score=0,best=parseInt(localStorage.getItem(KEY_BEST)||'0',10),round=1;
+bestEl.textContent=best;
+
+let holes=[];        // {x,y} positions on button (0..1 normalized)
+let pattern=[];       // sequence of hole indices to sew, e.g. X pattern order
+let stitchPairs=[];   // pairs of [from,to] for drawing thread
+let nextIdx=0;        // index into pattern we're waiting for
+let strength=100;
+let awaitingPull=false;
+let pullPos=0,pullDir=1,pullAnim=null;
+let zoneStart=0,zoneWidth=0;
+let sewnPairIdx=-1;
+let doneStitching=false;
+
+function holeCount(r){ return Math.min(4+Math.floor((r-1)/2),8); }
+
+function genPattern(n){
+  // holes arranged in circle
+  const hs=[];
+  for(let i=0;i<n;i++){
+    const ang=(Math.PI*2*i)/n - Math.PI/2;
+    hs.push({x:0.5+0.34*Math.cos(ang),y:0.5+0.34*Math.sin(ang)});
+  }
+  let seq;
+  if(n===4){
+    seq = Math.random()<0.5 ? [0,2,1,3] : [0,1,2,3]; // X or square-ish for 4
+  } else {
+    // build an X/star-like traversal: connect roughly-opposite holes repeatedly
+    seq=[0];
+    const used=new Set([0]);
+    let cur=0;
+    while(used.size<n){
+      let best=-1,bestScore=-1;
+      for(let i=0;i<n;i++){
+        if(used.has(i))continue;
+        const d=Math.min(Math.abs(i-cur),n-Math.abs(i-cur));
+        if(d>bestScore){bestScore=d;best=i;}
+      }
+      seq.push(best);used.add(best);cur=best;
+    }
+  }
+  return {holes:hs,seq};
+}
+
+function startRound(){
+  const n=holeCount(round);
+  const g=genPattern(n);
+  holes=g.holes;
+  pattern=g.seq;
+  stitchPairs=[];
+  nextIdx=1; // first click must be pattern[0]
+  strength=100;
+  awaitingPull=false;
+  doneStitching=false;
+  document.getElementById('workLabel').textContent=I18N.t('bs_work_label','Your Button — click holes in order ({n} holes)').replace('{n}',n);
+  document.getElementById('refLabel').textContent=I18N.t('bs_ref_label','Reference Pattern');
+  statusEl.textContent=I18N.t('bs_start_hint','Click the reference pattern\'s first hole to begin.');
+  roundEl.textContent=round;
+  updateStrength();
+  drawRef();
+  drawGame();
+}
+
+function updateStrength(){
+  strengthFill.style.width=Math.max(0,strength)+'%';
+}
+
+function project(canvas,h){
+  return {x:h.x*canvas.width,y:h.y*canvas.height};
+}
+
+function drawButtonBase(ctx,canvas,holesList,highlightIdx){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const cx=canvas.width/2,cy=canvas.height/2,r=canvas.width*0.42;
+  ctx.fillStyle='#c9a86a';
+  ctx.beginPath();ctx.arc(cx,cy,r,0,7);ctx.fill();
+  ctx.strokeStyle='#8a6d3b';ctx.lineWidth=3;ctx.stroke();
+  ctx.fillStyle='#b8975a';
+  ctx.beginPath();ctx.arc(cx,cy,r*0.7,0,7);ctx.fill();
+  holesList.forEach((h,i)=>{
+    const p=project(canvas,h);
+    ctx.fillStyle='#3a2b1a';
+    ctx.beginPath();ctx.arc(p.x,p.y,canvas.width*0.045,0,7);ctx.fill();
+    if(highlightIdx===i){
+      ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+      ctx.beginPath();ctx.arc(p.x,p.y,canvas.width*0.07,0,7);ctx.stroke();
+    }
+  });
+}
+
+function drawRef(){
+  drawButtonBase(refCtx,refCanvas,holes,null);
+  refCtx.strokeStyle='#e94560';
+  refCtx.lineWidth=3;
+  refCtx.beginPath();
+  pattern.forEach((idx,i)=>{
+    const p=project(refCanvas,holes[idx]);
+    if(i===0)refCtx.moveTo(p.x,p.y);else refCtx.lineTo(p.x,p.y);
+  });
+  refCtx.stroke();
+  pattern.forEach((idx,i)=>{
+    const p=project(refCanvas,holes[idx]);
+    refCtx.fillStyle='#fff';
+    refCtx.font='bold 13px Arial';
+    refCtx.textAlign='center';
+    refCtx.fillText(i+1,p.x,p.y-10);
+  });
+}
+
+function drawGame(){
+  const highlight = doneStitching?null: pattern[nextIdx-1]!==undefined ? pattern[nextIdx] : pattern[0];
+  drawButtonBase(gameCtx,gameCanvas,holes,doneStitching?null:pattern[nextIdx]);
+  gameCtx.strokeStyle='#e94560';
+  gameCtx.lineWidth=4;
+  stitchPairs.forEach(([a,b])=>{
+    const p1=project(gameCanvas,holes[a]),p2=project(gameCanvas,holes[b]);
+    gameCtx.beginPath();gameCtx.moveTo(p1.x,p1.y);gameCtx.lineTo(p2.x,p2.y);gameCtx.stroke();
+  });
+}
+
+gameCanvas.addEventListener('click',e=>{
+  if(doneStitching||awaitingPull)return;
+  const rect=gameCanvas.getBoundingClientRect();
+  const scaleX=gameCanvas.width/rect.width,scaleY=gameCanvas.height/rect.height;
+  const mx=(e.clientX-rect.left)*scaleX,my=(e.clientY-rect.top)*scaleY;
+  let hit=-1;
+  holes.forEach((h,i)=>{
+    const p=project(gameCanvas,h);
+    if(Math.hypot(p.x-mx,p.y-my)<gameCanvas.width*0.08)hit=i;
+  });
+  if(hit<0)return;
+  handleHoleClick(hit);
+},{passive:true});
+
+function handleHoleClick(hit){
+  const expected=pattern[nextIdx];
+  const prevHole=pattern[nextIdx-1];
+  if(hit===expected){
+    stitchPairs.push([prevHole,hit]);
+    sewnPairIdx=stitchPairs.length-1;
+    nextIdx++;
+    SFX.click();
+    if(nextIdx>=pattern.length){
+      doneStitching=true;
+      drawGame();
+      finishButton();
+      return;
+    }
+    beginPull();
+  } else {
+    strength-=25;
+    updateStrength();
+    SFX.error();
+    statusEl.textContent=I18N.t('bs_wrong_hole','Wrong hole! Attachment weakened.');
+    if(strength<=0){ failButton(); return; }
+  }
+  drawGame();
+}
+
+function beginPull(){
+  awaitingPull=true;
+  tensionWrap.hidden=false;
+  statusEl.textContent=I18N.t('bs_pull_hint','Pull the needle when it\'s in the green zone!');
+  const zoneW=Math.max(14,26-round); // narrower zone each round
+  zoneStart=10+Math.random()*(80-zoneW-10);
+  zoneWidth=zoneW;
+  tensionZone.style.left=zoneStart+'%';
+  tensionZone.style.width=zoneWidth+'%';
+  pullPos=0;pullDir=1;
+  const speed=1.4+round*0.15;
+  function anim(){
+    pullPos+=pullDir*speed;
+    if(pullPos>=100){pullPos=100;pullDir=-1;}
+    if(pullPos<=0){pullPos=0;pullDir=1;}
+    tensionNeedle.style.left=pullPos+'%';
+    pullAnim=requestAnimationFrame(anim);
+  }
+  pullAnim=requestAnimationFrame(anim);
+  pullBtn.disabled=false;
+}
+
+function doPull(){
+  if(!awaitingPull)return;
+  cancelAnimationFrame(pullAnim);
+  awaitingPull=false;
+  tensionWrap.hidden=true;
+  const inZone = pullPos>=zoneStart && pullPos<=zoneStart+zoneWidth;
+  if(inZone){
+    SFX.success();
+    statusEl.textContent=I18N.t('bs_tight','Nice tight stitch!');
+  } else {
+    strength-=18;
+    updateStrength();
+    SFX.hit();
+    statusEl.textContent=I18N.t('bs_loose','Loose stitch — attachment weakened.');
+    if(strength<=0){ failButton(); return; }
+  }
+  statusEl.textContent += ' ' + I18N.t('bs_next_hole','Click the next hole.');
+}
+pullBtn.addEventListener('click',doPull);
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&awaitingPull){e.preventDefault();doPull();}
+});
+
+function finishButton(){
+  score++;
+  scoreEl.textContent=score;
+  if(score>best){best=score;localStorage.setItem(KEY_BEST,best);bestEl.textContent=best;}
+  statusEl.textContent=I18N.t('bs_button_done','Button sewn! Strength: {s}%').replace('{s}',Math.max(0,Math.round(strength)));
+  SFX.win();
+  round++;
+  setTimeout(startRound,1600);
+}
+
+function failButton(){
+  doneStitching=true;
+  tensionWrap.hidden=true;
+  SFX.lose();
+  statusEl.textContent=I18N.t('bs_fell_off','The button fell off! Round reset.');
+  setTimeout(startRound,1600);
+}
+
+startRound();
+</script></body></html>
