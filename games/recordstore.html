@@ -1,0 +1,187 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Record Store</title><meta name="description" content="Play Record Store free online — Click a vinyl record from the incoming crate, then click the correct shelf slot for its genre section, alphabetized by artist. File records correctly and quickly to score points before the store closes — busier crates and finer alphabetizing each round!"><link rel="canonical" href="https://games.multiportllc.com/games/recordstore"><meta property="og:title" content="Record Store - Multiport Games"><meta property="og:description" content="Play Record Store free online — Click a vinyl record, then click the correct shelf slot for its genre section, alphabetized by artist. File correctly and quickly before the store closes!"><meta property="og:url" content="https://games.multiportllc.com/games/recordstore"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Record Store","description":"Play Record Store free online instantly. Click a vinyl record from the incoming crate, then click the correct shelf slot for its genre section, alphabetized by artist, before the store closes. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/recordstore","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{max-width:800px;margin:0 auto;padding:8px 6px;color:#eee}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;font-weight:800;margin-bottom:8px}
+#hud span{color:#ffd54f}
+#crate{display:flex;gap:8px;overflow-x:auto;padding:10px;background:#1a1a2e;border-radius:12px;margin-bottom:10px}
+.record{flex:0 0 auto;width:96px;background:radial-gradient(circle at 50% 50%,#222 0 14%,#111 15% 100%);border-radius:8px;padding:8px;text-align:center;cursor:pointer;border:3px solid transparent;color:#eee}
+.record.selected{border-color:#ffd54f}
+.record .art{width:100%;aspect-ratio:1;border-radius:6px;margin-bottom:6px;display:flex;align-items:center;justify-content:center;font-size:1.6rem}
+.record .artist{font-size:.68rem;font-weight:800;line-height:1.15}
+.record .genre{font-size:.6rem;color:#7ec850}
+#shelves{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;background:#16213e;border-radius:12px;padding:10px}
+.section{background:#0b0b14;border:2px solid #333;border-radius:8px;padding:8px}
+.section h4{margin:0 0 6px 0;color:#ffd54f;font-size:.85rem;text-align:center}
+.slots{display:flex;flex-direction:column;gap:4px;min-height:30px}
+.slot{background:#1e1e2e;border-radius:5px;padding:5px 6px;font-size:.68rem;color:#ccc;cursor:pointer;border:2px solid transparent}
+.slot:hover{border-color:#7ec850}
+.slot.target{outline:2px dashed #7ec850}
+#msg{text-align:center;min-height:1.4em;font-weight:800;color:#ffd54f;margin-top:8px}
+#over{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);align-items:center;justify-content:center;z-index:10;flex-direction:column;gap:10px}
+#over.show{display:flex}
+#over h2{color:#fff}
+#over button{padding:10px 26px;background:#7ec850;border:none;border-radius:20px;font-weight:800;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Record Store</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><div>Score <span id="scoreNum">0</span></div><div>Hi <span id="hiNum">0</span></div><div>Filed <span id="filedNum">0</span></div><div>Time <span id="timeNum">75</span>s</div></div>
+      <div id="crate"></div>
+      <div id="shelves"></div>
+      <div id="msg">Click a record, then click where it belongs on the shelves.</div>
+      <div id="over"><h2 id="overTitle">Store Closed!</h2><div id="overText" style="color:#ddd"></div><button id="overBtn">Play Again</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a vinyl record in the crate to select it, then click the shelf slot where it belongs: the correct <b>genre section</b>, positioned <b>alphabetically by artist</b> within that section. Wrong genre or wrong alphabetical spot costs points. File as many records correctly as you can before the store closes — the crate gets busier and the alphabetizing gets finer each round!</div>
+</div>
+<script>
+const GENRES=['Rock','Jazz','Classical','Hip-Hop','Electronic'];
+const ARTISTS_BY_GENRE={
+ 'Rock':['Aftershock','Blue Denim','Copper Wolves','Deep Static','Echo Ridge','Flint Avenue','Granite Sky'],
+ 'Jazz':['Amber Quartet','Blue Note Trio','Cool Horizon','Delta Reeds','Ember Sax','Fine Brass','Glass Piano'],
+ 'Classical':['Adagio Ensemble','Baroque Circle','Chamber Nine','Divertimento','Eternal Strings','Forte Orchestra','Grand Sonata'],
+ 'Hip-Hop':['Apex Flow','Boombox Kid','Cipher Union','Downtown MC','East Verse','Fresh Cadence','Ground Level'],
+ 'Electronic':['Analog Pulse','Bitwave','Circuit Bloom','Digital Rain','Echo Grid','Fractal Beat','Glow Synth']
+};
+const GENRE_EMOJI={'Rock':'🎸','Jazz':'🎷','Classical':'🎻','Hip-Hop':'🎤','Electronic':'🎛️'};
+
+let score=0,hi=parseInt(localStorage.getItem('recordstore_hi')||'0',10);
+let filed=0,timeLeft=75,round=1;
+let crate=[],selected=null;
+let shelves={}; // genre -> array of artist names filed
+let timerId=null;
+
+document.getElementById('hiNum').textContent=hi;
+GENRES.forEach(g=>shelves[g]=[]);
+
+function pick(arr){return arr[Math.floor(Math.random()*arr.length)];}
+function shuffle(arr){return arr.slice().sort(()=>Math.random()-0.5);}
+
+function makeRecord(){
+  const genre=pick(GENRES);
+  const pool=ARTISTS_BY_GENRE[genre].filter(a=>!shelves[genre].includes(a)&&!crate.some(r=>r.artist===a));
+  const artist=pool.length?pick(pool):pick(ARTISTS_BY_GENRE[genre]);
+  return {id:Math.random().toString(36).slice(2),artist,genre};
+}
+
+function crateSize(){return Math.min(4+Math.floor((round-1)/2),8);}
+
+function fillCrate(){
+  const n=crateSize();
+  while(crate.length<n){crate.push(makeRecord());}
+  renderCrate();
+}
+
+function renderCrate(){
+  const el=document.getElementById('crate');
+  el.innerHTML='';
+  crate.forEach(r=>{
+    const d=document.createElement('div');
+    d.className='record'+(selected&&selected.id===r.id?' selected':'');
+    d.innerHTML=`<div class="art">${GENRE_EMOJI[r.genre]}</div><div class="artist">${r.artist}</div><div class="genre">${r.genre}</div>`;
+    d.onclick=()=>{selected=r;SFX.select();renderCrate();renderShelves();};
+    el.appendChild(d);
+  });
+}
+
+function renderShelves(){
+  const el=document.getElementById('shelves');
+  el.innerHTML='';
+  GENRES.forEach(g=>{
+    const sec=document.createElement('div');
+    sec.className='section';
+    const sorted=shelves[g].slice().sort();
+    let html=`<h4>${GENRE_EMOJI[g]} ${g}</h4><div class="slots">`;
+    // build slot list including an insertion point before each existing artist and after the last
+    const insertPositions=[0,...sorted.map((_,i)=>i+1)];
+    if(sorted.length===0){
+      html+=`<div class="slot" data-genre="${g}" data-pos="0">— empty, click to file here —</div>`;
+    }else{
+      sorted.forEach((a,i)=>{
+        html+=`<div class="slot" data-genre="${g}" data-pos="${i}">before ${a}</div>`;
+      });
+      html+=`<div class="slot" data-genre="${g}" data-pos="${sorted.length}">after ${sorted[sorted.length-1]}</div>`;
+    }
+    html+='</div>';
+    sec.innerHTML=html;
+    el.appendChild(sec);
+  });
+  el.querySelectorAll('.slot').forEach(s=>{
+    s.onclick=()=>attemptFile(s.dataset.genre,parseInt(s.dataset.pos,10));
+  });
+}
+
+function correctPos(genre,artist){
+  const sorted=shelves[genre].slice().sort();
+  let pos=0;
+  while(pos<sorted.length&&sorted[pos]<artist)pos++;
+  return pos;
+}
+
+function attemptFile(genre,pos){
+  if(!selected)return;
+  const genreOk=genre===selected.genre;
+  const cpos=correctPos(genre,selected.artist);
+  const posOk=genreOk&&pos===cpos;
+  let pts;
+  if(posOk){pts=35;SFX.success();}
+  else if(genreOk){pts=8;SFX.point();}
+  else{pts=-20;SFX.error();}
+  score=Math.max(0,score+pts);
+  document.getElementById('scoreNum').textContent=score;
+  if(score>hi){hi=score;localStorage.setItem('recordstore_hi',hi);document.getElementById('hiNum').textContent=hi;}
+  if(genreOk){
+    shelves[genre].push(selected.artist);
+  }
+  filed++;
+  document.getElementById('filedNum').textContent=filed;
+  crate=crate.filter(r=>r.id!==selected.id);
+  const msg=posOk?`Filed perfectly! +${pts} pts`:(genreOk?`Right section, wrong spot. +${pts} pts`:`Wrong section — that's ${selected.genre}. ${pts} pts`);
+  document.getElementById('msg').textContent=msg;
+  selected=null;
+  if(filed%6===0)round++;
+  fillCrate();
+  renderShelves();
+}
+
+function tick(){
+  timeLeft--;
+  document.getElementById('timeNum').textContent=timeLeft;
+  if(timeLeft<=0){endGame();return;}
+  timerId=setTimeout(tick,1000);
+}
+
+function endGame(){
+  clearTimeout(timerId);
+  document.getElementById('overTitle').textContent=I18N.t('store_closed','Store Closed!');
+  document.getElementById('overText').textContent=I18N.t('final_score_text2','Final score: {s} — Filed {n} records').replace('{s}',score).replace('{n}',filed);
+  document.getElementById('over').classList.add('show');
+  SFX.lose();
+}
+
+document.getElementById('overBtn').addEventListener('click',startGame);
+
+function startGame(){
+  score=0;filed=0;timeLeft=75;round=1;selected=null;crate=[];
+  GENRES.forEach(g=>shelves[g]=[]);
+  document.getElementById('scoreNum').textContent=0;
+  document.getElementById('filedNum').textContent=0;
+  document.getElementById('timeNum').textContent=timeLeft;
+  document.getElementById('over').classList.remove('show');
+  clearTimeout(timerId);
+  fillCrate();
+  renderShelves();
+  timerId=setTimeout(tick,1000);
+}
+
+startGame();
+</script></body></html>

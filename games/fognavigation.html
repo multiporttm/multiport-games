@@ -1,0 +1,258 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Fog Navigation</title><meta name="description" content="Play Fog Navigation free online — Steer your boat through thick fog with Arrow Keys/WASD or by dragging, using brief radar pings to dodge rocks and other vessels and reach the harbor marker."><link rel="canonical" href="https://games.multiportllc.com/games/fognavigation"><meta property="og:title" content="Fog Navigation - Multiport Games"><meta property="og:description" content="Play Fog Navigation free online — Steer your boat through thick fog with Arrow Keys/WASD or by dragging, using brief radar pings to dodge rocks and other vessels and reach the harbor marker."><meta property="og:url" content="https://games.multiportllc.com/games/fognavigation"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Fog Navigation","description":"Play Fog Navigation free online instantly. Steer your boat through thick fog with Arrow Keys/WASD or by dragging, using brief radar pings to dodge rocks and other vessels and reach the harbor marker. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/fognavigation","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d1f2d;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#hud{color:#bfe6ff;font-size:1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span{background:rgba(0,0,0,.3);padding:4px 10px;border-radius:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Fog Navigation</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="courseDisp">Course 1</span>
+      <span id="scoreDisp">Safe crossings: 0</span>
+    </div>
+    <canvas id="c" width="800" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Steer your vessel with <b>Arrow Keys / WASD</b> or by <b>dragging</b> on mobile. Thick fog hides most of the course — watch for brief <b>radar pings</b> that flash nearby hazards and the compass direction to the harbor marker. Avoid rocks and other vessels and reach the marker to complete the course. Each new course brings thicker fog and rarer pings.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+let course=1,crossings=0,hi=parseInt(localStorage.getItem('fognavigation_hi')||'0',10);
+let boat,goal,hazards,pingTimer,pingActive,pingDuration,keys={},dragTarget=null,gameOver,won,frame;
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function setupCourse(){
+  boat={x:60,y:H/2,ang:0,speed:2.2};
+  goal={x:W-60,y:rand(80,H-80),r:26};
+  const hazardCount=4+Math.min(8,course);
+  hazards=[];
+  for(let i=0;i<hazardCount;i++){
+    hazards.push({
+      x:rand(180,W-140),y:rand(40,H-40),r:rand(18,34),
+      type:Math.random()<0.5?'rock':'ship',
+      vx:Math.random()<0.5?0:rand(-0.6,0.6),
+      vy:Math.random()<0.5?0:rand(-0.6,0.6)
+    });
+  }
+  pingTimer=0;
+  pingActive=false;
+  // pingInterval grows, pingDuration shrinks as course increases (thicker fog / rarer readings)
+  pingDuration=Math.max(28,90-course*8);
+  gameOver=false;won=false;frame=0;
+  updateHud();
+}
+
+function pingInterval(){return Math.min(420,140+course*35);}
+
+function updateHud(){
+  document.getElementById('courseDisp').textContent=I18N.t('course_label','Course {n}').replace('{n}',course);
+  document.getElementById('scoreDisp').textContent=I18N.t('crossings_label','Safe crossings: {n} (Best: {h})').replace('{n}',crossings).replace('{h}',hi);
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d','W','A','S','D',' '].includes(e.key)){e.preventDefault();}
+  keys[e.key.toLowerCase()]=true;
+  if(gameOver&&(e.key===' '||e.key==='Enter')){setupCourse();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function canvasPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+c.addEventListener('pointerdown',e=>{
+  if(gameOver){setupCourse();return;}
+  dragTarget=canvasPos(e);
+});
+c.addEventListener('pointermove',e=>{
+  if(dragTarget!==null&&e.buttons)dragTarget=canvasPos(e);
+});
+window.addEventListener('pointerup',()=>{dragTarget=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(gameOver){setupCourse();return;}dragTarget=canvasPos(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();dragTarget=canvasPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragTarget=null;},{passive:false});
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function update(){
+  if(gameOver)return;
+  frame++;
+  // Keyboard steering
+  let dx=0,dy=0;
+  if(keys['arrowup']||keys['w'])dy-=1;
+  if(keys['arrowdown']||keys['s'])dy+=1;
+  if(keys['arrowleft']||keys['a'])dx-=1;
+  if(keys['arrowright']||keys['d'])dx+=1;
+  if(dx||dy){
+    const len=Math.hypot(dx,dy);
+    boat.x+=(dx/len)*boat.speed;
+    boat.y+=(dy/len)*boat.speed;
+    boat.ang=Math.atan2(dy,dx);
+  } else if(dragTarget){
+    const ddx=dragTarget.x-boat.x,ddy=dragTarget.y-boat.y;
+    const d=Math.hypot(ddx,ddy);
+    if(d>4){
+      boat.x+=(ddx/d)*boat.speed;
+      boat.y+=(ddy/d)*boat.speed;
+      boat.ang=Math.atan2(ddy,ddx);
+    }
+  }
+  boat.x=Math.max(15,Math.min(W-15,boat.x));
+  boat.y=Math.max(15,Math.min(H-15,boat.y));
+
+  hazards.forEach(hz=>{
+    hz.x+=hz.vx;hz.y+=hz.vy;
+    if(hz.x<20||hz.x>W-20)hz.vx*=-1;
+    if(hz.y<20||hz.y>H-20)hz.vy*=-1;
+  });
+
+  // Radar ping cadence
+  pingTimer++;
+  if(!pingActive&&pingTimer>=pingInterval()){pingActive=true;pingTimer=0;SFX.tick();}
+  if(pingActive&&pingTimer>=pingDuration){pingActive=false;pingTimer=0;}
+
+  // Collisions
+  for(const hz of hazards){
+    if(dist(boat,hz)<hz.r+12){
+      gameOver=true;won=false;SFX.lose();
+      break;
+    }
+  }
+  if(!gameOver&&dist(boat,goal)<goal.r){
+    gameOver=true;won=true;crossings++;
+    if(crossings>hi){hi=crossings;localStorage.setItem('fognavigation_hi',hi);}
+    course++;
+    SFX.success();
+  }
+}
+
+function drawFog(){
+  // Fog thickness scales with course; visible radius around boat shrinks
+  const visRadius=Math.max(70,190-course*14);
+  const grad=ctx.createRadialGradient(boat.x,boat.y,visRadius*0.15,boat.x,boat.y,visRadius);
+  grad.addColorStop(0,'rgba(13,31,45,0)');
+  grad.addColorStop(1,'rgba(13,31,45,1)');
+  ctx.save();
+  ctx.fillStyle='#0d1f2d';
+  ctx.fillRect(0,0,W,H);
+  ctx.restore();
+  return visRadius;
+}
+
+function drawBoat(){
+  ctx.save();
+  ctx.translate(boat.x,boat.y);
+  ctx.rotate(boat.ang);
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();
+  ctx.moveTo(16,0);ctx.lineTo(-12,-10);ctx.lineTo(-6,0);ctx.lineTo(-12,10);
+  ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+
+function drawHazard(hz,visible){
+  ctx.save();
+  ctx.globalAlpha=visible?1:0.85;
+  if(hz.type==='rock'){
+    ctx.fillStyle='#5b5b5b';
+    ctx.beginPath();ctx.arc(hz.x,hz.y,hz.r,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#787878';
+    ctx.beginPath();ctx.arc(hz.x-hz.r*0.3,hz.y-hz.r*0.3,hz.r*0.4,0,Math.PI*2);ctx.fill();
+  }else{
+    ctx.fillStyle='#c0392b';
+    ctx.fillRect(hz.x-hz.r,hz.y-hz.r*0.5,hz.r*2,hz.r);
+    ctx.fillStyle='#e74c3c';
+    ctx.fillRect(hz.x-hz.r*0.6,hz.y-hz.r*0.9,hz.r*1.2,hz.r*0.4);
+  }
+  ctx.restore();
+}
+
+function draw(){
+  const visRadius=drawFog();
+
+  // Compass ring around boat always faintly visible
+  ctx.save();
+  ctx.strokeStyle='rgba(191,230,255,0.15)';
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(boat.x,boat.y,visRadius,0,Math.PI*2);ctx.stroke();
+  ctx.restore();
+
+  // During a radar ping, reveal hazards/goal within a larger radar radius regardless of fog
+  const radarRadius=visRadius*2.4;
+  hazards.forEach(hz=>{
+    const d=dist(boat,hz);
+    if(d<visRadius){drawHazard(hz,true);}
+    else if(pingActive&&d<radarRadius){
+      ctx.save();ctx.globalAlpha=0.55;drawHazard(hz,false);ctx.restore();
+    }
+  });
+
+  const dGoal=dist(boat,goal);
+  if(dGoal<visRadius||pingActive){
+    ctx.save();
+    ctx.globalAlpha=dGoal<visRadius?1:0.7;
+    ctx.strokeStyle='#4caf50';ctx.lineWidth=3;
+    ctx.beginPath();ctx.arc(goal.x,goal.y,goal.r,0,Math.PI*2);ctx.stroke();
+    ctx.fillStyle='#4caf50';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText('⚓',goal.x,goal.y+7);
+    ctx.restore();
+  }
+
+  // Compass needle toward goal, shown during ping
+  if(pingActive){
+    const ang=Math.atan2(goal.y-boat.y,goal.x-boat.x);
+    ctx.save();
+    ctx.translate(boat.x,boat.y);
+    ctx.rotate(ang);
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(20,0);ctx.lineTo(38,0);ctx.stroke();
+    ctx.fillStyle='#ffd54f';
+    ctx.beginPath();ctx.moveTo(38,0);ctx.lineTo(32,-5);ctx.lineTo(32,5);ctx.closePath();ctx.fill();
+    ctx.restore();
+  }
+
+  drawBoat();
+
+  if(pingActive){
+    ctx.save();
+    ctx.fillStyle='#ffd54f';ctx.font='bold 14px Arial';ctx.textAlign='left';
+    ctx.fillText(I18N.t('radar_active','📡 RADAR PING'),12,24);
+    ctx.restore();
+  }
+
+  if(gameOver){
+    ctx.save();
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='bold 34px Arial';
+    ctx.fillText(won?I18N.t('course_clear','COURSE CLEAR!'):I18N.t('shipwrecked','SHIPWRECKED!'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('tap_continue','Tap / Space to continue'),W/2,H/2+26);
+    ctx.restore();
+  }
+
+  updateHud();
+}
+
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+setupCourse();
+loop();
+</script></body></html>

@@ -1,0 +1,299 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Vinyl Shop</title><meta name="description" content="Play Vinyl Shop free online — Drag the brush in circles over the dusty record until the coverage meter fills, then carefully drag the needle onto the exact groove for the requested track. Clean and cue records correctly for customers before time runs out — trickier track positions each round!"><link rel="canonical" href="https://games.multiportllc.com/games/vinylshop"><meta property="og:title" content="Vinyl Shop - Multiport Games"><meta property="og:description" content="Play Vinyl Shop free online — Clean the dusty record with circular brush strokes, then drag the needle onto the exact groove for the requested track. Clean and cue correctly before time runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/vinylshop"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Vinyl Shop","description":"Play Vinyl Shop free online instantly. Clean a dusty vinyl record with circular brush strokes tracked by a coverage meter, then carefully lower the needle onto the exact starting groove for a requested track before playing it for a customer. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/vinylshop","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{max-width:560px;margin:0 auto;padding:8px 6px;color:#eee;text-align:center}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;font-weight:800;margin-bottom:8px}
+#hud span{color:#ffd54f}
+#request{background:#1a1a2e;border-radius:12px;padding:10px;margin-bottom:10px;font-weight:800}
+#request .track{color:#7ec850;font-size:1.1rem}
+#stageArea{position:relative;width:340px;height:340px;margin:0 auto;touch-action:none}
+#recordCanvas{width:340px;height:340px;border-radius:50%;background:#111;cursor:crosshair}
+#coverageWrap{margin:10px auto;width:300px}
+#coverageBar{height:16px;background:#222;border-radius:8px;overflow:hidden;border:1px solid #444}
+#coverageFill{height:100%;width:0%;background:linear-gradient(90deg,#3a7bd5,#7ec850);transition:width .1s}
+#phaseLabel{font-weight:800;margin-top:8px;color:#ffd54f}
+#actionBtn{margin-top:10px;padding:10px 26px;background:#e94560;border:none;border-radius:20px;color:#fff;font-weight:800;cursor:pointer}
+#actionBtn:disabled{opacity:.35;cursor:not-allowed}
+#msg{text-align:center;min-height:1.4em;font-weight:800;color:#ffd54f;margin-top:8px}
+#over{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);align-items:center;justify-content:center;z-index:10;flex-direction:column;gap:10px}
+#over.show{display:flex}
+#over h2{color:#fff}
+#over button{padding:10px 26px;background:#7ec850;border:none;border-radius:20px;font-weight:800;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Vinyl Shop</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><div>Score <span id="scoreNum">0</span></div><div>Hi <span id="hiNum">0</span></div><div>Served <span id="servedNum">0</span></div><div>Time <span id="timeNum">75</span>s</div></div>
+      <div id="request">Customer wants: <span class="track" id="trackName">—</span></div>
+      <div id="phaseLabel">Clean the record</div>
+      <div id="stageArea"><canvas id="recordCanvas" width="340" height="340"></canvas></div>
+      <div id="coverageWrap"><div id="coverageBar"><div id="coverageFill"></div></div></div>
+      <button id="actionBtn">Start Cleaning</button>
+      <div id="msg">Drag in circles over the record to clean off the dust.</div>
+      <div id="over"><h2 id="overTitle">Shop Closed!</h2><div id="overText" style="color:#ddd"></div><button id="overBtn">Play Again</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">First, drag the brush in <b>circular motions</b> all over the dusty record until the coverage meter fills up. Then carefully drag the needle onto the <b>exact groove ring</b> highlighted for the requested track and release to cue it up — the closer to the exact groove, the better your score. Serve as many customers correctly as you can before the shop closes — track positions get trickier each round!</div>
+</div>
+<script>
+const canvas=document.getElementById('recordCanvas'),ctx=canvas.getContext('2d');
+const CX=170,CY=170,R=160,LABEL_R=28;
+const TRACK_NAMES=['Midnight Drive','Golden Hour','Neon Skyline','Slow Burn','Paper Moon','Echoes Fade','Velvet Static','Silver Lining','Afterglow','Wildflower Road'];
+
+let score=0,hi=parseInt(localStorage.getItem('vinylshop_hi')||'0',10);
+let served=0,timeLeft=75,round=1;
+let phase='idle'; // idle -> cleaning -> cueing -> done
+let dustMap=null; // canvas alpha grid via offscreen
+let coverage=0;
+let brushing=false;
+let track=null; // {name,ringRadius}
+let needleAngleR=null; // current radius while dragging needle
+let draggingNeedle=false;
+let timerId=null;
+
+document.getElementById('hiNum').textContent=hi;
+
+function rand(a,b){return a+Math.random()*(b-a);}
+function pick(arr){return arr[Math.floor(Math.random()*arr.length)];}
+
+function newTrack(){
+  const difficulty=Math.min(1,(round-1)/8);
+  const minR=40,maxR=150;
+  const r=rand(minR,maxR);
+  const tolerance=Math.max(4,14-difficulty*9);
+  return {name:pick(TRACK_NAMES),ringRadius:r,tolerance};
+}
+
+function drawVinylBase(){
+  ctx.clearRect(0,0,340,340);
+  // record disc
+  const g=ctx.createRadialGradient(CX,CY,10,CX,CY,R);
+  g.addColorStop(0,'#333');g.addColorStop(1,'#0a0a0a');
+  ctx.fillStyle=g;
+  ctx.beginPath();ctx.arc(CX,CY,R,0,Math.PI*2);ctx.fill();
+  // grooves
+  ctx.strokeStyle='rgba(255,255,255,0.06)';
+  for(let r=LABEL_R+10;r<R;r+=4){
+    ctx.beginPath();ctx.arc(CX,CY,r,0,Math.PI*2);ctx.lineWidth=1;ctx.stroke();
+  }
+  // label
+  ctx.fillStyle='#e94560';
+  ctx.beginPath();ctx.arc(CX,CY,LABEL_R,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#111';
+  ctx.beginPath();ctx.arc(CX,CY,4,0,Math.PI*2);ctx.fill();
+}
+
+function initDust(){
+  dustMap=document.createElement('canvas');
+  dustMap.width=340;dustMap.height=340;
+  const dctx=dustMap.getContext('2d');
+  dctx.fillStyle='rgba(200,190,170,0.55)';
+  dctx.beginPath();dctx.arc(CX,CY,R,0,Math.PI*2);dctx.fill();
+  // add speckle texture
+  for(let i=0;i<250;i++){
+    const a=Math.random()*Math.PI*2,rr=Math.random()*R;
+    const x=CX+Math.cos(a)*rr,y=CY+Math.sin(a)*rr;
+    dctx.fillStyle=`rgba(230,220,200,${rand(0.15,0.4)})`;
+    dctx.beginPath();dctx.arc(x,y,rand(1,3),0,Math.PI*2);dctx.fill();
+  }
+  coverage=0;
+}
+
+function drawCleaningFrame(){
+  drawVinylBase();
+  ctx.drawImage(dustMap,0,0);
+}
+
+function computeCoverage(){
+  const dctx=dustMap.getContext('2d');
+  const data=dctx.getImageData(0,0,340,340).data;
+  let total=0,cleared=0;
+  for(let i=3;i<data.length;i+=4*20){ // sample every 20th pixel for perf
+    total++;
+    if(data[i]<40)cleared++;
+  }
+  return total?cleared/total*100:0;
+}
+
+function eraseAt(x,y){
+  const dctx=dustMap.getContext('2d');
+  dctx.save();
+  dctx.globalCompositeOperation='destination-out';
+  const grad=dctx.createRadialGradient(x,y,0,x,y,22);
+  grad.addColorStop(0,'rgba(0,0,0,0.9)');
+  grad.addColorStop(1,'rgba(0,0,0,0)');
+  dctx.fillStyle=grad;
+  dctx.beginPath();dctx.arc(x,y,22,0,Math.PI*2);dctx.fill();
+  dctx.restore();
+}
+
+function pointerPos(e){
+  const rect=canvas.getBoundingClientRect();
+  const cx=e.touches?e.touches[0].clientX:e.clientX;
+  const cy=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(cx-rect.left)*(340/rect.width),y:(cy-rect.top)*(340/rect.height)};
+}
+
+canvas.addEventListener('pointerdown',e=>{
+  if(phase==='cleaning'){brushing=true;handleClean(e);}
+  else if(phase==='cueing'){draggingNeedle=true;handleCue(e);}
+});
+canvas.addEventListener('pointermove',e=>{
+  if(brushing&&phase==='cleaning')handleClean(e);
+  if(draggingNeedle&&phase==='cueing')handleCue(e);
+});
+window.addEventListener('pointerup',()=>{
+  if(brushing){brushing=false;}
+  if(draggingNeedle){draggingNeedle=false;finishCue();}
+});
+
+function handleClean(e){
+  const p=pointerPos(e);
+  const d=Math.hypot(p.x-CX,p.y-CY);
+  if(d>R+20)return;
+  eraseAt(p.x,p.y);
+  drawCleaningFrame();
+  drawBrushCursor(p);
+  coverage=computeCoverage();
+  document.getElementById('coverageFill').style.width=Math.min(100,coverage)+'%';
+  if(coverage>=88&&phase==='cleaning'){
+    phase='cleaned';
+    SFX.success();
+    document.getElementById('msg').textContent='Record is clean! Click "Cue the Needle" to continue.';
+    document.getElementById('actionBtn').disabled=false;
+    document.getElementById('actionBtn').textContent='Cue the Needle';
+  }
+}
+
+function drawBrushCursor(p){
+  ctx.strokeStyle='rgba(255,255,255,0.6)';
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(p.x,p.y,20,0,Math.PI*2);ctx.stroke();
+}
+
+function drawCueingFrame(){
+  drawVinylBase();
+  // target ring
+  ctx.save();
+  ctx.strokeStyle='rgba(126,200,80,0.9)';
+  ctx.setLineDash([4,4]);
+  ctx.lineWidth=track.tolerance*2;
+  ctx.globalAlpha=0.35;
+  ctx.beginPath();ctx.arc(CX,CY,track.ringRadius,0,Math.PI*2);ctx.stroke();
+  ctx.restore();
+  // needle
+  const r = needleAngleR!=null?needleAngleR:R+30;
+  const nx=CX,ny=CY-r;
+  ctx.save();
+  ctx.strokeStyle='#ddd';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(CX,CY-R-40);ctx.lineTo(nx,ny);ctx.stroke();
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(nx,ny,7,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function handleCue(e){
+  const p=pointerPos(e);
+  const d=Math.hypot(p.x-CX,p.y-CY);
+  needleAngleR=Math.max(0,Math.min(R+40,d));
+  drawCueingFrame();
+}
+
+function finishCue(){
+  if(needleAngleR==null)return;
+  const diff=Math.abs(needleAngleR-track.ringRadius);
+  let pts,quality;
+  if(diff<=track.tolerance*0.4){pts=50;quality='Perfect cue!';SFX.success();}
+  else if(diff<=track.tolerance){pts=25;quality='Good cue';SFX.point();}
+  else if(diff<=track.tolerance*2){pts=5;quality='Rough cue';SFX.click();}
+  else{pts=-15;quality='Missed the groove!';SFX.error();}
+  score=Math.max(0,score+pts);
+  document.getElementById('scoreNum').textContent=score;
+  if(score>hi){hi=score;localStorage.setItem('vinylshop_hi',hi);document.getElementById('hiNum').textContent=hi;}
+  document.getElementById('msg').textContent=`${quality} (${pts>0?'+':''}${pts} pts)`;
+  served++;
+  document.getElementById('servedNum').textContent=served;
+  if(served%5===0)round++;
+  phase='served';
+  document.getElementById('actionBtn').textContent='Next Customer';
+  document.getElementById('actionBtn').disabled=false;
+}
+
+document.getElementById('actionBtn').addEventListener('click',()=>{
+  if(phase==='idle'||phase==='served'){
+    startCleaningPhase();
+  }else if(phase==='cleaned'){
+    startCueingPhase();
+  }
+});
+
+function startCleaningPhase(){
+  track=newTrack();
+  document.getElementById('trackName').textContent=track.name;
+  document.getElementById('phaseLabel').textContent=I18N.t('phase_clean','Clean the record');
+  document.getElementById('msg').textContent=I18N.t('clean_hint','Drag in circles over the record to clean off the dust.');
+  document.getElementById('coverageFill').style.width='0%';
+  initDust();
+  drawCleaningFrame();
+  phase='cleaning';
+  needleAngleR=null;
+  document.getElementById('actionBtn').disabled=true;
+  document.getElementById('actionBtn').textContent='Cleaning...';
+}
+
+function startCueingPhase(){
+  phase='cueing';
+  needleAngleR=R+40;
+  document.getElementById('phaseLabel').textContent=I18N.t('phase_cue','Cue up: ')+track.name;
+  document.getElementById('msg').textContent=I18N.t('cue_hint','Drag the needle onto the highlighted groove, then release.');
+  drawCueingFrame();
+  document.getElementById('actionBtn').disabled=true;
+  document.getElementById('actionBtn').textContent='Cueing...';
+}
+
+function tick(){
+  timeLeft--;
+  document.getElementById('timeNum').textContent=timeLeft;
+  if(timeLeft<=0){endGame();return;}
+  timerId=setTimeout(tick,1000);
+}
+
+function endGame(){
+  clearTimeout(timerId);
+  phase='idle';
+  document.getElementById('actionBtn').disabled=true;
+  document.getElementById('overTitle').textContent=I18N.t('shop_closed','Shop Closed!');
+  document.getElementById('overText').textContent=I18N.t('final_score_text3','Final score: {s} — Served {n} customers').replace('{s}',score).replace('{n}',served);
+  document.getElementById('over').classList.add('show');
+  SFX.lose();
+}
+
+document.getElementById('overBtn').addEventListener('click',startGame);
+
+function startGame(){
+  score=0;served=0;timeLeft=75;round=1;phase='idle';
+  document.getElementById('scoreNum').textContent=0;
+  document.getElementById('servedNum').textContent=0;
+  document.getElementById('timeNum').textContent=timeLeft;
+  document.getElementById('coverageFill').style.width='0%';
+  document.getElementById('trackName').textContent='—';
+  document.getElementById('phaseLabel').textContent='Ready?';
+  document.getElementById('msg').textContent=I18N.t('clean_hint','Drag in circles over the record to clean off the dust.');
+  document.getElementById('over').classList.remove('show');
+  document.getElementById('actionBtn').disabled=false;
+  document.getElementById('actionBtn').textContent='Start Cleaning';
+  drawVinylBase();
+  clearTimeout(timerId);
+  timerId=setTimeout(tick,1000);
+}
+
+startGame();
+</script></body></html>

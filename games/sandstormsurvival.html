@@ -1,0 +1,241 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Sandstorm Survival</title><meta name="description" content="Play Sandstorm Survival free online — Guide your desert traveler with Arrow Keys/WASD or by dragging, managing stamina and finding rock outcrops to shelter behind as the sandstorm closes in."><link rel="canonical" href="https://games.multiportllc.com/games/sandstormsurvival"><meta property="og:title" content="Sandstorm Survival - Multiport Games"><meta property="og:description" content="Play Sandstorm Survival free online — Guide your desert traveler with Arrow Keys/WASD or by dragging, managing stamina and finding rock outcrops to shelter behind as the sandstorm closes in."><meta property="og:url" content="https://games.multiportllc.com/games/sandstormsurvival"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Sandstorm Survival","description":"Play Sandstorm Survival free online instantly. Guide your desert traveler with Arrow Keys/WASD or by dragging, managing stamina and finding rock outcrops to shelter behind as the sandstorm closes in. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/sandstormsurvival","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#c9975a;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#hud{color:#ffe9c7;font-size:1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:14px;flex-wrap:wrap}
+#hud span{background:rgba(0,0,0,.3);padding:4px 10px;border-radius:8px}
+#staminaWrap{width:160px;height:12px;background:rgba(0,0,0,.35);border-radius:6px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+#staminaBar{height:100%;background:#4caf50;width:100%;transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Sandstorm Survival</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="distDisp">Distance: 0m</span>
+      <span id="shelterDisp">Shelters: 0</span>
+      <span>Stamina<span id="staminaWrap"><span id="staminaBar"></span></span></span>
+    </div>
+    <canvas id="c" width="800" height="450"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Move your traveler with <b>Arrow Keys / WASD</b> or by <b>dragging</b> on mobile, fleeing the sandstorm wall closing in from the left. Running drains <b>stamina</b> (regenerates when still); reach a <b>rock outcrop 🪨</b> and stay near it briefly to shelter and recover, reducing the storm's reach. Visibility drops sharply inside the storm. Survive as far as you can before the storm overwhelms you!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=450;
+let player,stormX,shelters,shelterCount,distance,stamina,gameOver,keys={},dragTarget=null,camX,inShelter,shelterTimer,hi;
+hi=parseInt(localStorage.getItem('sandstormsurvival_hi')||'0',10);
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function reset(){
+  player={x:100,y:H/2,speed:3.2};
+  stormX=-40;
+  shelters=[];
+  for(let i=0;i<40;i++){
+    shelters.push({x:400+i*260+rand(-60,60),y:rand(60,H-60),r:26,used:false});
+  }
+  shelterCount=0;
+  distance=0;
+  stamina=100;
+  gameOver=false;
+  camX=0;
+  inShelter=null;
+  shelterTimer=0;
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('distDisp').textContent=I18N.t('distance_label','Distance: {d}m').replace('{d}',Math.floor(distance));
+  document.getElementById('shelterDisp').textContent=I18N.t('shelters_label','Shelters: {n}').replace('{n}',shelterCount);
+  document.getElementById('staminaBar').style.width=Math.max(0,stamina)+'%';
+  document.getElementById('staminaBar').style.background=stamina>40?'#4caf50':stamina>15?'#ffb300':'#e53935';
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d','W','A','S','D',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  if(gameOver&&(e.key===' '||e.key==='Enter'))reset();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function canvasPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+c.addEventListener('pointerdown',e=>{ if(gameOver){reset();return;} dragTarget=canvasPos(e); });
+c.addEventListener('pointermove',e=>{ if(dragTarget!==null&&e.buttons)dragTarget=canvasPos(e); });
+window.addEventListener('pointerup',()=>{dragTarget=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault(); if(gameOver){reset();return;} dragTarget=canvasPos(e); },{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault(); dragTarget=canvasPos(e); },{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault(); dragTarget=null; },{passive:false});
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function update(){
+  if(gameOver)return;
+  let dx=0,dy=0,moving=false;
+  if(keys['arrowup']||keys['w']){dy-=1;moving=true;}
+  if(keys['arrowdown']||keys['s']){dy+=1;moving=true;}
+  if(keys['arrowleft']||keys['a']){dx-=1;moving=true;}
+  if(keys['arrowright']||keys['d']){dx+=1;moving=true;}
+  let worldDragTarget=null;
+  if(dragTarget){worldDragTarget={x:dragTarget.x+camX,y:dragTarget.y};}
+  if(!moving&&worldDragTarget){
+    const ddx=worldDragTarget.x-player.x,ddy=worldDragTarget.y-player.y;
+    const d=Math.hypot(ddx,ddy);
+    if(d>4){dx=ddx/d;dy=ddy/d;moving=true;}
+  }
+
+  const inShelterNow=shelters.some(s=>dist(player,s)<s.r+14);
+  const sprint=moving&&stamina>0;
+  const spd=inShelterNow?player.speed*0.6:player.speed;
+
+  if(moving&&dx!==0&&dy!==0){const len=Math.hypot(dx,dy);dx/=len;dy/=len;}
+  if(sprint){
+    player.x+=dx*spd;
+    player.y+=dy*spd;
+    stamina=Math.max(0,stamina-0.55);
+  } else if(moving && stamina<=0){
+    // exhausted: crawl slowly
+    player.x+=dx*spd*0.35;
+    player.y+=dy*spd*0.35;
+  } else {
+    stamina=Math.min(100,stamina+0.4);
+  }
+  player.x=Math.max(20,player.x);
+  player.y=Math.max(20,Math.min(H-20,player.y));
+
+  // Shelter mechanic: stand near an unused shelter to consume it & push storm back
+  let nearShelter=null;
+  for(const s of shelters){
+    if(!s.used&&dist(player,s)<s.r+18){nearShelter=s;break;}
+  }
+  if(nearShelter){
+    inShelter=nearShelter;
+    shelterTimer++;
+    stamina=Math.min(100,stamina+1.2);
+    if(shelterTimer>60){
+      nearShelter.used=true;
+      shelterCount++;
+      stormX-=140; // push storm back, buying distance
+      shelterTimer=0;
+      inShelter=null;
+      SFX.powerup();
+    }
+  } else {
+    inShelter=null;
+    shelterTimer=0;
+  }
+
+  // Storm advances, speeding up over time
+  const stormSpeed=1.1+distance/2200;
+  stormX+=stormSpeed;
+  distance=Math.max(distance,player.x-100);
+
+  // Camera follows player, keeping some lead room
+  camX=Math.max(0,player.x-220);
+
+  if(stormX>player.x-14){
+    gameOver=true;SFX.lose();
+    if(distance>hi){hi=Math.floor(distance);localStorage.setItem('sandstormsurvival_hi',hi);}
+  }
+}
+
+function draw(){
+  ctx.save();
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#e8b573');sky.addColorStop(1,'#c9975a');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(-camX,0);
+
+  // Shelters (rocks)
+  shelters.forEach(s=>{
+    if(s.x<camX-40||s.x>camX+W+40)return;
+    ctx.save();
+    ctx.globalAlpha=s.used?0.35:1;
+    ctx.fillStyle='#8a7160';
+    ctx.beginPath();ctx.ellipse(s.x,s.y,s.r,s.r*0.8,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#6d5847';
+    ctx.beginPath();ctx.ellipse(s.x-s.r*0.3,s.y-s.r*0.3,s.r*0.4,s.r*0.3,0,0,Math.PI*2);ctx.fill();
+    if(!s.used&&inShelter===s){
+      ctx.strokeStyle='#4caf50';ctx.lineWidth=3;
+      ctx.beginPath();ctx.arc(s.x,s.y,s.r+18,0,Math.PI*2);ctx.stroke();
+    }
+    ctx.restore();
+  });
+
+  // Distance marker every 500m
+  ctx.fillStyle='rgba(0,0,0,0.15)';
+  for(let m=500;m<distance+2000;m+=500){
+    const mx=100+m;
+    if(mx>camX-40&&mx<camX+W+40)ctx.fillRect(mx,0,3,H);
+  }
+
+  // Player
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  ctx.fillStyle='#3d2b1f';
+  ctx.beginPath();ctx.arc(0,-14,9,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#5b3a29';
+  ctx.fillRect(-8,-6,16,22);
+  ctx.restore();
+
+  // Storm wall
+  const stormGrad=ctx.createLinearGradient(stormX-120,0,stormX+20,0);
+  stormGrad.addColorStop(0,'rgba(120,80,40,0)');
+  stormGrad.addColorStop(1,'rgba(90,55,25,0.97)');
+  ctx.fillStyle=stormGrad;
+  ctx.fillRect(stormX-120,0,220,H);
+  ctx.fillStyle='rgba(90,55,25,1)';
+  ctx.fillRect(stormX-40,0,W+camX+400,H);
+
+  ctx.restore();
+
+  // Visibility fog overlay near storm — reduces sight the closer player is to storm
+  const distToStorm=player.x-stormX;
+  const fogStrength=Math.max(0,Math.min(0.85,1-(distToStorm/260)));
+  if(fogStrength>0){
+    const vg=ctx.createRadialGradient(220,player.y,40,220,player.y,320);
+    vg.addColorStop(0,'rgba(90,60,30,0)');
+    vg.addColorStop(1,`rgba(90,60,30,${fogStrength})`);
+    ctx.fillStyle=vg;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  if(gameOver){
+    ctx.save();
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('caught_title','CAUGHT BY THE STORM!'),W/2,H/2-24);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_stats','Distance: {d}m — Shelters: {s}').replace('{d}',Math.floor(distance)).replace('{s}',shelterCount),W/2,H/2+12);
+    ctx.fillText(I18N.t('tap_continue','Tap / Space to try again'),W/2,H/2+44);
+    ctx.restore();
+  }
+
+  updateHud();
+}
+
+function loop(){
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>

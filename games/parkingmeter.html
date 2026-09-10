@@ -1,0 +1,202 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Parking Meter</title><meta name="description" content="Play Parking Meter free online — Click meters to feed them coins before their time runs out. Prioritize the ones about to expire, budget your coins wisely, and keep the whole row alive!"><link rel="canonical" href="https://games.multiportllc.com/games/parkingmeter"><meta property="og:title" content="Parking Meter - Multiport Games"><meta property="og:description" content="Play Parking Meter free online — Click meters to feed them coins before their time runs out. Prioritize the ones about to expire, budget your coins wisely, and keep the whole row alive!"><meta property="og:url" content="https://games.multiportllc.com/games/parkingmeter"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Parking Meter","description":"Play Parking Meter free online instantly. Click meters to feed them coins before their time runs out. Prioritize the ones about to expire, budget your limited coins wisely, and keep the whole row of meters alive through your shift. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/parkingmeter","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:14px;max-width:680px;margin:0 auto}
+#hud{display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;color:#fff;font-weight:800;font-size:.95rem;padding:0 4px 10px}
+#hud span{color:#ffd54f}
+#meters{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:10px}
+.meter{background:#0b3d2e;border-radius:10px;padding:8px 6px;text-align:center;cursor:pointer;user-select:none;position:relative;transition:transform .1s}
+.meter:active{transform:scale(.94)}
+.meter .post{width:8px;height:16px;background:#555;margin:0 auto}
+.meter .head{width:60px;height:60px;border-radius:50% 50% 8px 8px;background:#37474f;margin:0 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;border:3px solid #263238}
+.meter .dial{width:44px;height:32px;background:#0b0b0b;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#4caf50;font-weight:900;font-size:.85rem}
+.meter.warn .dial{color:#ffb300}
+.meter.danger .dial{color:#ff5252}
+.meter.expired .head{background:#7a1f1f;border-color:#4a0f0f}
+.meter.expired .dial{color:#ffcdd2}
+.meter .lbl{color:#cfd8dc;font-size:.7rem;margin-top:4px}
+#coinbar{display:flex;justify-content:center;gap:10px;margin-top:14px;flex-wrap:wrap}
+#coinbar button{padding:10px 16px;border:none;border-radius:20px;background:#ffd54f;color:#222;font-weight:900;cursor:pointer;font-size:1rem}
+#coinbar button:disabled{opacity:.35;cursor:not-allowed}
+#budget{text-align:center;color:#fff;margin-top:8px;font-weight:700}
+#gamewrap{position:relative}
+#overlay{position:absolute;inset:0;background:rgba(0,0,0,.75);color:#fff;display:none;flex-direction:column;align-items:center;justify-content:center;border-radius:14px;text-align:center;padding:20px;z-index:5}
+#overlay.show{display:flex}
+#overlay button{margin-top:14px;padding:10px 26px;border:none;border-radius:20px;background:#ffd54f;color:#222;font-weight:900;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Parking Meter</div>
+  <div class="game-frame">
+    <div id="gamewrap">
+      <div id="wrap">
+        <div id="hud"><span id="scoreLabel">Score: 0</span><span id="hiLabel">Hi: 0</span><span id="timeLabel">Shift: 90</span></div>
+        <div id="meters"></div>
+        <div id="coinbar">
+          <button id="nickelBtn" data-v="5">Nickel (+10s)</button>
+          <button id="dimeBtn" data-v="10">Dime (+25s)</button>
+          <button id="quarterBtn" data-v="25">Quarter (+70s)</button>
+        </div>
+        <div id="budget">Coin Budget: <b id="budgetAmt">$5.00</b></div>
+      </div>
+      <div id="overlay">
+        <div id="overText" style="font-size:1.4rem;font-weight:900"></div>
+        <button id="restartBtn">Play Again</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a meter to select it (it glows), then click a coin to add time — nickels, dimes, and quarters add different amounts. Keep every meter above zero before your coin budget or shift timer runs out. Meters closest to expiring flash red — feed those first! Losing a meter costs points; running out of budget with dead meters ends your shift.</div>
+</div>
+<script>
+const LS_KEY='parkingmeter_hi';
+let score=0,hi=parseInt(localStorage.getItem(LS_KEY)||'0',10);
+let shiftTime=90,running=false,lastT=null;
+let meters=[],selected=-1,budgetCents=500,meterCount=4,expiredCount=0;
+const COIN_VALUES={5:10,10:25,25:70}; // cents -> seconds added
+
+const metersEl=document.getElementById('meters');
+const overlay=document.getElementById('overlay');
+
+function makeMeter(){
+  const maxTime=20+Math.random()*15;
+  return {time:maxTime,max:maxTime+40,dead:false};
+}
+
+function initMeters(n){
+  meters=[];
+  for(let i=0;i<n;i++)meters.push(makeMeter());
+  selected=-1;
+}
+
+function render(){
+  metersEl.innerHTML='';
+  meters.forEach((m,i)=>{
+    const div=document.createElement('div');
+    let cls='meter';
+    if(m.dead)cls+=' expired';
+    else if(m.time<10)cls+=' danger';
+    else if(m.time<25)cls+=' warn';
+    if(i===selected)div.style.outline='3px solid #ffd54f';
+    div.className=cls;
+    div.innerHTML=`<div class="head"><div class="dial">${m.dead?'EXP':Math.ceil(m.time)+'s'}</div></div><div class="post"></div><div class="lbl">${I18N.t('meter_label','Meter {n}').replace('{n}',i+1)}</div>`;
+    div.onclick=()=>selectMeter(i);
+    metersEl.appendChild(div);
+  });
+  updateCoinButtons();
+}
+
+function selectMeter(i){
+  if(!running||meters[i].dead)return;
+  selected=i;
+  render();
+}
+
+function updateCoinButtons(){
+  document.querySelectorAll('#coinbar button').forEach(b=>{
+    const v=parseInt(b.dataset.v,10);
+    b.disabled=!running||budgetCents<v||selected<0||meters[selected]&&meters[selected].dead;
+  });
+  document.getElementById('budgetAmt').textContent='$'+(budgetCents/100).toFixed(2);
+}
+
+function feedCoin(v){
+  if(!running||selected<0)return;
+  const m=meters[selected];
+  if(!m||m.dead||budgetCents<v)return;
+  budgetCents-=v;
+  m.time=Math.min(m.max,m.time+COIN_VALUES[v]);
+  SFX.coin();
+  score+=5;
+  render();
+  updateHud();
+}
+
+document.querySelectorAll('#coinbar button').forEach(b=>{
+  b.onclick=()=>feedCoin(parseInt(b.dataset.v,10));
+});
+
+function updateHud(){
+  document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('hiLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+  document.getElementById('timeLabel').textContent=I18N.t('shift_label','Shift: {t}').replace('{t}',Math.ceil(shiftTime));
+}
+
+function endGame(){
+  running=false;
+  if(score>hi){hi=score;localStorage.setItem(LS_KEY,hi);}
+  SFX.lose();
+  document.getElementById('overText').textContent=I18N.t('game_over_msg','SHIFT OVER — Score: {s}  (Best: {h})').replace('{s}',score).replace('{h}',hi);
+  overlay.classList.add('show');
+}
+
+function frame(t){
+  if(!running)return;
+  if(lastT===null)lastT=t;
+  const dt=Math.min((t-lastT)/1000,0.2);
+  lastT=t;
+  shiftTime-=dt;
+
+  meterCount=Math.min(9,4+Math.floor(score/200));
+  while(meters.length<meterCount)meters.push(makeMeter());
+  const depleteRate=1+score/1500;
+
+  meters.forEach(m=>{
+    if(m.dead)return;
+    m.time-=dt*depleteRate;
+    if(m.time<=0){
+      m.time=0;m.dead=true;expiredCount++;
+      score=Math.max(0,score-15);
+      SFX.hit();
+    }
+  });
+
+  const deadTooMany=meters.filter(m=>m.dead).length>=Math.ceil(meters.length*0.6);
+  if(shiftTime<=0){shiftTime=0;endGame();return;}
+  if(budgetCents<=0&&meters.filter(m=>!m.dead).length===0){endGame();return;}
+  if(deadTooMany){endGame();return;}
+
+  score+=dt*2; // survival bonus
+  render();
+  updateHud();
+  requestAnimationFrame(frame);
+}
+
+function startGame(){
+  score=0;shiftTime=90;budgetCents=500;meterCount=4;expiredCount=0;lastT=null;selected=-1;
+  initMeters(meterCount);
+  overlay.classList.remove('show');
+  running=true;
+  render();
+  updateHud();
+  requestAnimationFrame(frame);
+}
+
+document.getElementById('restartBtn').onclick=startGame;
+document.addEventListener('keydown',e=>{
+  if(e.key==='1')feedCoin(5);
+  else if(e.key==='2')feedCoin(10);
+  else if(e.key==='3')feedCoin(25);
+  else if(e.key>='a'&&e.key<='i'){
+    const idx=e.key.charCodeAt(0)-97;
+    if(idx<meters.length)selectMeter(idx);
+  } else if(e.key==='Tab'){
+    e.preventDefault();
+    if(meters.length){
+      let idx=selected;
+      for(let k=0;k<meters.length;k++){
+        idx=(idx+1)%meters.length;
+        if(!meters[idx].dead){selected=idx;break;}
+      }
+      render();
+    }
+  }
+});
+
+startGame();
+</script></body></html>

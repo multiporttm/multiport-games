@@ -1,0 +1,292 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mandolin Playing</title><meta name="description" content="Play Mandolin Playing free online — Notes scroll toward the hit line: tap once for short notes, or rapidly tremolo-tap while a long note crosses the line. Nail the timing to build your combo as the tempo climbs."><link rel="canonical" href="https://games.multiportllc.com/games/mandolinplaying"><meta property="og:title" content="Mandolin Playing - Multiport Games"><meta property="og:description" content="Play Mandolin Playing free online — Notes scroll toward the hit line: tap once for short notes, or rapidly tremolo-tap while a long note crosses the line. Nail the timing to build your combo as the tempo climbs."><meta property="og:url" content="https://games.multiportllc.com/games/mandolinplaying"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mandolin Playing","description":"Play Mandolin Playing free online instantly. Notes scroll toward the hit line: tap once for short notes, or rapidly tremolo-tap while a long note crosses the line. Nail the timing to build your combo as the tempo climbs. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/mandolinplaying","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#241608;display:block;border-radius:8px;touch-action:manipulation;max-width:100%}
+#hud{color:#f3d9a4;font-size:1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:14px;flex-wrap:wrap}
+#hud span{background:rgba(0,0,0,.3);padding:4px 10px;border-radius:8px}
+#lanes{display:flex;justify-content:center;gap:10px;margin-top:6px}
+.laneBtn{width:70px;height:56px;border-radius:10px;background:#5a3b1e;border:3px solid #a3703c;color:#ffe9c7;font-weight:900;font-size:1.1rem;user-select:none;touch-action:manipulation;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.laneBtn.active{background:#e0a458;color:#241608}
+@media(max-width:480px){.laneBtn{width:22vw;height:48px;font-size:.9rem}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mandolin Playing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0</span>
+      <span id="comboDisp">Combo: 0</span>
+      <span id="hiDisp">Best: 0</span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <div id="lanes">
+      <div class="laneBtn" data-lane="0">D</div>
+      <div class="laneBtn" data-lane="1">F</div>
+      <div class="laneBtn" data-lane="2">J</div>
+      <div class="laneBtn" data-lane="3">K</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Notes scroll down 4 lanes toward the hit line. For a short note, press the matching key (<b>D F J K</b>) or tap its lane once right as it crosses the line. For a long note, keep <b>rapidly tapping (tremolo-picking)</b> that lane's key/button the whole time it overlaps the line — stopping early breaks it. Accurate timing and unbroken tremolo build your combo streak. Tempo and note density increase every round!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const LANES=4;
+const laneX=i=>60+i*((W-120)/(LANES-1));
+const hitY=H-60;
+const LANE_KEYS=['d','f','j','k'];
+const LANE_COLORS=['#e94560','#ffd54f','#4caf50','#4fc3f7'];
+
+let notes,score,combo,best,round,gameTime,spawnTimer,noteSpeed,started,tremoloState;
+best=parseInt(localStorage.getItem('mandolinplaying_hi')||'0',10);
+
+function resetGame(){
+  notes=[];
+  score=0;combo=0;round=1;gameTime=0;spawnTimer=0;
+  noteSpeed=180; // px per second
+  started=true;
+  tremoloState=[0,0,0,0]; // frames since last successful tremolo tick, per lane
+  scheduleQueue=[];
+  buildRound();
+  updateHud();
+}
+
+// Builds a chart of notes for the current round: mix of short taps and long tremolo holds
+let scheduleQueue=[];
+function buildRound(){
+  scheduleQueue=[];
+  const count=14+round*3;
+  const bpmFactor=Math.min(2.2,1+round*0.12);
+  let t=1.0;
+  for(let i=0;i<count;i++){
+    const lane=Math.floor(Math.random()*LANES);
+    const isLong=Math.random()<Math.min(0.45,0.15+round*0.05);
+    const dur=isLong?rand(0.7,1.4):0;
+    scheduleQueue.push({t,lane,isLong,dur});
+    t+=rand(0.42,0.75)/bpmFactor;
+  }
+  roundTotalTime=t+2;
+  roundEndsAt=null;
+}
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('comboDisp').textContent=I18N.t('combo_label','Combo: {c}').replace('{c}',combo);
+  document.getElementById('hiDisp').textContent=I18N.t('best_label','Best: {b}').replace('{b}',best);
+}
+
+// Input handling
+const pressed=[false,false,false,false];
+function pressLane(i){
+  if(!started)return;
+  pressed[i]=true;
+  document.querySelectorAll('.laneBtn')[i].classList.add('active');
+  handleHit(i);
+}
+function releaseLane(i){
+  pressed[i]=false;
+  document.querySelectorAll('.laneBtn')[i].classList.remove('active');
+}
+
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  const idx=LANE_KEYS.indexOf(k);
+  if(idx>=0){e.preventDefault(); if(!pressed[idx])pressLane(idx);}
+  if(e.code==='Space'&&!started){resetGame();}
+});
+document.addEventListener('keyup',e=>{
+  const idx=LANE_KEYS.indexOf(e.key.toLowerCase());
+  if(idx>=0)releaseLane(idx);
+});
+
+document.querySelectorAll('.laneBtn').forEach(btn=>{
+  const i=parseInt(btn.dataset.lane,10);
+  const down=ev=>{ev.preventDefault();pressLane(i);};
+  const up=ev=>{ev.preventDefault();releaseLane(i);};
+  btn.addEventListener('pointerdown',down);
+  btn.addEventListener('pointerup',up);
+  btn.addEventListener('pointerleave',up);
+  btn.addEventListener('touchstart',down,{passive:false});
+  btn.addEventListener('touchend',up,{passive:false});
+});
+
+c.addEventListener('pointerdown',()=>{ if(!started)resetGame(); });
+
+function handleHit(lane){
+  // Find nearest active note in this lane close to hit line, not yet resolved
+  let best_=null,bestD=999;
+  for(const n of notes){
+    if(n.lane!==lane||n.resolved)continue;
+    if(n.isLong){
+      // long note: check if within its window
+      if(n.y>=hitY-40&&n.y<=hitY+n.h+30){
+        best_=n;break;
+      }
+    } else {
+      const d=Math.abs(n.y-hitY);
+      if(d<50&&d<bestD){bestD=d;best_=n;}
+    }
+  }
+  if(!best_)return;
+  if(best_.isLong){
+    best_.ticks++;
+    tremoloState[lane]=0;
+    score+=6;
+    SFX.tick();
+  } else {
+    best_.resolved=true;
+    const acc=1-Math.min(1,bestD/50);
+    const gained=Math.round(20+acc*40);
+    score+=gained;
+    combo++;
+    if(combo>0&&combo%10===0)SFX.levelup();else SFX.point();
+  }
+  updateHud();
+}
+
+let lastTime=null,roundTotalTime=0,roundEndsAt=null;
+
+function spawnDue(){
+  while(scheduleQueue.length&&scheduleQueue[0].t<=gameTime){
+    const spec=scheduleQueue.shift();
+    notes.push({
+      lane:spec.lane,
+      isLong:spec.isLong,
+      y:-30,
+      h:spec.isLong?spec.dur*noteSpeed:0,
+      resolved:false,
+      missed:false,
+      ticks:0,
+      ticksNeeded:spec.isLong?Math.max(2,Math.round(spec.dur*4)):0,
+      passedLine:false,
+      tailPassed:false
+    });
+  }
+}
+
+function update(dt){
+  if(!started)return;
+  gameTime+=dt;
+  spawnDue();
+
+  notes.forEach(n=>{
+    n.y+=noteSpeed*dt;
+    if(n.isLong){
+      const tailY=n.y+n.h;
+      const overlapping=n.y<hitY+34&&tailY>hitY-6;
+      if(overlapping&&!n.resolved){
+        if(pressed[n.lane]){
+          tremoloState[n.lane]+=dt;
+          if(tremoloState[n.lane]>0.16){
+            // auto counts a tick if held continuously past tremolo threshold, but real tremolo taps via handleHit count faster
+          }
+        }
+      }
+      if(tailY>hitY+34&&!n.resolved){
+        n.resolved=true;
+        const ratio=n.ticksNeeded>0?n.ticks/n.ticksNeeded:1;
+        if(ratio>=0.7){
+          score+=Math.round(40*Math.min(1.5,ratio));
+          combo++;
+          SFX.success();
+        } else {
+          combo=0;
+          SFX.fail();
+        }
+        updateHud();
+      }
+    } else {
+      if(n.y>hitY+50&&!n.resolved){
+        n.resolved=true;n.missed=true;combo=0;SFX.error();updateHud();
+      }
+    }
+  });
+  notes=notes.filter(n=>n.y<H+60);
+
+  if(scheduleQueue.length===0&&notes.length===0){
+    if(score>best){best=score;localStorage.setItem('mandolinplaying_hi',best);}
+    round++;
+    noteSpeed=Math.min(420,180+round*18);
+    buildRound();
+    updateHud();
+  }
+}
+
+function drawLane(i){
+  const x=laneX(i);
+  ctx.save();
+  ctx.strokeStyle='rgba(255,233,199,0.15)';
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();
+  ctx.restore();
+}
+
+function drawHitLine(){
+  ctx.save();
+  ctx.strokeStyle='#ffd54f';
+  ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(20,hitY);ctx.lineTo(W-20,hitY);ctx.stroke();
+  ctx.restore();
+}
+
+function drawNote(n){
+  const x=laneX(n.lane);
+  ctx.save();
+  ctx.fillStyle=LANE_COLORS[n.lane];
+  if(n.isLong){
+    ctx.globalAlpha=n.resolved?0.35:1;
+    ctx.fillRect(x-22,n.y,44,n.h);
+    ctx.fillStyle='rgba(255,255,255,0.35)';
+    const filled=n.ticksNeeded>0?Math.min(1,n.ticks/n.ticksNeeded):1;
+    ctx.fillRect(x-22,n.y+n.h*(1-filled),44,n.h*filled);
+  } else {
+    ctx.globalAlpha=n.resolved?(n.missed?0.25:0.5):1;
+    ctx.beginPath();ctx.arc(x,n.y,20,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#2e1c0d');bg.addColorStop(1,'#241608');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  for(let i=0;i<LANES;i++)drawLane(i);
+  drawHitLine();
+  notes.forEach(drawNote);
+
+  ctx.save();
+  ctx.fillStyle='#f3d9a4';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('round_label','Round {r}').replace('{r}',round),W/2,26);
+  ctx.restore();
+
+  if(combo>=5){
+    ctx.save();
+    ctx.fillStyle='#ffd54f';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('combo_x','{c}x COMBO!').replace('{c}',combo),W/2,56);
+    ctx.restore();
+  }
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min(0.05,(ts-lastTime)/1000);
+  lastTime=ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+resetGame();
+requestAnimationFrame(loop);
+</script></body></html>
