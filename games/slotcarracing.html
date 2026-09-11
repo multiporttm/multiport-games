@@ -1,0 +1,377 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Slot Car Racing</title><meta name="description" content="Play Slot Car Racing free online — Hold Space (or press and hold the track) to throttle your slot car around a fixed looping track. Ease off before sharp curves or you'll fly off the track! Race the AI car across 3 races."><link rel="canonical" href="https://games.multiportllc.com/games/slotcarracing"><meta property="og:title" content="Slot Car Racing - Multiport Games"><meta property="og:description" content="Play Slot Car Racing free online — Hold Space (or press and hold the track) to throttle your slot car around a fixed looping track. Ease off before sharp curves or you'll fly off the track! Race the AI car across 3 races."><meta property="og:url" content="https://games.multiportllc.com/games/slotcarracing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Slot Car Racing","description":"Play Slot Car Racing free online instantly. Hold the throttle to speed your slot car around a fixed looping track, easing off before sharp curves to avoid flying off, while racing an AI car in the adjacent lane across 3 races. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/slotcarracing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a2e1a;display:block;border-radius:8px;touch-action:none;user-select:none}
+#hud{color:#fff;font-size:1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+#msg{color:#7ec8ff;text-align:center;font-size:.9rem;min-height:1.4em;padding-bottom:4px}
+#throttleBtn{display:block;margin:8px auto 0;padding:14px 40px;background:#e94560;border:none;border-radius:30px;color:#fff;font-weight:800;font-size:1.1rem;cursor:pointer;touch-action:manipulation;-webkit-user-select:none}
+#throttleBtn:active{background:#c72e45}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Slot Car Racing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div data-i18n="hud_race">Race: <span id="raceNum">1</span>/3</div>
+      <div data-i18n="hud_lap">Lap: <span id="lapVal">0</span>/5</div>
+      <div data-i18n="hud_place">Place: <span id="place">1st</span></div>
+      <div data-i18n="hud_lastlap">Last Lap: <span id="lastLap">--</span></div>
+      <div data-i18n="hud_best">Best Lap: <span id="bestVal">--</span></div>
+    </div>
+    <div id="msg" data-i18n="msg_start">Hold Space or the Throttle button — but ease off before sharp curves!</div>
+    <canvas id="c" width="800" height="500"></canvas>
+    <button id="throttleBtn" data-i18n="throttle_btn">HOLD THROTTLE</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Space</b> or press-and-hold the <b>Throttle</b> button (or the track itself) to accelerate your slot car around the fixed track. Red danger zones mark sharp curves — release the throttle to slow down before you reach them, or your car flies off the track and you have to restart the lap! Race the AI car in the next lane over 5 laps, across 3 races.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+const ID='slotcarracing';
+let best=parseFloat(localStorage.getItem('hs_'+ID))||null;
+document.getElementById('bestVal').textContent=best?best.toFixed(2)+'s':'--';
+
+// Track: closed loop shape defined as segments with curvature info for danger-zone detection.
+// Represent centerline via a smooth path built from control points; lanes offset perpendicular.
+function buildTrackPoints(n){
+  const shapes=[
+    [[120,250],[120,130],[220,80],[420,80],[500,130],[500,250],[560,300],[680,300],[700,380],[620,440],[300,440],[180,400],[120,340],[120,250]],
+    [[100,300],[100,150],[200,90],[350,90],[420,160],[500,90],[650,90],[720,180],[700,320],[600,420],[450,440],[380,360],[260,440],[140,400],[100,300]],
+    [[400,80],[560,80],[620,150],[700,150],[740,260],[660,340],[660,420],[540,460],[300,460],[180,400],[100,300],[140,180],[240,120],[400,80]]
+  ];
+  return shapes[n%shapes.length];
+}
+
+function densify(pts,samplesPerSeg){
+  // Catmull-Rom-ish smoothing via simple subdivision for a rounder loop, then closed.
+  const out=[];
+  const n=pts.length-1; // pts already closed (first===last)
+  for(let i=0;i<n;i++){
+    const p0=pts[(i-1+n)%n], p1=pts[i], p2=pts[(i+1)%n], p3=pts[(i+2)%n];
+    for(let s=0;s<samplesPerSeg;s++){
+      const t=s/samplesPerSeg;
+      const t2=t*t,t3=t2*t;
+      const x=0.5*((2*p1[0])+(-p0[0]+p2[0])*t+(2*p0[0]-5*p1[0]+4*p2[0]-p3[0])*t2+(-p0[0]+3*p1[0]-3*p2[0]+p3[0])*t3);
+      const y=0.5*((2*p1[1])+(-p0[1]+p2[1])*t+(2*p0[1]-5*p1[1]+4*p2[1]-p3[1])*t2+(-p0[1]+3*p1[1]-3*p2[1]+p3[1])*t3);
+      out.push([x,y]);
+    }
+  }
+  return out;
+}
+
+function computeCurvature(pts){
+  const n=pts.length;
+  const curv=new Array(n).fill(0);
+  for(let i=0;i<n;i++){
+    const a=pts[(i-3+n)%n], b=pts[i], d=pts[(i+3)%n];
+    const v1=[b[0]-a[0],b[1]-a[1]], v2=[d[0]-b[0],d[1]-b[1]];
+    const l1=Math.hypot(v1[0],v1[1])||1, l2=Math.hypot(v2[0],v2[1])||1;
+    const dot=(v1[0]*v2[0]+v1[1]*v2[1])/(l1*l2);
+    const ang=Math.acos(Math.max(-1,Math.min(1,dot)));
+    curv[i]=ang; // higher = sharper turn
+  }
+  return curv;
+}
+
+let race=0;
+let centerline, curvature, dangerZones, trackLen;
+const LANE_OFFSET=16;
+
+function setupTrackGeometry(){
+  const raw=buildTrackPoints(race);
+  centerline=densify(raw,14);
+  curvature=computeCurvature(centerline);
+  trackLen=centerline.length;
+  // mark danger zones: indices where curvature exceeds threshold, grouped into ranges (with pre-warning lead-in)
+  const threshold=0.34;
+  dangerZones=[];
+  let inZone=false,startIdx=0;
+  for(let i=0;i<trackLen;i++){
+    if(curvature[i]>threshold&&!inZone){inZone=true;startIdx=i;}
+    if(curvature[i]<=threshold&&inZone){inZone=false;dangerZones.push([startIdx,i]);}
+  }
+  if(inZone)dangerZones.push([startIdx,trackLen-1]);
+}
+
+function normalAt(i){
+  const a=centerline[(i-1+trackLen)%trackLen], b=centerline[(i+1)%trackLen];
+  const dx=b[0]-a[0], dy=b[1]-a[1];
+  const len=Math.hypot(dx,dy)||1;
+  return [-dy/len,dx/len];
+}
+
+function laneMaxSpeed(idx,lane){
+  // Max safe speed at this track index: high on straights, lower approaching/through danger zones
+  const k=curvature[idx];
+  const safe = k>0.34 ? 1.6 : (k>0.18 ? 2.6 : 4.6);
+  return safe;
+}
+
+const LAPS_TO_WIN=5;
+let raceTime=0,started=false,finished=false;
+let lastLapTime=null,bestLapThisRace=null;
+
+class SlotCar{
+  constructor(color,lane,isPlayer){
+    this.color=color;this.lane=lane;this.isPlayer=isPlayer;
+    this.idx=0; this.distAccum=0; this.speed=1.6; this.laps=0;
+    this.offTrack=false; this.offTimer=0;
+    this.lapStart=0;
+  }
+}
+let player,ai,cars;
+
+function setupRace(){
+  setupTrackGeometry();
+  player=new SlotCar('#e94560',-1,true);
+  ai=Object.assign(new SlotCar('#4fc3f7',1,false),{skill:0.72+race*0.06});
+  cars=[player,ai];
+  raceTime=0;started=false;finished=false;lastLapTime=null;bestLapThisRace=null;
+  document.getElementById('raceNum').textContent=(race+1);
+  document.getElementById('lapVal').textContent='0';
+  document.getElementById('lastLap').textContent='--';
+  document.getElementById('msg').textContent=I18N.t('msg_start','Hold Space or the Throttle button — but ease off before sharp curves!');
+  updateHud();
+  drawFrame();
+}
+
+let throttle=false;
+document.addEventListener('keydown',e=>{ if(e.code==='Space'){e.preventDefault(); if(!started&&!finished)started=true; if(finished){nextAfterFinish();return;} throttle=true; } });
+document.addEventListener('keyup',e=>{ if(e.code==='Space')throttle=false; });
+const btn=document.getElementById('throttleBtn');
+function throttleDown(e){ e.preventDefault(); if(!started&&!finished)started=true; if(finished){nextAfterFinish();return;} throttle=true; }
+function throttleUp(e){ throttle=false; }
+btn.addEventListener('pointerdown',throttleDown);
+btn.addEventListener('pointerup',throttleUp);
+btn.addEventListener('pointerleave',throttleUp);
+btn.addEventListener('pointercancel',throttleUp);
+c.addEventListener('pointerdown',throttleDown);
+c.addEventListener('pointerup',throttleUp);
+c.addEventListener('pointerleave',throttleUp);
+window.addEventListener('pointerup',()=>{throttle=false;});
+
+function nextAfterFinish(){ race=(race+1)%3; setupRace(); }
+
+function rankValue(car){ return car.laps + car.distAccum/trackLen; }
+
+function updateHud(){
+  document.getElementById('lapVal').textContent=Math.min(player.laps,LAPS_TO_WIN);
+  const sorted=[...cars].sort((a,b)=>rankValue(b)-rankValue(a));
+  const place=sorted.indexOf(player)+1;
+  document.getElementById('place').textContent = place===1?I18N.t('ord_1st','1st'):I18N.t('ord_2nd','2nd');
+  if(lastLapTime!=null)document.getElementById('lastLap').textContent=lastLapTime.toFixed(2)+'s';
+}
+
+function advanceCar(car,dt,wantsThrottle,maxSpeedMul){
+  if(car.offTrack){
+    car.offTimer-=dt;
+    if(car.offTimer<=0){ car.offTrack=false; car.speed=1.0; }
+    return;
+  }
+  const curIdx=Math.floor(car.idx)%trackLen;
+  const safeMax=laneMaxSpeed(curIdx,car.lane)*maxSpeedMul;
+  if(wantsThrottle){
+    car.speed=Math.min(car.speed+0.09*dt, safeMax*1.55); // can overspend into danger if throttle held
+  } else {
+    car.speed=Math.max(car.speed-0.14*dt, 0.6);
+  }
+  // check danger: if going faster than safe threshold while in a sharp curve, chance to fly off
+  const k=curvature[curIdx];
+  if(k>0.34 && car.speed>safeMax){
+    const overBy=(car.speed-safeMax);
+    const crashChance = Math.min(0.9,overBy*0.35)*dt/2;
+    if(Math.random()<crashChance){
+      car.offTrack=true; car.offTimer=90; car.speed=0;
+      if(car.isPlayer)SFX.lose(); else SFX.hit();
+      return;
+    }
+  }
+  car.distAccum+=car.speed*dt*2.0;
+  const prevIdx=Math.floor(car.idx);
+  car.idx=(car.idx + car.speed*dt*2.0) % trackLen;
+  const newIdx=Math.floor(car.idx);
+  if(newIdx<prevIdx){
+    // completed a lap
+    const now=raceTime;
+    const lapT= car.lapStart!=null? now-car.lapStart : now;
+    car.lapStart=now;
+    car.laps++;
+    if(car.isPlayer){
+      lastLapTime=lapT;
+      if(bestLapThisRace===null||lapT<bestLapThisRace)bestLapThisRace=lapT;
+      if(best===null||lapT<best){best=lapT;localStorage.setItem('hs_'+ID,best.toFixed(3));document.getElementById('bestVal').textContent=best.toFixed(2)+'s';}
+      SFX.point();
+    }
+  }
+}
+
+function updateAI(dt){
+  // AI throttles based on upcoming curvature lookahead, mostly plays it safe but sometimes aggressive
+  const lookIdx=Math.floor(ai.idx+6)%trackLen;
+  const k=curvature[lookIdx];
+  const wantsThrottle = k<0.30 || Math.random()<0.3*ai.skill;
+  advanceCar(ai,dt,wantsThrottle,ai.skill);
+}
+
+function drawTrack(){
+  ctx.fillStyle='#1a2e1a';
+  ctx.fillRect(0,0,W,H);
+  // outer/inner lane ribbons
+  for(const lane of [-1,1]){
+    ctx.beginPath();
+    centerline.forEach((p,i)=>{
+      const n=normalAt(i);
+      const x=p[0]+n[0]*LANE_OFFSET*lane, y=p[1]+n[1]*LANE_OFFSET*lane;
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    });
+    ctx.closePath();
+    ctx.lineWidth=LANE_OFFSET*0.9;
+    ctx.strokeStyle= lane<0? '#333':'#3a3a3a';
+    ctx.stroke();
+  }
+  // track bed
+  ctx.beginPath();
+  centerline.forEach((p,i)=>{ if(i===0)ctx.moveTo(p[0],p[1]); else ctx.lineTo(p[0],p[1]); });
+  ctx.closePath();
+  ctx.lineWidth=LANE_OFFSET*2+6;
+  ctx.strokeStyle='#2b2b2b';
+  ctx.stroke();
+  for(const lane of [-1,1]){
+    ctx.beginPath();
+    centerline.forEach((p,i)=>{
+      const n=normalAt(i);
+      const x=p[0]+n[0]*LANE_OFFSET*lane, y=p[1]+n[1]*LANE_OFFSET*lane;
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    });
+    ctx.closePath();
+    ctx.lineWidth=LANE_OFFSET*0.85;
+    ctx.strokeStyle= lane<0? '#444':'#4a4a4a';
+    ctx.stroke();
+  }
+  // slot grooves (dashed center per lane)
+  ctx.setLineDash([6,8]);
+  ctx.lineWidth=1.5;ctx.strokeStyle='#fff5';
+  for(const lane of [-1,1]){
+    ctx.beginPath();
+    centerline.forEach((p,i)=>{
+      const n=normalAt(i);
+      const x=p[0]+n[0]*LANE_OFFSET*lane, y=p[1]+n[1]*LANE_OFFSET*lane;
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    });
+    ctx.closePath();
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // danger zones highlighted in red across both lanes
+  dangerZones.forEach(([s,e])=>{
+    ctx.beginPath();
+    let started=false;
+    for(let i=s;i<=e;i++){
+      const idx=i%trackLen;
+      const p=centerline[idx];
+      const n=normalAt(idx);
+      const x=p[0]+n[0]*LANE_OFFSET*1.15, y=p[1]+n[1]*LANE_OFFSET*1.15;
+      if(!started){ctx.moveTo(x,y);started=true;}else ctx.lineTo(x,y);
+    }
+    for(let i=e;i>=s;i--){
+      const idx=i%trackLen;
+      const p=centerline[idx];
+      const n=normalAt(idx);
+      const x=p[0]-n[0]*LANE_OFFSET*1.15, y=p[1]-n[1]*LANE_OFFSET*1.15;
+      ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+    ctx.fillStyle='rgba(233,69,96,0.28)';
+    ctx.fill();
+  });
+
+  // start/finish line
+  const p0=centerline[0], n0=normalAt(0);
+  ctx.strokeStyle='#fff';ctx.lineWidth=4;
+  ctx.beginPath();
+  ctx.moveTo(p0[0]-n0[0]*LANE_OFFSET*2,p0[1]-n0[1]*LANE_OFFSET*2);
+  ctx.lineTo(p0[0]+n0[0]*LANE_OFFSET*2,p0[1]+n0[1]*LANE_OFFSET*2);
+  ctx.stroke();
+}
+
+function drawCar(car){
+  if(car.offTrack&&car.offTimer<60&&Math.floor(car.offTimer/6)%2===0)return; // blink while off
+  const idx=Math.floor(car.idx)%trackLen;
+  const p=centerline[idx];
+  const n=normalAt(idx);
+  let laneOff=car.lane*LANE_OFFSET;
+  let extra=0;
+  if(car.offTrack){ extra=(90-car.offTimer)*0.5; }
+  const x=p[0]+n[0]*(laneOff+ (car.offTrack? extra*car.lane:0));
+  const y=p[1]+n[1]*(laneOff+ (car.offTrack? extra*car.lane:0));
+  const next=centerline[(idx+2)%trackLen];
+  const angle=Math.atan2(next[1]-p[1],next[0]-p[0]);
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(angle);
+  ctx.fillStyle=car.color;
+  ctx.fillRect(-10,-6,20,12);
+  ctx.fillStyle='#111';
+  ctx.fillRect(-7,-8,6,3);ctx.fillRect(-7,5,6,3);
+  ctx.fillRect(1,-8,6,3);ctx.fillRect(1,5,6,3);
+  ctx.fillStyle='#fff9';
+  ctx.fillRect(-1,-3,7,6);
+  ctx.restore();
+}
+
+function drawFrame(){
+  drawTrack();
+  drawCar(ai);
+  drawCar(player);
+
+  if(!started){
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('race_label','Race {n}').replace('{n}',race+1),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('msg_start','Hold Space or the Throttle button — but ease off before sharp curves!'),W/2,H/2+16);
+  }
+  if(finished){
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffd54f';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    const place=[...cars].sort((a,b)=>rankValue(b)-rankValue(a)).indexOf(player)+1;
+    const label = place===1?I18N.t('finish_1st','You Won the Race! 🏆'):I18N.t('finish_2nd','AI Won This Race');
+    ctx.fillText(label,W/2,H/2-30);
+    ctx.font='20px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('finish_bestlap','Best Lap: {t}s').replace('{t}',(bestLapThisRace||0).toFixed(2)),W/2,H/2+6);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('finish_next','Tap or press Space for next race'),W/2,H/2+38);
+  }
+}
+
+let lastT=null;
+function loop(ts){
+  if(lastT==null)lastT=ts;
+  const dt=Math.min((ts-lastT)/16.6667,3);
+  lastT=ts;
+  if(started&&!finished){
+    raceTime+=dt/60;
+    advanceCar(player,dt,throttle,1.0);
+    updateAI(dt);
+    if(player.laps>=LAPS_TO_WIN || ai.laps>=LAPS_TO_WIN){
+      finished=true;
+      const place=[...cars].sort((a,b)=>rankValue(b)-rankValue(a)).indexOf(player)+1;
+      if(place===1)SFX.win();else SFX.fail();
+    }
+    updateHud();
+  }
+  drawFrame();
+  requestAnimationFrame(loop);
+}
+
+setupRace();
+requestAnimationFrame(loop);
+</script></body></html>

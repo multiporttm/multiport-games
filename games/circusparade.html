@@ -1,0 +1,282 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Circus Parade</title><meta name="description" content="Play Circus Parade free online — Use Arrow Keys/WASD or drag to lead your parade down the street. Keep performers in formation, dodge obstacles, and press Space to wave to the crowd for excitement points!"><link rel="canonical" href="https://games.multiportllc.com/games/circusparade"><meta property="og:title" content="Circus Parade - Multiport Games"><meta property="og:description" content="Play Circus Parade free online — Use Arrow Keys/WASD or drag to lead your parade down the street. Keep performers in formation, dodge obstacles, and press Space to wave to the crowd for excitement points!"><meta property="og:url" content="https://games.multiportllc.com/games/circusparade"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Circus Parade","description":"Play Circus Parade free online instantly. Control the parade lead marching down a street, keep a line of performers following in formation with a slight delay, navigate around obstacles, and wave to the crowds with a timed wave action for excitement points. Scored by formation maintained and crowd excitement across the parade route. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/circusparade","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a6ea5;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffd54f;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Circus Parade</div>
+  <div class="game-frame">
+    <div id="score-display">
+      <span id="scoreSpan">Score: 0</span>
+      <span id="formSpan">Formation: 100%</span>
+      <span id="hiSpan">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Use <b>Arrow Keys</b>/<b>WASD</b>, or <b>drag</b> on touch, to steer the parade lead down the street. Your performers follow behind with a short delay — weave too sharply and they'll fall out of formation. Dodge street obstacles (cones, puddles, lampposts). Press <b>Space</b> or tap the crowd to <b>wave</b> and pump up crowd excitement for bonus points. Survive the whole parade route with high formation and excitement for the best score!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+const STREET_TOP=60, STREET_BOTTOM=360;
+
+let score=0, hi=parseInt(localStorage.getItem('circusparade_hi')||'0',10);
+let formation=100, excitement=50, distance=0, routeLength=6000;
+let gameOver=false, started=false, won=false;
+let keys={};
+let waveTimer=0, waveCooldown=0;
+let obstacles=[], crowdBursts=[];
+let obsTimer=0;
+let lastTime=null;
+
+const lead = {x:W/2, y:(STREET_TOP+STREET_BOTTOM)/2, targetX:W/2};
+const NUM_FOLLOWERS=4;
+let trail=[]; // history of lead positions for followers to chase
+let followers=[];
+
+function reset(){
+  score=0; formation=100; excitement=50; distance=0;
+  gameOver=false; started=false; won=false;
+  lead.x=W/2; lead.targetX=W/2;
+  trail=[];
+  followers=[];
+  for(let i=0;i<NUM_FOLLOWERS;i++) followers.push({x:W/2,y:0});
+  obstacles=[]; crowdBursts=[]; obsTimer=0;
+  waveTimer=0; waveCooldown=0;
+  lastTime=null;
+  document.getElementById('hiSpan').textContent = I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+}
+reset();
+
+function startGame(){ if(!started){started=true;} }
+
+function doWave(){
+  startGame();
+  if(gameOver){ reset(); return; }
+  if(waveCooldown<=0){
+    waveTimer=18;
+    waveCooldown=45;
+    excitement=Math.min(100,excitement+14);
+    score+=Math.round(excitement/4);
+    SFX.powerup();
+    crowdBursts.push({x:lead.x, y:STREET_TOP-10, life:24});
+    crowdBursts.push({x:lead.x, y:STREET_BOTTOM+10, life:24});
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(e.code==='Space'){ e.preventDefault(); doWave(); }
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.code)) e.preventDefault();
+  startGame();
+});
+document.addEventListener('keyup',e=>{ keys[e.code]=false; });
+
+let dragging=false, dragStartX=0, leadStartX=0;
+c.addEventListener('pointerdown',e=>{
+  startGame();
+  if(gameOver){ reset(); return; }
+  const rect=c.getBoundingClientRect();
+  const px=(e.clientX-rect.left)*(W/rect.width);
+  dragging=true; dragStartX=px; leadStartX=lead.targetX;
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const rect=c.getBoundingClientRect();
+  const px=(e.clientX-rect.left)*(W/rect.width);
+  lead.targetX = leadStartX + (px-dragStartX);
+});
+window.addEventListener('pointerup',()=>{ dragging=false; });
+c.addEventListener('dblclick',doWave);
+let tapTimer=null;
+c.addEventListener('pointerdown',()=>{
+  if(tapTimer){ clearTimeout(tapTimer); tapTimer=null; doWave(); }
+  else { tapTimer=setTimeout(()=>{tapTimer=null;},280); }
+});
+
+function spawnObstacle(){
+  const types=['cone','puddle','lamp'];
+  const type=types[Math.floor(Math.random()*types.length)];
+  const laneY = STREET_TOP+30 + Math.random()*(STREET_BOTTOM-STREET_TOP-60);
+  obstacles.push({x:W+40, y:laneY, w:26, h:26, type, hit:false});
+}
+
+function rectsOverlap(a,b){ return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y; }
+
+function drawStreet(){
+  ctx.fillStyle='#3a6ea5';
+  ctx.fillRect(0,0,W,H);
+  // sidewalks / crowd zones
+  ctx.fillStyle='#5d4037';
+  ctx.fillRect(0,0,W,STREET_TOP);
+  ctx.fillRect(0,STREET_BOTTOM,W,H-STREET_BOTTOM);
+  // street
+  ctx.fillStyle='#616161';
+  ctx.fillRect(0,STREET_TOP,W,STREET_BOTTOM-STREET_TOP);
+  // lane dashes scrolling
+  ctx.strokeStyle='#fdfdfd88';
+  ctx.setLineDash([20,20]);
+  ctx.lineWidth=3;
+  const offset=-(distance*2)%40;
+  ctx.beginPath();
+  ctx.moveTo(offset,(STREET_TOP+STREET_BOTTOM)/2);
+  ctx.lineTo(W,(STREET_TOP+STREET_BOTTOM)/2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // crowd dots
+  ctx.fillStyle='#ffd54f';
+  for(let i=0;i<12;i++){
+    const cx=((i*70)-((distance*2)%70));
+    ctx.beginPath();ctx.arc(cx,STREET_TOP-20,6,0,7);ctx.fill();
+    ctx.beginPath();ctx.arc(cx+35,STREET_BOTTOM+20,6,0,7);ctx.fill();
+  }
+}
+
+function drawObstacle(o){
+  if(o.type==='cone'){ ctx.fillStyle='#ff7043'; ctx.beginPath(); ctx.moveTo(o.x+13,o.y); ctx.lineTo(o.x+26,o.y+26); ctx.lineTo(o.x,o.y+26); ctx.closePath(); ctx.fill(); }
+  else if(o.type==='puddle'){ ctx.fillStyle='#4fc3f7cc'; ctx.beginPath(); ctx.ellipse(o.x+13,o.y+13,15,9,0,0,7); ctx.fill(); }
+  else { ctx.fillStyle='#37474f'; ctx.fillRect(o.x+10,o.y,6,26); ctx.fillStyle='#ffee58'; ctx.beginPath(); ctx.arc(o.x+13,o.y-2,8,0,7); ctx.fill(); }
+}
+
+function drawPerson(x,y,color,isLead){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle=color;
+  ctx.beginPath(); ctx.arc(0,-18,9,0,7); ctx.fill(); // head
+  ctx.fillRect(-10,-10,20,26); // body
+  const bob = isLead? Math.sin(distance*0.3)*3 : Math.sin(distance*0.3+1)*3;
+  ctx.fillRect(-14,-6+bob,6,16); // arm
+  ctx.fillRect(8,-6-bob,6,16); // arm
+  if(isLead && waveTimer>0){
+    ctx.strokeStyle='#fff'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(14,-18); ctx.lineTo(22,-28); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawStreet();
+
+  if(!started){
+    drawPerson(lead.x,lead.y,'#e94560',true);
+    ctx.fillStyle='#fff'; ctx.font='bold 22px Arial'; ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Move to start the parade!'),W/2,40);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver||won){
+    ctx.fillStyle='#fff'; ctx.font='bold 34px Arial'; ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('parade_done','PARADE COMPLETE!'):I18N.t('game_over_title','FORMATION BROKEN'),W/2,170);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: {s}').replace('{s}',score),W/2,205);
+    ctx.fillText(I18N.t('restart_hint','Tap, drag, or press a key to restart'),W/2,235);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  // Steering
+  const speed=5.5;
+  if(keys['ArrowLeft']||keys['KeyA']) lead.targetX-=speed*dt;
+  if(keys['ArrowRight']||keys['KeyD']) lead.targetX+=speed*dt;
+  if(keys['ArrowUp']||keys['KeyW']) lead.y-=3.2*dt;
+  if(keys['ArrowDown']||keys['KeyS']) lead.y+=3.2*dt;
+  lead.targetX = Math.max(30, Math.min(W-30, lead.targetX));
+  lead.x += (lead.targetX-lead.x)*0.25;
+  lead.y = Math.max(STREET_TOP+20, Math.min(STREET_BOTTOM-20, lead.y));
+
+  distance += 2.4*dt;
+  if(distance>=routeLength && !won){ won=true; SFX.win(); saveHi(); }
+
+  // trail for followers
+  trail.unshift({x:lead.x,y:lead.y});
+  if(trail.length>400) trail.length=400;
+  followers.forEach((f,i)=>{
+    const delay=(i+1)*14;
+    const target = trail[Math.min(delay,trail.length-1)] || trail[trail.length-1];
+    f.x += (target.x-f.x)*0.18*dt;
+    f.y += (target.y-f.y)*0.18*dt;
+  });
+
+  // formation quality: how far followers are from ideal spot behind lead
+  let totalDrift=0;
+  followers.forEach((f,i)=>{
+    const delay=(i+1)*14;
+    const target = trail[Math.min(delay,trail.length-1)] || trail[trail.length-1];
+    totalDrift += Math.abs(f.x-target.x)+Math.abs(f.y-target.y);
+  });
+  const driftPenalty = totalDrift/300;
+  formation = Math.max(0, Math.min(100, formation - driftPenalty*dt + 0.15*dt));
+
+  // obstacles
+  obsTimer+=dt;
+  const interval = Math.max(38, 70-distance/150);
+  if(obsTimer>=interval){ obsTimer-=interval; spawnObstacle(); }
+  obstacles = obstacles.filter(o=>o.x>-40);
+  const leadHit = {x:lead.x-12,y:lead.y-16,w:24,h:32};
+  obstacles.forEach(o=>{
+    o.x -= 4.5*dt;
+    drawObstacle(o);
+    if(!o.hit && rectsOverlap(leadHit,o)){
+      o.hit=true;
+      formation = Math.max(0, formation-18);
+      excitement = Math.max(0, excitement-8);
+      SFX.hit();
+    }
+  });
+
+  // excitement decays slowly, waving keeps it up
+  excitement = Math.max(0, excitement - 0.05*dt);
+  if(waveTimer>0) waveTimer-=dt;
+  if(waveCooldown>0) waveCooldown-=dt;
+
+  // crowd burst particles
+  crowdBursts = crowdBursts.filter(b=>b.life>0);
+  crowdBursts.forEach(b=>{
+    b.life-=dt;
+    ctx.fillStyle=`rgba(255,213,79,${Math.max(0,b.life/24)})`;
+    ctx.font='bold 18px Arial'; ctx.textAlign='center';
+    ctx.fillText('★',b.x,b.y-(24-b.life));
+  });
+
+  score += (excitement/100)*0.3*dt + (formation/100)*0.15*dt;
+
+  if(formation<=0){ gameOver=true; SFX.lose(); saveHi(); }
+
+  // draw followers behind lead (draw furthest first)
+  for(let i=followers.length-1;i>=0;i--){
+    drawPerson(followers[i].x,followers[i].y,'#ffb74d',false);
+  }
+  drawPerson(lead.x,lead.y,'#e94560',true);
+
+  // progress bar
+  ctx.fillStyle='rgba(0,0,0,.3)'; ctx.fillRect(20,10,W-40,8);
+  ctx.fillStyle='#4caf50'; ctx.fillRect(20,10,(W-40)*Math.min(1,distance/routeLength),8);
+
+  document.getElementById('scoreSpan').textContent = I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('formSpan').textContent = I18N.t('formation_label','Formation: {f}%').replace('{f}',Math.floor(formation));
+  requestAnimationFrame(loop);
+}
+
+function saveHi(){
+  if(Math.floor(score)>hi){ hi=Math.floor(score); localStorage.setItem('circusparade_hi',hi); }
+  document.getElementById('hiSpan').textContent = I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+}
+
+loop();
+</script></body></html>

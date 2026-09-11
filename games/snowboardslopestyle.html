@@ -1,0 +1,270 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Snowboard Slopestyle</title><meta name="description" content="Play Snowboard Slopestyle free online — Ride a full slopestyle course of rails and big-air jumps. Hold the arrow keys to balance on rail grinds, then combo tricks and stick the landing off each jump for the highest combined run score."><link rel="canonical" href="https://games.multiportllc.com/games/snowboardslopestyle"><meta property="og:title" content="Snowboard Slopestyle - Multiport Games"><meta property="og:description" content="Play Snowboard Slopestyle free online — Ride a full slopestyle course of rails and big-air jumps. Hold the arrow keys to balance on rail grinds, then combo tricks and stick the landing off each jump for the highest combined run score."><meta property="og:url" content="https://games.multiportllc.com/games/snowboardslopestyle"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Snowboard Slopestyle","description":"Play Snowboard Slopestyle free online instantly. Ride a full course of rail grinds and big-air jumps — balance on the rails, stack up aerial tricks, and stick your landings for the highest combined run score. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/snowboardslopestyle","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(#0d3b5c,#4fb8e8);display:block;border-radius:8px}
+#hud{color:#eaf6ff;font-size:1rem;font-weight:700;text-align:center;padding:8px}
+#pad{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;padding:6px 0 10px}
+#pad button{width:64px;height:48px;border-radius:10px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:1.2rem;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#pad button:active{background:rgba(255,255,255,.28)}
+#actBtn{background:#e94560!important;font-size:.8rem!important;font-weight:800;width:150px!important}
+#courseBar{max-width:560px;margin:6px auto;display:flex;gap:4px;justify-content:center}
+.featIcon{width:26px;height:26px;border-radius:6px;background:rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;font-size:.9rem}
+.featIcon.done{background:#3fae4d}
+.featIcon.fail{background:#c9414f}
+.featIcon.active{outline:2px solid #ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Snowboard Slopestyle</div>
+  <div class="game-frame">
+    <div id="hud">Score: 0 | Combo: x1.0 | Best: 0</div>
+    <div id="courseBar"></div>
+    <canvas id="c" width="800" height="380"></canvas>
+    <div id="pad">
+      <button data-key="ArrowUp">⬆️</button>
+      <button data-key="ArrowLeft">⬅️</button>
+      <button data-key="ArrowRight">➡️</button>
+      <button data-key="ArrowDown">⬇️</button>
+      <button id="actBtn">LAND / GO (Space)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Ride the course from rail to rail and jump to jump. On a <b>rail</b>, hold <b>Left/Right Arrow</b> to keep your balance centered while you grind. On a <b>jump</b>, tap the <b>Arrow Keys</b> in the air to stack tricks, then press <b>Space</b> at the right moment to straighten out and land. Chain clean features together to build your combo multiplier — falling resets it!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=380;
+const hud=document.getElementById('hud');
+const KEY='snowboardslopestyle_best';
+let best=parseFloat(localStorage.getItem(KEY)||'0');
+
+const COURSE=[
+  {type:'rail'},{type:'jump'},{type:'rail'},{type:'jump'},{type:'rail'},{type:'jump'}
+];
+const RAIL_NAMES=['Boardslide','50-50 Grind','Nosepress','Tailpress','Lipslide','Feeble Grind'];
+const TRICKS={
+  ArrowUp:{name:'Method Grab',pts:25},
+  ArrowDown:{name:'Nose Grab',pts:25},
+  ArrowLeft:{name:'Backside 180',pts:30},
+  ArrowRight:{name:'Frontside 360',pts:38}
+};
+
+let featIdx=0,started=false,phase='ready'; // ready, approach, rail, air, featresult, done
+let score=0,combo=1,best_combo=1;
+let approachT=0;
+let railName='',railT=0,railDur=110,balance=0.5,wobble=0.006,wobbleDir=1,railFailed=false;
+let airT=0,airDur=68,performed={},toastQueue=[],toastT=0;
+let lastQuality='',lastPts=0,lastLabel='',lastTricks=[];
+let barX=0;
+
+function reset(){featIdx=0;started=false;phase='ready';score=0;combo=1;renderCourseBar();}
+
+function renderCourseBar(){
+  const wrap=document.getElementById('courseBar');
+  wrap.innerHTML='';
+  COURSE.forEach((f,i)=>{
+    const d=document.createElement('div');
+    d.className='featIcon'+(f.done?(f.ok?' done':' fail'):'')+(i===featIdx&&started&&phase!=='done'?' active':'');
+    d.textContent=f.type==='rail'?'▬':'⛰️';
+    wrap.appendChild(d);
+  });
+}
+
+function startFeature(){
+  const f=COURSE[featIdx];
+  if(!f){phase='done';if(score>best){best=score;localStorage.setItem(KEY,best);}SFX.win();renderCourseBar();return;}
+  if(f.type==='rail'){
+    phase='rail';railName=RAIL_NAMES[Math.floor(Math.random()*RAIL_NAMES.length)];
+    railT=0;railDur=100+Math.random()*30;balance=0.5;wobble=0.008+Math.random()*0.006;wobbleDir=Math.random()<0.5?-1:1;railFailed=false;
+  } else {
+    phase='air';airT=0;airDur=62+Math.random()*20;performed={};toastQueue=[];
+    SFX.jump();
+  }
+  renderCourseBar();
+}
+
+function finishFeature(ok,pts,label){
+  COURSE[featIdx].done=true;COURSE[featIdx].ok=ok;
+  if(ok){combo=Math.min(3,combo+0.25);}else{combo=1;}
+  score+=Math.round(pts*combo);
+  lastQuality=ok?'good':'fail';lastPts=Math.round(pts*combo);lastLabel=label;
+  featIdx++;
+  phase='featresult';
+  renderCourseBar();
+}
+
+function tryTrick(k){
+  if(phase!=='air')return;
+  const t=TRICKS[k];
+  if(!t||performed[k])return;
+  performed[k]=true;
+  toastQueue.push(t.name);toastT=45;
+  SFX.point();
+}
+
+function act(){
+  if(phase==='ready'){started=true;phase='approach';approachT=0;return;}
+  if(phase==='approach')return;
+  if(phase==='rail'){
+    if(!railFailed){
+      const quality=1-Math.abs(balance-0.5)*2;
+      const ok=quality>0.25;
+      const pts=Math.round(40+quality*80);
+      lastTricks=[railName];
+      finishFeature(ok,ok?pts:15,railName+(ok?'':' — bailed'));
+      SFX[ok?'success':'error']();
+    }
+    return;
+  }
+  if(phase==='air'){
+    const frac=airT/airDur;
+    let quality;
+    if(frac>=0.82&&frac<=0.99)quality='perfect';
+    else if(frac>=0.65)quality='good';
+    else quality='sloppy';
+    landAir(quality);
+    return;
+  }
+  if(phase==='featresult'){startFeature();return;}
+  if(phase==='done'){reset();return;}
+}
+
+function landAir(quality){
+  const tricks=Object.keys(performed).map(k=>TRICKS[k]);
+  let base=tricks.reduce((s,t)=>s+t.pts,0);
+  if(tricks.length>=3)base+=60; else if(tricks.length===2)base+=20;
+  lastTricks=tricks.map(t=>t.name);
+  let ok=true,pts;
+  if(quality==='perfect'){pts=Math.round(base*1.5+40);SFX.success();}
+  else if(quality==='good'){pts=Math.round(base*1.0+15);SFX.point();}
+  else if(quality==='sloppy'){pts=Math.round(base*0.4);ok=false;SFX.error();}
+  else {pts=Math.round(base*0.1);ok=false;SFX.hit();}
+  const label={perfect:'Perfect landing!',good:'Solid landing',sloppy:'Shaky landing',crash:'Crash!'}[quality];
+  finishFeature(ok,pts,label);
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();act();return;}
+  if(TRICKS[e.key]&&phase==='air'){e.preventDefault();tryTrick(e.key);return;}
+  if((e.key==='ArrowLeft'||e.key==='ArrowRight')&&phase==='rail'){e.preventDefault();keys[e.key]=true;}
+});
+document.addEventListener('keyup',e=>{ if(phase==='rail')keys[e.key]=false; });
+let keys={};
+c.addEventListener('click',()=>{ if(phase!=='rail'&&phase!=='air')act(); else if(phase==='air')act(); });
+c.addEventListener('touchstart',e=>{e.preventDefault(); if(phase!=='rail')act();},{passive:false});
+document.getElementById('actBtn').addEventListener('click',act);
+document.querySelectorAll('#pad button[data-key]').forEach(btn=>{
+  const k=btn.dataset.key;
+  const on=ev=>{ev.preventDefault(); if(phase==='rail'&&(k==='ArrowLeft'||k==='ArrowRight')){keys[k]=true;} else if(phase==='air'){tryTrick(k);} else {act();} };
+  const off=ev=>{ev.preventDefault(); keys[k]=false; };
+  btn.addEventListener('touchstart',on,{passive:false});
+  btn.addEventListener('touchend',off,{passive:false});
+  btn.addEventListener('mousedown',on);
+  btn.addEventListener('mouseup',off);
+  btn.addEventListener('mouseleave',off);
+});
+
+function drawRider(x,y,lean,tuck){
+  ctx.save();ctx.translate(x,y);ctx.rotate(lean);
+  ctx.fillStyle='#333';ctx.fillRect(-16,4+tuck,34,4);
+  ctx.fillStyle='#ff6b35';ctx.fillRect(-4,-20,8,26);
+  ctx.fillStyle='#222';ctx.beginPath();ctx.arc(0,-26,7,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawScene(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0d3b5c');sky.addColorStop(1,'#4fb8e8');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#eef6fb';
+  ctx.beginPath();ctx.moveTo(0,H-40);ctx.lineTo(W,H-70);ctx.lineTo(W,H);ctx.lineTo(0,H);ctx.closePath();ctx.fill();
+}
+
+function loop(){
+  drawScene();
+  if(phase==='ready'){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('ss_ready_msg','Tap / Space to drop into the course'),400,H/2);
+    drawRider(80,H-60,0,0);
+  } else if(phase==='approach'){
+    approachT++;
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    const f=COURSE[featIdx];
+    ctx.fillText(I18N.t('ss_approach_msg','Approaching a {f}...').replace('{f}',f.type==='rail'?I18N.t('ss_a_rail','rail'):I18N.t('ss_a_jump','jump')),400,60);
+    const px=80+approachT*4;
+    drawRider(Math.min(px,700),H-60,0,0);
+    if(approachT>40)startFeature();
+  } else if(phase==='rail'){
+    railT++;
+    if(!keys) keys={};
+    balance+=wobbleDir*wobble;
+    if(keys['ArrowLeft'])balance-=0.02;
+    if(keys['ArrowRight'])balance+=0.02;
+    if(Math.random()<0.03)wobbleDir*=-1;
+    balance=Math.max(0,Math.min(1,balance));
+    if(!railFailed&&(balance<=0.03||balance>=0.97)){
+      railFailed=true;SFX.hit();
+      setTimeout(()=>{finishFeature(false,10,railName+' — bailed!');},250);
+    }
+    ctx.fillStyle='#c9a876';ctx.fillRect(200,H-90,400,12);
+    const px=200+railT/railDur*400;
+    const lean=(balance-0.5)*1.6;
+    drawRider(Math.min(px,600),H-96,lean,0);
+    ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(railName,400,40);
+    ctx.fillText(I18N.t('ss_rail_hint','Hold ⬅️ / ➡️ to balance!'),400,64);
+    ctx.fillStyle='rgba(0,0,0,.35)';ctx.fillRect(300,80,200,18);
+    ctx.fillStyle=Math.abs(balance-0.5)<0.2?'#7ec850':'#e94560';
+    ctx.fillRect(300+balance*196,80,4,18);
+    ctx.strokeStyle='#fff';ctx.strokeRect(300,80,200,18);
+    if(!railFailed&&railT>=railDur){act();}
+  } else if(phase==='air'){
+    airT++;
+    const t=Math.min(1,airT/airDur);
+    const spin=Object.keys(performed).length*Math.PI*0.6*t;
+    const x=150+t*500;
+    const y=H-90-Math.sin(t*Math.PI)*140;
+    drawRider(x,y,spin,-6);
+    ctx.fillStyle='#fff';ctx.font='bold 15px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('ss_air_hint','Arrows = tricks, SPACE = land!'),400,30);
+    if(toastQueue.length&&toastT>0){
+      ctx.fillStyle='#ffd54f';ctx.font='bold 18px Arial';
+      ctx.fillText(toastQueue[toastQueue.length-1],400,55);
+      toastT--;
+    }
+    const bx=W/2-110,by=64,bw=220,bh=16;
+    ctx.strokeStyle='#fff';ctx.strokeRect(bx,by,bw,bh);
+    ctx.fillStyle='rgba(255,213,79,.5)';ctx.fillRect(bx+bw*0.65,by,bw*0.34,bh);
+    ctx.fillStyle='rgba(76,175,80,.75)';ctx.fillRect(bx+bw*0.82,by,bw*0.17,bh);
+    ctx.fillStyle='#e94560';ctx.fillRect(bx+bw*t-2,by-4,4,bh+8);
+    if(airT>=airDur){landAir('crash');}
+  } else if(phase==='featresult'){
+    ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(lastLabel,400,140);
+    ctx.font='18px Arial';
+    if(lastTricks.length)ctx.fillText(I18N.t('ss_tricks_label','Tricks: {t}').replace('{t}',lastTricks.join(', ')),400,175);
+    ctx.fillText(I18N.t('ss_feat_score','+{p} pts (combo x{c})').replace('{p}',lastPts).replace('{c}',combo.toFixed(2)),400,205);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('ss_next_hint','Tap / Space to ride to the next feature'),400,245);
+  } else if(phase==='done'){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('ss_run_over_title','RUN COMPLETE!'),400,150);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('ss_total_label','Total Score: {s}').replace('{s}',score),400,190);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('ss_restart_hint','Tap / Space to ride again'),400,225);
+  }
+  hud.textContent=I18N.t('ss_hud_label','Score: {s} | Combo: x{c} | Best: {b}')
+    .replace('{s}',score).replace('{c}',combo.toFixed(1)).replace('{b}',Math.round(best));
+  requestAnimationFrame(loop);
+}
+reset();loop();
+</script></body></html>

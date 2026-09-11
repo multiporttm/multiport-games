@@ -1,0 +1,275 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ferret Training</title><meta name="description" content="Play Ferret Training free online — Show your ferret the target item, then click a clutter pile to send it sniffing there. Hot/cold cues tell you how close the pile is to the hidden item — click the glowing pile again to reward a correct find before time runs out. More clutter and hidden items each round."><link rel="canonical" href="https://games.multiportllc.com/games/ferrettraining"><meta property="og:title" content="Ferret Training - Multiport Games"><meta property="og:description" content="Play Ferret Training free online — Show your ferret the target item, then click a clutter pile to send it sniffing there. Hot/cold cues tell you how close the pile is to the hidden item — click the glowing pile again to reward a correct find before time runs out. More clutter and hidden items each round."><meta property="og:url" content="https://games.multiportllc.com/games/ferrettraining"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ferret Training","description":"Play Ferret Training free online instantly. Show your ferret the target item, then click a clutter pile to send it sniffing there. Hot/cold cues tell you how close the pile is to the hidden item — click the glowing pile again to reward a correct find before time runs out. More clutter and hidden items each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/ferrettraining","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#panel{background:#16213e;border-radius:14px;padding:16px;max-width:480px;margin:0 auto}
+#topinfo{display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:800;margin-bottom:8px;flex-wrap:wrap;gap:6px;font-size:.95rem}
+#target-box{background:#0b3d2e;border-radius:10px;padding:8px 12px;text-align:center;color:#ffd54f;font-weight:800;margin-bottom:10px;font-size:1.05rem}
+#target-box .icon{font-size:1.6rem;vertical-align:middle;margin-right:6px}
+#timerbar-track{height:9px;background:rgba(255,255,255,.12);border-radius:5px;overflow:hidden;margin-bottom:10px}
+#timerbar{height:100%;background:#4caf50;width:100%;transition:width .1s linear}
+#stage{position:relative;background:#1e3a24;border-radius:12px;margin:0 auto;overflow:hidden}
+.pile{position:absolute;display:flex;align-items:center;justify-content:center;border-radius:10px;background:#3d5a3f;font-size:1.6rem;cursor:pointer;box-shadow:inset 0 0 0 2px rgba(255,255,255,.06);transition:background .2s,transform .1s;user-select:none}
+.pile:hover{background:#4a6b4c}
+.pile.selected{box-shadow:inset 0 0 0 3px #ffd54f}
+.pile.searched-cold{background:#2b4a55}
+.pile.searched-warm{background:#6b4a2b}
+.pile.searched-hot{background:#8a3a2b}
+.pile.found{background:#2e7d32;animation:pulse 0.7s infinite}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+#ferret{position:absolute;font-size:2rem;transition:left .28s ease,top .28s ease;pointer-events:none;filter:drop-shadow(0 3px 2px rgba(0,0,0,.4))}
+#cue{text-align:center;color:#fff;font-weight:800;min-height:1.6em;margin-top:10px;font-size:1rem}
+#status{text-align:center;color:#bcd;min-height:1.3em;margin-top:2px;font-size:.85rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ferret Training</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="panel">
+      <div id="topinfo"><span id="round-display">Round: 1</span><span id="found-display">Found: 0/0</span><span id="score-display">Score: 0</span><span id="hi-display">Best: 0</span></div>
+      <div id="target-box"><span class="icon" id="target-icon">🧦</span><span id="target-text">Find the sock!</span></div>
+      <div id="timerbar-track"><div id="timerbar"></div></div>
+      <div id="stage"></div>
+      <div id="cue">Click a pile to send your ferret sniffing!</div>
+      <div id="status"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Show your ferret the target item, then click a clutter pile (or use arrow keys + Enter) to send it sniffing there. Hot/cold cues tell you how close the pile is to the hidden item — click the glowing pile again to reward a correct find before time runs out. More clutter and hidden items each round.</div>
+</div>
+<script>
+const ITEMS=[['🧦','sock'],['🎾','ball'],['🔑','keys'],['📱','phone'],['🥿','slipper'],['🧸','teddy bear'],['🖊️','pen'],['🧤','glove'],['🪙','coin'],['👛','wallet']];
+const CELL=56,GAP=8,PAD=10;
+const HI_KEY='ferrettraining_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let round=1,score=0,gridSize=3,itemsToFind=1,foundCount=0;
+let cells=[],remainingTargets=[],currentTarget=null,gameOver=false,started=false;
+let ferretPos={row:0,col:0},moving=false,foundReady=false,foundCellIdx=-1;
+let timeLeft=0,timeLimit=0,lastTs=null,selIdx=0;
+
+const stage=document.getElementById('stage');
+const cueEl=document.getElementById('cue');
+const statusEl=document.getElementById('status');
+const timerbar=document.getElementById('timerbar');
+
+function setDisplays(){
+  document.getElementById('round-display').textContent=I18N.t('round_label','Round: {n}').replace('{n}',round);
+  document.getElementById('found-display').textContent=I18N.t('found_label','Found: {a}/{b}').replace('{a}',foundCount).replace('{b}',itemsToFind);
+  document.getElementById('score-display').textContent=I18N.t('score_label2','Score: {s}').replace('{s}',score);
+  document.getElementById('hi-display').textContent=I18N.t('best_label','Best: {n}').replace('{n}',hi);
+}
+
+function cellIndex(r,c){return r*gridSize+c;}
+
+function layoutStage(){
+  const size=PAD*2+gridSize*CELL+(gridSize-1)*GAP;
+  stage.style.width=Math.min(size,460)+'px';
+  const scale=Math.min(1,460/size);
+  stage.style.height=(size*scale)+'px';
+  stage.style.transform='';
+  stage.innerHTML='';
+  cells=[];
+  for(let r=0;r<gridSize;r++){
+    for(let col=0;col<gridSize;col++){
+      const div=document.createElement('div');
+      div.className='pile';
+      div.textContent='📦';
+      const x=PAD+col*(CELL+GAP), y=PAD+r*(CELL+GAP);
+      div.style.left=(x*scale)+'px';div.style.top=(y*scale)+'px';
+      div.style.width=(CELL*scale)+'px';div.style.height=(CELL*scale)+'px';
+      div.style.fontSize=(1.6*scale)+'em';
+      const idx=cellIndex(r,col);
+      div.addEventListener('click',()=>onPileClick(idx));
+      stage.appendChild(div);
+      cells.push({row:r,col,el:div,state:'unsearched',hasTarget:false});
+    }
+  }
+  const ferret=document.createElement('div');
+  ferret.id='ferret';ferret.textContent='🐾';
+  stage.appendChild(ferret);
+  window._scale=scale;
+  positionFerret(true);
+}
+
+function positionFerret(instant){
+  const ferret=document.getElementById('ferret');
+  const x=PAD+ferretPos.col*(CELL+GAP)+CELL/2-16;
+  const y=PAD+ferretPos.row*(CELL+GAP)+CELL/2-16;
+  const s=window._scale||1;
+  if(instant)ferret.style.transition='none';
+  ferret.style.left=(x*s)+'px';ferret.style.top=(y*s)+'px';
+  if(instant)requestAnimationFrame(()=>{ferret.style.transition='left .28s ease,top .28s ease';});
+}
+
+function pickTargetIcon(){
+  return ITEMS[Math.floor(Math.random()*ITEMS.length)];
+}
+
+function startRound(){
+  gridSize=Math.min(3+Math.floor((round-1)/2),6);
+  itemsToFind=Math.min(1+Math.ceil(round/2),Math.max(1,gridSize*gridSize-2));
+  foundCount=0;
+  layoutStage();
+  // choose hidden target cells
+  const idxs=Array.from({length:gridSize*gridSize},(_,i)=>i);
+  for(let i=idxs.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[idxs[i],idxs[j]]=[idxs[j],idxs[i]];}
+  remainingTargets=idxs.slice(0,itemsToFind).map(i=>({idx:i,item:pickTargetIcon()}));
+  ferretPos={row:0,col:0};
+  moving=false;foundReady=false;foundCellIdx=-1;
+  nextTarget();
+  timeLimit=8000+gridSize*gridSize*1600+itemsToFind*2500;
+  timeLeft=timeLimit;
+  setDisplays();
+  cueEl.textContent=I18N.t('cue_start','Click a pile to send your ferret sniffing!');
+  statusEl.textContent='';
+}
+
+function nextTarget(){
+  if(remainingTargets.length===0){currentTarget=null;return;}
+  currentTarget=remainingTargets[0];
+  document.getElementById('target-icon').textContent=currentTarget.item[0];
+  document.getElementById('target-text').textContent=I18N.t('find_item','Find the {n}!').replace('{n}',currentTarget.item[1]);
+}
+
+function dist(a,b){
+  const ca=cells[a],cb=cells[b];
+  return Math.max(Math.abs(ca.row-cb.row),Math.abs(ca.col-cb.col));
+}
+
+function onPileClick(idx){
+  if(!started)started=true;
+  if(gameOver){resetGame();return;}
+  if(moving)return;
+  selIdx=idx;
+  updateSelHighlight();
+  if(foundReady){
+    if(idx===foundCellIdx){
+      grabReward();
+      return;
+    } else {
+      foundReady=false;
+      cells[foundCellIdx].el.classList.remove('found');
+    }
+  }
+  travelTo(idx);
+}
+
+function updateSelHighlight(){
+  cells.forEach((c,i)=>c.el.classList.toggle('selected',i===selIdx));
+}
+
+function travelTo(idx){
+  moving=true;
+  const c=cells[idx];
+  ferretPos={row:c.row,col:c.col};
+  positionFerret(false);
+  SFX.click();
+  setTimeout(()=>{
+    moving=false;
+    sniffAt(idx);
+  },300);
+}
+
+function sniffAt(idx){
+  if(!currentTarget){return;}
+  const d=dist(idx,currentTarget.idx);
+  const cell=cells[idx];
+  cell.el.classList.remove('searched-cold','searched-warm','searched-hot');
+  if(d===0){
+    cell.el.classList.add('found');
+    foundReady=true;foundCellIdx=idx;
+    cueEl.textContent=I18N.t('cue_found','🎯 Found it! Click again to reward!');
+    SFX.select();
+  } else if(d===1){
+    cell.el.classList.add('searched-hot');
+    cueEl.textContent=I18N.t('cue_hot','🔥 Very warm!');
+    SFX.tick();
+  } else if(d<=2){
+    cell.el.classList.add('searched-warm');
+    cueEl.textContent=I18N.t('cue_warm','😊 Warm');
+    SFX.tick();
+  } else {
+    cell.el.classList.add('searched-cold');
+    cueEl.textContent=I18N.t('cue_cold','❄️ Cold');
+    SFX.tick();
+  }
+}
+
+function grabReward(){
+  foundReady=false;
+  const cell=cells[foundCellIdx];
+  cell.el.classList.remove('found');
+  cell.el.classList.add('searched-hot');
+  score+=20+gridSize*2;
+  foundCount++;
+  SFX.success();
+  statusEl.textContent=I18N.t('retrieved','Retrieved the {n}!').replace('{n}',currentTarget.item[1]);
+  remainingTargets.shift();
+  setDisplays();
+  if(remainingTargets.length===0){
+    const bonus=Math.max(0,Math.round(timeLeft/60));
+    score+=bonus;
+    cueEl.textContent=I18N.t('round_clear','Room cleared! +{b} bonus').replace('{b}',bonus);
+    SFX.levelup();
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    round++;
+    setDisplays();
+    setTimeout(startRound,1300);
+  } else {
+    nextTarget();
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Enter',' '].includes(e.key))return;
+  e.preventDefault();
+  if(!started)started=true;
+  if(gameOver){resetGame();return;}
+  const r=cells[selIdx]?cells[selIdx].row:0, c=cells[selIdx]?cells[selIdx].col:0;
+  let nr=r,nc=c;
+  if(e.key==='ArrowLeft')nc=Math.max(0,c-1);
+  if(e.key==='ArrowRight')nc=Math.min(gridSize-1,c+1);
+  if(e.key==='ArrowUp')nr=Math.max(0,r-1);
+  if(e.key==='ArrowDown')nr=Math.min(gridSize-1,r+1);
+  if(e.key==='Enter'||e.key===' '){onPileClick(selIdx);return;}
+  selIdx=cellIndex(nr,nc);
+  updateSelHighlight();
+});
+
+function resetGame(){
+  round=1;score=0;gameOver=false;started=false;
+  startRound();
+  render();
+}
+
+function render(){
+  const pct=Math.max(0,timeLeft/timeLimit)*100;
+  timerbar.style.width=pct+'%';
+  timerbar.style.background=pct<25?'#c0392b':pct<55?'#c9962b':'#4caf50';
+}
+
+function tickLoop(ts){
+  requestAnimationFrame(tickLoop);
+  if(!started||gameOver){render();return;}
+  if(lastTs===null)lastTs=ts;
+  const dt=Math.min(ts-lastTs,80);
+  lastTs=ts;
+  timeLeft-=dt;
+  render();
+  if(timeLeft<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    setDisplays();
+    cueEl.textContent=I18N.t('time_up2','⏰ Time’s up! Final score: {s}').replace('{s}',score);
+    statusEl.textContent=I18N.t('restart_hint3','Click any pile or press Enter to play again');
+    SFX.lose();
+  }
+}
+
+startRound();
+requestAnimationFrame(tickLoop);
+</script></body></html>

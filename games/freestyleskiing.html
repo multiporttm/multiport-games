@@ -1,0 +1,236 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Freestyle Skiing</title><meta name="description" content="Play Freestyle Skiing free online — Build speed on the in-run, launch off the terrain-park jump, hold direction keys in the air to stack up tricks, then hit Space at just the right moment to straighten out and stick the landing."><link rel="canonical" href="https://games.multiportllc.com/games/freestyleskiing"><meta property="og:title" content="Freestyle Skiing - Multiport Games"><meta property="og:description" content="Play Freestyle Skiing free online — Build speed on the in-run, launch off the terrain-park jump, hold direction keys in the air to stack up tricks, then hit Space at just the right moment to straighten out and stick the landing."><meta property="og:url" content="https://games.multiportllc.com/games/freestyleskiing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Freestyle Skiing","description":"Play Freestyle Skiing free online instantly. Build speed on the in-run, launch off the terrain-park jump, combo up aerial tricks with the arrow keys, then straighten out at the right instant to stick the landing across multiple jumps. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/freestyleskiing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(#0d3b5c,#4fb8e8);display:block;border-radius:8px}
+#hud{color:#eaf6ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px}
+#trickpad{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;padding:6px 0 10px}
+#trickpad button{width:64px;height:48px;border-radius:10px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;font-size:1.3rem;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#trickpad button:active{background:rgba(255,255,255,.28)}
+#straightBtn{background:#e94560!important;font-size:.85rem!important;font-weight:800;width:150px!important}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Freestyle Skiing</div>
+  <div class="game-frame">
+    <div id="hud">Jump 1/3 | Score: 0 | Best: 0</div>
+    <canvas id="c" width="800" height="400"></canvas>
+    <div id="trickpad">
+      <button data-key="ArrowUp">⬆️</button>
+      <button data-key="ArrowLeft">⬅️</button>
+      <button data-key="ArrowRight">➡️</button>
+      <button data-key="ArrowDown">⬇️</button>
+      <button id="straightBtn">STRAIGHTEN (Space)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press <b>Space</b> or <b>Tap</b> to build speed on the in-run, again at the lip to launch. In the air, tap the <b>Arrow Keys</b> to stack up different tricks, then press <b>Space</b> at just the right moment to straighten your skis and stick the landing — three jumps per round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+const hud=document.getElementById('hud');
+const KEY='freestyleskiing_best';
+let best=parseFloat(localStorage.getItem(KEY)||'0');
+
+const TRICKS={
+  ArrowUp:{key:'trick_daffy',name:'Daffy',pts:25},
+  ArrowDown:{key:'trick_tuck',name:'Tuck Knee Grab',pts:30},
+  ArrowLeft:{key:'trick_spread',name:'Spread Eagle',pts:30},
+  ArrowRight:{key:'trick_scratcher',name:'Back Scratcher',pts:35}
+};
+
+let phase='ready'; // ready, inrun, launch, air, result, done
+let jumpNum=1,totalScore=0;
+let power=0,launchQ=0,barT=0;
+let airT=0,airDur=70,performed={},toastQueue=[],toastT=0;
+let lastQuality='',lastPts=0,lastTricks=[];
+let flashMsg='';
+
+function resetRound(){jumpNum=1;totalScore=0;phase='ready';}
+
+function startAir(){
+  phase='air';airT=0;performed={};toastQueue=[];
+  airDur=62+power*18+launchQ*10;
+  SFX.jump();
+}
+
+function tryTrick(k){
+  if(phase!=='air')return;
+  const t=TRICKS[k];
+  if(!t||performed[k])return;
+  performed[k]=true;
+  toastQueue.push(t.name);toastT=45;
+  SFX.point();
+}
+
+function attemptLand(){
+  if(phase==='air'){
+    const frac=airT/airDur;
+    let quality;
+    if(frac>=0.82&&frac<=0.99)quality='perfect';
+    else if(frac>=0.65)quality='good';
+    else quality='sloppy';
+    resolveLanding(quality);
+    return;
+  }
+  if(phase==='ready'){phase='inrun';barT=0;return;}
+  if(phase==='inrun'){
+    const pos=(Math.sin(barT)+1)/2;
+    const q=1-Math.abs(pos-0.5)*2;
+    power=Math.max(0.15,q);
+    SFX.click();
+    phase='launch';barT=0;
+    return;
+  }
+  if(phase==='launch'){
+    const pos=(Math.sin(barT)+1)/2;
+    const q=1-Math.abs(pos-0.62)*2.2;
+    launchQ=Math.max(0.1,Math.min(1,q));
+    startAir();
+    return;
+  }
+  if(phase==='result'){
+    if(jumpNum>=3){
+      phase='done';
+      if(totalScore>best){best=totalScore;localStorage.setItem(KEY,best);}
+      SFX.win();
+    }else{
+      jumpNum++;phase='ready';
+    }
+    return;
+  }
+  if(phase==='done'){resetRound();}
+}
+
+function resolveLanding(quality){
+  const tricks=Object.keys(performed).map(k=>TRICKS[k]);
+  let base=tricks.reduce((s,t)=>s+t.pts,0);
+  if(tricks.length>=3)base+=60;
+  else if(tricks.length===2)base+=20;
+  lastTricks=tricks.map(t=>t.name);
+  if(quality==='perfect'){lastPts=Math.round(base*1.5+40);SFX.success();}
+  else if(quality==='good'){lastPts=Math.round(base*1.0+15);SFX.point();}
+  else if(quality==='sloppy'){lastPts=Math.round(base*0.4);SFX.error();}
+  else {lastPts=Math.round(base*0.15);SFX.hit();}
+  lastQuality=quality;
+  totalScore+=lastPts;
+  phase='result';
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();attemptLand();return;}
+  if(TRICKS[e.key]){e.preventDefault();tryTrick(e.key);}
+});
+c.addEventListener('click',()=>{ if(phase!=='air')attemptLand(); });
+c.addEventListener('touchstart',e=>{e.preventDefault(); if(phase!=='air')attemptLand();},{passive:false});
+document.getElementById('straightBtn').addEventListener('click',attemptLand);
+document.querySelectorAll('#trickpad button[data-key]').forEach(btn=>{
+  const k=btn.dataset.key;
+  const fire=ev=>{ev.preventDefault(); if(phase==='ready'||phase==='inrun'||phase==='launch'){attemptLand();}else{tryTrick(k);} };
+  btn.addEventListener('touchstart',fire,{passive:false});
+  btn.addEventListener('mousedown',fire);
+});
+
+function drawBar(label,targetCenter,targetHalf){
+  const bx=150,by=340,bw=500,bh=26;
+  ctx.fillStyle='rgba(0,0,0,.35)';ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle='#7ec850';
+  ctx.fillRect(bx+(targetCenter-targetHalf)*bw,by,targetHalf*2*bw,bh);
+  const pos=(Math.sin(barT)+1)/2;
+  ctx.fillStyle='#fff';ctx.fillRect(bx+pos*bw-3,by-6,6,bh+12);
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(label,bx+bw/2,by-14);
+}
+
+function drawSkier(x,y,lean,tuck){
+  ctx.save();ctx.translate(x,y);ctx.rotate(lean);
+  ctx.fillStyle='#333';ctx.fillRect(-15,4+tuck,34,3);
+  ctx.fillStyle='#e94560';ctx.fillRect(-4,-20,8,26);
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(0,-26,7,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawScene(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0d3b5c');sky.addColorStop(1,'#4fb8e8');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#fff';
+  ctx.beginPath();ctx.moveTo(0,120);ctx.lineTo(500,120);ctx.lineTo(500,360);ctx.lineTo(0,360);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#e0f0ff';
+  ctx.beginPath();ctx.moveTo(500,120);ctx.lineTo(560,300);ctx.lineTo(500,360);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath();ctx.moveTo(560,300);ctx.lineTo(800,380);ctx.lineTo(800,400);ctx.lineTo(500,400);ctx.lineTo(500,360);ctx.closePath();ctx.fill();
+}
+
+function loop(){
+  drawScene();
+  if(phase==='ready'){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('fs_ready_msg','Tap / Space to start in-run'),400,80);
+    drawSkier(60,110,0,0);
+  } else if(phase==='inrun'){
+    barT+=0.09;
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('fs_inrun_msg','BUILD SPEED — tap in the zone!'),400,60);
+    drawBar(I18N.t('fs_speed_label','SPEED'),0.5,0.14);
+    drawSkier(60+((Math.sin(barT*0.4)+1)/2)*20,110,0,0);
+  } else if(phase==='launch'){
+    barT+=0.11;
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('fs_launch_msg','LAUNCH — tap at the edge!'),400,60);
+    drawBar(I18N.t('fs_launch_label','LAUNCH TIMING'),0.62,0.12);
+    drawSkier(470,340,-0.15,0);
+  } else if(phase==='air'){
+    airT+=1;
+    const t=Math.min(1,airT/airDur);
+    const spin=Object.keys(performed).length*Math.PI*0.6*t;
+    const x=560+t*220;
+    const y=300-Math.sin(t*Math.PI)*130;
+    drawSkier(x,y,spin,-6);
+    ctx.fillStyle='#fff';ctx.font='bold 15px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('fs_air_hint','Arrows = tricks, SPACE = straighten out!'),400,30);
+    if(toastQueue.length&&toastT>0){
+      ctx.fillStyle='#ffd54f';ctx.font='bold 18px Arial';
+      ctx.fillText(toastQueue[toastQueue.length-1],400,55);
+      toastT--;
+    }
+    const barX=W/2-110,barY=64,barW=220,barH=16;
+    ctx.strokeStyle='#fff';ctx.strokeRect(barX,barY,barW,barH);
+    ctx.fillStyle='rgba(255,213,79,.5)';
+    ctx.fillRect(barX+barW*0.65,barY,barW*0.34,barH);
+    ctx.fillStyle='rgba(76,175,80,.75)';
+    ctx.fillRect(barX+barW*0.82,barY,barW*0.17,barH);
+    const markerX=barX+barW*t;
+    ctx.fillStyle='#e94560';ctx.fillRect(markerX-2,barY-4,4,barH+8);
+    if(airT>=airDur){resolveLanding('crash');}
+  } else if(phase==='result'){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    const titles={perfect:I18N.t('fs_perfect_title','PERFECT LANDING!'),good:I18N.t('fs_good_title','SOLID LANDING'),sloppy:I18N.t('fs_sloppy_title','SHAKY LANDING'),crash:I18N.t('fs_crash_title','CRASH!')};
+    ctx.fillText(titles[lastQuality],400,130);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('fs_tricks_label','Tricks: {t}').replace('{t}',lastTricks.length?lastTricks.join(', '):I18N.t('fs_none','None')),400,170);
+    ctx.fillText(I18N.t('fs_jumpscore_label','Jump Score: {s}').replace('{s}',lastPts),400,200);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('fs_next_hint','Tap / Space to continue'),400,240);
+  } else if(phase==='done'){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('fs_round_over_title','ROUND OVER'),400,150);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('fs_total_label','Total Score: {s}').replace('{s}',Math.round(totalScore)),400,190);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('fs_restart_hint','Tap / Space for a new round'),400,225);
+  }
+  hud.textContent=I18N.t('fs_hud_label','Jump {j}/3 | Score: {s} | Best: {b}')
+    .replace('{j}',Math.min(jumpNum,3)).replace('{s}',Math.round(totalScore)).replace('{b}',Math.round(best));
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

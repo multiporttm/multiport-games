@@ -1,0 +1,390 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Remote Control Car</title><meta name="description" content="Play Remote Control Car free online — Use Arrow Keys or WASD (or drag on the course) to steer your twitchy RC car around furniture and ramps. Reach 1st place before the other RC cars across 3 courses!"><link rel="canonical" href="https://games.multiportllc.com/games/remotecontrolcar"><meta property="og:title" content="Remote Control Car - Multiport Games"><meta property="og:description" content="Play Remote Control Car free online — Use Arrow Keys or WASD (or drag on the course) to steer your twitchy RC car around furniture and ramps. Reach 1st place before the other RC cars across 3 courses!"><meta property="og:url" content="https://games.multiportllc.com/games/remotecontrolcar"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Remote Control Car","description":"Play Remote Control Car free online instantly. Use Arrow Keys or WASD (or drag on the course) to steer your twitchy RC car around furniture and ramps indoors. Reach 1st place before the other RC cars across 3 courses. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/remotecontrolcar","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#c9a876;display:block;border-radius:8px;touch-action:none}
+#hud{color:#fff;font-size:1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+#msg{color:#7ec8ff;text-align:center;font-size:.9rem;min-height:1.4em;padding-bottom:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Remote Control Car</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div data-i18n="hud_course">Course: <span id="courseNum">1</span>/3</div>
+      <div data-i18n="hud_place">Place: <span id="place">1st</span></div>
+      <div data-i18n="hud_time">Time: <span id="timeVal">0.0s</span></div>
+      <div data-i18n="hud_best">Best: <span id="bestVal">--</span></div>
+    </div>
+    <div id="msg" data-i18n="msg_start">Press Space or Tap the course to start!</div>
+    <canvas id="c" width="800" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> or <b>WASD</b> to steer your twitchy toy RC car (or press and drag on the course). Race 3 laps around the indoor obstacle course — furniture, ramps, and tight corners — and beat the other RC cars to 1st place! Complete all 3 courses for the best total time.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=500;
+const ID='remotecontrolcar';
+let best=parseFloat(localStorage.getItem('hs_'+ID))||null;
+document.getElementById('bestVal').textContent=best?best.toFixed(1)+'s':'--';
+
+// ---- Course definitions: each is a loop track built from waypoints + obstacle rects ----
+function buildTrack(n){
+  const tracks=[
+    { // Course 1: living room loop
+      waypoints:[[120,120],[680,100],[700,250],[500,260],[480,400],[680,420],[650,470],[100,460],[80,300],[260,280],[120,120]],
+      obstacles:[ {x:340,y:150,w:120,h:60,label:'🛋️'}, {x:560,y:320,w:90,h:70,label:'📦'}, {x:150,y:340,w:80,h:60,label:'🪑'} ],
+      ramps:[ {x:400,y:300,w:60,h:30} ]
+    },
+    { // Course 2: hallway + kitchen figure-eight-ish loop
+      waypoints:[[100,100],[400,90],[420,240],[700,230],[700,420],[420,430],[400,300],[100,320],[100,100]],
+      obstacles:[ {x:200,y:150,w:70,h:70,label:'📚'}, {x:500,y:280,w:100,h:50,label:'🧺'}, {x:250,y:370,w:70,h:60,label:'🐾'} ],
+      ramps:[ {x:560,y:120,w:60,h:30},{x:230,y:250,w:50,h:26} ]
+    },
+    { // Course 3: backyard patio loop, tighter & faster
+      waypoints:[[90,250],[220,110],[480,100],[680,180],[690,330],[520,420],[300,430],[150,380],[90,250]],
+      obstacles:[ {x:330,y:180,w:90,h:60,label:'🪴'}, {x:520,y:250,w:70,h:70,label:'🧱'}, {x:200,y:300,w:80,h:50,label:'🌳'} ],
+      ramps:[ {x:420,y:330,w:60,h:28},{x:600,y:200,w:50,h:26} ]
+    }
+  ];
+  return tracks[n%tracks.length];
+}
+
+const TRACK_WIDTH=70;
+let course=0;
+let track=buildTrack(course);
+let raceTime=0,started=false,finished=false,countdown=0;
+let bestThisSession=[];
+
+function pathLen(wps){let l=0;for(let i=0;i<wps.length-1;i++){l+=Math.hypot(wps[i+1][0]-wps[i][0],wps[i+1][1]-wps[i][1]);}return l;}
+
+function pointAtProgress(wps,t){
+  // t in [0,1) around loop
+  const segLens=[];let total=0;
+  for(let i=0;i<wps.length-1;i++){const l=Math.hypot(wps[i+1][0]-wps[i][0],wps[i+1][1]-wps[i][1]);segLens.push(l);total+=l;}
+  let d=t*total;
+  for(let i=0;i<segLens.length;i++){
+    if(d<=segLens[i]){
+      const f=segLens[i]===0?0:d/segLens[i];
+      const [x1,y1]=wps[i],[x2,y2]=wps[i+1];
+      return {x:x1+(x2-x1)*f,y:y1+(y2-y1)*f};
+    }
+    d-=segLens[i];
+  }
+  return {x:wps[0][0],y:wps[0][1]};
+}
+
+class Car{
+  constructor(color,isPlayer){
+    this.color=color;
+    this.isPlayer=isPlayer;
+    const start=track.waypoints[0];
+    this.x=start[0]+(isPlayer?-18:18*(this.aiOffset||0));
+    this.y=start[1];
+    this.angle=0;
+    this.speed=0;
+    this.progress=0; // AI progress along path 0..laps
+    this.laps=0;
+    this.vx=0;this.vy=0;
+    this.steerVel=0;
+    this.finishedTime=null;
+  }
+}
+
+let player,ais,cars,laps,LAPS_TO_WIN=3;
+
+function setupCourse(){
+  track=buildTrack(course);
+  player=new Car('#e94560',true);
+  ais=[
+    Object.assign(new Car('#4fc3f7',false),{aiOffset:1,aiSpeed:2.15+course*0.15,aiProgress:0.0}),
+    Object.assign(new Car('#7ec850',false),{aiOffset:2,aiSpeed:2.0+course*0.15,aiProgress:0.0})
+  ];
+  cars=[player,...ais];
+  raceTime=0;started=false;finished=false;countdown=0;
+  document.getElementById('courseNum').textContent=(course+1);
+  document.getElementById('msg').textContent=I18N.t('msg_start','Press Space or Tap the course to start!');
+  updateHud();
+  drawFrame();
+}
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  if(e.code==='Space')tryStart();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+let dragPos=null;
+c.addEventListener('pointerdown',e=>{
+  tryStart();
+  const r=c.getBoundingClientRect();
+  dragPos={x:(e.clientX-r.left)*(W/r.width),y:(e.clientY-r.top)*(H/r.height)};
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragPos)return;
+  const r=c.getBoundingClientRect();
+  dragPos={x:(e.clientX-r.left)*(W/r.width),y:(e.clientY-r.top)*(H/r.height)};
+});
+window.addEventListener('pointerup',()=>{dragPos=null;});
+
+function tryStart(){
+  if(!started&&!finished){started=true;SFX.jump();}
+  else if(finished){ nextAfterFinish(); }
+}
+
+function updateHud(){
+  document.getElementById('timeVal').textContent=raceTime.toFixed(1)+'s';
+  const sorted=[...cars].sort((a,b)=>rankValue(b)-rankValue(a));
+  const place=sorted.indexOf(player)+1;
+  const ord=place===1?I18N.t('ord_1st','1st'):place===2?I18N.t('ord_2nd','2nd'):I18N.t('ord_3rd','3rd');
+  document.getElementById('place').textContent=ord;
+}
+function rankValue(car){
+  return car.isPlayer? (player.laps + player.progress) : (car.laps + car.aiProgress);
+}
+
+function nextAfterFinish(){
+  course=(course+1)%3;
+  setupCourse();
+}
+
+function segInfo(wps,idx){
+  const [x1,y1]=wps[idx],[x2,y2]=wps[idx+1];
+  return {x1,y1,x2,y2,ang:Math.atan2(y2-y1,x2-x1)};
+}
+
+function closestTrackPoint(x,y){
+  const wps=track.waypoints;
+  let best=null,bestD=Infinity,bestT=0,cumBefore=0;
+  const total=pathLen(wps);
+  let cum=0;
+  for(let i=0;i<wps.length-1;i++){
+    const {x1,y1,x2,y2}=segInfo(wps,i);
+    const dx=x2-x1,dy=y2-y1;
+    const len2=dx*dx+dy*dy||1;
+    let t=((x-x1)*dx+(y-y1)*dy)/len2;
+    t=Math.max(0,Math.min(1,t));
+    const px=x1+dx*t,py=y1+dy*t;
+    const d=Math.hypot(px-x,py-y);
+    const segLen=Math.hypot(dx,dy);
+    if(d<bestD){bestD=d;best={x:px,y:py};bestT=(cum+t*segLen)/total;}
+    cum+=segLen;
+  }
+  return {point:best,dist:bestD,t:bestT};
+}
+
+function rectDist(px,py,r){
+  const cx=Math.max(r.x,Math.min(px,r.x+r.w));
+  const cy=Math.max(r.y,Math.min(py,r.y+r.h));
+  return Math.hypot(px-cx,py-cy);
+}
+
+function updatePlayer(dt){
+  const p=player;
+  let accel=0,steer=0;
+  if(keys['arrowup']||keys['w'])accel=1;
+  if(keys['arrowdown']||keys['s'])accel=-0.6;
+  if(keys['arrowleft']||keys['a'])steer=-1;
+  if(keys['arrowright']||keys['d'])steer=1;
+
+  if(dragPos){
+    const dx=dragPos.x-p.x,dy=dragPos.y-p.y;
+    const dist=Math.hypot(dx,dy);
+    if(dist>6){
+      const targetAng=Math.atan2(dy,dx);
+      let diff=targetAng-p.angle;
+      while(diff>Math.PI)diff-=Math.PI*2;
+      while(diff<-Math.PI)diff+=Math.PI*2;
+      steer=Math.max(-1,Math.min(1,diff*2.2));
+      accel=1;
+    }
+  }
+
+  // twitchy toy-like handling: fast responsive steering, high top speed relative to size, loose grip
+  const maxSpeed=4.6;
+  p.speed+=accel*0.32*dt;
+  p.speed*=0.965; // friction/drag
+  p.speed=Math.max(-1.6,Math.min(maxSpeed,p.speed));
+
+  const steerFactor=0.075*(0.4+Math.min(1,Math.abs(p.speed)/2));
+  p.angle+=steer*steerFactor*dt*(p.speed<0?-1:1);
+
+  p.x+=Math.cos(p.angle)*p.speed*dt;
+  p.y+=Math.sin(p.angle)*p.speed*dt;
+
+  // wall/obstacle collision -> bounce & slow (toy car bumps off things)
+  track.obstacles.forEach(o=>{
+    const d=rectDist(p.x,p.y,o);
+    if(d<14){
+      const cx=Math.max(o.x,Math.min(p.x,o.x+o.w));
+      const cy=Math.max(o.y,Math.min(p.y,o.y+o.h));
+      const nx=p.x-cx,ny=p.y-cy;
+      const nl=Math.hypot(nx,ny)||1;
+      p.x+=(nx/nl)*(14-d+1);
+      p.y+=(ny/nl)*(14-d+1);
+      p.speed*=-0.35;
+      SFX.hit();
+    }
+  });
+
+  // off-track penalty (slow down like carpet/grass drag) — track corridor check
+  const {dist,t}=closestTrackPoint(p.x,p.y);
+  if(dist>TRACK_WIDTH/2){
+    p.speed*=0.9;
+  }
+
+  // ramp boost
+  track.ramps.forEach(r=>{
+    if(p.x>r.x&&p.x<r.x+r.w&&p.y>r.y&&p.y<r.y+r.h&&Math.abs(p.speed)>1){
+      if(!p._rampCooldown||p._rampCooldown<=0){
+        p._rampCooldown=40;
+        SFX.powerup();
+      }
+    }
+  });
+  if(p._rampCooldown>0)p._rampCooldown-=dt;
+
+  // clamp to canvas
+  p.x=Math.max(20,Math.min(W-20,p.x));
+  p.y=Math.max(20,Math.min(H-20,p.y));
+
+  // lap progress tracking
+  const prevProg=p.progress||0;
+  p.progress=t;
+  if(prevProg>0.85&&t<0.15){
+    p.laps++;
+    SFX.point();
+  }
+}
+
+function updateAI(car,dt){
+  const wps=track.waypoints;
+  car.aiProgress+= (car.aiSpeed*dt)/pathLen(wps)*40;
+  if(car.aiProgress>=1){car.aiProgress-=1;car.laps++;SFX.tick&&0;}
+  const target=pointAtProgress(wps,car.aiProgress);
+  // slight wobble for personality
+  const wob=Math.sin((raceTime+car.aiOffset*3)*2)*6;
+  car.x+= (target.x-car.x)*0.18;
+  car.y+= (target.y+wob*0.3-car.y)*0.18;
+  car.angle=Math.atan2(target.y-car.y,target.x-car.x);
+}
+
+function drawCourse(){
+  ctx.fillStyle='#c9a876';
+  ctx.fillRect(0,0,W,H);
+  // subtle floor pattern
+  ctx.strokeStyle='rgba(0,0,0,0.05)';
+  for(let i=0;i<W;i+=40){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,H);ctx.stroke();}
+  // track path
+  ctx.lineWidth=TRACK_WIDTH;
+  ctx.strokeStyle='#8a8a92';
+  ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();
+  track.waypoints.forEach(([x,y],i)=>{ if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+  ctx.stroke();
+  ctx.lineWidth=TRACK_WIDTH-10;
+  ctx.strokeStyle='#9d9da3';
+  ctx.beginPath();
+  track.waypoints.forEach(([x,y],i)=>{ if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+  ctx.stroke();
+  // dashed centerline
+  ctx.setLineDash([10,10]);
+  ctx.lineWidth=2;ctx.strokeStyle='#fff8';
+  ctx.beginPath();
+  track.waypoints.forEach(([x,y],i)=>{ if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // start line
+  const [sx,sy]=track.waypoints[0];
+  ctx.fillStyle='#fff';
+  ctx.fillRect(sx-4,sy-TRACK_WIDTH/2,8,TRACK_WIDTH);
+
+  // ramps
+  track.ramps.forEach(r=>{
+    ctx.fillStyle='#e0b04a';
+    ctx.fillRect(r.x,r.y,r.w,r.h);
+    ctx.strokeStyle='#a97d20';ctx.strokeRect(r.x,r.y,r.w,r.h);
+  });
+
+  // obstacles (furniture)
+  track.obstacles.forEach(o=>{
+    ctx.fillStyle='#5b4636';
+    ctx.fillRect(o.x,o.y,o.w,o.h);
+    ctx.font=(Math.min(o.w,o.h)-10)+'px serif';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(o.label,o.x+o.w/2,o.y+o.h/2);
+  });
+}
+
+function drawCar(car){
+  ctx.save();
+  ctx.translate(car.x,car.y);
+  ctx.rotate(car.angle);
+  ctx.fillStyle=car.color;
+  ctx.fillRect(-12,-8,24,16);
+  ctx.fillStyle='#222';
+  ctx.fillRect(-9,-10,7,4);ctx.fillRect(-9,6,7,4);
+  ctx.fillRect(5,-10,7,4);ctx.fillRect(5,6,7,4);
+  ctx.fillStyle='#fff9';
+  ctx.fillRect(-2,-5,8,10);
+  ctx.restore();
+}
+
+function drawFrame(){
+  drawCourse();
+  cars.slice().sort((a,b)=>a.y-b.y).forEach(drawCar);
+
+  if(!started){
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('course_label','Course {n}').replace('{n}',course+1),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('msg_start','Press Space or Tap the course to start!'),W/2,H/2+16);
+  }
+  if(finished){
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffd54f';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    const place=[...cars].sort((a,b)=>rankValue(b)-rankValue(a)).indexOf(player)+1;
+    const label = place===1?I18N.t('finish_1st','You Finished 1st! 🏆'):place===2?I18N.t('finish_2nd','You Finished 2nd'):I18N.t('finish_3rd','You Finished 3rd');
+    ctx.fillText(label,W/2,H/2-30);
+    ctx.font='20px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('finish_time','Time: {t}s').replace('{t}',raceTime.toFixed(1)),W/2,H/2+6);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('finish_next','Tap or press Space for next course'),W/2,H/2+38);
+  }
+}
+
+let lastT=null;
+function loop(ts){
+  if(lastT==null)lastT=ts;
+  const dt=Math.min((ts-lastT)/16.6667,3);
+  lastT=ts;
+
+  if(started&&!finished){
+    raceTime+=dt/60;
+    updatePlayer(dt);
+    ais.forEach(a=>updateAI(a,dt));
+    if(player.laps>=LAPS_TO_WIN){
+      finished=true;
+      if(best===null||raceTime<best){best=raceTime;localStorage.setItem('hs_'+ID,best.toFixed(2));document.getElementById('bestVal').textContent=best.toFixed(1)+'s';}
+      const place=[...cars].sort((a,b)=>rankValue(b)-rankValue(a)).indexOf(player)+1;
+      if(place===1)SFX.win();else SFX.fail();
+    }
+    updateHud();
+  }
+  drawFrame();
+  requestAnimationFrame(loop);
+}
+
+setupCourse();
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,430 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Saddle Making</title><meta name="description" content="Play Saddle Making free online — Drag the blade along the dashed guide line to cut each leather piece, click the numbered stitch points in ascending order to sew them together, then pick the right hardware chip and click its marked spot to attach it. Misaligned cuts and wrong order cost points — each saddle adds more pieces and steps."><link rel="canonical" href="https://games.multiportllc.com/games/saddlemaking"><meta property="og:title" content="Saddle Making - Multiport Games"><meta property="og:description" content="Play Saddle Making free online — Drag the blade along the dashed guide line to cut each leather piece, click the numbered stitch points in ascending order to sew them together, then pick the right hardware chip and click its marked spot to attach it. Misaligned cuts and wrong order cost points — each saddle adds more pieces and steps."><meta property="og:url" content="https://games.multiportllc.com/games/saddlemaking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Saddle Making","description":"Play Saddle Making free online instantly. Drag the blade along the dashed guide line to cut each leather piece, click the numbered stitch points in ascending order to sew them together, then pick the right hardware chip and click its marked spot to attach it. Misaligned cuts and wrong order cost points — each saddle adds more pieces and steps. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/saddlemaking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#2b1d13;border-radius:14px;padding:14px;max-width:460px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:#f2e2c8;font-weight:800;margin-bottom:6px;font-size:.92rem}
+#phaseLabel{text-align:center;color:#ffd54f;font-weight:900;font-size:1.1rem;margin-bottom:6px}
+#timerbar-track{height:8px;background:rgba(255,255,255,.12);border-radius:4px;overflow:hidden;margin-bottom:8px}
+#timerbar{height:100%;background:#4caf50;width:100%;transition:width .1s linear}
+#c{background:#c9a06a;border-radius:10px;display:block;margin:0 auto;touch-action:none;max-width:100%}
+#chips{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.chip{padding:8px 12px;border-radius:18px;border:none;background:#5c3b20;color:#f2e2c8;font-weight:800;cursor:pointer;font-size:.85rem}
+.chip.active{background:#e0942b;color:#2b1d13}
+.chip:disabled{opacity:.35;cursor:default}
+#msg{text-align:center;color:#fff;font-weight:800;min-height:1.4em;margin-top:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Saddle Making</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span id="round-display">Saddle: 1</span><span id="score-display">Score: 0</span><span id="hi-display">Best: 0</span></div>
+      <div id="phaseLabel">Cut the leather</div>
+      <div id="timerbar-track"><div id="timerbar"></div></div>
+      <canvas id="c" width="420" height="280"></canvas>
+      <div id="chips"></div>
+      <div id="msg"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the blade along the dashed guide line to cut each leather piece (or press Enter for an assisted cut), click the numbered stitch points in ascending order to sew them together, then pick the right hardware chip and click its marked spot to attach it. Misaligned cuts and wrong order cost points — each saddle adds more pieces and steps.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=420,H=280;
+const HI_KEY='saddlemaking_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let round=1,score=0,saddlesMade=0,gameOver=false,started=false,misses=0;
+let phase='cut',phaseIdx=0;
+let pieces=[],stitchPts=[],hardwareZones=[],hardwareChips=[],selectedChip=-1;
+let dragging=false,dragPts=[],progressMax=0;
+let timeLeft=0,timeLimit=0,lastTs=null,transitioning=false;
+let focusZone=0;
+
+const HW_TYPES=[['stirrupL','🪢','Stirrup L'],['stirrupR','🪢','Stirrup R'],['girth','🎗️','Girth Strap'],['horn','⭐','Horn']];
+
+function roundDisplay(){document.getElementById('round-display').textContent=I18N.t('saddle_label','Saddle: {n}').replace('{n}',round);}
+function scoreDisplay(){document.getElementById('score-display').textContent=I18N.t('score_label2','Score: {s}').replace('{s}',score);}
+function hiDisplay(){document.getElementById('hi-display').textContent=I18N.t('best_label','Best: {n}').replace('{n}',hi);}
+function phaseLabel(t){document.getElementById('phaseLabel').textContent=t;}
+function msg(t){document.getElementById('msg').textContent=t;}
+
+function genPieces(n){
+  const arr=[];
+  for(let i=0;i<n;i++){
+    const y0=40+ (i*(H-80)/Math.max(1,n-1||1));
+    const amp=18+round*3;
+    const sx=40,ex=W-40;
+    const midx=(sx+ex)/2+(Math.random()<0.5?-1:1)*amp;
+    arr.push({pts:[{x:sx,y:y0},{x:midx,y:y0+ (Math.random()<0.5?-1:1)*amp},{x:ex,y:y0}],done:false,acc:0});
+  }
+  return arr;
+}
+
+function pathLength(pts){
+  let l=0;for(let i=1;i<pts.length;i++)l+=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y);
+  return l;
+}
+function closestOnPath(pts,px,py){
+  let best=Infinity,bestT=0,acc=0;
+  const total=pathLength(pts);
+  for(let i=1;i<pts.length;i++){
+    const a=pts[i-1],b=pts[i];
+    const segLen=Math.hypot(b.x-a.x,b.y-a.y);
+    const t=Math.max(0,Math.min(1,((px-a.x)*(b.x-a.x)+(py-a.y)*(b.y-a.y))/(segLen*segLen||1)));
+    const cx=a.x+(b.x-a.x)*t, cy=a.y+(b.y-a.y)*t;
+    const d=Math.hypot(px-cx,py-cy);
+    const along=acc+segLen*t;
+    if(d<best){best=d;bestT=along/total;}
+    acc+=segLen;
+  }
+  return {dist:best,progress:bestT};
+}
+
+function genStitch(n){
+  const pts=[];
+  const margin=45;
+  for(let i=1;i<=n;i++){
+    let x,y,ok;
+    let tries=0;
+    do{
+      x=margin+Math.random()*(W-margin*2);
+      y=margin+Math.random()*(H-margin*2);
+      ok=pts.every(p=>Math.hypot(p.x-x,p.y-y)>44);
+      tries++;
+    }while(!ok&&tries<50);
+    pts.push({x,y,num:i,done:false});
+  }
+  return pts;
+}
+
+function genHardware(m){
+  const need=HW_TYPES.slice(0,m);
+  const decoys=Math.min(2,m);
+  const zones=[];
+  const margin=40;
+  function place(type,label){
+    let x,y,ok,tries=0;
+    do{
+      x=margin+Math.random()*(W-margin*2);
+      y=margin+Math.random()*(H-margin*2);
+      ok=zones.every(z=>Math.hypot(z.x-x,z.y-y)>50);
+      tries++;
+    }while(!ok&&tries<50);
+    zones.push({x,y,type,label,done:false});
+  }
+  need.forEach(t=>place(t[0],t[2]));
+  for(let i=0;i<decoys;i++)place('decoy'+i,null);
+  return zones;
+}
+
+function startSaddle(){
+  transitioning=false;
+  phase='cut';phaseIdx=0;selectedChip=-1;focusZone=0;
+  progressMax=0;dragPts=[];
+  const pieceCount=Math.min(2+Math.floor((round-1)/1),6);
+  const stitchCount=Math.min(4+round,12);
+  const hwCount=Math.min(1+Math.floor(round/2),4);
+  pieces=genPieces(pieceCount);
+  stitchPts=genStitch(stitchCount);
+  hardwareZones=genHardware(hwCount);
+  hardwareChips=hardwareZones.filter(z=>!z.type.startsWith('decoy')).map(z=>z.type);
+  timeLimit=6000+pieceCount*4500+stitchCount*1400+hwCount*2600;
+  timeLeft=timeLimit;
+  buildChips();
+  updatePhaseLabel();
+  msg('');
+  roundDisplay();scoreDisplay();hiDisplay();
+}
+
+function buildChips(){
+  const box=document.getElementById('chips');
+  box.innerHTML='';
+  if(phase!=='hardware'){return;}
+  hardwareChips.forEach((type,i)=>{
+    const def=HW_TYPES.find(h=>h[0]===type);
+    const b=document.createElement('button');
+    b.className='chip';
+    const zone=hardwareZones.find(z=>z.type===type);
+    b.textContent=def[1]+' '+def[2]+(zone&&zone.done?' ✓':'');
+    if(zone&&zone.done)b.disabled=true;
+    b.addEventListener('click',()=>{selectedChip=type;renderChipActive();SFX.click();});
+    box.appendChild(b);
+  });
+}
+function renderChipActive(){
+  document.querySelectorAll('.chip').forEach((b,i)=>{
+    b.classList.toggle('active',hardwareChips[i]===selectedChip);
+  });
+}
+
+function updatePhaseLabel(){
+  if(phase==='cut')phaseLabel(I18N.t('phase_cut','Cut piece {a} of {b}').replace('{a}',phaseIdx+1).replace('{b}',pieces.length));
+  else if(phase==='stitch')phaseLabel(I18N.t('phase_stitch','Stitch in order — need #{n}').replace('{n}',(stitchPts.filter(p=>!p.done).sort((a,b)=>a.num-b.num)[0]||{num:'?'}).num));
+  else if(phase==='hardware')phaseLabel(I18N.t('phase_hw','Attach the hardware'));
+}
+
+// ---- pointer handling ----
+function toCanvasXY(clientX,clientY){
+  const r=c.getBoundingClientRect();
+  return {x:(clientX-r.left)*(W/r.width),y:(clientY-r.top)*(H/r.height)};
+}
+function pointerDown(x,y){
+  if(!started){started=true;}
+  if(gameOver){resetGame();return;}
+  if(phase==='cut'){
+    const piece=pieces[phaseIdx];
+    if(!piece)return;
+    const start=piece.pts[0];
+    if(Math.hypot(x-start.x,y-start.y)<26){
+      dragging=true;dragPts=[{x,y}];progressMax=0;piece.acc=0;piece.sampleCount=0;
+    }
+  } else if(phase==='stitch'){
+    const target=stitchPts.filter(p=>!p.done).sort((a,b)=>a.num-b.num)[0];
+    stitchPts.forEach(p=>{
+      if(p.done)return;
+      if(Math.hypot(p.x-x,p.y-y)<24){
+        if(p.num===target.num){
+          p.done=true;score+=8+round;SFX.success();
+          const remain=stitchPts.filter(pp=>!pp.done);
+          if(remain.length===0){advancePhase();}
+          else updatePhaseLabel();
+        } else {
+          score=Math.max(0,score-4);misses++;SFX.error();msg(I18N.t('wrong_order','Wrong order! Need #{n} next').replace('{n}',target.num));
+        }
+      }
+    });
+  } else if(phase==='hardware'){
+    if(!selectedChip||selectedChip===-1)return;
+    hardwareZones.forEach(z=>{
+      if(z.done)return;
+      if(Math.hypot(z.x-x,z.y-y)<26){
+        if(z.type===selectedChip){
+          z.done=true;score+=12+round*2;SFX.success();
+          selectedChip=-1;buildChips();
+          if(hardwareZones.filter(zz=>!zz.type.startsWith('decoy')).every(zz=>zz.done)){completeSaddle();}
+        } else {
+          score=Math.max(0,score-5);misses++;SFX.error();msg(I18N.t('wrong_spot','Wrong spot for that piece!'));
+        }
+      }
+    });
+  }
+}
+function pointerMove(x,y){
+  if(!dragging||phase!=='cut')return;
+  const piece=pieces[phaseIdx];
+  dragPts.push({x,y});
+  const {dist,progress}=closestOnPath(piece.pts,x,y);
+  piece.acc+=dist;piece.sampleCount=(piece.sampleCount||0)+1;
+  progressMax=Math.max(progressMax,progress);
+}
+function pointerUp(){
+  if(!dragging||phase!=='cut')return;
+  dragging=false;
+  const piece=pieces[phaseIdx];
+  const avgErr=piece.sampleCount?piece.acc/piece.sampleCount:999;
+  if(progressMax<0.8){
+    msg(I18N.t('cut_incomplete','Cut incomplete — trace the whole line!'));
+    SFX.error();
+    dragPts=[];progressMax=0;
+    return;
+  }
+  const acc=Math.max(0,Math.min(100,Math.round(100-avgErr*3)));
+  piece.done=true;piece.finalAcc=acc;
+  score+=Math.round(acc/5)+round;
+  if(acc<50){SFX.hit();msg(I18N.t('misaligned','Misaligned cut — only {a}% accurate').replace('{a}',acc));}
+  else{SFX.success();msg(I18N.t('nice_cut','Nice cut! {a}% accurate').replace('{a}',acc));}
+  dragPts=[];progressMax=0;
+  phaseIdx++;
+  if(phaseIdx>=pieces.length){advancePhase();}
+  else updatePhaseLabel();
+}
+
+c.addEventListener('mousedown',e=>{const p=toCanvasXY(e.clientX,e.clientY);pointerDown(p.x,p.y);});
+c.addEventListener('mousemove',e=>{const p=toCanvasXY(e.clientX,e.clientY);pointerMove(p.x,p.y);});
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[0];const p=toCanvasXY(t.clientX,t.clientY);pointerDown(p.x,p.y);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();const t=e.touches[0];const p=toCanvasXY(t.clientX,t.clientY);pointerMove(p.x,p.y);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerUp();},{passive:false});
+
+function advancePhase(){
+  msg('');
+  if(phase==='cut'){phase='stitch';buildChips();updatePhaseLabel();}
+  else if(phase==='stitch'){phase='hardware';buildChips();updatePhaseLabel();renderChipActive();}
+}
+
+function completeSaddle(){
+  transitioning=true;
+  saddlesMade++;
+  const bonus=Math.max(0,Math.round(timeLeft/70));
+  score+=bonus;
+  msg(I18N.t('saddle_done','Saddle #{n} complete! +{b} bonus').replace('{n}',saddlesMade).replace('{b}',bonus));
+  SFX.levelup();
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  round++;
+  scoreDisplay();hiDisplay();
+  setTimeout(startSaddle,1400);
+}
+
+function resetGame(){
+  round=1;score=0;saddlesMade=0;gameOver=false;started=false;misses=0;
+  startSaddle();
+}
+
+// keyboard support
+document.addEventListener('keydown',e=>{
+  if(!started&&['Enter',' ','1','2','3','4','5','6','7','8','9'].includes(e.key))started=true;
+  if(gameOver&&(e.key==='Enter'||e.key===' ')){resetGame();return;}
+  if(phase==='cut'&&(e.key==='Enter'||e.key===' ')){
+    e.preventDefault();
+    const piece=pieces[phaseIdx];
+    if(!piece)return;
+    piece.done=true;piece.finalAcc=70;
+    score+=Math.round(70/5)+round;
+    msg(I18N.t('assisted_cut','Assisted cut used — 70% accurate'));
+    SFX.success();
+    phaseIdx++;
+    if(phaseIdx>=pieces.length)advancePhase();else updatePhaseLabel();
+  } else if(phase==='stitch'&&/^[0-9]$/.test(e.key)){
+    e.preventDefault();
+    const n=parseInt(e.key,10);
+    const p=stitchPts.find(pp=>pp.num===n&&!pp.done);
+    if(p)pointerDown(p.x,p.y);
+  } else if(phase==='hardware'){
+    if(/^[1-4]$/.test(e.key)){
+      const i=parseInt(e.key,10)-1;
+      if(hardwareChips[i]){selectedChip=hardwareChips[i];renderChipActive();}
+    } else if(e.key==='Tab'){
+      e.preventDefault();
+      const open=hardwareZones.filter(z=>!z.done);
+      if(open.length)focusZone=(focusZone+1)%open.length;
+    } else if(e.key==='Enter'||e.key===' '){
+      e.preventDefault();
+      const open=hardwareZones.filter(z=>!z.done);
+      const z=open[focusZone%Math.max(1,open.length)];
+      if(z)pointerDown(z.x,z.y);
+    }
+  }
+});
+
+function drawPiece(p,isCurrent){
+  ctx.save();
+  ctx.strokeStyle=isCurrent?'#3d2510':'rgba(61,37,16,.35)';
+  ctx.lineWidth=3;
+  ctx.setLineDash(isCurrent?[10,8]:[]);
+  ctx.beginPath();
+  p.pts.forEach((pt,i)=>i===0?ctx.moveTo(pt.x,pt.y):ctx.lineTo(pt.x,pt.y));
+  ctx.stroke();
+  ctx.setLineDash([]);
+  if(isCurrent){
+    ctx.fillStyle='#2e7d32';
+    ctx.beginPath();ctx.arc(p.pts[0].x,p.pts[0].y,10,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#c0392b';
+    const end=p.pts[p.pts.length-1];
+    ctx.beginPath();ctx.arc(end.x,end.y,7,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#c9a06a';ctx.fillRect(0,0,W,H);
+  // subtle texture lines
+  ctx.strokeStyle='rgba(0,0,0,.05)';ctx.lineWidth=1;
+  for(let i=0;i<H;i+=14){ctx.beginPath();ctx.moveTo(0,i);ctx.lineTo(W,i);ctx.stroke();}
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,.5)';ctx.textAlign='center';ctx.font='bold 18px Arial';
+    ctx.fillText(I18N.t('sm_start','Click / tap / press a key to start'),W/2,H/2);
+    return;
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='bold 26px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-24);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),W/2,H/2+6);
+    ctx.fillText(I18N.t('restart_hint2','Tap / Space to try again'),W/2,H/2+30);
+    return;
+  }
+
+  if(phase==='cut'){
+    pieces.forEach((p,i)=>{if(i!==phaseIdx)drawPiece(p,false);});
+    if(pieces[phaseIdx])drawPiece(pieces[phaseIdx],true);
+    if(dragPts.length>1){
+      ctx.strokeStyle='#8a2be2';ctx.lineWidth=3;ctx.beginPath();
+      dragPts.forEach((pt,i)=>i===0?ctx.moveTo(pt.x,pt.y):ctx.lineTo(pt.x,pt.y));
+      ctx.stroke();
+    }
+  } else if(phase==='stitch'){
+    // connecting lines between done points in order for visual seam
+    const doneOrdered=stitchPts.filter(p=>p.done).sort((a,b)=>a.num-b.num);
+    if(doneOrdered.length>1){
+      ctx.strokeStyle='#5c3b20';ctx.lineWidth=2;ctx.setLineDash([6,5]);
+      ctx.beginPath();doneOrdered.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    stitchPts.forEach(p=>{
+      ctx.beginPath();ctx.arc(p.x,p.y,15,0,Math.PI*2);
+      ctx.fillStyle=p.done?'#2e7d32':'#3d2510';
+      ctx.fill();
+      ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(p.done?'✓':String(p.num),p.x,p.y+1);
+    });
+    ctx.textBaseline='alphabetic';
+  } else if(phase==='hardware'){
+    hardwareZones.forEach((z,i)=>{
+      const isDecoy=z.type.startsWith('decoy');
+      ctx.beginPath();ctx.arc(z.x,z.y,18,0,Math.PI*2);
+      ctx.fillStyle=z.done?'#2e7d32':(isDecoy?'#5a2020':'#3d2510');
+      ctx.fill();
+      ctx.strokeStyle='#f2e2c8';ctx.lineWidth=2;ctx.stroke();
+      ctx.font='16px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+      const def=isDecoy?null:HW_TYPES.find(h=>h[0]===z.type);
+      ctx.fillText(z.done?'✓':(def?def[1]:'?'),z.x,z.y+1);
+    });
+    ctx.textBaseline='alphabetic';
+  }
+
+  // timer bar
+  const pct=Math.max(0,timeLeft/timeLimit);
+  document.getElementById('timerbar').style.width=(pct*100)+'%';
+  document.getElementById('timerbar').style.background=pct<0.25?'#c0392b':pct<0.55?'#c9962b':'#4caf50';
+}
+
+function loop(ts){
+  requestAnimationFrame(loop);
+  if(started&&!gameOver){
+    if(lastTs===null)lastTs=ts;
+    const dt=Math.min(ts-lastTs,80);
+    lastTs=ts;
+    if(!transitioning){
+      timeLeft-=dt;
+      if(timeLeft<=0){
+        transitioning=true;
+        if(misses>=8){
+          gameOver=true;
+          if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+          SFX.lose();
+        } else {
+          misses++;
+          score=Math.max(0,score-10);
+          msg(I18N.t('out_of_time','Out of time on this saddle — starting fresh'));
+          SFX.fail();
+          setTimeout(startSaddle,1200);
+        }
+      }
+    }
+  } else {
+    lastTs=ts;
+  }
+  draw();
+}
+startSaddle();
+requestAnimationFrame(loop);
+</script></body></html>
