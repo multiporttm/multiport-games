@@ -1,0 +1,265 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Gas Station Pump - Multiport Games</title><meta name="description" content="Play Gas Station Pump free online — Click a pump to select it, pick the fuel grade the customer asked for, then start the pump and stop it right on target. Juggle up to three cars at once with keys 1/2/3, G to cycle grade, and Space to start/stop."><link rel="canonical" href="https://games.multiportllc.com/games/gasstationpump"><meta property="og:title" content="Gas Station Pump - Multiport Games"><meta property="og:description" content="Play Gas Station Pump free online — Click a pump to select it, pick the fuel grade the customer asked for, then start the pump and stop it right on target. Juggle up to three cars at once with keys 1/2/3, G to cycle grade, and Space to start/stop."><meta property="og:url" content="https://games.multiportllc.com/games/gasstationpump"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Gas Station Pump","description":"Play Gas Station Pump free online instantly. Operate up to three gas pumps at once: select the correct fuel grade for each waiting car, start the flow, and stop it exactly on the amount requested. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/gasstationpump","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{color:#fff;text-align:center;font-weight:800;font-size:1.05rem;padding:8px 0;display:flex;gap:18px;justify-content:center;flex-wrap:wrap}
+#hud span{color:#ffd54f}
+#bays{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;padding:10px}
+.bay{width:190px;background:rgba(255,255,255,.06);border:2px solid rgba(255,255,255,.12);border-radius:14px;padding:10px;text-align:center;transition:border-color .15s,transform .1s}
+.bay.active{border-color:#ffd54f;transform:translateY(-2px)}
+.bay.filling{border-color:#4caf50}
+.bay.empty{opacity:.55}
+.carRow{font-size:2.2rem;min-height:2.6rem}
+.reqLine{color:#ddd;font-size:.82rem;min-height:1.2em;font-weight:700}
+.reqLine .grade-regular{color:#7ec850}
+.reqLine .grade-plus{color:#4fc3f7}
+.reqLine .grade-premium{color:#e94560}
+.gaugeWrap{background:#111;border-radius:8px;height:16px;margin:8px 0;overflow:hidden;position:relative}
+.gaugeFill{height:100%;background:linear-gradient(90deg,#4caf50,#ffd54f);width:0%}
+.target-mark{position:absolute;top:0;bottom:0;width:2px;background:#fff}
+.grades{display:flex;gap:4px;justify-content:center;margin:6px 0}
+.grades button{flex:1;padding:5px 2px;font-size:.72rem;font-weight:800;border:2px solid rgba(255,255,255,.2);border-radius:6px;background:#1a1a2e;color:#ccc;cursor:pointer}
+.grades button.sel-regular{background:#2d5a27;border-color:#7ec850;color:#fff}
+.grades button.sel-plus{background:#0d3b5c;border-color:#4fc3f7;color:#fff}
+.grades button.sel-premium{background:#5c0d24;border-color:#e94560;color:#fff}
+.pumpBtn{width:100%;padding:9px;border:none;border-radius:8px;font-weight:800;cursor:pointer;background:#e94560;color:#fff;font-size:.95rem}
+.pumpBtn.running{background:#4caf50}
+.patience{height:5px;background:#111;border-radius:3px;overflow:hidden;margin-top:6px}
+.patience i{display:block;height:100%;background:#ffd54f}
+#msg{color:#7ec850;text-align:center;font-weight:800;min-height:1.5em;padding:4px}
+#lives{color:#ff6b6b}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Gas Station Pump</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div>Score: <span id="score">0</span></div>
+      <div>Hi: <span id="hi">0</span></div>
+      <div id="lives">Lives: ❤❤❤</div>
+    </div>
+    <div id="msg">&nbsp;</div>
+    <div id="bays"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Cars pull up wanting a specific fuel <b>grade</b> and <b>amount</b>. Click a pump bay to select it (or press <b>1</b>/<b>2</b>/<b>3</b>), pick the matching grade button (or press <b>G</b> to cycle), then click <b>Start Pump</b> (or <b>Space</b>) to begin filling. Click it again to stop — try to land as close as possible to the requested amount without going over! Wrong grade or big overfills anger the customer and cost you a life.
+  </div>
+</div>
+<script>
+const NUM_BAYS=3;
+const GRADES=['regular','plus','premium'];
+const GRADE_LABEL={regular:I18N.t('grade_regular','Regular'),plus:I18N.t('grade_plus','Plus'),premium:I18N.t('grade_premium','Premium')};
+const CARS=['🚗','🚙','🚓','🚕','🚐'];
+const KEY='gasstationpump_hi';
+let score=0,hi=parseInt(localStorage.getItem(KEY)||'0',10),lives=3,gameOver=false,selected=0;
+document.getElementById('hi').textContent=hi;
+
+function rnd(a,b){return a+Math.random()*(b-a);}
+
+const bays=[];
+for(let i=0;i<NUM_BAYS;i++){
+  bays.push({car:null,fill:0,target:0,grade:null,selGrade:'regular',running:false,patience:100,el:null,timeoutTimer:0});
+}
+
+function spawnCar(b){
+  b.car=CARS[Math.floor(Math.random()*CARS.length)];
+  b.grade=GRADES[Math.floor(Math.random()*GRADES.length)];
+  b.target=Math.round(rnd(6,16)*10)/10;
+  b.fill=0;
+  b.selGrade='regular';
+  b.running=false;
+  b.patience=100;
+}
+
+for(const b of bays)spawnCar(b);
+
+function setMsg(t,cls){
+  const el=document.getElementById('msg');
+  el.textContent=t;
+  el.style.color=cls||'#7ec850';
+}
+
+function buildBayDom(){
+  const wrap=document.getElementById('bays');
+  wrap.innerHTML='';
+  bays.forEach((b,i)=>{
+    const div=document.createElement('div');
+    div.className='bay';
+    div.dataset.i=i;
+    div.innerHTML=`
+      <div style="font-weight:800;color:#fff">${I18N.t('pump_label','Pump {n}').replace('{n}',i+1)}</div>
+      <div class="carRow"></div>
+      <div class="reqLine"></div>
+      <div class="gaugeWrap"><div class="target-mark"></div><div class="gaugeFill"></div></div>
+      <div class="grades">
+        ${GRADES.map(g=>`<button data-g="${g}">${GRADE_LABEL[g]}</button>`).join('')}
+      </div>
+      <button class="pumpBtn">${I18N.t('start_pump','Start Pump')}</button>
+      <div class="patience"><i></i></div>
+    `;
+    div.addEventListener('click',e=>{
+      selected=i;
+      if(e.target.dataset.g){setGrade(i,e.target.dataset.g);}
+      else if(e.target.classList.contains('pumpBtn')){toggleRun(i);}
+      else{updateBayDom();}
+    });
+    wrap.appendChild(div);
+    b.el=div;
+  });
+  updateBayDom();
+}
+
+function setGrade(i,g){
+  bays[i].selGrade=g;
+  SFX.select();
+  updateBayDom();
+}
+
+function toggleRun(i){
+  const b=bays[i];
+  if(gameOver||!b.car)return;
+  b.running=!b.running;
+  if(b.running)SFX.click(); else finishFill(i);
+  updateBayDom();
+}
+
+function finishFill(i){
+  const b=bays[i];
+  if(!b.car)return;
+  const gradeOk=b.selGrade===b.grade;
+  const diff=b.fill-b.target;
+  if(!gradeOk){
+    SFX.error();
+    setMsg(I18N.t('wrong_grade_msg','Wrong fuel grade! Customer drives off angry.'),'#ff6b6b');
+    loseLife();
+  }else if(diff>1.5){
+    SFX.fail();
+    setMsg(I18N.t('overfill_msg','Overfilled the tank — spill everywhere!'),'#ff6b6b');
+    loseLife();
+  }else if(Math.abs(diff)<=0.3){
+    SFX.success();
+    const pts=50;
+    score+=pts;
+    setMsg(I18N.t('perfect_msg','Perfect fill! +{p} pts').replace('{p}',pts),'#7ec850');
+  }else{
+    SFX.point();
+    const pts=Math.max(5,Math.round(30-Math.abs(diff)*10));
+    score+=pts;
+    setMsg(I18N.t('close_msg','Close enough. +{p} pts').replace('{p}',pts),'#ffd54f');
+  }
+  updateScore();
+  b.car=null;
+  b.fill=0;
+  b.running=false;
+  setTimeout(()=>{ if(!gameOver){spawnCar(b);updateBayDom();} },700+Math.random()*600);
+}
+
+function loseLife(){
+  lives--;
+  document.getElementById('lives').textContent='Lives: '+'❤'.repeat(Math.max(0,lives))+'♡'.repeat(3-Math.max(0,lives));
+  if(lives<=0)endGame();
+}
+
+function updateScore(){
+  document.getElementById('score').textContent=score;
+  if(score>hi){hi=score;localStorage.setItem(KEY,hi);document.getElementById('hi').textContent=hi;}
+}
+
+function updateBayDom(){
+  bays.forEach((b,i)=>{
+    const el=b.el;
+    el.classList.toggle('active',i===selected);
+    el.classList.toggle('filling',b.running);
+    el.classList.toggle('empty',!b.car);
+    el.querySelector('.carRow').textContent=b.car||'—';
+    el.querySelector('.reqLine').innerHTML=b.car? `${GRADE_LABEL[b.grade]} · ${b.target.toFixed(1)} gal` : I18N.t('waiting_next','waiting for next car…');
+    const pct=b.car?Math.min(100,(b.fill/(b.target*1.4))*100):0;
+    el.querySelector('.gaugeFill').style.width=pct+'%';
+    const tPct=b.car?Math.min(100,(b.target/(b.target*1.4))*100):0;
+    el.querySelector('.target-mark').style.left=tPct+'%';
+    GRADES.forEach(g=>{
+      const btn=el.querySelector(`button[data-g="${g}"]`);
+      btn.className='';
+      if(b.selGrade===g)btn.classList.add('sel-'+g);
+    });
+    const pumpBtn=el.querySelector('.pumpBtn');
+    pumpBtn.textContent=b.running?I18N.t('stop_pump','Stop Pump'):I18N.t('start_pump','Start Pump');
+    pumpBtn.classList.toggle('running',b.running);
+    pumpBtn.disabled=!b.car;
+    el.querySelector('.patience i').style.width=(b.car?b.patience:100)+'%';
+  });
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameOver){ if(e.code==='Space'||e.code==='Enter')restart(); return; }
+  if(e.key==='1'){selected=0;updateBayDom();}
+  else if(e.key==='2'&&NUM_BAYS>1){selected=1;updateBayDom();}
+  else if(e.key==='3'&&NUM_BAYS>2){selected=2;updateBayDom();}
+  else if(e.key==='g'||e.key==='G'){
+    const b=bays[selected];
+    const idx=(GRADES.indexOf(b.selGrade)+1)%GRADES.length;
+    setGrade(selected,GRADES[idx]);
+  }else if(e.code==='Space'){
+    e.preventDefault();
+    toggleRun(selected);
+  }
+});
+
+function endGame(){
+  gameOver=true;
+  setMsg(I18N.t('game_over_msg','GAME OVER — Final score: {s}. Tap/Space to restart.').replace('{s}',score),'#ff6b6b');
+  SFX.lose();
+}
+
+function restart(){
+  score=0;lives=3;gameOver=false;
+  document.getElementById('lives').textContent='Lives: ❤❤❤';
+  updateScore();
+  for(const b of bays)spawnCar(b);
+  setMsg(' ');
+  buildBayDom();
+  loop.last=null;
+}
+
+buildBayDom();
+
+let lastTime=null;
+function loop(ts){
+  if(!gameOver){
+    if(lastTime==null)lastTime=ts;
+    const dt=Math.min((ts-lastTime)/1000,0.1);
+    lastTime=ts;
+    let changed=false;
+    bays.forEach(b=>{
+      if(b.car&&b.running){
+        b.fill+=dt*3.2;
+        changed=true;
+        if(b.fill-b.target>2.2){
+          finishFill(bays.indexOf(b));
+          changed=true;
+        }
+      }else if(b.car&&!b.running){
+        b.patience-=dt*4;
+        changed=true;
+        if(b.patience<=0){
+          SFX.error();
+          setMsg(I18N.t('drove_off_msg','A customer got tired of waiting and left!'),'#ff6b6b');
+          loseLife();
+          b.car=null;
+          setTimeout(()=>{ if(!gameOver){spawnCar(b);updateBayDom();} },800);
+        }
+      }
+    });
+    if(changed)updateBayDom();
+  }else{
+    lastTime=null;
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

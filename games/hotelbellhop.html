@@ -1,0 +1,223 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Hotel Bellhop - Multiport Games</title><meta name="description" content="Play Hotel Bellhop free online — Push your luggage cart with arrow keys or on-screen buttons, pick up matching bags in the lobby, ride the elevator, and deliver each bag to its numbered room before guests lose patience."><link rel="canonical" href="https://games.multiportllc.com/games/hotelbellhop"><meta property="og:title" content="Hotel Bellhop - Multiport Games"><meta property="og:description" content="Play Hotel Bellhop free online — Push your luggage cart with arrow keys or on-screen buttons, pick up matching bags in the lobby, ride the elevator, and deliver each bag to its numbered room before guests lose patience."><meta property="og:url" content="https://games.multiportllc.com/games/hotelbellhop"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Hotel Bellhop","description":"Play Hotel Bellhop free online instantly. Push your luggage cart around the lobby and hallways, pick up bags color-matched to waiting guests, ride the elevator between floors, and deliver each bag to the correct room before time runs out. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/hotelbellhop","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a2a1e;display:block;border-radius:8px;margin:0 auto;touch-action:none}
+#hud{color:#fff;font-weight:800;text-align:center;padding:6px;font-size:1.05rem}
+#hud span{color:#ffd54f}
+#pad{display:grid;grid-template-columns:repeat(3,56px);grid-template-rows:repeat(2,56px);gap:6px;justify-content:center;margin:10px auto;max-width:200px}
+#pad button{font-size:1.4rem;border:none;border-radius:10px;background:#16213e;color:#fff;cursor:pointer}
+#pad button:active{transform:scale(.92)}
+#padUp{grid-column:2;grid-row:1}
+#padLeft{grid-column:1;grid-row:2}
+#padDown{grid-column:2;grid-row:2}
+#padRight{grid-column:3;grid-row:2}
+#padAction{grid-column:1;grid-row:1;background:#e94560}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Hotel Bellhop</div>
+  <div class="game-frame">
+    <div id="hud">Score: <span id="score">0</span> | Hi: <span id="hi">0</span> | Floor <span id="floor">1</span> | <span id="lives">❤❤❤</span></div>
+    <canvas id="c" width="720" height="360"></canvas>
+    <div id="pad">
+      <button id="padAction">✋</button>
+      <button id="padUp">▲</button>
+      <button id="padLeft">◀</button>
+      <button id="padDown">▼</button>
+      <button id="padRight">▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drive the luggage cart with <b>Arrow Keys / WASD</b> (or the on-screen pad). Roll over a colored bag in the lobby to pick it up, ride the <b>elevator</b> (yellow tile) to the right floor, and push into the matching colored door to deliver it before the guest's patience runs out. You can only carry one bag at a time.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const COLS=15,ROWS=8,TS=48;
+const COLORS=['#e94560','#4caf50','#2196f3','#ffb300','#9c27b0'];
+const KEY='hotelbellhop_hi';
+let score=0,hi=parseInt(localStorage.getItem(KEY)||'0',10),lives=3;
+let floor=1,cart={x:1,y:4,carrying:null,moveCd:0};
+let bags=[],doors=[],running=false,spawnTimer=0,lastTime=null,elevCd=0;
+document.getElementById('hi').textContent=hi;
+
+// door positions per floor (room slots along top and bottom walls)
+function doorSlots(){
+  const slots=[];
+  for(let x=3;x<COLS-1;x+=2){ slots.push({x,y:0}); slots.push({x,y:ROWS-1}); }
+  return slots;
+}
+const ELEV={x:0,y:Math.floor(ROWS/2)};
+const LOBBY_X=1;
+
+function reset(){
+  score=0;lives=3;floor=1;cart={x:1,y:4,carrying:null,moveCd:0};
+  bags=[];doors=[];running=true;spawnTimer=0;lastTime=null;elevCd=0;
+  for(let i=0;i<2;i++) spawnGuest();
+}
+
+function spawnGuest(){
+  const color=COLORS[Math.floor(Math.random()*COLORS.length)];
+  const slot=doorSlots()[Math.floor(Math.random()*doorSlots().length)];
+  const guestFloor=1+Math.floor(Math.random()*3);
+  const bagY=2+Math.floor(Math.random()*(ROWS-4));
+  bags.push({id:Math.random(),color,x:LOBBY_X,y:bagY,floor:1,room:{x:slot.x,y:slot.y,floor:guestFloor},patience:100,taken:false});
+}
+
+function attemptAction(){
+  if(!running)return;
+  // pickup
+  if(!cart.carrying){
+    const b=bags.find(b=>!b.taken && b.floor===floor && b.x===cart.x && b.y===cart.y);
+    if(b){ b.taken=true; cart.carrying=b; SFX.click(); return; }
+  } else {
+    // deliver: must be at carrying.room location and on same floor
+    const b=cart.carrying;
+    if(floor===b.room.floor && cart.x===b.room.x && cart.y===b.room.y){
+      const bonus=Math.max(5,Math.round(b.patience/2));
+      score+=15+bonus;
+      SFX.success();
+      bags=bags.filter(x=>x!==b);
+      cart.carrying=null;
+      spawnGuest();
+    } else {
+      SFX.error();
+    }
+  }
+}
+
+function tryMove(dx,dy){
+  if(!running)return;
+  const nx=cart.x+dx, ny=cart.y+dy;
+  if(nx<0||nx>=COLS||ny<0||ny>=ROWS)return;
+  cart.x=nx;cart.y=ny;
+  SFX.tick();
+  // elevator ride
+  if(cart.x===ELEV.x && cart.y===ELEV.y && elevCd<=0){
+    // handled by pressing up/down while on elevator tile via floor change buttons below
+  }
+}
+
+function changeFloor(dir){
+  if(cart.x===ELEV.x && cart.y===ELEV.y && elevCd<=0){
+    const nf=floor+dir;
+    if(nf>=1&&nf<=3){ floor=nf; elevCd=20; SFX.swoosh(); }
+  }
+}
+
+const keysDown={};
+document.addEventListener('keydown',e=>{
+  if(!running && (e.code==='Space')){ startFromOverlay(); return; }
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD','Space','KeyE'].includes(e.code)) e.preventDefault();
+  if(e.code==='KeyE'||e.code==='Space'){ attemptAction(); return; }
+  if(e.repeat)return;
+  if(e.code==='ArrowUp'||e.code==='KeyW') moveOrFloor(0,-1);
+  else if(e.code==='ArrowDown'||e.code==='KeyS') moveOrFloor(0,1);
+  else if(e.code==='ArrowLeft'||e.code==='KeyA') tryMove(-1,0);
+  else if(e.code==='ArrowRight'||e.code==='KeyD') tryMove(1,0);
+});
+
+function moveOrFloor(dx,dy){
+  if(cart.x===ELEV.x && cart.y===ELEV.y){ changeFloor(dy<0?1:-1); return; }
+  tryMove(dx,dy);
+}
+
+document.getElementById('padUp').addEventListener('click',()=>moveOrFloor(0,-1));
+document.getElementById('padDown').addEventListener('click',()=>moveOrFloor(0,1));
+document.getElementById('padLeft').addEventListener('click',()=>tryMove(-1,0));
+document.getElementById('padRight').addEventListener('click',()=>tryMove(1,0));
+document.getElementById('padAction').addEventListener('click',attemptAction);
+
+function startFromOverlay(){ if(!running) reset(); }
+c.addEventListener('click',()=>{ if(!running) reset(); });
+
+function drawGrid(){
+  ctx.fillStyle='#3a2a1e';ctx.fillRect(0,0,c.width,c.height);
+  // floor tiles
+  for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
+    ctx.fillStyle=((x+y)%2===0)?'#4a3626':'#43301f';
+    ctx.fillRect(x*TS,y*TS,TS,TS);
+  }
+  // elevator tile
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(ELEV.x*TS,ELEV.y*TS,TS,TS);
+  ctx.fillStyle='#3a2a1e';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText('LIFT',ELEV.x*TS+TS/2,ELEV.y*TS+TS/2+4);
+  // doors for this floor
+  doorSlots().forEach(s=>{
+    const b=bags.find(bg=>bg.room.x===s.x&&bg.room.y===s.y&&bg.room.floor===floor);
+    ctx.fillStyle=b?b.color:'#2c1a10';
+    ctx.fillRect(s.x*TS+6,s.y*TS+6,TS-12,TS-12);
+  });
+}
+
+function drawBags(){
+  bags.filter(b=>!b.taken && b.floor===floor).forEach(b=>{
+    ctx.fillStyle=b.color;
+    ctx.beginPath();ctx.arc(b.x*TS+TS/2,b.y*TS+TS/2,TS*0.28,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+  });
+}
+
+function drawCart(){
+  ctx.fillStyle='#cccccc';
+  ctx.fillRect(cart.x*TS+8,cart.y*TS+8,TS-16,TS-16);
+  ctx.strokeStyle='#333';ctx.lineWidth=2;ctx.strokeRect(cart.x*TS+8,cart.y*TS+8,TS-16,TS-16);
+  if(cart.carrying){
+    ctx.fillStyle=cart.carrying.color;
+    ctx.beginPath();ctx.arc(cart.x*TS+TS/2,cart.y*TS+TS/2,TS*0.18,0,Math.PI*2);ctx.fill();
+  }
+}
+
+function drawOverlay(text,sub){
+  ctx.fillStyle='rgba(0,0,0,.72)';ctx.fillRect(0,0,c.width,c.height);
+  ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+  ctx.fillText(text,c.width/2,c.height/2-10);
+  ctx.font='16px Arial';ctx.fillText(sub,c.width/2,c.height/2+22);
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+  if(elevCd>0) elevCd-=dt;
+  drawGrid();
+  if(running){
+    const decay=0.15+score/3000;
+    bags.filter(b=>!b.taken).forEach(b=>b.patience-=decay*dt);
+    const expired=bags.filter(b=>!b.taken && b.patience<=0);
+    expired.forEach(b=>{
+      bags=bags.filter(x=>x!==b);
+      lives--; SFX.fail();
+      if(lives<=0) endGame();
+      else spawnGuest();
+    });
+    spawnTimer+=dt;
+    const interval=Math.max(220,420-score/8);
+    const waiting=bags.filter(b=>!b.taken).length;
+    if(spawnTimer>=interval && waiting<4 && running){ spawnTimer=0; spawnGuest(); }
+    if(score>hi){hi=Math.floor(score); localStorage.setItem(KEY,String(hi)); }
+  }
+  drawBags();
+  drawCart();
+  if(!running){
+    drawOverlay(I18N.t('bh_title','Hotel Bellhop'),I18N.t('start_hint','Tap or Space to start'));
+  }
+  document.getElementById('score').textContent=Math.floor(score);
+  document.getElementById('hi').textContent=hi;
+  document.getElementById('floor').textContent=floor;
+  document.getElementById('lives').textContent='❤'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+  requestAnimationFrame(loop);
+}
+
+function endGame(){
+  running=false;
+  SFX.lose();
+}
+
+requestAnimationFrame(loop);
+</script></body></html>

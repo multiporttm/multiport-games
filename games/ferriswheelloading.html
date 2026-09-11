@@ -1,0 +1,219 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ferris Wheel Loading - Multiport Games</title><meta name="description" content="Play Ferris Wheel Loading free online — Tap ACT the instant an empty gondola stops in the loading zone to board a guest, or a finished gondola to unload it. Don't jam the wheel or strand guests!"><link rel="canonical" href="https://games.multiportllc.com/games/ferriswheelloading"><meta property="og:title" content="Ferris Wheel Loading - Multiport Games"><meta property="og:description" content="Play Ferris Wheel Loading free online — Tap ACT the instant an empty gondola stops in the loading zone to board a guest, or a finished gondola to unload it. Don't jam the wheel or strand guests!"><meta property="og:url" content="https://games.multiportllc.com/games/ferriswheelloading"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ferris Wheel Loading","description":"Play Ferris Wheel Loading free online instantly. Time your ACT button press to load waiting guests into empty gondolas as they rotate past the platform, and unload finished riders before the wheel speeds up too much. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/ferriswheelloading","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d1b2e;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffd54f;font-size:1.05rem;font-weight:700;text-align:center;padding:6px}
+#actBtn{display:block;margin:12px auto;padding:14px 40px;background:#4caf50;color:#fff;border:none;border-radius:26px;font-weight:900;font-size:1.2rem;cursor:pointer}
+#actBtn:active{transform:scale(.96)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ferris Wheel Loading</div>
+  <div class="game-frame">
+    <div id="hud">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="440"></canvas>
+    <button id="actBtn">ACT</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Guests wait at the platform, each wanting a colored gondola. Press <b>ACT</b> (or <b>Space</b> / click the wheel) the moment a gondola sits in the loading zone at the bottom: an <b>empty</b> gondola boards the next guest, a <b>full, finished</b> gondola (ring glowing) unloads. Acting on the wrong gondola jams the wheel — 3 jams or 3 stranded guests ends the ride. Speed rises each round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const CENTER={x:400,y:200},RADIUS=140;
+const N=8;
+const ZONE_HALF=0.26; // radians half-width of loading zone at bottom (angle = PI/2)
+const RIDE_TIME=340; // frames a guest rides before ready to unload
+let score=0,hi=0,gameOver=false,started=false;
+let angle=0,angSpeed=0.006;
+let gondolas=[]; // {occupied:false, color, rideT}
+let queue=[]; // waiting guests {color}
+let jams=0,stranded=0,patience=[];
+let flashMsg='',flashTimer=0,flashColor='#fff';
+const COLORS=['#e94560','#4caf50','#42a5f5','#ffd54f','#ab47bc','#ff7043'];
+
+try{hi=parseInt(localStorage.getItem('ferriswheelloading_hi')||'0',10)||0;}catch(e){hi=0;}
+
+function reset(){
+  score=0;gameOver=false;started=false;angle=0;angSpeed=0.006;jams=0;stranded=0;
+  gondolas=[];for(let i=0;i<N;i++)gondolas.push({occupied:false,color:null,rideT:0});
+  queue=[];patience=[];
+  for(let i=0;i<3;i++)addGuest();
+  flashMsg='';
+}
+function addGuest(){
+  queue.push({color:COLORS[Math.floor(Math.random()*COLORS.length)]});
+  patience.push(560);
+}
+reset();
+
+function flash(msg,color){flashMsg=msg;flashColor=color||'#fff';flashTimer=70;}
+
+function gondolaAngle(i){
+  return angle + i*(Math.PI*2/N);
+}
+function angDiff(a,b){
+  let d=(a-b)%(Math.PI*2);
+  if(d>Math.PI)d-=Math.PI*2;
+  if(d<-Math.PI)d+=Math.PI*2;
+  return d;
+}
+function gondolaInZone(i){
+  const a=((gondolaAngle(i)%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+  return Math.abs(angDiff(a,Math.PI/2))<ZONE_HALF;
+}
+
+function doAct(){
+  if(!started||gameOver){begin();return;}
+  let target=-1;
+  for(let i=0;i<N;i++)if(gondolaInZone(i)){target=i;break;}
+  if(target===-1){
+    flash(I18N.t('no_gondola','No gondola in the zone!'),'#ffd54f');
+    return;
+  }
+  const g=gondolas[target];
+  if(!g.occupied){
+    if(queue.length===0){
+      flash(I18N.t('no_guests','No guests waiting!'),'#ffd54f');
+      return;
+    }
+    const guest=queue.shift();patience.shift();
+    g.occupied=true;g.color=guest.color;g.rideT=0;
+    score+=5;
+    SFX.select();
+    flash(I18N.t('boarded','Guest boarded!'),'#4caf50');
+  }else if(g.rideT>=RIDE_TIME){
+    g.occupied=false;g.color=null;g.rideT=0;
+    score+=8;
+    SFX.point();
+    flash(I18N.t('unloaded','Gondola cleared!'),'#4caf50');
+  }else{
+    jams++;
+    SFX.error();
+    flash(I18N.t('jam','Jam! That gondola is still mid-ride.'),'#e94560');
+    if(jams>=3){endGame(I18N.t('too_many_jams','Too many jams — wheel shut down!'));return;}
+  }
+}
+document.getElementById('actBtn').onclick=doAct;
+document.addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();doAct();}});
+c.addEventListener('click',doAct);
+c.addEventListener('touchstart',e=>{e.preventDefault();doAct();},{passive:false});
+
+function endGame(msg){
+  gameOver=true;
+  if(score>hi){hi=score;try{localStorage.setItem('ferriswheelloading_hi',String(hi));}catch(e){}}
+  SFX.fail();
+  flash(msg,'#e94560');
+}
+function begin(){
+  if(gameOver){reset();return;}
+  started=true;
+}
+
+function drawWheel(){
+  ctx.strokeStyle='#3d5578';ctx.lineWidth=6;
+  ctx.beginPath();ctx.arc(CENTER.x,CENTER.y,RADIUS,0,Math.PI*2);ctx.stroke();
+  ctx.lineWidth=1;
+  for(let i=0;i<N;i++){
+    const a=gondolaAngle(i);
+    const gx=CENTER.x+Math.cos(a)*RADIUS,gy=CENTER.y+Math.sin(a)*RADIUS;
+    ctx.strokeStyle='#3d5578';ctx.beginPath();ctx.moveTo(CENTER.x,CENTER.y);ctx.lineTo(gx,gy);ctx.stroke();
+  }
+  // loading zone arc
+  ctx.strokeStyle='#4caf50';ctx.lineWidth=8;
+  ctx.beginPath();ctx.arc(CENTER.x,CENTER.y,RADIUS,Math.PI/2-ZONE_HALF,Math.PI/2+ZONE_HALF);ctx.stroke();
+  ctx.lineWidth=1;
+  for(let i=0;i<N;i++){
+    const a=gondolaAngle(i);
+    const gx=CENTER.x+Math.cos(a)*RADIUS,gy=CENTER.y+Math.sin(a)*RADIUS;
+    const g=gondolas[i];
+    const inZone=gondolaInZone(i);
+    ctx.fillStyle=g.occupied?(g.rideT>=RIDE_TIME?'#ffd54f':g.color):'#0f1e33';
+    ctx.beginPath();ctx.arc(gx,gy,17,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle=inZone?'#fff':'#5a6f95';ctx.lineWidth=inZone?3:1.5;
+    ctx.stroke();
+    if(g.occupied&&g.rideT>=RIDE_TIME){
+      ctx.strokeStyle='#fff';ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(gx,gy,22,0,Math.PI*2*Math.min(1,(g.rideT-RIDE_TIME)/40+0.3));ctx.stroke();
+    }
+  }
+}
+
+function drawQueue(){
+  ctx.fillStyle='#ffd54f';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('queue_label','GUESTS WAITING'),20,395);
+  for(let i=0;i<Math.min(queue.length,8);i++){
+    const x=20+i*36,y=405;
+    ctx.fillStyle=queue[i].color;
+    ctx.beginPath();ctx.arc(x+10,y+15,12,0,Math.PI*2);ctx.fill();
+    if(patience[i]<150){
+      ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x+10,y+15,14,0,Math.PI*2);ctx.stroke();
+    }
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,440);
+  const sky=ctx.createLinearGradient(0,0,0,440);
+  sky.addColorStop(0,'#0d1b2e');sky.addColorStop(1,'#16283f');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,440);
+
+  document.getElementById('hud').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+
+  if(!started){
+    drawWheel();
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('tap_to_start','Tap / Space to start'),400,60);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawWheel();
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,60);
+    ctx.font='16px Arial';
+    ctx.fillText(flashMsg,400,90);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,115);
+    requestAnimationFrame(loop);return;
+  }
+
+  angle+=angSpeed;
+  angSpeed=Math.min(0.022,angSpeed+0.0000025*score);
+
+  for(const g of gondolas)if(g.occupied)g.rideT++;
+
+  if(Math.random()<0.006+score/400000&&queue.length<8)addGuest();
+  for(let i=patience.length-1;i>=0;i--){
+    patience[i]--;
+    if(patience[i]<=0){
+      queue.splice(i,1);patience.splice(i,1);
+      stranded++;
+      SFX.hurt();
+      flash(I18N.t('stranded','A guest gave up and left!'),'#e94560');
+      if(stranded>=3){endGame(I18N.t('too_many_stranded','Too many guests stranded!'));break;}
+    }
+  }
+
+  drawWheel();
+  drawQueue();
+
+  ctx.fillStyle='#9fb0c9';ctx.font='12px Arial';ctx.textAlign='right';
+  ctx.fillText(I18N.t('jams_label','Jams: {j}/3').replace('{j}',jams),780,20);
+  ctx.fillText(I18N.t('stranded_label','Stranded: {s}/3').replace('{s}',stranded),780,36);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashColor;ctx.font='bold 15px Arial';ctx.textAlign='center';
+    ctx.globalAlpha=Math.min(1,flashTimer/20);
+    ctx.fillText(flashMsg,400,375);
+    ctx.globalAlpha=1;
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

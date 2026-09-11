@@ -1,0 +1,249 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Roller Coaster Operator - Multiport Games</title><meta name="description" content="Play Roller Coaster Operator free online — Check each rider's height and lock their restraint, then click Dispatch when the safety gauge is green. Board and clear the queue before it overflows!"><link rel="canonical" href="https://games.multiportllc.com/games/rollercoasteroperator"><meta property="og:title" content="Roller Coaster Operator - Multiport Games"><meta property="og:description" content="Play Roller Coaster Operator free online — Check each rider's height and lock their restraint, then click Dispatch when the safety gauge is green. Board and clear the queue before it overflows!"><meta property="og:url" content="https://games.multiportllc.com/games/rollercoasteroperator"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Roller Coaster Operator","description":"Play Roller Coaster Operator free online instantly. Inspect each rider's height, reject the ones too short, lock the restraint on the ones who board, then dispatch the train only when the safety gauge reads a safe gap from the train ahead. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/rollercoasteroperator","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d1b2e;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffd54f;font-size:1.05rem;font-weight:700;text-align:center;padding:6px}
+#btnRow{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:10px 0}
+#btnRow button{padding:10px 18px;border:none;border-radius:20px;font-weight:800;cursor:pointer;font-size:1rem}
+#btnReject{background:#e94560;color:#fff}
+#btnBoard{background:#4caf50;color:#fff}
+#btnDispatch{background:#ffd54f;color:#222}
+#btnRow button:disabled{opacity:.35;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Roller Coaster Operator</div>
+  <div class="game-frame">
+    <div id="hud">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="320"></canvas>
+    <div id="btnRow">
+      <button id="btnReject">✕ Reject</button>
+      <button id="btnBoard">✓ Board</button>
+      <button id="btnDispatch">🚀 Dispatch</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Each rider needs a height check: click <b>Board</b> to seat tall-enough riders (locks their restraint) or <b>Reject</b> short ones. When your car has riders, click <b>Dispatch</b> (or press <b>Space</b>) while the gap gauge is in the <b>green</b> zone — dispatching in the red zone causes a collision! Keys: <b>R</b> reject, <b>B</b> board, <b>Space</b> dispatch. Don't let the queue overflow.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const MIN_HEIGHT=48;
+const CAR_CAP=4;
+const MAX_QUEUE=6;
+const GREEN_START=0.42; // needle position where zone turns safe
+let score=0,hi=0,gameOver=false,started=false;
+let queue=[],car=[],needle=0,needleSpeed=0.011,dispatchedCount=0,violations=0;
+let flashMsg='',flashTimer=0,flashColor='#fff';
+let spawnTimer=0,spawnInterval=95;
+
+try{hi=parseInt(localStorage.getItem('rollercoasteroperator_hi')||'0',10)||0;}catch(e){hi=0;}
+
+function newRider(){
+  return {h:36+Math.floor(Math.random()*30)};
+}
+
+function reset(){
+  score=0;queue=[];car=[];needle=0;needleSpeed=0.011;dispatchedCount=0;violations=0;
+  spawnTimer=0;spawnInterval=95;gameOver=false;started=false;flashMsg='';
+  for(let i=0;i<3;i++)queue.push(newRider());
+}
+reset();
+
+function flash(msg,color){flashMsg=msg;flashColor=color||'#fff';flashTimer=70;}
+
+function frontRider(){return queue[0];}
+
+function doReject(){
+  if(gameOver||!started){begin();return;}
+  const r=frontRider();
+  if(!r)return;
+  if(r.h<MIN_HEIGHT){
+    queue.shift();
+    score+=2;
+    SFX.click();
+    flash(I18N.t('rejected_ok','Correctly turned away — too short'),'#4caf50');
+  }else{
+    // wrongly rejecting a tall-enough rider costs a bit
+    queue.shift();
+    score=Math.max(0,score-3);
+    SFX.error();
+    flash(I18N.t('rejected_bad','Oops — that rider was tall enough!'),'#e94560');
+  }
+  queue.push(newRider());
+}
+
+function doBoard(){
+  if(gameOver||!started){begin();return;}
+  const r=frontRider();
+  if(!r)return;
+  if(car.length>=CAR_CAP){
+    flash(I18N.t('car_full','Car is full — dispatch first!'),'#ffd54f');
+    return;
+  }
+  if(r.h<MIN_HEIGHT){
+    violations++;
+    SFX.hurt();
+    flash(I18N.t('violation_short','Safety violation! Rider was too short.'),'#e94560');
+    if(violations>=2){endGame();return;}
+  }else{
+    car.push(r);
+    score+=1;
+    SFX.select();
+  }
+  queue.shift();
+  queue.push(newRider());
+}
+
+function doDispatch(){
+  if(gameOver||!started){begin();return;}
+  if(car.length===0){
+    flash(I18N.t('empty_car','No riders boarded yet!'),'#ffd54f');
+    return;
+  }
+  if(needle<GREEN_START){
+    SFX.lose();
+    endGame(I18N.t('collision','COLLISION! Dispatched too soon.'));
+    return;
+  }
+  dispatchedCount++;
+  score+=10+car.length*3;
+  car=[];
+  needle=0;
+  needleSpeed=Math.min(0.028,needleSpeed+0.0009);
+  SFX.powerup();
+  flash(I18N.t('dispatched_safe','Train dispatched safely!'),'#4caf50');
+}
+
+function endGame(msg){
+  gameOver=true;
+  if(score>hi){hi=score;try{localStorage.setItem('rollercoasteroperator_hi',String(hi));}catch(e){}}
+  SFX.fail();
+  flash(msg||I18N.t('overflow','Queue overflowed — too many riders waiting!'),'#e94560');
+}
+
+function begin(){
+  if(gameOver){reset();return;}
+  started=true;
+}
+
+document.getElementById('btnReject').onclick=doReject;
+document.getElementById('btnBoard').onclick=doBoard;
+document.getElementById('btnDispatch').onclick=doDispatch;
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();doDispatch();}
+  else if(e.key==='r'||e.key==='R')doReject();
+  else if(e.key==='b'||e.key==='B')doBoard();
+});
+c.addEventListener('click',()=>{ if(!started||gameOver)begin(); });
+c.addEventListener('touchstart',e=>{e.preventDefault(); if(!started||gameOver)begin();},{passive:false});
+
+function drawGauge(){
+  const gx=60,gy=250,gw=680,gh=28;
+  ctx.fillStyle='#1a2740';ctx.fillRect(gx,gy,gw,gh);
+  // red zone
+  ctx.fillStyle='#5a1f2c';ctx.fillRect(gx,gy,gw*GREEN_START,gh);
+  // green zone
+  ctx.fillStyle='#1f5a30';ctx.fillRect(gx+gw*GREEN_START,gy,gw*(1-GREEN_START),gh);
+  // needle
+  const nx=gx+gw*Math.min(needle,1);
+  ctx.fillStyle='#fff';ctx.fillRect(nx-2,gy-6,4,gh+12);
+  ctx.strokeStyle='#495770';ctx.strokeRect(gx,gy,gw,gh);
+  ctx.fillStyle='#9fb0c9';ctx.font='13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('gap_gauge_label','GAP TO TRAIN AHEAD — dispatch only in green'),gx+gw/2,gy-12);
+}
+
+function drawRiderCard(r,x,y,dim){
+  ctx.save();
+  if(dim)ctx.globalAlpha=0.45;
+  ctx.fillStyle='#2b3a55';ctx.fillRect(x,y,70,90);
+  ctx.strokeStyle='#5a6f95';ctx.strokeRect(x,y,70,90);
+  const barH=Math.min(60,r.h);
+  ctx.fillStyle=r.h<MIN_HEIGHT?'#e94560':'#4caf50';
+  ctx.fillRect(x+25,y+80-barH,20,barH);
+  ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText(r.h+'"',x+35,y+14);
+  ctx.restore();
+}
+
+function drawCar(){
+  const baseX=560,baseY=100;
+  ctx.fillStyle='#7ec850';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('car_label','LOADING CAR')+' ('+car.length+'/'+CAR_CAP+')',baseX,baseY-14);
+  for(let i=0;i<CAR_CAP;i++){
+    const x=baseX+i*40,y=baseY;
+    ctx.fillStyle='#0f1e33';ctx.fillRect(x,y,34,44);
+    ctx.strokeStyle='#3d5578';ctx.strokeRect(x,y,34,44);
+    if(car[i]){
+      ctx.fillStyle='#ffd54f';ctx.beginPath();ctx.arc(x+17,y+16,10,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#4caf50';ctx.fillRect(x+7,y+26,20,14);
+    }
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,320);
+  const sky=ctx.createLinearGradient(0,0,0,320);
+  sky.addColorStop(0,'#0d1b2e');sky.addColorStop(1,'#16283f');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,320);
+
+  document.getElementById('hud').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('tap_to_start','Tap / Space to start'),400,160);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,120);
+    ctx.font='18px Arial';
+    ctx.fillText(flashMsg,400,155);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,185);
+    requestAnimationFrame(loop);return;
+  }
+
+  needle+=needleSpeed;
+  if(needle>1)needle=1;
+
+  spawnTimer++;
+  if(spawnTimer>=spawnInterval&&queue.length<MAX_QUEUE+2){
+    spawnTimer=0;
+    if(queue.length<MAX_QUEUE)queue.push(newRider());
+    spawnInterval=Math.max(50,spawnInterval-1.2);
+  }
+
+  if(queue.length>MAX_QUEUE){
+    endGame();
+  }
+
+  // queue display
+  ctx.fillStyle='#ffd54f';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('queue_label','QUEUE')+' ('+queue.length+'/'+MAX_QUEUE+')',30,30);
+  for(let i=0;i<Math.min(queue.length,6);i++){
+    drawRiderCard(queue[i],30+i*80,40,i>0);
+  }
+
+  drawCar();
+  drawGauge();
+
+  document.getElementById('btnDispatch').disabled=false;
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashColor;ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.globalAlpha=Math.min(1,flashTimer/20);
+    ctx.fillText(flashMsg,400,210);
+    ctx.globalAlpha=1;
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

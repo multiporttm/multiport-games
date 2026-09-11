@@ -1,0 +1,237 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Carousel Timing - Multiport Games</title><meta name="description" content="Play Carousel Timing free online — Pick a waiting child, then tap HOP the instant their matching horse swings past the platform at its lowest point. Get every child off before the ride timer ends!"><link rel="canonical" href="https://games.multiportllc.com/games/carouseltiming"><meta property="og:title" content="Carousel Timing - Multiport Games"><meta property="og:description" content="Play Carousel Timing free online — Pick a waiting child, then tap HOP the instant their matching horse swings past the platform at its lowest point. Get every child off before the ride timer ends!"><meta property="og:url" content="https://games.multiportllc.com/games/carouseltiming"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Carousel Timing","description":"Play Carousel Timing free online instantly. Select a waiting child, then tap HOP the instant their color-matched horse is passing the platform at the bottom of its bob so they can safely mount or dismount before the ride timer runs out. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/carouseltiming","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d1b2e;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffd54f;font-size:1.05rem;font-weight:700;text-align:center;padding:6px}
+#kids{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin:8px 0;min-height:44px}
+#kids button{width:40px;height:40px;border-radius:50%;border:3px solid transparent;cursor:pointer;font-weight:900}
+#kids button.armed{border-color:#fff}
+#hopBtn{display:block;margin:10px auto;padding:14px 40px;background:#4caf50;color:#fff;border:none;border-radius:26px;font-weight:900;font-size:1.2rem;cursor:pointer}
+#hopBtn:active{transform:scale(.96)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Carousel Timing</div>
+  <div class="game-frame">
+    <div id="hud">Score: 0 | Hi: 0 | Ride: 60s</div>
+    <canvas id="c" width="800" height="360"></canvas>
+    <div id="kids"></div>
+    <button id="hopBtn">HOP</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click a waiting child (colored circle) to arm them, then press <b>HOP</b> (or <b>Space</b>) right when their matching-colored horse passes the platform at the <b>bottom</b> of its bob. Mounted children need the same timed hop to get off again — get everyone off before the ride countdown hits zero, or it's a safety fail!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const CENTER={x:400,y:170},RADIUS=150;
+const N=5;
+const ZONE_HALF=0.24;
+const BOB_THRESHOLD=0.72; // sin value threshold near bottom of bob (must be high = low position)
+const RIDE_SECONDS=60;
+const COLORS=['#e94560','#4caf50','#42a5f5','#ffd54f','#ab47bc'];
+let score=0,hi=0,gameOver=false,started=false,won=false;
+let angle=0,angSpeed=0.010;
+let horses=[]; // {mounted:false,childColor,bobPhase}
+let waiting=[]; // children not yet mounted {color}
+let armedIdx=-1,armedIsMounted=false,armedHorse=-1;
+let rideTimeLeft=RIDE_SECONDS*60;
+let fails=0;
+let flashMsg='',flashTimer=0,flashColor='#fff';
+
+try{hi=parseInt(localStorage.getItem('carouseltiming_hi')||'0',10)||0;}catch(e){hi=0;}
+
+function reset(){
+  score=0;gameOver=false;started=false;won=false;angle=0;angSpeed=0.010;
+  horses=[];for(let i=0;i<N;i++)horses.push({mounted:false,color:COLORS[i],bobPhase:Math.random()*Math.PI*2});
+  waiting=[];
+  // assign one waiting child per horse color, shuffled order
+  const order=[...Array(N).keys()];
+  for(let i=order.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[order[i],order[j]]=[order[j],order[i]];}
+  order.forEach(i=>waiting.push({color:COLORS[i]}));
+  armedIdx=-1;armedIsMounted=false;armedHorse=-1;
+  rideTimeLeft=RIDE_SECONDS*60;
+  fails=0;flashMsg='';
+  renderKids();
+}
+reset();
+
+function flash(msg,color){flashMsg=msg;flashColor=color||'#fff';flashTimer=70;}
+
+function renderKids(){
+  const el=document.getElementById('kids');
+  el.innerHTML='';
+  waiting.forEach((k,i)=>{
+    const b=document.createElement('button');
+    b.style.background=k.color;
+    if(i===armedIdx&&!armedIsMounted)b.classList.add('armed');
+    b.onclick=()=>{armedIdx=i;armedIsMounted=false;armedHorse=-1;renderKids();SFX.click();};
+    el.appendChild(b);
+  });
+  horses.forEach((h,i)=>{
+    if(!h.mounted)return;
+    const b=document.createElement('button');
+    b.style.background=h.color;
+    b.style.opacity='0.55';
+    b.textContent='★';
+    if(armedIsMounted&&armedHorse===i)b.classList.add('armed');
+    b.onclick=()=>{armedIsMounted=true;armedHorse=i;armedIdx=-1;renderKids();SFX.click();};
+    el.appendChild(b);
+  });
+}
+
+function horseAngle(i){return angle + i*(Math.PI*2/N);}
+function angDiff(a,b){let d=(a-b)%(Math.PI*2);if(d>Math.PI)d-=Math.PI*2;if(d<-Math.PI)d+=Math.PI*2;return d;}
+function horseInZone(i){
+  const a=((horseAngle(i)%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+  return Math.abs(angDiff(a,Math.PI/2))<ZONE_HALF;
+}
+function horseBobLow(i){
+  return Math.sin(performance.now()/260+horses[i].bobPhase) > BOB_THRESHOLD;
+}
+
+function doHop(){
+  if(!started||gameOver){begin();return;}
+  if(armedIdx===-1&&!armedIsMounted){
+    flash(I18N.t('pick_child','Pick a child first!'),'#ffd54f');
+    return;
+  }
+  if(armedIsMounted){
+    const h=horses[armedHorse];
+    if(horseInZone(armedHorse)&&horseBobLow(armedHorse)){
+      h.mounted=false;
+      score+=10;
+      SFX.point();
+      flash(I18N.t('dismounted','Safely off!'),'#4caf50');
+      armedIsMounted=false;armedHorse=-1;
+      renderKids();
+      checkWin();
+    }else{
+      fails++;
+      SFX.error();
+      flash(I18N.t('bad_timing','Bad timing — try again!'),'#e94560');
+      if(fails>=5){endGame(I18N.t('too_many_fails','Too many mistimed hops!'));}
+    }
+    return;
+  }
+  const child=waiting[armedIdx];
+  let targetHorse=-1;
+  for(let i=0;i<N;i++){
+    if(!horses[i].mounted&&horses[i].color===child.color&&horseInZone(i)&&horseBobLow(i)){targetHorse=i;break;}
+  }
+  if(targetHorse!==-1){
+    horses[targetHorse].mounted=true;
+    waiting.splice(armedIdx,1);
+    armedIdx=-1;
+    score+=6;
+    SFX.select();
+    flash(I18N.t('mounted','Child mounted!'),'#4caf50');
+    renderKids();
+  }else{
+    fails++;
+    SFX.error();
+    flash(I18N.t('bad_timing','Bad timing — try again!'),'#e94560');
+    if(fails>=5){endGame(I18N.t('too_many_fails','Too many mistimed hops!'));}
+  }
+}
+document.getElementById('hopBtn').onclick=doHop;
+document.addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();doHop();}});
+c.addEventListener('click',()=>{ if(!started||gameOver)begin(); });
+c.addEventListener('touchstart',e=>{e.preventDefault(); if(!started||gameOver)begin();},{passive:false});
+
+function checkWin(){
+  if(waiting.length===0&&horses.every(h=>!h.mounted)){
+    won=true;
+    score+=50;
+    endGame(I18N.t('ride_clear','Everyone off safely! Ride complete.'),true);
+  }
+}
+
+function endGame(msg,isWin){
+  gameOver=true;
+  if(score>hi){hi=score;try{localStorage.setItem('carouseltiming_hi',String(hi));}catch(e){}}
+  if(isWin)SFX.win();else SFX.lose();
+  flash(msg,isWin?'#4caf50':'#e94560');
+}
+function begin(){
+  if(gameOver){reset();return;}
+  started=true;
+}
+
+function drawCarousel(){
+  ctx.strokeStyle='#3d5578';ctx.lineWidth=6;
+  ctx.beginPath();ctx.arc(CENTER.x,CENTER.y,RADIUS,0,Math.PI*2);ctx.stroke();
+  ctx.strokeStyle='#4caf50';ctx.lineWidth=8;
+  ctx.beginPath();ctx.arc(CENTER.x,CENTER.y,RADIUS,Math.PI/2-ZONE_HALF,Math.PI/2+ZONE_HALF);ctx.stroke();
+  ctx.lineWidth=1;
+  for(let i=0;i<N;i++){
+    const a=horseAngle(i);
+    const bob=Math.sin(performance.now()/260+horses[i].bobPhase)*10;
+    const gx=CENTER.x+Math.cos(a)*RADIUS,gy=CENTER.y+Math.sin(a)*RADIUS+bob;
+    const inZone=horseInZone(i);
+    const low=horseBobLow(i);
+    ctx.fillStyle=horses[i].color;
+    ctx.beginPath();ctx.arc(gx,gy,16,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle=(inZone&&low)?'#fff':'#5a6f95';ctx.lineWidth=(inZone&&low)?3:1.5;
+    ctx.stroke();
+    if(horses[i].mounted){
+      ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+      ctx.fillText('★',gx,gy+5);
+    }
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,360);
+  const sky=ctx.createLinearGradient(0,0,0,360);
+  sky.addColorStop(0,'#0d1b2e');sky.addColorStop(1,'#16283f');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,360);
+
+  const secLeft=Math.max(0,Math.ceil(rideTimeLeft/60));
+  document.getElementById('hud').textContent=I18N.t('score_hi_ride_label','Score: {s} | Hi: {h} | Ride: {r}s').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi)).replace('{r}',secLeft);
+
+  if(!started){
+    drawCarousel();
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('tap_to_start','Tap / Space to start'),400,40);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawCarousel();
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('ride_complete_title','RIDE COMPLETE'):I18N.t('game_over_title','GAME OVER'),400,40);
+    ctx.font='16px Arial';
+    ctx.fillText(flashMsg,400,68);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,94);
+    requestAnimationFrame(loop);return;
+  }
+
+  angle+=angSpeed;
+  rideTimeLeft--;
+  if(rideTimeLeft<=0){
+    endGame(I18N.t('time_up','Time is up with riders still aboard!'),false);
+  }
+  if(rideTimeLeft>0&&horses.every(h=>!h.mounted)&&waiting.length===0)checkWin();
+
+  drawCarousel();
+
+  ctx.fillStyle='#9fb0c9';ctx.font='12px Arial';ctx.textAlign='right';
+  ctx.fillText(I18N.t('fails_label','Mistimes: {f}/5').replace('{f}',fails),780,20);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashColor;ctx.font='bold 15px Arial';ctx.textAlign='center';
+    ctx.globalAlpha=Math.min(1,flashTimer/20);
+    ctx.fillText(flashMsg,400,335);
+    ctx.globalAlpha=1;
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
