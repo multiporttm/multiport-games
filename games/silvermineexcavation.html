@@ -1,0 +1,241 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Silver Mine Excavation - Multiport Games</title><meta name="description" content="Play Silver Mine Excavation free online — Click or tap tiles to dig, use the ore-vein hint numbers to avoid unstable rock, and collect as much silver as possible before your support beams run out."><link rel="canonical" href="https://games.multiportllc.com/games/silvermineexcavation"><meta property="og:title" content="Silver Mine Excavation - Multiport Games"><meta property="og:description" content="Play Silver Mine Excavation free online — Click or tap tiles to dig, use the ore-vein hint numbers to avoid unstable rock, and collect as much silver as possible before your support beams run out."><meta property="og:url" content="https://games.multiportllc.com/games/silvermineexcavation"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Silver Mine Excavation","description":"Play Silver Mine Excavation free online instantly. Dig underground tiles one at a time, use ore-vein hint numbers to deduce which tiles are safe, and collect as much silver as possible before your support beams run out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/silvermineexcavation","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#board{background:#241d17;border-radius:14px;padding:16px;text-align:center}
+#hud{display:flex;justify-content:space-between;max-width:480px;margin:0 auto 10px;color:#e6d8c3;font-weight:800;font-size:.92rem}
+#hud b{color:#c0c0c0}
+#beams{color:#ffd54f}
+#grid{display:inline-grid;grid-template-columns:repeat(8,44px);grid-template-rows:repeat(8,44px);gap:3px;background:#150f0a;padding:8px;border-radius:10px;margin:0 auto}
+.tile{width:44px;height:44px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1rem;border-radius:6px;background:#4a3826;color:#2b2018;cursor:pointer;user-select:none;transition:background .1s,transform .08s}
+.tile:active{transform:scale(.94)}
+.tile.dug{background:#1e1712;color:#c8c8c8;cursor:default}
+.tile.dug.silver{color:#d9d9d9}
+.tile.flagged{background:#5c4a2e}
+.tile.flagged::after{content:'🪵';font-size:1rem}
+.tile.unstable{background:#5a1f1f;color:#ffdada}
+#msg{max-width:480px;margin:14px auto 0;min-height:1.6em;font-weight:800;font-size:1.05rem}
+#msg.good{color:#7ec850}
+#msg.bad{color:#e94560}
+#restartBtn{display:none;margin:14px auto 0;padding:9px 22px;background:#c0c0c0;border:none;border-radius:20px;color:#241d17;cursor:pointer;font-weight:800;font-size:1rem}
+@media(max-width:480px){
+  #grid{grid-template-columns:repeat(8,36px);grid-template-rows:repeat(8,36px)}
+  .tile{width:36px;height:36px;font-size:.85rem}
+}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Silver Mine Excavation</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="board">
+      <div id="hud"><span>Silver: <b id="silverNum">0</b>oz</span><span>Beams: <b id="beams">🪵🪵🪵</b></span><span>Best: <b id="bestNum">0</b>oz</span></div>
+      <div id="grid"></div>
+      <div id="msg"></div>
+      <button id="restartBtn">Start New Shaft</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Click or tap a tile to dig it. Safe tiles reveal a number showing how many <b>unstable rock</b> tiles touch it (an ore-vein hint) plus any silver found there — a 0 auto-clears neighboring tiles. Right-click / long-press a tile to mark it with a support beam if you suspect it's unstable. Digging an unstable tile costs one of your 3 support beams — lose all 3 and the shaft collapses! Clear every safe tile to complete the excavation and bank your silver.</div>
+</div>
+<script>
+const SIZE=8, UNSTABLE_COUNT=10, MAX_BEAMS=3;
+const HI_KEY='mp_hi_silvermineexcavation';
+let grid, revealed, flagged, beams, silverTotal, gameOver, firstClick;
+let best=0;
+try{ best=parseInt(localStorage.getItem(HI_KEY)||'0',10)||0; }catch(e){}
+document.getElementById('bestNum').textContent=best;
+
+function idx(r,c){return r*SIZE+c;}
+function neighbors(r,c){
+  const res=[];
+  for(let dr=-1;dr<=1;dr++)for(let dc=-1;dc<=1;dc++){
+    if(dr===0&&dc===0)continue;
+    const nr=r+dr,nc=c+dc;
+    if(nr>=0&&nr<SIZE&&nc>=0&&nc<SIZE)res.push([nr,nc]);
+  }
+  return res;
+}
+
+function buildGrid(safeR,safeC){
+  const g=Array.from({length:SIZE},()=>Array.from({length:SIZE},()=>({unstable:false,silver:0,hint:0})));
+  let placed=0;
+  while(placed<UNSTABLE_COUNT){
+    const r=Math.floor(Math.random()*SIZE), c=Math.floor(Math.random()*SIZE);
+    if(g[r][c].unstable) continue;
+    if(Math.abs(r-safeR)<=1 && Math.abs(c-safeC)<=1) continue; // keep first click area safe
+    g[r][c].unstable=true; placed++;
+  }
+  for(let r=0;r<SIZE;r++)for(let c=0;c<SIZE;c++){
+    if(g[r][c].unstable)continue;
+    let cnt=0;
+    neighbors(r,c).forEach(([nr,nc])=>{ if(g[nr][nc].unstable)cnt++; });
+    g[r][c].hint=cnt;
+    if(cnt===0){ g[r][c].silver = Math.random()<0.5 ? 1+Math.floor(Math.random()*2) : 0; }
+    else { g[r][c].silver = Math.random()<0.7 ? cnt + Math.floor(Math.random()*3) : 0; }
+  }
+  return g;
+}
+
+function totalSafeTiles(){ return SIZE*SIZE - UNSTABLE_COUNT; }
+
+function startGame(){
+  grid=null;
+  revealed=Array.from({length:SIZE},()=>Array(SIZE).fill(false));
+  flagged=Array.from({length:SIZE},()=>Array(SIZE).fill(false));
+  beams=MAX_BEAMS; silverTotal=0; gameOver=false; firstClick=true;
+  document.getElementById('restartBtn').style.display='none';
+  document.getElementById('msg').textContent='';
+  document.getElementById('msg').className='';
+  renderBeams();
+  document.getElementById('silverNum').textContent=0;
+  buildDom();
+}
+
+function renderBeams(){
+  document.getElementById('beams').textContent='🪵'.repeat(beams) || '—';
+}
+
+function buildDom(){
+  const g=document.getElementById('grid');
+  g.innerHTML='';
+  for(let r=0;r<SIZE;r++){
+    for(let c=0;c<SIZE;c++){
+      const el=document.createElement('div');
+      el.className='tile';
+      el.dataset.r=r; el.dataset.c=c;
+      el.addEventListener('click',()=>dig(r,c));
+      el.addEventListener('contextmenu',e=>{ e.preventDefault(); toggleFlag(r,c); });
+      let pressTimer=null;
+      el.addEventListener('touchstart',e=>{
+        pressTimer=setTimeout(()=>{ toggleFlag(r,c); pressTimer=null; },500);
+      },{passive:true});
+      el.addEventListener('touchend',e=>{
+        if(pressTimer){ clearTimeout(pressTimer); }
+      });
+      g.appendChild(el);
+    }
+  }
+}
+
+function toggleFlag(r,c){
+  if(gameOver||revealed[r][c])return;
+  flagged[r][c]=!flagged[r][c];
+  SFX.click();
+  updateTileEl(r,c);
+}
+
+function updateTileEl(r,c){
+  const el=document.querySelector(`.tile[data-r="${r}"][data-c="${c}"]`);
+  if(!el)return;
+  el.className='tile';
+  if(revealed[r][c]){
+    el.classList.add('dug');
+    const cell=grid[r][c];
+    if(cell.unstable){
+      el.classList.add('unstable');
+      el.textContent='💥';
+    } else {
+      if(cell.silver>0){ el.classList.add('silver'); el.textContent = cell.hint>0 ? (cell.hint+' ⛏'+cell.silver) : ('⛏'+cell.silver); }
+      else { el.textContent = cell.hint>0 ? cell.hint : ''; }
+    }
+  } else if(flagged[r][c]){
+    el.classList.add('flagged');
+  }
+}
+
+function floodReveal(r,c){
+  const stack=[[r,c]];
+  while(stack.length){
+    const [cr,cc]=stack.pop();
+    if(revealed[cr][cc])continue;
+    revealed[cr][cc]=true;
+    flagged[cr][cc]=false;
+    const cell=grid[cr][cc];
+    if(!cell.unstable){
+      silverTotal+=cell.silver;
+      if(cell.hint===0){
+        neighbors(cr,cc).forEach(([nr,nc])=>{ if(!revealed[nr][nc]) stack.push([nr,nc]); });
+      }
+    }
+    updateTileEl(cr,cc);
+  }
+}
+
+function dig(r,c){
+  if(gameOver||revealed[r][c]||flagged[r][c])return;
+  if(firstClick){
+    grid=buildGrid(r,c);
+    firstClick=false;
+  }
+  const cell=grid[r][c];
+  if(cell.unstable){
+    revealed[r][c]=true;
+    updateTileEl(r,c);
+    beams--;
+    renderBeams();
+    SFX.hit();
+    if(beams<=0){
+      return collapse();
+    } else {
+      setMsg('bad','Cave-in! A support beam is gone. ' + beams + ' left.');
+    }
+  } else {
+    floodReveal(r,c);
+    SFX.coin();
+    document.getElementById('silverNum').textContent=silverTotal;
+    checkWin();
+  }
+}
+
+function checkWin(){
+  let count=0;
+  for(let r=0;r<SIZE;r++)for(let c=0;c<SIZE;c++) if(revealed[r][c] && !grid[r][c].unstable) count++;
+  if(count>=totalSafeTiles()){
+    gameOver=true;
+    SFX.win();
+    if(silverTotal>best){ best=silverTotal; try{localStorage.setItem(HI_KEY,String(best));}catch(e){} document.getElementById('bestNum').textContent=best; }
+    setMsg('good', I18N.t('mine_win','⛏️ Shaft cleared! You banked ' + silverTotal + 'oz of silver.'));
+    document.getElementById('restartBtn').style.display='inline-block';
+  }
+}
+
+function collapse(){
+  gameOver=true;
+  SFX.lose();
+  // reveal all unstable tiles
+  for(let r=0;r<SIZE;r++)for(let c=0;c<SIZE;c++){
+    if(grid[r][c].unstable){ revealed[r][c]=true; updateTileEl(r,c); }
+  }
+  if(silverTotal>best){ best=silverTotal; try{localStorage.setItem(HI_KEY,String(best));}catch(e){} document.getElementById('bestNum').textContent=best; }
+  setMsg('bad', I18N.t('mine_collapse','🪨 The shaft has collapsed! You banked ' + silverTotal + 'oz before it gave way.'));
+  document.getElementById('restartBtn').style.display='inline-block';
+}
+
+function setMsg(cls,text){
+  const el=document.getElementById('msg');
+  el.className=cls; el.textContent=text;
+}
+
+// keyboard support: arrow keys move cursor, Enter/Space digs, F flags
+let curR=0,curC=0;
+document.addEventListener('keydown',e=>{
+  if(gameOver)return;
+  if(e.key==='ArrowUp'){ curR=Math.max(0,curR-1); e.preventDefault(); }
+  else if(e.key==='ArrowDown'){ curR=Math.min(SIZE-1,curR+1); e.preventDefault(); }
+  else if(e.key==='ArrowLeft'){ curC=Math.max(0,curC-1); e.preventDefault(); }
+  else if(e.key==='ArrowRight'){ curC=Math.min(SIZE-1,curC+1); e.preventDefault(); }
+  else if(e.key===' '||e.key==='Enter'){ e.preventDefault(); dig(curR,curC); }
+  else if(e.key==='f'||e.key==='F'){ e.preventDefault(); toggleFlag(curR,curC); }
+  else return;
+  document.querySelectorAll('.tile').forEach(t=>t.style.outline='');
+  const el=document.querySelector(`.tile[data-r="${curR}"][data-c="${curC}"]`);
+  if(el) el.style.outline='2px solid #ffd54f';
+});
+
+document.getElementById('restartBtn').addEventListener('click',startGame);
+startGame();
+</script></body></html>

@@ -1,0 +1,240 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Railroad Spike - Multiport Games</title><meta name="description" content="Play Railroad Spike free online — Press Space or Tap in rhythm with the swinging hammer to drive spikes home. Mistimed swings bend the spike. Finish the track section before the train arrives."><link rel="canonical" href="https://games.multiportllc.com/games/railroadspike"><meta property="og:title" content="Railroad Spike - Multiport Games"><meta property="og:description" content="Play Railroad Spike free online — Press Space or Tap in rhythm with the swinging hammer to drive spikes home. Mistimed swings bend the spike. Finish the track section before the train arrives."><meta property="og:url" content="https://games.multiportllc.com/games/railroadspike"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Railroad Spike","description":"Play Railroad Spike free online instantly. Press Space or Tap in rhythm with the swinging hammer to drive spikes home. Mistimed swings bend the spike. Finish the track section before the train arrives. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/railroadspike","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a2a1e;display:block;border-radius:8px;touch-action:manipulation}
+#hud{color:#ffb74d;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:22px;flex-wrap:wrap}
+#hud span b{color:#fff}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Railroad Spike</div>
+  <div class="game-frame">
+    <div id="hud"><span>Spike: <b id="spikeDisp">1</b>/8</span><span>Bends: <b id="bendDisp">0</b></span><span>Train: <b id="trainDisp">60</b>s</span><span>Hi: <b id="hiDisp">0</b> ties</span></div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> A hammer swings back and forth above the spike. Press <b>Space</b> / <b>click</b> / <b>tap</b> exactly when the hammer's target ring lines up with the sweet spot to strike the spike squarely. Perfect hits drive it in fast; sloppy timing drives it in slowly; missing the window badly <b>bends the spike</b> (costly — it needs extra hits to fix). Drive all 8 spikes in a section before the supply train arrives to advance to the next, faster section.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+const KEY='railroadspike_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0')||0;
+document.getElementById('hiDisp').textContent=hi;
+
+const TOTAL_SPIKES=8;
+let section=1,spikeIndex=0,bends=0,tiesLaid=0;
+let trainTime=60,gameOver=false,started=false,win=false;
+let spikeDepth=0; // 0..1, 1 = fully driven
+let bentPenalty=0; // extra depth requirement while bent
+let isBent=false;
+let hammerAngle=0,hammerDir=1,hammerSpeed=0.05; // radians per frame-ish
+let sweetCenter=0.5,sweetWidth=0.16; // position along swing (0..1) and tolerance
+let swingPos=0; // 0..1 normalized ping-pong position
+let flashText=null,flashTimer=0;
+let lastTime=null;
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function newSection(){
+  section++;
+  spikeIndex=0;
+  trainTime=Math.max(28,60-section*4);
+  hammerSpeed=Math.min(0.11,0.045+section*0.006);
+  newSpike();
+}
+
+function newSpike(){
+  spikeDepth=0;
+  isBent=false;
+  bentPenalty=0;
+  sweetWidth=Math.max(0.09,0.17-section*0.008);
+  sweetCenter=rand(0.3,0.7);
+  swingPos=0;hammerDir=1;
+}
+
+function resetGame(){
+  section=0;spikeIndex=0;bends=0;tiesLaid=0;gameOver=false;started=false;win=false;lastTime=null;
+  newSection();
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('spikeDisp').textContent=Math.min(spikeIndex+1,TOTAL_SPIKES);
+  document.getElementById('bendDisp').textContent=bends;
+  document.getElementById('trainDisp').textContent=Math.max(0,Math.ceil(trainTime));
+}
+
+function strike(){
+  if(!started){started=true;return;}
+  if(gameOver){resetGame();return;}
+  const dist=Math.abs(swingPos-sweetCenter);
+  if(dist<=sweetWidth*0.3){
+    // perfect
+    spikeDepth+=isBent?0.12:0.34;
+    SFX.hit();
+    flashText='PERFECT';flashTimer=30;
+  } else if(dist<=sweetWidth){
+    spikeDepth+=isBent?0.06:0.16;
+    SFX.click();
+    flashText='GOOD';flashTimer=24;
+  } else if(dist<=sweetWidth*1.8){
+    spikeDepth+=isBent?0.02:0.05;
+    SFX.tick();
+    flashText='WEAK';flashTimer=20;
+  } else {
+    // bad miss: bend the spike
+    if(!isBent){
+      isBent=true;
+      bends++;
+      SFX.error();
+      flashText='BENT!';flashTimer=36;
+    } else {
+      SFX.fail();
+      flashText='OUCH';flashTimer=24;
+    }
+  }
+  if(spikeDepth>=1){
+    spikeDepth=1;
+    SFX.success();
+    spikeIndex++;
+    if(spikeIndex>=TOTAL_SPIKES){
+      tiesLaid++;
+      if(tiesLaid>hi){hi=tiesLaid;localStorage.setItem(KEY,String(hi));document.getElementById('hiDisp').textContent=hi;}
+      SFX.levelup();
+      newSection();
+    } else {
+      newSpike();
+    }
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='Enter'){e.preventDefault();strike();}
+});
+c.addEventListener('mousedown',e=>{e.preventDefault();strike();});
+c.addEventListener('touchstart',e=>{e.preventDefault();strike();},{passive:false});
+
+function step(dt){
+  if(!started||gameOver)return;
+  trainTime-=dt/60;
+  if(trainTime<=0){
+    trainTime=0;endGame(false);return;
+  }
+  swingPos+=hammerDir*hammerSpeed*dt;
+  if(swingPos>=1){swingPos=1;hammerDir=-1;}
+  if(swingPos<=0){swingPos=0;hammerDir=1;}
+  if(flashTimer>0)flashTimer-=dt;
+  updateHud();
+}
+
+function endGame(won){
+  gameOver=true;win=won;
+  if(tiesLaid>hi){hi=tiesLaid;localStorage.setItem(KEY,String(hi));}
+  document.getElementById('hiDisp').textContent=hi;
+  SFX.lose();
+}
+
+function drawTrack(){
+  ctx.fillStyle='#5c4432';ctx.fillRect(0,300,W,100);
+  // ties
+  for(let i=0;i<9;i++){
+    ctx.fillStyle='#6b4a2e';
+    ctx.fillRect(20+i*90,290,60,20);
+  }
+  // rail
+  ctx.fillStyle='#888';ctx.fillRect(0,275,W,14);
+  ctx.fillStyle='#bbb';ctx.fillRect(0,275,W,4);
+}
+
+function drawSpike(){
+  const tieX=20+spikeIndex*90+30;
+  const tieY=300;
+  const maxOut=40;
+  const out=maxOut*(1-spikeDepth);
+  ctx.save();
+  ctx.fillStyle=isBent?'#c0392b':'#999';
+  ctx.fillRect(tieX-6,tieY-out,12,out+18);
+  ctx.fillStyle='#ddd';
+  ctx.fillRect(tieX-10,tieY-out-6,20,8);
+  ctx.restore();
+}
+
+function drawHammerTrack(){
+  const barX=200,barW=400,barY=80;
+  ctx.fillStyle='#222';
+  ctx.fillRect(barX,barY,barW,18);
+  // sweet zone
+  const sx=barX+(sweetCenter-sweetWidth)*barW;
+  const sw=sweetWidth*2*barW;
+  ctx.fillStyle='rgba(255,213,79,0.55)';
+  ctx.fillRect(Math.max(barX,sx),barY,Math.min(sw,barW),18);
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(barX+(sweetCenter)*barW-2,barY,4,18);
+  // hammer marker
+  const hx=barX+swingPos*barW;
+  ctx.beginPath();
+  ctx.moveTo(hx,barY-6);
+  ctx.lineTo(hx-10,barY-22);
+  ctx.lineTo(hx+10,barY-22);
+  ctx.closePath();
+  ctx.fillStyle='#fff';
+  ctx.fill();
+  // hammer head graphic above
+  ctx.fillStyle='#555';
+  ctx.fillRect(hx-16,barY-50,32,20);
+  ctx.fillStyle='#333';
+  ctx.fillRect(hx-3,barY-30,6,26);
+}
+
+function loop(ts){
+  const dt=lastTime===null?1:Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#7a5230');sky.addColorStop(1,'#3a2a1e');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('section_label','Section {n}').replace('{n}',section),20,30);
+
+  drawTrack();
+  drawSpike();
+  drawHammerTrack();
+
+  if(flashTimer>0&&flashText){
+    ctx.save();
+    ctx.globalAlpha=Math.min(1,flashTimer/15);
+    ctx.fillStyle=flashText==='BENT!'||flashText==='OUCH'?'#e74c3c':'#7ec850';
+    ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('flash_'+flashText.replace(/[^A-Z]/g,''),flashText),400,140);
+    ctx.restore();
+  }
+
+  if(!started){
+    ctx.fillStyle='#ffd54fcc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Space / Tap to swing the hammer'),400,200);
+  } else if(!gameOver){
+    step(dt);
+  } else {
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('train_arrived_title','TRAIN ARRIVED!'),400,180);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('ties_laid_label','Track sections completed: {t}').replace('{t}',tiesLaid),400,220);
+    ctx.fillText(I18N.t('bends_label','Bent spikes: {b}').replace('{b}',bends),400,248);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Space / Tap to try again'),400,286);
+  }
+
+  requestAnimationFrame(loop);
+}
+resetGame();
+requestAnimationFrame(loop);
+</script></body></html>

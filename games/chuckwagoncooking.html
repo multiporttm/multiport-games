@@ -1,0 +1,233 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Chuck Wagon Cooking</title><meta name="description" content="Play Chuck Wagon Cooking free online — Click pots to stir, add ingredients at the right moment, and pull them off the fire before they burn. Serve correct orders before the cowboys' patience runs out."><link rel="canonical" href="https://games.multiportllc.com/games/chuckwagoncooking"><meta property="og:title" content="Chuck Wagon Cooking - Multiport Games"><meta property="og:description" content="Play Chuck Wagon Cooking free online — Click pots to stir, add ingredients at the right moment, and pull them off the fire before they burn. Serve correct orders before the cowboys' patience runs out."><meta property="og:url" content="https://games.multiportllc.com/games/chuckwagoncooking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Chuck Wagon Cooking","description":"Play Chuck Wagon Cooking free online instantly. Cook meals over an open chuck wagon campfire for hungry cowboys — manage multiple pots and pans at once, stirring, adding ingredients, and pulling food off the heat before it burns to serve correct orders before patience runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/chuckwagoncooking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#2a1c10;border-radius:14px;padding:16px;text-align:center}
+#hud{color:#ffe9b0;font-size:1.05rem;font-weight:700;margin:4px 0 10px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud b{color:#ff8a3d}
+#stations{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.station{width:150px;background:#3a2818;border-radius:12px;padding:10px;position:relative;cursor:pointer;user-select:none;border:3px solid #55391f;transition:border-color .15s}
+.station.hot{border-color:#ff8a3d}
+.station .pan{width:100%;height:80px;border-radius:50%;background:#1c1108;display:flex;align-items:center;justify-content:center;font-size:2rem;position:relative;overflow:hidden}
+.station .heatbar{height:8px;border-radius:4px;background:#1c1108;margin-top:8px;overflow:hidden}
+.station .heatfill{height:100%;width:0%;background:linear-gradient(90deg,#7ec850,#ffd54f,#e94560)}
+.station .stagelabel{color:#ffe9b0;font-size:.8rem;margin-top:6px;min-height:1.2em}
+.station.burnt{filter:grayscale(1) brightness(.6)}
+.station.empty .pan{opacity:.3}
+#orders{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.order{background:#4a3320;border-radius:10px;padding:8px 12px;color:#ffe9b0;font-size:.85rem;min-width:100px}
+.order .patience{height:6px;background:#1c1108;border-radius:3px;margin-top:4px;overflow:hidden}
+.order .patiencefill{height:100%;background:#7ec850}
+#msg{color:#fff;font-size:1rem;font-weight:700;min-height:1.6em;margin-bottom:6px}
+@media(max-width:600px){.station{width:44%}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Chuck Wagon Cooking</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="hud"><span>Score: <b id="scoreNum">0</b></span><span>Served: <b id="servedNum">0</b></span><span>Lives: <b id="livesNum">3</b></span><span>Hi: <b id="hiNum">0</b></span></div>
+      <div id="msg">Click a pot to start cooking, then keep stirring and watch the heat!</div>
+      <div id="orders"></div>
+      <div id="stations"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click an empty pot to start a dish for an order. Keep clicking it to <b>stir</b> and add ingredients as prompted — but watch the heat bar: pull it off (click the <b>Serve</b> label once ready) before it burns! Serve the dish matching an order before that cowboy's patience runs out.</div>
+</div>
+<script>
+const HI_KEY='chuckwagoncooking_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+document.getElementById('hiNum').textContent=hi;
+
+const DISHES=[
+  {id:'beans',label:'Beans',emoji:'🫘'},
+  {id:'stew',label:'Stew',emoji:'🍲'},
+  {id:'cornbread',label:'Cornbread',emoji:'🍞'},
+  {id:'bacon',label:'Bacon',emoji:'🥓'}
+];
+const STATION_COUNT=4;
+
+let stations=[];
+let orders=[];
+let score=0,served=0,lives=3,gameOver=false;
+let orderTimer=0;
+let msgT=0;
+
+function initStations(){
+  stations=[];
+  for(let i=0;i<STATION_COUNT;i++){
+    stations.push({idx:i,state:'empty',dish:null,heat:0,stirsNeeded:0,stirsDone:0,readyPulse:0});
+  }
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;msgT=0;}
+
+function spawnOrder(){
+  if(orders.length>=3)return;
+  const dish=DISHES[Math.floor(Math.random()*DISHES.length)];
+  orders.push({dish,patience:100,id:Math.random().toString(36).slice(2)});
+}
+
+function reset(){
+  initStations();orders=[];score=0;served=0;lives=3;gameOver=false;orderTimer=0;
+  spawnOrder();
+}
+
+function startStation(st){
+  if(st.state!=='empty'||gameOver)return;
+  // pick a dish matching an existing order if possible, else random
+  let dish;
+  const matching=orders.find(o=>!stations.some(s=>s.dish&&s.dish.id===o.dish.id&&s.state!=='empty'));
+  dish=matching?matching.dish:DISHES[Math.floor(Math.random()*DISHES.length)];
+  st.state='cooking';
+  st.dish=dish;
+  st.heat=0;
+  st.stirsNeeded=3+Math.floor(Math.random()*2);
+  st.stirsDone=0;
+  SFX.click();
+}
+
+function stirStation(st){
+  if(gameOver)return;
+  if(st.state==='cooking'){
+    st.stirsDone++;
+    SFX.tick();
+    if(st.stirsDone>=st.stirsNeeded){
+      st.state='ready';
+      SFX.select();
+    }
+  }else if(st.state==='ready'){
+    // serve it
+    serveDish(st);
+  }else if(st.state==='burnt'){
+    st.state='empty';st.dish=null;st.heat=0;
+    SFX.click();
+  }
+}
+
+function serveDish(st){
+  const orderIdx=orders.findIndex(o=>o.dish.id===st.dish.id);
+  if(orderIdx>=0){
+    const pts=Math.round(50+orders[orderIdx].patience*1.5);
+    score+=pts;
+    served++;
+    orders.splice(orderIdx,1);
+    setMsg(I18N.t('served_msg','Served {d}! +{p} pts').replace('{d}',I18N.t('dish_'+st.dish.id,st.dish.label)).replace('{p}',pts));
+    SFX.success();
+  }else{
+    score=Math.max(0,score-10);
+    setMsg(I18N.t('no_order_msg','No one ordered that... wasted!'));
+    SFX.error();
+  }
+  st.state='empty';st.dish=null;st.heat=0;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+}
+
+function render(){
+  const wrap=document.getElementById('stations');
+  wrap.innerHTML='';
+  stations.forEach(st=>{
+    const div=document.createElement('div');
+    div.className='station'+(st.state==='cooking'?' hot':'')+(st.state==='burnt'?' burnt':'')+(st.state==='empty'?' empty':'');
+    const pan=document.createElement('div');
+    pan.className='pan';
+    pan.textContent=st.dish?st.dish.emoji:'🍳';
+    div.appendChild(pan);
+    const heatbar=document.createElement('div');
+    heatbar.className='heatbar';
+    const heatfill=document.createElement('div');
+    heatfill.className='heatfill';
+    heatfill.style.width=Math.min(100,st.heat)+'%';
+    heatbar.appendChild(heatfill);
+    div.appendChild(heatbar);
+    const label=document.createElement('div');
+    label.className='stagelabel';
+    if(st.state==='empty')label.textContent=I18N.t('tap_to_cook','Tap to cook');
+    else if(st.state==='cooking')label.textContent=I18N.t('stir_progress','Stir! {a}/{b}').replace('{a}',st.stirsDone).replace('{b}',st.stirsNeeded);
+    else if(st.state==='ready')label.textContent=I18N.t('tap_to_serve','Tap to SERVE!');
+    else if(st.state==='burnt')label.textContent=I18N.t('burnt_label','Burnt! Tap to clear');
+    div.appendChild(label);
+    div.onclick=()=>{
+      if(st.state==='empty')startStation(st);
+      else stirStation(st);
+    };
+    wrap.appendChild(div);
+  });
+
+  const ordersEl=document.getElementById('orders');
+  ordersEl.innerHTML='';
+  orders.forEach(o=>{
+    const div=document.createElement('div');
+    div.className='order';
+    div.innerHTML=`<div>${o.dish.emoji} ${I18N.t('dish_'+o.dish.id,o.dish.label)}</div><div class="patience"><div class="patiencefill" style="width:${o.patience}%;background:${o.patience>40?'#7ec850':'#e94560'}"></div></div>`;
+    ordersEl.appendChild(div);
+  });
+
+  document.getElementById('scoreNum').textContent=score;
+  document.getElementById('servedNum').textContent=served;
+  document.getElementById('livesNum').textContent=lives;
+  document.getElementById('hiNum').textContent=hi;
+}
+
+// keyboard support: number keys 1-4 select station, Enter/Space triggers stir/serve on first cooking/ready one
+let selectedStation=0;
+document.addEventListener('keydown',e=>{
+  if(gameOver&&e.code==='Space'){reset();return;}
+  if(['Digit1','Digit2','Digit3','Digit4'].includes(e.code)){
+    selectedStation=parseInt(e.code.slice(-1),10)-1;
+  }
+  if(e.code==='Space'||e.code==='Enter'){
+    e.preventDefault();
+    const st=stations[selectedStation];
+    if(st){
+      if(st.state==='empty')startStation(st);
+      else stirStation(st);
+    }
+  }
+});
+
+function tick(){
+  if(!gameOver){
+    stations.forEach(st=>{
+      if(st.state==='cooking'||st.state==='ready'){
+        st.heat+=st.state==='ready'?0.55:0.3;
+        if(st.heat>=100&&st.state!=='burnt'){
+          st.state='burnt';st.heat=100;
+          SFX.hurt();
+          lives--;
+          if(lives<=0){
+            gameOver=true;
+            SFX.lose();
+            setMsg(I18N.t('game_over_full','Out of patience! Final score: {s}').replace('{s}',score));
+            if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+          }
+        }
+      }
+    });
+    orders.forEach(o=>{o.patience-=0.18;});
+    const lost=orders.filter(o=>o.patience<=0);
+    if(lost.length){
+      orders=orders.filter(o=>o.patience>0);
+      lives-=lost.length;
+      SFX.error();
+      if(lives<=0&&!gameOver){
+        gameOver=true;SFX.lose();
+        setMsg(I18N.t('game_over_full','Out of patience! Final score: {s}').replace('{s}',score));
+        if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+      }
+    }
+    orderTimer++;
+    if(orderTimer>240){orderTimer=0;spawnOrder();}
+  }
+  render();
+  requestAnimationFrame(tick);
+}
+
+reset();
+requestAnimationFrame(tick);
+</script></body></html>

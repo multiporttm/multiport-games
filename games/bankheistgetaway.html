@@ -1,0 +1,199 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bank Heist Getaway - Multiport Games</title><meta name="description" content="Play Bank Heist Getaway free online — Press Up/Down Arrows or W/S (or swipe/tap the lanes) to weave your horse between three lanes, dodge obstacles, and outrun the posse to the hideout."><link rel="canonical" href="https://games.multiportllc.com/games/bankheistgetaway"><meta property="og:title" content="Bank Heist Getaway - Multiport Games"><meta property="og:description" content="Play Bank Heist Getaway free online — Press Up/Down Arrows or W/S (or swipe/tap the lanes) to weave your horse between three lanes, dodge obstacles, and outrun the posse to the hideout."><meta property="og:url" content="https://games.multiportllc.com/games/bankheistgetaway"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bank Heist Getaway","description":"Play Bank Heist Getaway free online instantly. You just robbed the bank — ride full speed through town streets and open desert, dodging obstacles and a pursuing posse, and reach the hideout before the posse catches you. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/bankheistgetaway","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#c9a15c;display:block;border-radius:8px;touch-action:none}
+#hud{max-width:800px;margin:0 auto 6px;color:#3a2213;background:#ffd54f;border-radius:8px;font-weight:800;font-size:.95rem;display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;padding:6px 10px}
+#heatWrap{background:#3a2213;border-radius:8px;height:14px;max-width:800px;margin:0 auto 8px;overflow:hidden;border:2px solid #241407}
+#heatFill{height:100%;background:linear-gradient(90deg,#ffd54f,#e94560);width:0%;transition:width .12s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bank Heist Getaway</div>
+  <div class="game-frame">
+    <div id="hud"><span id="scoreDisp">Distance: 0 | Hi: 0</span><span id="heatLabel">Posse: 0%</span></div>
+    <div id="heatWrap"><div id="heatFill"></div></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press <b>Up</b>/<b>Down</b> arrows or <b>W</b>/<b>S</b> (or swipe/tap top/bottom of a lane) to weave between the three lanes. Dodge crates, cacti and wagons — every hit fires up the <b>posse meter</b>. Reach the hideout before the meter fills or the posse catches you!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const laneY=[110,210,310];
+let laneIdx=1;
+const player={x:130,y:laneY[1],w:52,h:38};
+const goal=4200;
+
+let distance=0,hi=parseFloat(localStorage.getItem('bankheistgetaway_hi')||'0');
+let heat=0,speed=6;
+let obstacles=[],posseRiders=[],dust=[];
+let frame=0,gameOver=false,won=false,started=false,lastTime=null,obsTimer=0,invuln=0;
+
+function reset(){
+  distance=0;heat=0;speed=6;laneIdx=1;player.y=laneY[1];
+  obstacles=[];posseRiders=[];dust=[];frame=0;gameOver=false;won=false;started=false;lastTime=null;obsTimer=0;invuln=0;
+}
+function begin(){ if(!started)started=true; else if(gameOver||won)reset(); }
+
+function moveLane(dir){
+  begin();
+  laneIdx=Math.max(0,Math.min(2,laneIdx+dir));
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowUp'||e.code==='KeyW'){e.preventDefault();moveLane(-1);}
+  if(e.code==='ArrowDown'||e.code==='KeyS'){e.preventDefault();moveLane(1);}
+  if(e.code==='Space'&&(!started||gameOver||won)){e.preventDefault();begin();}
+});
+
+let touchStartY=null;
+c.addEventListener('pointerdown',e=>{ touchStartY=e.clientY; begin(); });
+c.addEventListener('pointerup',e=>{
+  if(touchStartY===null)return;
+  const dy=e.clientY-touchStartY;
+  if(dy<-24)moveLane(-1); else if(dy>24)moveLane(1);
+  touchStartY=null;
+});
+c.addEventListener('touchstart',e=>{e.preventDefault();touchStartY=e.changedTouches[0].clientY;begin();},{passive:false});
+c.addEventListener('touchend',e=>{
+  e.preventDefault();
+  if(touchStartY===null)return;
+  const dy=e.changedTouches[0].clientY-touchStartY;
+  if(dy<-24)moveLane(-1); else if(dy>24)moveLane(1);
+  touchStartY=null;
+},{passive:false});
+
+function spawnObstacle(){
+  const lane=Math.floor(Math.random()*3);
+  const kinds=['crate','cactus','wagon'];
+  const kind=kinds[Math.floor(Math.random()*kinds.length)];
+  obstacles.push({x:W+40,y:laneY[lane],w:kind==='wagon'?60:30,h:kind==='wagon'?40:30,kind,lane});
+}
+
+function rect(a,b){return a.x-a.w/2<b.x+b.w/2&&a.x+a.w/2>b.x-b.w/2&&a.y-a.h/2<b.y+b.h/2&&a.y+a.h/2>b.y-b.h/2;}
+
+function drawBackground(){
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#e8b96b');sky.addColorStop(1,'#c9a15c');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#b08a4a';ctx.lineWidth=2;
+  for(let i=0;i<3;i++){
+    ctx.beginPath();ctx.moveTo(0,laneY[i]+40);ctx.lineTo(W,laneY[i]+40);ctx.stroke();
+  }
+  ctx.lineWidth=1;
+}
+
+function drawPlayer(){
+  ctx.save();
+  if(invuln>0&&Math.floor(frame/3)%2===0)ctx.globalAlpha=0.4;
+  const x=player.x,y=laneY[laneIdx];
+  ctx.fillStyle='#3a2213';
+  ctx.fillRect(x-20,y-10,40,22);
+  ctx.fillStyle='#6b4226';
+  ctx.fillRect(x-6,y-24,20,20);
+  ctx.fillStyle='#e94560';
+  ctx.beginPath();ctx.arc(x+2,y-30,8,0,7);ctx.fill();
+  ctx.restore();
+}
+
+function drawObstacle(o){
+  if(o.kind==='crate'){ctx.fillStyle='#8b5a2b';ctx.fillRect(o.x-o.w/2,o.y-o.h/2,o.w,o.h);ctx.strokeStyle='#3a2213';ctx.strokeRect(o.x-o.w/2,o.y-o.h/2,o.w,o.h);}
+  else if(o.kind==='cactus'){ctx.fillStyle='#2e7d32';ctx.fillRect(o.x-6,o.y-o.h/2,12,o.h);ctx.fillRect(o.x-16,o.y-4,14,10);ctx.fillRect(o.x+2,o.y-10,14,10);}
+  else{ctx.fillStyle='#5c3418';ctx.fillRect(o.x-o.w/2,o.y-o.h/2,o.w,o.h);ctx.fillStyle='#241407';ctx.beginPath();ctx.arc(o.x-o.w/4,o.y+o.h/2-4,6,0,7);ctx.arc(o.x+o.w/4,o.y+o.h/2-4,6,0,7);ctx.fill();}
+}
+
+function drawPosse(){
+  const chaseX=Math.max(-40,-40-(100-heat)*1.2);
+  for(let i=0;i<3;i++){
+    ctx.fillStyle='#241407aa';
+    ctx.beginPath();ctx.arc(chaseX-i*22,laneY[i]+2,12,0,7);ctx.fill();
+  }
+}
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('distance_hi_label_b','Distance: {s}m | Hi: {h}m').replace('{s}',Math.floor(distance)).replace('{h}',Math.floor(hi));
+  document.getElementById('heatLabel').textContent=I18N.t('posse_label','Posse: {p}%').replace('{p}',Math.floor(heat));
+  document.getElementById('heatFill').style.width=Math.min(100,heat)+'%';
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawBackground();
+  drawPosse();
+
+  if(!started){
+    drawPlayer();
+    ctx.fillStyle='#241407';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_b','Up/Down or swipe to start'),W/2,60);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver||won){
+    obstacles.forEach(drawObstacle);
+    drawPlayer();
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.strokeStyle='#000';ctx.lineWidth=4;
+    const title=won?I18N.t('hideout_reached','HIDEOUT REACHED!'):I18N.t('posse_caught','THE POSSE CAUGHT YOU!');
+    ctx.strokeText(title,W/2,H/2-16);ctx.fillText(title,W/2,H/2-16);
+    ctx.font='18px Arial';ctx.lineWidth=3;
+    const hint=I18N.t('restart_hint','Tap or Space to restart');
+    ctx.strokeText(hint,W/2,H/2+20);ctx.fillText(hint,W/2,H/2+20);
+    ctx.lineWidth=1;
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frame+=dt;
+  if(invuln>0)invuln-=dt;
+
+  speed=6+distance/500;
+  distance+=speed*0.1*dt;
+  if(distance>hi)hi=distance;
+
+  heat=Math.min(100,heat+0.16*dt);
+
+  obsTimer+=dt;
+  const interval=Math.max(24,50-distance/70);
+  if(obsTimer>=interval){obsTimer-=interval;spawnObstacle();}
+
+  obstacles.forEach(o=>{o.x-=(speed+2)*dt;});
+  obstacles=obstacles.filter(o=>{
+    if(o.x<-60)return false;
+    drawObstacle(o);
+    if(invuln<=0&&o.lane===laneIdx&&rect({x:player.x,y:laneY[laneIdx],w:player.w-10,h:player.h-6},o)){
+      invuln=50;SFX.hit();
+      heat=Math.min(100,heat+22);
+      return false;
+    }
+    return true;
+  });
+
+  drawPlayer();
+
+  if(!gameOver&&heat>=100){
+    gameOver=true;SFX.lose();
+    if(distance>hi)hi=distance;
+    localStorage.setItem('bankheistgetaway_hi',String(hi));
+  }
+  if(!gameOver&&distance>=goal){
+    won=true;SFX.win();
+    localStorage.setItem('bankheistgetaway_hi',String(hi));
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

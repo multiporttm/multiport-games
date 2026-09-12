@@ -1,0 +1,257 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rope Trick Show</title><meta name="description" content="Play Rope Trick Show free online — Swipe or drag in the direction shown to match each rope trick's motion before time runs out. Build the applause meter across the routine!"><link rel="canonical" href="https://games.multiportllc.com/games/ropetrickshow"><meta property="og:title" content="Rope Trick Show - Multiport Games"><meta property="og:description" content="Play Rope Trick Show free online — Swipe or drag in the direction shown to match each rope trick's motion before time runs out. Build the applause meter across the routine!"><meta property="og:url" content="https://games.multiportllc.com/games/ropetrickshow"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rope Trick Show","description":"Play Rope Trick Show free online instantly. Perform rope-spinning trick shots for a crowd — vertical loops, flat loops and jump-throughs — by matching each trick's timed swipe or drag gesture, building an applause meter across the routine. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/ropetrickshow","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a1e12;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffe9b0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#ff8a3d}
+#applauseWrap{max-width:600px;margin:0 auto 6px;background:#3a2a18;border-radius:10px;height:16px;overflow:hidden}
+#applauseBar{height:100%;background:linear-gradient(90deg,#ff8a3d,#ffd54f);width:0%;transition:width .15s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rope Trick Show</div>
+  <div class="game-frame">
+    <div id="hud"><span>Trick: <b id="trickNum">0</b>/<b id="trickTotal">12</b></span><span>Score: <b id="scoreNum">0</b></span><span>Hi: <b id="hiNum">0</b></span></div>
+    <div id="applauseWrap"><div id="applauseBar"></div></div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch the arrow prompt for each trick, then <b>swipe / drag</b> your mouse or finger across the ring in that direction while the timing bar is in the green zone (or use Arrow Keys). Match the motion to win applause — miss the window or gesture wrong and the crowd goes quiet!</div>
+</div>
+<script>
+const HI_KEY='ropetrickshow_hi';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+document.getElementById('hiNum').textContent=hi;
+
+const TOTAL_TRICKS=12;
+const TRICK_TYPES=[
+  {id:'vloop',label:'Vertical Loop',dir:'up',arrow:'⬆️'},
+  {id:'floop',label:'Flat Loop',dir:'side',arrow:'↔️'},
+  {id:'jump',label:'Jump Through',dir:'down',arrow:'⬇️'}
+];
+
+let trickIndex=0,score=0,applause=50,gameOver=false,started=false;
+let curTrick=null,windowStart=0,windowEnd=0,timerT=0,phase='waiting'; // waiting -> active -> result
+let resultT=0,resultMsg='',resultGood=false;
+let dragging=false,dragStart=null,dragCur=null;
+let ropeAngle=0;
+
+document.getElementById('trickTotal').textContent=TOTAL_TRICKS;
+
+function reset(){
+  trickIndex=0;score=0;applause=50;gameOver=false;started=false;
+  curTrick=null;phase='waiting';timerT=0;resultT=0;
+}
+
+function nextTrick(){
+  if(trickIndex>=TOTAL_TRICKS){
+    gameOver=true;
+    SFX.win();
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+    return;
+  }
+  trickIndex++;
+  curTrick=TRICK_TYPES[Math.floor(Math.random()*TRICK_TYPES.length)];
+  phase='active';
+  timerT=0;
+  windowStart=45; // frames before green window opens
+  windowEnd=95; // frames green window closes
+}
+
+function startGame(){
+  if(!started){started=true;nextTrick();return;}
+  if(gameOver){reset();started=true;nextTrick();}
+}
+
+function judge(dir){
+  if(phase!=='active')return;
+  const inWindow=timerT>=windowStart&&timerT<=windowEnd;
+  const correct=dir===curTrick.dir;
+  if(inWindow&&correct){
+    const centerDist=Math.abs(timerT-((windowStart+windowEnd)/2));
+    const perfect=centerDist<12;
+    const gain=perfect?14:8;
+    score+=perfect?100:60;
+    applause=Math.min(100,applause+gain);
+    resultMsg=perfect?I18N.t('perfect','PERFECT!'):I18N.t('nice','NICE!');
+    resultGood=true;
+    SFX.success();
+  }else{
+    applause=Math.max(0,applause-18);
+    score=Math.max(0,score-10);
+    resultMsg=I18N.t('miss','MISS!');
+    resultGood=false;
+    SFX.fail();
+  }
+  phase='result';resultT=0;
+  if(applause<=0&&!gameOver){
+    gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+  }
+}
+
+function gestureDirFromDelta(dx,dy){
+  if(Math.abs(dx)>Math.abs(dy)*1.3)return 'side';
+  if(dy<0)return 'up';
+  return 'down';
+}
+
+function handleStart(x,y){
+  if(!started||gameOver){startGame();return;}
+  dragging=true;dragStart={x,y};dragCur={x,y};
+}
+function handleMove(x,y){
+  if(!dragging)return;
+  dragCur={x,y};
+}
+function handleEnd(){
+  if(!dragging)return;
+  dragging=false;
+  const dx=dragCur.x-dragStart.x,dy=dragCur.y-dragStart.y;
+  const dist=Math.hypot(dx,dy);
+  if(dist<25)return; // too small to count
+  judge(gestureDirFromDelta(dx,dy));
+}
+
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  handleStart((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));
+});
+c.addEventListener('pointermove',e=>{
+  const r=c.getBoundingClientRect();
+  handleMove((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));
+});
+window.addEventListener('pointerup',handleEnd);
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  if(!started||gameOver){if(e.code==='Space')startGame();return;}
+  if(e.code==='ArrowUp')judge('up');
+  else if(e.code==='ArrowDown')judge('down');
+  else if(e.code==='ArrowLeft'||e.code==='ArrowRight')judge('side');
+});
+
+function drawArrow(dir,x,y,scale){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(scale,scale);
+  ctx.fillStyle='#ffd54f';
+  ctx.strokeStyle='#ff8a3d';ctx.lineWidth=3;
+  ctx.beginPath();
+  if(dir==='up'){
+    ctx.moveTo(0,-40);ctx.lineTo(24,0);ctx.lineTo(10,0);ctx.lineTo(10,40);ctx.lineTo(-10,40);ctx.lineTo(-10,0);ctx.lineTo(-24,0);
+  }else if(dir==='down'){
+    ctx.moveTo(0,40);ctx.lineTo(24,0);ctx.lineTo(10,0);ctx.lineTo(10,-40);ctx.lineTo(-10,-40);ctx.lineTo(-10,0);ctx.lineTo(-24,0);
+  }else{
+    ctx.moveTo(-40,0);ctx.lineTo(-24,-16);ctx.lineTo(-24,-6);ctx.lineTo(24,-6);ctx.lineTo(24,-16);ctx.lineTo(40,0);
+    ctx.lineTo(24,16);ctx.lineTo(24,6);ctx.lineTo(-24,6);ctx.lineTo(-24,16);
+  }
+  ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.restore();
+}
+
+function drawPerformer(){
+  const cx=W/2,cy=280;
+  ctx.save();
+  ctx.translate(cx,cy);
+  // rope loop
+  ropeAngle+=0.12;
+  ctx.strokeStyle='#c9a15a';ctx.lineWidth=4;
+  ctx.beginPath();
+  const rx=60+Math.sin(ropeAngle)*6, ry=90;
+  ctx.ellipse(0,-40,rx,ry,0,0,Math.PI*2);
+  ctx.stroke();
+  // performer body
+  ctx.fillStyle='#8a3d2a';
+  ctx.fillRect(-14,-40,28,60);
+  ctx.fillStyle='#e8b98a';
+  ctx.beginPath();ctx.arc(0,-56,16,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#3a2a18';
+  ctx.fillRect(-22,-70,44,10);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#4a2e18');grad.addColorStop(1,'#1e1409');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+  // crowd silhouette
+  ctx.fillStyle='#120c06';
+  for(let i=0;i<20;i++){
+    ctx.beginPath();ctx.arc(20+i*40,60+Math.sin(i)*6,16,0,Math.PI*2);ctx.fill();
+  }
+  ctx.fillStyle='#3a2a18';ctx.fillRect(0,330,W,70);
+
+  if(!started){
+    drawPerformer();
+    ctx.fillStyle='#ffe9b0';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap or Space to start'),W/2,140);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('rt_desc','Match the swipe direction shown!'),W/2,172);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawPerformer();
+    ctx.fillStyle='rgba(10,6,3,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    const won=applause>0&&trickIndex>=TOTAL_TRICKS;
+    ctx.fillText(won?I18N.t('show_over_win','SHOW COMPLETE!'):I18N.t('show_over_lose','CROWD LEFT!'),W/2,160);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),W/2,196);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,228);
+    requestAnimationFrame(loop);return;
+  }
+
+  drawPerformer();
+
+  if(phase==='active'){
+    timerT++;
+    const barW=500,barX=W/2-barW/2,barY=340;
+    ctx.fillStyle='#2a1e12';ctx.fillRect(barX,barY,barW,18);
+    const wsx=barX+(windowStart/130)*barW,wex=barX+(windowEnd/130)*barW;
+    ctx.fillStyle='rgba(120,220,120,0.6)';ctx.fillRect(wsx,barY,wex-wsx,18);
+    const px=barX+Math.min(1,timerT/130)*barW;
+    ctx.fillStyle='#ff8a3d';ctx.fillRect(px-2,barY-4,4,26);
+
+    ctx.fillStyle='#ffe9b0';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('trick_'+curTrick.id,curTrick.label),W/2,60);
+    drawArrow(curTrick.dir,W/2,150,1.2);
+
+    if(dragging&&dragStart&&dragCur){
+      ctx.strokeStyle='#ffd54f';ctx.lineWidth=4;
+      ctx.beginPath();ctx.moveTo(dragStart.x,dragStart.y);ctx.lineTo(dragCur.x,dragCur.y);ctx.stroke();
+    }
+
+    if(timerT>windowEnd+25){
+      judge('__timeout__');
+    }
+  }else if(phase==='result'){
+    resultT++;
+    ctx.fillStyle=resultGood?'#7ec850':'#e94560';
+    ctx.font='bold 40px Arial';ctx.textAlign='center';
+    ctx.fillText(resultMsg,W/2,140);
+    if(resultT>40){
+      phase='waiting';
+      nextTrick();
+    }
+  }
+
+  const barW2=500,barX2=W/2-barW2/2;
+  document.getElementById('applauseBar').style.width=applause+'%';
+  document.getElementById('trickNum').textContent=Math.min(trickIndex,TOTAL_TRICKS);
+  document.getElementById('scoreNum').textContent=score;
+  document.getElementById('hiNum').textContent=hi;
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

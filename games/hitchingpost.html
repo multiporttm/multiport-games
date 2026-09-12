@@ -1,0 +1,213 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Hitching Post - Multiport Games</title><meta name="description" content="Play Hitching Post free online — Tap a waiting horse then tap the rail slot with the matching color tag to hitch it. Tap a hitched horse once it's ready to leave to untie it before the rail backs up."><link rel="canonical" href="https://games.multiportllc.com/games/hitchingpost"><meta property="og:title" content="Hitching Post - Multiport Games"><meta property="og:description" content="Play Hitching Post free online — Tap a waiting horse then tap the rail slot with the matching color tag to hitch it. Tap a hitched horse once it's ready to leave to untie it before the rail backs up."><meta property="og:url" content="https://games.multiportllc.com/games/hitchingpost"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Hitching Post","description":"Play Hitching Post free online instantly. Match arriving horses to the correct hitching rail slot by owner tag color before the rail backs up, and untie horses once their owners are ready to leave to keep the post running smoothly. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/hitchingpost","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#4a2f1a;border-radius:14px;padding:16px;max-width:820px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#ffe0a3;font-weight:800;padding:2px 4px 10px;flex-wrap:wrap;gap:8px}
+#status{color:#fff8e1;text-align:center;min-height:1.4em;margin-bottom:8px;font-weight:600}
+#queue{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;min-height:92px;background:#3a2213;border-radius:10px;padding:10px;margin-bottom:14px}
+#rail{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;background:#5c3418;border-radius:10px;padding:14px 10px}
+.horse{width:70px;height:82px;border-radius:10px;background:#241407;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:6px;cursor:pointer;position:relative;border:3px solid #241407;transition:transform .1s}
+.horse.selected{transform:translateY(-6px) scale(1.05);box-shadow:0 0 0 3px #fff8e1}
+.horse .emoji{font-size:2rem;line-height:1}
+.horse .patience{width:80%;height:6px;background:#00000055;border-radius:3px;margin-top:4px;overflow:hidden}
+.horse .patience-fill{height:100%;background:#7ec850}
+.slot{width:82px;height:96px;border-radius:10px;background:#2b1608;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;position:relative;box-sizing:border-box}
+.slot .label{position:absolute;top:4px;left:0;right:0;text-align:center;font-size:.65rem;font-weight:800;color:#0008}
+.slot .emoji{font-size:2.1rem}
+.slot.ready{animation:pulse 0.7s infinite alternate}
+@keyframes pulse{from{box-shadow:0 0 0 0 #fff8e1aa}to{box-shadow:0 0 0 6px #fff8e100}}
+.tagdot{width:14px;height:14px;border-radius:50%;margin-top:2px}
+#lives{font-size:1.1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Hitching Post</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="hud"><span id="scoreDisp">Score: 0 | Hi: 0</span><span id="lives">Patience: ❤️❤️❤️</span></div>
+      <div id="status">Tap a waiting horse, then tap its matching rail slot.</div>
+      <div id="queue"></div>
+      <div id="rail"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Tap a waiting <b>horse</b> to select it, then tap the <b>rail slot</b> with the matching color tag to hitch it — wrong slot won't work. When a hitched horse's owner is <b>ready</b> (it glows), tap that slot to untie it and free the space. Don't let a waiting horse's patience run out three times!</div>
+</div>
+<script>
+const PALETTE=[
+  {c:'#e94560',n:'Red'},{c:'#ffd54f',n:'Gold'},{c:'#2ec4b6',n:'Teal'},
+  {c:'#9b5de5',n:'Purple'},{c:'#ff8c42',n:'Orange'},{c:'#4caf50',n:'Green'}
+];
+const SLOT_COUNT=6;
+let slots=[]; // {color, horse:null|{visitTime}}
+let queue=[]; // {color, patience, maxPatience}
+let selectedIdx=null;
+let score=0,hi=parseFloat(localStorage.getItem('hitchingpost_hi')||'0');
+let lives=3,gameOver=false;
+let spawnTimer=0,spawnInterval=220,frame=0,lastTime=null;
+
+function shuffledColors(){
+  const arr=PALETTE.slice();
+  for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}
+  return arr;
+}
+
+function init(){
+  const colors=shuffledColors();
+  slots=colors.map(col=>({color:col,horse:null}));
+  queue=[];
+  score=0;lives=3;gameOver=false;selectedIdx=null;
+  spawnTimer=0;spawnInterval=220;frame=0;lastTime=null;
+  setStatus(I18N.t('start_status','Tap a waiting horse, then tap its matching rail slot.'));
+  render();
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function spawnHorse(){
+  if(queue.length>=5)return;
+  const col=PALETTE[Math.floor(Math.random()*PALETTE.length)];
+  const maxPatience=1600-Math.min(700,score*4);
+  queue.push({color:col,patience:maxPatience,maxPatience});
+}
+
+function selectHorse(i){
+  if(gameOver)return;
+  if(selectedIdx===i){selectedIdx=null;}
+  else{selectedIdx=i;SFX.select();}
+  render();
+}
+
+function clickSlot(i){
+  if(gameOver)return;
+  const slot=slots[i];
+  if(slot.horse){
+    if(slot.horse.ready){
+      slot.horse=null;
+      score+=5;
+      SFX.click();
+      setStatus(I18N.t('untied_msg','Untied! Rail slot free again.'));
+    }else{
+      SFX.error();
+      setStatus(I18N.t('not_ready_msg',"That horse's owner isn't ready yet."));
+    }
+    render();
+    return;
+  }
+  if(selectedIdx===null){
+    setStatus(I18N.t('select_first_msg','Select a waiting horse first.'));
+    return;
+  }
+  const horse=queue[selectedIdx];
+  if(horse.color.c===slot.color.c){
+    queue.splice(selectedIdx,1);
+    selectedIdx=null;
+    const visit=340+Math.random()*420;
+    slot.horse={color:horse.color,timer:visit,ready:false};
+    score+=15;
+    if(score>hi){hi=score;localStorage.setItem('hitchingpost_hi',String(hi));}
+    SFX.success();
+    setStatus(I18N.t('hitched_msg','Hitched! Owner will return later.'));
+  }else{
+    SFX.error();
+    setStatus(I18N.t('wrong_slot_msg','Wrong rail — that tag color doesn\'t match.'));
+  }
+  render();
+}
+
+function render(){
+  const scoreDisp=document.getElementById('scoreDisp');
+  scoreDisp.textContent=I18N.t('score_hi_label_h','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',Math.floor(hi));
+  document.getElementById('lives').textContent=I18N.t('patience_lives','Patience: {h}').replace('{h}','❤️'.repeat(Math.max(0,lives)));
+
+  const qEl=document.getElementById('queue');
+  qEl.innerHTML='';
+  queue.forEach((h,i)=>{
+    const d=document.createElement('div');
+    d.className='horse'+(selectedIdx===i?' selected':'');
+    d.style.borderColor=h.color.c;
+    const pct=Math.max(0,h.patience/h.maxPatience*100);
+    d.innerHTML=`<div class="emoji">🐴</div><div class="tagdot" style="background:${h.color.c}"></div><div class="patience"><div class="patience-fill" style="width:${pct}%;background:${pct<30?'#e94560':'#7ec850'}"></div></div>`;
+    d.onclick=()=>selectHorse(i);
+    qEl.appendChild(d);
+  });
+  if(queue.length===0){
+    const empty=document.createElement('div');
+    empty.style.cssText='color:#fff8e199;align-self:center;font-size:.9rem;';
+    empty.textContent=I18N.t('no_horses_waiting','No horses waiting...');
+    qEl.appendChild(empty);
+  }
+
+  const rEl=document.getElementById('rail');
+  rEl.innerHTML='';
+  slots.forEach((s,i)=>{
+    const d=document.createElement('div');
+    d.className='slot'+(s.horse&&s.horse.ready?' ready':'');
+    d.style.background=s.color.c+'33';
+    d.style.border='3px solid '+s.color.c;
+    d.innerHTML=`<div class="label">${s.color.n}</div><div class="emoji">${s.horse?'🐴':'🚏'}</div>`;
+    d.onclick=()=>clickSlot(i);
+    rEl.appendChild(d);
+  });
+}
+
+document.getElementById('queue').parentElement; // no-op keep structure stable
+
+function tick(dt){
+  spawnTimer+=dt;
+  if(spawnTimer>=spawnInterval){
+    spawnTimer=0;
+    spawnInterval=Math.max(90,220-score);
+    spawnHorse();
+  }
+  let expired=false;
+  queue.forEach(h=>{h.patience-=dt;});
+  const before=queue.length;
+  queue=queue.filter(h=>{
+    if(h.patience<=0){expired=true;return false;}
+    return true;
+  });
+  if(expired&&before>queue.length){
+    lives--;
+    SFX.fail();
+    setStatus(I18N.t('horse_left_msg','A horse gave up waiting and left angry!'));
+    if(selectedIdx!==null&&selectedIdx>=queue.length)selectedIdx=null;
+    if(lives<=0){
+      gameOver=true;
+      SFX.lose();
+      setStatus(I18N.t('game_over_h','Game over! The hitching post is in chaos. Tap New Game to try again.')+' Score: '+score);
+    }
+  }
+  slots.forEach(s=>{
+    if(s.horse&&!s.horse.ready){
+      s.horse.timer-=dt;
+      if(s.horse.timer<=0)s.horse.ready=true;
+    }
+  });
+}
+
+function loop(ts){
+  if(!gameOver){
+    const dt=lastTime===null?16:Math.min(ts-lastTime,50);
+    lastTime=ts;
+    frame++;
+    tick(dt);
+    render();
+  }
+  requestAnimationFrame(loop);
+}
+
+// restart control: tap anywhere on status area when game over
+document.getElementById('status').addEventListener('click',()=>{ if(gameOver)init(); });
+document.getElementById('table').addEventListener('click',(e)=>{
+  if(gameOver && !e.target.closest('.horse') && !e.target.closest('.slot')) init();
+});
+
+init();
+requestAnimationFrame(loop);
+</script></body></html>

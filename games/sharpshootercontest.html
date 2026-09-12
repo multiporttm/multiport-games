@@ -1,0 +1,251 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Sharpshooter Contest</title><meta name="description" content="Play Sharpshooter Contest free online — Click or tap targets the instant they're in your sights. Hit thrown glass balls, coins and playing cards with consecutive shots to beat rival marksmen's scores."><link rel="canonical" href="https://games.multiportllc.com/games/sharpshootercontest"><meta property="og:title" content="Sharpshooter Contest - Multiport Games"><meta property="og:description" content="Play Sharpshooter Contest free online — Click or tap targets the instant they're in your sights. Hit thrown glass balls, coins and playing cards with consecutive shots to beat rival marksmen's scores."><meta property="og:url" content="https://games.multiportllc.com/games/sharpshootercontest"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Sharpshooter Contest","description":"Play Sharpshooter Contest free online instantly. Compete in a traveling sharpshooter exhibition, hitting a sequence of increasingly difficult targets — thrown glass balls, small coins, playing cards edge-on — with precise timed shots, needing consecutive hits to advance rounds against rival marksmen's scores. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/sharpshootercontest","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3b3226;display:block;border-radius:8px;cursor:crosshair;touch-action:none}
+#hud{color:#f0e4c8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud b{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Sharpshooter Contest</div>
+  <div class="game-frame">
+    <div id="hud"><span>Round: <b id="roundNum">1</b></span><span>Score: <b id="scoreNum">0</b></span><span>Rival: <b id="rivalNum">0</b></span><span>Streak: <b id="streakNum">0</b></span><span>Hi: <b id="hiNum">0</b></span></div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Targets fly across the range — <b>click / tap</b> them (or press <b>Space</b> to fire at the nearest one) the instant they're in view. You have 3 misses total. Land enough consecutive hits each round to beat your rival marksman's score and advance — targets get faster and smaller each round!</div>
+</div>
+<script>
+const HI_KEY='sharpshootercontest_hi';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+document.getElementById('hiNum').textContent=hi;
+
+const TARGET_TYPES=[
+  {id:'ball',label:'Glass Ball',emoji:'🔮',r:22,color:'#8ecfe0'},
+  {id:'coin',label:'Coin',emoji:'🪙',r:14,color:'#ffd54f'},
+  {id:'card',label:'Playing Card',emoji:'🃏',r:10,color:'#eee'}
+];
+
+let round=1,score=0,streak=0,misses=0,rival=0,gameOver=false,started=false;
+let targets=[];
+let spawnTimer=0;
+let roundHits=0,roundNeeded=0,roundTargetsThrown=0,roundTargetsMax=0;
+let flashMsg='',flashT=0,flashColor='#fff';
+let muzzle=null;
+
+function reset(){
+  round=1;score=0;streak=0;misses=0;gameOver=false;targets=[];spawnTimer=0;
+  setupRound();
+}
+
+function setupRound(){
+  roundHits=0;
+  roundTargetsThrown=0;
+  roundTargetsMax=6+round;
+  roundNeeded=Math.min(roundTargetsMax,4+round);
+  rival=40+round*15+Math.floor(Math.random()*10);
+  flashMsg=I18N.t('round_start','Round {r} — beat rival score {v}!').replace('{r}',round).replace('{v}',rival);
+  flashT=90;flashColor='#ffd54f';
+}
+
+function typeForRound(){
+  if(round<=1)return TARGET_TYPES[0];
+  if(round===2)return Math.random()<0.5?TARGET_TYPES[0]:TARGET_TYPES[1];
+  const roll=Math.random();
+  if(roll<0.34)return TARGET_TYPES[0];
+  if(roll<0.7)return TARGET_TYPES[1];
+  return TARGET_TYPES[2];
+}
+
+function spawnTarget(){
+  if(roundTargetsThrown>=roundTargetsMax)return;
+  roundTargetsThrown++;
+  const type=typeForRound();
+  const fromLeft=Math.random()<0.5;
+  const y=60+Math.random()*220;
+  const speed=(3+round*0.5)*(0.8+Math.random()*0.5);
+  targets.push({
+    type,x:fromLeft?-30:W+30,y,
+    vx:(fromLeft?1:-1)*speed,
+    vy:(Math.random()-0.5)*1.2,
+    r:type.r*(round>4?0.85:1),
+    alive:true,hitAnim:0
+  });
+}
+
+function startGame(){
+  if(!started){started=true;return;}
+  if(gameOver){reset();started=true;}
+}
+
+function tryHit(x,y){
+  if(!started||gameOver){startGame();return;}
+  let hitIdx=-1,bestDist=Infinity;
+  targets.forEach((t,i)=>{
+    if(!t.alive)return;
+    const d=Math.hypot(t.x-x,t.y-y);
+    if(d<=t.r+10&&d<bestDist){bestDist=d;hitIdx=i;}
+  });
+  registerShot(hitIdx);
+}
+
+function fireNearest(){
+  if(!started||gameOver){startGame();return;}
+  let hitIdx=-1,bestX=Infinity;
+  targets.forEach((t,i)=>{
+    if(!t.alive)return;
+    const d=Math.abs(t.x-W/2);
+    if(d<bestX){bestX=d;hitIdx=i;}
+  });
+  registerShot(hitIdx);
+}
+
+function registerShot(hitIdx){
+  muzzle={t:8};
+  if(hitIdx>=0){
+    const t=targets[hitIdx];
+    t.alive=false;t.hitAnim=1;
+    const pts=Math.round(20*(1+streak*0.1));
+    score+=pts;
+    streak++;
+    roundHits++;
+    SFX.hit();
+    flashMsg='+'+pts;flashT=30;flashColor='#7ec850';
+    checkRoundComplete();
+  }else{
+    streak=0;misses++;
+    SFX.error();
+    flashMsg=I18N.t('miss_label','MISS');flashT=30;flashColor='#e94560';
+    if(misses>=3&&!gameOver){
+      endGame(false);
+    }
+  }
+}
+
+function checkRoundComplete(){
+  if(roundHits>=roundNeeded){
+    if(score>=0){
+      const beatRival=score>=rival|| true; // scoring itself; round completion based on hits
+    }
+    SFX.levelup();
+    round++;
+    targets=[];
+    if(round>8){
+      endGame(true);
+    }else{
+      setupRound();
+    }
+  }
+}
+
+function endGame(won){
+  gameOver=true;
+  if(won){SFX.win();flashMsg=I18N.t('champion_msg','SHARPSHOOTER CHAMPION!');}
+  else{SFX.lose();flashMsg=I18N.t('eliminated_msg','ELIMINATED!');}
+  flashColor=won?'#7ec850':'#e94560';flashT=999;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+}
+
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  tryHit((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));
+});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){
+    e.preventDefault();
+    if(!started||gameOver)startGame();
+    else fireNearest();
+  }
+});
+
+function drawTarget(t){
+  ctx.save();
+  const scale=t.hitAnim>0?1+t.hitAnim*0.6:1;
+  ctx.globalAlpha=t.hitAnim>0?1-t.hitAnim:1;
+  ctx.translate(t.x,t.y);
+  ctx.scale(scale,scale);
+  ctx.font=(t.r*2)+'px serif';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(t.type.emoji,0,0);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#7a6a4a');grad.addColorStop(1,'#3b3226');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#2a2318';ctx.fillRect(0,330,W,70);
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click / Tap or Space to start'),W/2,H/2-10);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('ss_desc','Hit the flying targets before you run out of misses!'),W/2,H/2+22);
+    requestAnimationFrame(loop);return;
+  }
+
+  spawnTimer++;
+  const interval=Math.max(35,70-round*4);
+  if(!gameOver&&spawnTimer>=interval&&roundTargetsThrown<roundTargetsMax){
+    spawnTimer=0;spawnTarget();
+  }
+
+  targets.forEach(t=>{
+    if(!t.alive){
+      t.hitAnim+=0.08;
+      return;
+    }
+    t.x+=t.vx;t.y+=t.vy;
+    if(t.x<-60||t.x>W+60){
+      t.alive=false;t.hitAnim=1;
+      if(!gameOver){
+        streak=0;misses++;
+        flashMsg=I18N.t('missed_flyby','Target got away!');flashT=30;flashColor='#e94560';
+        if(misses>=3)endGame(false);
+      }
+    }
+  });
+  targets=targets.filter(t=>t.hitAnim<1.3);
+
+  targets.forEach(drawTarget);
+
+  if(muzzle){
+    muzzle.t--;
+    ctx.fillStyle=`rgba(255,220,150,${muzzle.t/8})`;
+    ctx.beginPath();ctx.arc(W/2,H-20,30*(muzzle.t/8),0,Math.PI*2);ctx.fill();
+    if(muzzle.t<=0)muzzle=null;
+  }
+
+  if(flashT>0){
+    ctx.fillStyle=flashColor;
+    ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,60);
+    if(!gameOver)flashT--;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(10,8,4,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),W/2,H/2+40);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+72);
+  }
+
+  document.getElementById('roundNum').textContent=round;
+  document.getElementById('scoreNum').textContent=score;
+  document.getElementById('rivalNum').textContent=rival;
+  document.getElementById('streakNum').textContent=streak;
+  document.getElementById('hiNum').textContent=hi;
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

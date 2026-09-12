@@ -1,0 +1,235 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mine Cart Push - Multiport Games</title><meta name="description" content="Play Mine Cart Push free online — Switch lanes with Up/Down (or the buttons) to dodge collapsed tunnels, and tap Push when the gauge marker is in the green zone to keep your cart's momentum alive all the way to the surface elevator."><link rel="canonical" href="https://games.multiportllc.com/games/minecartpush"><meta property="og:title" content="Mine Cart Push - Multiport Games"><meta property="og:description" content="Play Mine Cart Push free online — Switch lanes with Up/Down (or the buttons) to dodge collapsed tunnels, and tap Push when the gauge marker is in the green zone to keep your cart's momentum alive all the way to the surface elevator."><meta property="og:url" content="https://games.multiportllc.com/games/minecartpush"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mine Cart Push","description":"Play Mine Cart Push free online instantly. Switch tracks to dodge collapsed tunnels and time your pushes to keep an ore cart's momentum alive all the way to the surface elevator. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/minecartpush","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a120a;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;max-width:800px;margin:0 auto 6px;color:#e0b482;font-weight:800;font-size:.95rem;padding:0 4px}
+#hud b{color:#ffd54f}
+#gaugeWrap{max-width:800px;margin:0 auto 8px;position:relative;height:22px;background:#241a10;border-radius:6px;border:1px solid #4a341f;overflow:hidden}
+#gaugeZone{position:absolute;top:0;bottom:0;left:40%;width:20%;background:rgba(126,200,80,.45)}
+#gaugeMarker{position:absolute;top:0;bottom:0;width:4px;background:#fff}
+#touchControls{display:flex;justify-content:center;gap:10px;margin-top:10px}
+#touchControls button{padding:12px 20px;background:#4a341f;border:1px solid #6b4a2e;border-radius:10px;color:#f4e3c1;font-weight:800;font-size:1rem;cursor:pointer;min-width:70px}
+#touchControls button:active{background:#6b4a2e}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mine Cart Push</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="hud"><span id="statusText">Ready</span><span>Distance: <b id="distNum">0</b>m / <b id="goalNum">500</b>m</span><span>Best: <b id="bestNum">0</b>m</span></div>
+    <div id="gaugeWrap"><div id="gaugeZone"></div><div id="gaugeMarker"></div></div>
+    <canvas id="c" width="800" height="280"></canvas>
+    <div id="touchControls">
+      <button id="btnUp">▲ Lane</button>
+      <button id="btnPush">⛏ PUSH</button>
+      <button id="btnDown">▼ Lane</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Your ore cart rolls automatically along the rails. Use <b>Up/Down Arrow</b> (or the Lane buttons / swipe) to switch between the 3 tracks and dodge collapsed tunnels. Press <b>Space</b> or the <b>PUSH</b> button when the white marker is inside the green zone of the gauge to boost your momentum — momentum drains over time and crashing into a collapsed tunnel drains it fast. Reach the surface elevator before momentum hits zero!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const LANES=[70,140,210];
+const GOAL=500; // meters
+const HI_KEY='mp_hi_minecartpush';
+let hi=0;
+try{ hi=parseInt(localStorage.getItem(HI_KEY)||'0',10)||0; }catch(e){}
+document.getElementById('bestNum').textContent=hi;
+document.getElementById('goalNum').textContent=GOAL;
+
+let laneIdx=1, cartY=LANES[1], targetY=LANES[1];
+let momentum=60, distance=0, gameOver=false, won=false, started=false;
+let segments=[]; // {x, blocked:[bool,bool,bool]}
+let segSpacing=140, lastSegX=0;
+let gaugeT=0, gaugePower=0;
+let lastTime=null;
+
+function reset(){
+  laneIdx=1; cartY=LANES[1]; targetY=LANES[1];
+  momentum=60; distance=0; gameOver=false; won=false; started=false;
+  segments=[]; lastSegX=900;
+  for(let x=900;x<900+2400;x+=segSpacing) addSegment(x);
+  gaugeT=0; lastTime=null;
+}
+
+function addSegment(x){
+  // choose which lanes are blocked, guarantee at least one open
+  const blocked=[false,false,false];
+  if(distance>40||x>1100){
+    const numBlock = Math.random()<0.55 ? 1 : (Math.random()<0.25?2:0);
+    const idxs=[0,1,2].sort(()=>Math.random()-0.5);
+    for(let i=0;i<numBlock;i++) blocked[idxs[i]]=true;
+  }
+  segments.push({x,blocked});
+  lastSegX=x;
+}
+
+function switchLane(dir){
+  const ni=laneIdx+dir;
+  if(ni<0||ni>2)return;
+  laneIdx=ni; targetY=LANES[laneIdx];
+  SFX.click();
+}
+
+function doPush(){
+  if(!started){started=true;}
+  if(gameOver){ reset(); return; }
+  // gauge marker position 0..1 sine-based
+  const pos = (Math.sin(gaugeT)+1)/2;
+  const dist = Math.abs(pos-0.5);
+  let boost;
+  if(dist<0.06){ boost=26; SFX.powerup(); }
+  else if(dist<0.15){ boost=14; SFX.point(); }
+  else { boost=5; SFX.click(); }
+  momentum=Math.min(100, momentum+boost);
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowUp'){e.preventDefault(); switchLane(-1);}
+  else if(e.code==='ArrowDown'){e.preventDefault(); switchLane(1);}
+  else if(e.code==='Space'){e.preventDefault(); doPush();}
+});
+document.getElementById('btnUp').addEventListener('click',()=>switchLane(-1));
+document.getElementById('btnDown').addEventListener('click',()=>switchLane(1));
+document.getElementById('btnPush').addEventListener('click',doPush);
+
+let touchStartY=null;
+c.addEventListener('touchstart',e=>{ e.preventDefault(); touchStartY=e.touches[0].clientY; doPush(); },{passive:false});
+c.addEventListener('touchmove',e=>{
+  if(touchStartY==null)return;
+  const dy=e.touches[0].clientY-touchStartY;
+  if(dy<-30){ switchLane(-1); touchStartY=e.touches[0].clientY; }
+  else if(dy>30){ switchLane(1); touchStartY=e.touches[0].clientY; }
+},{passive:false});
+c.addEventListener('click',doPush);
+
+function drawCart(y){
+  ctx.save();
+  ctx.fillStyle='#7a2e12';
+  ctx.fillRect(90,y-16,50,26);
+  ctx.fillStyle='#e0a458';
+  for(let i=0;i<4;i++) ctx.fillRect(96+i*11,y-22,6,8);
+  ctx.fillStyle='#333';
+  ctx.beginPath(); ctx.arc(100,y+12,6,0,7); ctx.fill();
+  ctx.beginPath(); ctx.arc(130,y+12,6,0,7); ctx.fill();
+  ctx.restore();
+}
+
+function rect(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function loop(){
+  ctx.clearRect(0,0,800,280);
+  const sky=ctx.createLinearGradient(0,0,0,280);
+  sky.addColorStop(0,'#0d0805'); sky.addColorStop(1,'#241a10');
+  ctx.fillStyle=sky; ctx.fillRect(0,0,800,280);
+
+  // lane rails
+  LANES.forEach(y=>{
+    ctx.strokeStyle='#4a341f'; ctx.lineWidth=4;
+    ctx.beginPath(); ctx.moveTo(0,y+18); ctx.lineTo(800,y+18); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,y-18); ctx.lineTo(800,y-18); ctx.stroke();
+  });
+
+  const statusEl=document.getElementById('statusText');
+
+  if(!started){
+    ctx.fillStyle='#e0b482cc'; ctx.font='bold 22px Arial'; ctx.textAlign='center';
+    ctx.fillText(I18N.t('cart_start_hint','Press Space / PUSH to start pushing'),400,140);
+    drawCart(cartY);
+    statusEl.textContent=I18N.t('status_ready','Ready');
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff'; ctx.font='bold 30px Arial'; ctx.textAlign='center';
+    if(won){
+      ctx.fillStyle='#7ec850';
+      ctx.fillText(I18N.t('cart_win_title','SURFACE REACHED!'),400,120);
+    } else {
+      ctx.fillStyle='#e94560';
+      ctx.fillText(I18N.t('cart_lose_title','MOMENTUM LOST'),400,120);
+    }
+    ctx.font='18px Arial'; ctx.fillStyle='#f4e3c1';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to try again'),400,155);
+    statusEl.textContent=won? I18N.t('status_won','Delivered!') : I18N.t('status_crashed','Stalled out');
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  gaugeT+=dt*0.08;
+  const pos=(Math.sin(gaugeT)+1)/2;
+  document.getElementById('gaugeMarker').style.left=(pos*100)+'%';
+
+  momentum-=0.09*dt;
+  momentum=Math.max(0,Math.min(100,momentum));
+  cartY += (targetY-cartY)*0.25*dt;
+
+  const speed = 1.2 + momentum*0.045;
+  distance += speed*dt*0.05;
+  document.getElementById('distNum').textContent=Math.floor(distance);
+  statusEl.textContent=I18N.t('status_pushing','Momentum: ' + Math.floor(momentum) + '%');
+
+  segments.forEach(s=>s.x-=speed*dt);
+  while(segments.length && segments[0].x < -60) segments.shift();
+  while(lastSegX - (segments.length?segments[0].x:0) < 2400) addSegment(lastSegX+segSpacing);
+
+  // draw segments (collapsed tunnel markers)
+  segments.forEach(s=>{
+    s.blocked.forEach((b,li)=>{
+      if(b){
+        ctx.fillStyle='#3a1a1a';
+        ctx.fillRect(s.x-14,LANES[li]-16,28,32);
+        ctx.strokeStyle='#e94560'; ctx.lineWidth=2;
+        ctx.beginPath();
+        ctx.moveTo(s.x-14,LANES[li]-16); ctx.lineTo(s.x+14,LANES[li]+16);
+        ctx.moveTo(s.x+14,LANES[li]-16); ctx.lineTo(s.x-14,LANES[li]+16);
+        ctx.stroke();
+      }
+    });
+  });
+
+  // collision check: segments near cart x (90-140)
+  segments.forEach(s=>{
+    if(s.x>70 && s.x<150){
+      if(s.blocked[laneIdx] && Math.abs(cartY-LANES[laneIdx])<10 && !s.hit){
+        s.hit=true;
+        momentum-=32;
+        SFX.hit();
+      }
+    }
+  });
+
+  if(momentum<=0){ gameOver=true; won=false; SFX.lose();
+    if(distance>hi){ hi=Math.floor(distance); try{localStorage.setItem(HI_KEY,String(hi));}catch(e){} document.getElementById('bestNum').textContent=hi; }
+  }
+  if(distance>=GOAL && !gameOver){ gameOver=true; won=true; SFX.win();
+    if(Math.floor(distance)>hi){ hi=Math.floor(distance); try{localStorage.setItem(HI_KEY,String(hi));}catch(e){} document.getElementById('bestNum').textContent=hi; }
+  }
+
+  drawCart(cartY);
+
+  // elevator marker near goal
+  const elevX = 400 + (GOAL-distance)*4;
+  if(elevX<820 && elevX>-40){
+    ctx.fillStyle='#ffd54f';
+    ctx.fillRect(elevX-10,20,20,240);
+    ctx.fillStyle='#1a120a'; ctx.font='bold 14px Arial'; ctx.textAlign='center';
+    ctx.fillText('▲',elevX,140);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>
