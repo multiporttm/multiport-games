@@ -1,0 +1,286 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Trebuchet Launch</title><meta name="description" content="Play Trebuchet Launch free online — Pick a counterweight amount, then press Space or tap at the right instant as the trebuchet's arm swings to release the boulder and strike distant fortifications. Heavier weights and later releases change the arc — dial in both to hit every target!"><link rel="canonical" href="https://games.multiportllc.com/games/trebuchetlaunch"><meta property="og:title" content="Trebuchet Launch - Multiport Games"><meta property="og:description" content="Play Trebuchet Launch free online — Pick a counterweight amount, then press Space or tap at the right instant as the trebuchet's arm swings to release the boulder and strike distant fortifications. Heavier weights and later releases change the arc — dial in both to hit every target!"><meta property="og:url" content="https://games.multiportllc.com/games/trebuchetlaunch"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Trebuchet Launch","description":"Play Trebuchet Launch free online instantly. Pick a counterweight amount, then press Space or tap at the right instant as the trebuchet's arm swings to release the boulder and strike distant fortifications. Heavier weights and later releases change the arc — dial in both to hit every target! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/trebuchetlaunch","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#a9c9e8;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:center;flex-wrap:wrap;gap:16px;color:#fff;font-size:1rem;font-weight:800;padding:8px}
+#hud span{color:#ffd54f}
+#controls{display:flex;justify-content:center;align-items:center;gap:14px;flex-wrap:wrap;margin:6px 0;color:#fff;font-weight:700}
+#controls input[type=range]{width:200px}
+#fireBtn{padding:10px 22px;border-radius:20px;border:none;background:#e94560;color:#fff;font-weight:800;cursor:pointer;font-size:1rem}
+#fireBtn:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Trebuchet Launch</div>
+  <div class="game-frame">
+    <div id="hud">Level: <span id="level">1</span>/<span id="totalLevels">6</span> &nbsp; Shots left: <span id="shots">3</span> &nbsp; Score: <span id="score">0</span> &nbsp; Hi: <span id="hi">0</span></div>
+    <canvas id="c" width="800" height="360"></canvas>
+    <div id="controls">
+      <label>Counterweight: <span id="cwVal">5</span>t <input type="range" id="cwSlider" min="1" max="10" value="5"></label>
+      <button id="fireBtn">Load &amp; Swing</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Choose a <b>counterweight</b> (heavier = more power but a slower, later-peaking swing), click <b>Load &amp; Swing</b>, then press <b>Space</b> or <b>tap</b> at the exact moment in the arm's swing to release the boulder. Release angle and counterweight together decide the arc — land inside the target fortification to score a hit. Three shots per level, six levels of increasing range!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=360;
+const HS='trebuchetlaunch_hi';
+let hi=parseInt(localStorage.getItem(HS)||'0',10);
+document.getElementById('hi').textContent=hi;
+
+const TOTAL_LEVELS=6;
+const GROUND_Y=H-40;
+const PIVOT={x:120,y:GROUND_Y-90};
+
+let level=1,score=0,shotsLeft=3,gameOver=false,gameWon=false;
+let counterweight=5;
+let target={x:0,w:60};
+let phase='idle'; // idle | swinging | flying | result
+let armAngle=-2.2; // radians, cocked position (arm tip low/back)
+let armStartAngle=-2.2, armEndAngle=0.9;
+let swingT=0,swingDur=0; // ms
+let released=false,releaseAngle=0,releaseSpeed=0;
+let proj=null;
+let resultText='';
+
+function levelTargetX(lv){
+  return 420+lv*55; // increasing range
+}
+
+function setupLevel(){
+  target.x=levelTargetX(level);
+  target.w=Math.max(36,60-level*3);
+  shotsLeft=3;
+  phase='idle';
+  proj=null;
+  resultText='';
+  document.getElementById('fireBtn').disabled=false;
+}
+
+function reset(){
+  level=1;score=0;gameOver=false;gameWon=false;
+  setupLevel();
+}
+
+document.getElementById('cwSlider').addEventListener('input',e=>{
+  counterweight=parseInt(e.target.value,10);
+  document.getElementById('cwVal').textContent=counterweight;
+});
+
+function startSwing(){
+  if(phase!=='idle'||shotsLeft<=0||gameOver)return;
+  phase='swinging';
+  released=false;
+  swingT=0;
+  // Heavier counterweight = slower overall swing but more launch speed
+  swingDur=1600+counterweight*90;
+  document.getElementById('fireBtn').disabled=true;
+  SFX.click();
+}
+
+function doRelease(){
+  if(phase!=='swinging'||released)return;
+  released=true;
+  const frac=Math.min(1,swingT/swingDur);
+  releaseAngle=armStartAngle+(armEndAngle-armStartAngle)*frac;
+  // speed scales with counterweight and how far through the swing (more swing = more speed, up to a point)
+  const swingSpeedFactor=0.6+frac*0.9;
+  releaseSpeed=(6+counterweight*1.9)*swingSpeedFactor;
+  // launch angle: map release point in swing to an angle above horizontal (later release = flatter, early = steeper)
+  const launchAngle=Math.max(0.25,1.35-frac*1.05);
+  const vx=releaseSpeed*Math.cos(launchAngle)*9;
+  const vy=-releaseSpeed*Math.sin(launchAngle)*9;
+  const armLen=170;
+  const tipX=PIVOT.x+Math.cos(releaseAngle)*armLen;
+  const tipY=PIVOT.y+Math.sin(releaseAngle)*armLen;
+  proj={x:tipX,y:tipY,vx,vy};
+  phase='flying';
+  SFX.swoosh();
+}
+
+function updateSwing(dt){
+  swingT+=dt;
+  const frac=Math.min(1,swingT/swingDur);
+  armAngle=armStartAngle+(armEndAngle-armStartAngle)*easeOutQuad(frac);
+  if(frac>=1&&!released){
+    doRelease(); // auto-release at end of swing if player never pressed
+  }
+}
+function easeOutQuad(t){return 1-(1-t)*(1-t);}
+
+const g=0.5;
+function updateProjectile(dt){
+  const steps=Math.max(1,Math.round(dt/16));
+  for(let s=0;s<steps;s++){
+    proj.x+=proj.vx*(dt/steps)/16;
+    proj.y+=proj.vy*(dt/steps)/16;
+    proj.vy+=g*(dt/steps)/16;
+    if(proj.y>=GROUND_Y){
+      landProjectile();
+      return;
+    }
+  }
+}
+
+function landProjectile(){
+  const hitDist=Math.abs(proj.x-target.x);
+  const hit = hitDist<=target.w/2+10;
+  shotsLeft--;
+  if(hit){
+    const acc=Math.max(0,1-hitDist/(target.w/2+10));
+    const pts=Math.round(80+acc*60);
+    score+=pts;
+    SFX.success();
+    resultText=I18N.t('hit_msg','Direct hit! +{p} pts').replace('{p}',pts);
+    phase='result';
+    setTimeout(()=>{
+      level++;
+      if(level>TOTAL_LEVELS){ endGame(true); }
+      else { setupLevel(); }
+    },1300);
+  } else {
+    SFX.fail();
+    resultText = proj.x<target.x? I18N.t('short_msg','Fell short of the wall!') : I18N.t('over_msg','Overshot the fortification!');
+    phase='result';
+    setTimeout(()=>{
+      if(shotsLeft<=0){ endGame(false); }
+      else { phase='idle'; document.getElementById('fireBtn').disabled=false; }
+    },1200);
+  }
+}
+
+function endGame(win){
+  gameOver=true;gameWon=win;phase='idle';
+  document.getElementById('fireBtn').disabled=true;
+  if(win){score+=200;SFX.win();} else {SFX.lose();}
+  if(score>hi){hi=score;localStorage.setItem(HS,String(hi));}
+}
+
+document.getElementById('fireBtn').addEventListener('click',startSwing);
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){
+    e.preventDefault();
+    if(gameOver){reset();return;}
+    if(phase==='idle')startSwing();
+    else if(phase==='swinging')doRelease();
+  }
+});
+c.addEventListener('click',()=>{
+  if(gameOver){reset();return;}
+  if(phase==='swinging')doRelease();
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){reset();return;}
+  if(phase==='swinging')doRelease();
+},{passive:false});
+
+function drawGround(){
+  ctx.fillStyle='#7fae5a';ctx.fillRect(0,GROUND_Y,W,H-GROUND_Y);
+  ctx.fillStyle='#5c8a3c';ctx.fillRect(0,GROUND_Y,W,4);
+}
+
+function drawFort(){
+  const x=target.x,w=target.w;
+  ctx.fillStyle='#8a8a8a';
+  ctx.fillRect(x-w/2,GROUND_Y-70,w,70);
+  ctx.fillStyle='#6f6f6f';
+  for(let i=0;i<=4;i++){
+    ctx.fillRect(x-w/2+i*(w/4)-4,GROUND_Y-80,10,12);
+  }
+}
+
+function drawTrebuchet(){
+  // base
+  ctx.strokeStyle='#5a3d21';ctx.lineWidth=8;
+  ctx.beginPath();ctx.moveTo(PIVOT.x-50,GROUND_Y);ctx.lineTo(PIVOT.x,PIVOT.y);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(PIVOT.x+50,GROUND_Y);ctx.lineTo(PIVOT.x,PIVOT.y);ctx.stroke();
+  // arm
+  const armLen=170;
+  const shortLen=60;
+  const ax=PIVOT.x+Math.cos(armAngle)*armLen;
+  const ay=PIVOT.y+Math.sin(armAngle)*armLen;
+  const bx=PIVOT.x-Math.cos(armAngle)*shortLen;
+  const by=PIVOT.y-Math.sin(armAngle)*shortLen;
+  ctx.strokeStyle='#7a5230';ctx.lineWidth=10;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(ax,ay);ctx.stroke();
+  // counterweight box at short end
+  ctx.fillStyle='#3a2b1a';
+  ctx.fillRect(bx-14,by-14,28,28);
+  // sling/boulder at long end if not released
+  if(!(proj)){
+    ctx.fillStyle='#444';
+    ctx.beginPath();ctx.arc(ax,ay,12,0,Math.PI*2);ctx.fill();
+  }
+  // pivot
+  ctx.fillStyle='#2a1d10';ctx.beginPath();ctx.arc(PIVOT.x,PIVOT.y,8,0,Math.PI*2);ctx.fill();
+}
+
+function drawProjectile(){
+  if(!proj)return;
+  ctx.fillStyle='#333';
+  ctx.beginPath();ctx.arc(proj.x,proj.y,10,0,Math.PI*2);ctx.fill();
+}
+
+let lastTime=null;
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min(50,now-lastTime);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#7fb3e0');sky.addColorStop(1,'#a9c9e8');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  drawGround();
+  drawFort();
+
+  if(phase==='swinging'){
+    updateSwing(dt);
+  } else if(phase==='flying'){
+    updateProjectile(dt);
+  }
+
+  drawTrebuchet();
+  drawProjectile();
+
+  ctx.fillStyle='#12210c';ctx.font='bold 18px Arial';ctx.textAlign='center';
+  if(phase==='idle'&&!gameOver){
+    ctx.fillText(I18N.t('idle_hint','Set counterweight, then Load & Swing'),W/2,30);
+  } else if(phase==='swinging'){
+    ctx.fillText(I18N.t('swing_hint','Press Space / Tap to release!'),W/2,30);
+  }
+
+  if(phase==='result'){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,H/2-40,W,60);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(resultText,W/2,H/2-4);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';
+    ctx.fillText(gameWon?I18N.t('treb_win_title','FORTRESS BREACHED!'):I18N.t('treb_lose_title','SIEGE FAILED'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('score_label3','Score: {s}').replace('{s}',score),W/2,H/2+12);
+    ctx.fillText(I18N.t('restart_hint4','Tap or press Space to play again'),W/2,H/2+40);
+  }
+
+  document.getElementById('level').textContent=Math.min(level,TOTAL_LEVELS);
+  document.getElementById('totalLevels').textContent=TOTAL_LEVELS;
+  document.getElementById('shots').textContent=Math.max(0,shotsLeft);
+  document.getElementById('score').textContent=score;
+
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

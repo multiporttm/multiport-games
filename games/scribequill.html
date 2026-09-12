@@ -1,0 +1,242 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Scribe Quill</title><meta name="description" content="Play Scribe Quill free online — Drag or drag-touch your quill along the glowing guide stroke to trace each calligraphy letter. Stay on the line to save ink and earn accuracy; wander off and you waste precious ink. Copy the whole page before the inkwell runs dry!"><link rel="canonical" href="https://games.multiportllc.com/games/scribequill"><meta property="og:title" content="Scribe Quill - Multiport Games"><meta property="og:description" content="Play Scribe Quill free online — Drag or drag-touch your quill along the glowing guide stroke to trace each calligraphy letter. Stay on the line to save ink and earn accuracy; wander off and you waste precious ink. Copy the whole page before the inkwell runs dry!"><meta property="og:url" content="https://games.multiportllc.com/games/scribequill"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Scribe Quill","description":"Play Scribe Quill free online instantly. Drag or drag-touch your quill along the glowing guide stroke to trace each calligraphy letter. Stay on the line to save ink and earn accuracy; wander off and you waste precious ink. Copy the whole page before the inkwell runs dry! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/scribequill","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#f2e6c9;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{display:flex;justify-content:center;flex-wrap:wrap;gap:18px;color:#fff;font-size:1.02rem;font-weight:800;padding:8px}
+#hud span{color:#ffd54f}
+#inkbar-wrap{width:220px;height:14px;background:#3a2b1a;border-radius:7px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+#inkbar{height:100%;background:linear-gradient(90deg,#3b6fd4,#6fa8ff);width:100%;transition:width .15s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Scribe Quill</div>
+  <div class="game-frame">
+    <div id="hud">Letter: <span id="letterNum">1</span>/<span id="letterTotal">8</span> &nbsp; Accuracy: <span id="acc">100%</span> &nbsp; Ink:<span id="inkbar-wrap"><span id="inkbar"></span></span></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press and hold (mouse or touch) on the glowing dot at the <b>start</b> of the stroke, then drag your quill along the guide path to the end to trace the letter. Staying close to the path preserves ink and accuracy; drifting away wastes ink fast. Trace all letters on the page before the inkwell runs dry!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const TOTAL_LETTERS=8;
+const HS='scribequill_hi';
+let hi=parseInt(localStorage.getItem(HS)||'0',10);
+
+let letterIdx=0,ink=100,gameOver=false,won=false,drawing=false;
+let path=[],coverIdx=0,accSum=0,accCount=0,letterAccuracies=[];
+let cursor=null,started=false;
+let deviationFlash=0;
+
+function seedRand(){ return Math.random(); }
+
+function genPath(){
+  // Build a smooth flowing calligraphy-like stroke using a few random control points
+  const pts=[];
+  const n=5+Math.floor(seedRand()*3);
+  const marginX=120,marginY=90;
+  const cps=[];
+  for(let i=0;i<n;i++){
+    cps.push({
+      x: marginX + (W-2*marginX)*(i/(n-1)),
+      y: marginY + seedRand()*(H-2*marginY-40)
+    });
+  }
+  // Catmull-Rom spline through control points for a flowing curve
+  function crPoint(p0,p1,p2,p3,t){
+    const t2=t*t,t3=t2*t;
+    return {
+      x:0.5*((2*p1.x)+(-p0.x+p2.x)*t+(2*p0.x-5*p1.x+4*p2.x-p3.x)*t2+(-p0.x+3*p1.x-3*p2.x+p3.x)*t3),
+      y:0.5*((2*p1.y)+(-p0.y+p2.y)*t+(2*p0.y-5*p1.y+4*p2.y-p3.y)*t2+(-p0.y+3*p1.y-3*p2.y+p3.y)*t3)
+    };
+  }
+  const ext=[cps[0],...cps,cps[cps.length-1]];
+  for(let i=0;i<ext.length-3;i++){
+    for(let t=0;t<=20;t++){
+      pts.push(crPoint(ext[i],ext[i+1],ext[i+2],ext[i+3],t/20));
+    }
+  }
+  return pts;
+}
+
+function newLetter(){
+  path=genPath();
+  coverIdx=0;
+  accSum=0;accCount=0;
+  drawing=false;
+  document.getElementById('letterNum').textContent=letterIdx+1;
+}
+
+function reset(){
+  letterIdx=0;ink=100;gameOver=false;won=false;started=false;letterAccuracies=[];
+  newLetter();
+}
+reset();
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function nearestOnPath(p){
+  let best=Infinity,bi=0;
+  const searchFrom=Math.max(0,coverIdx-5);
+  const searchTo=Math.min(path.length-1,coverIdx+40);
+  for(let i=searchFrom;i<=searchTo;i++){
+    const d=dist(p,path[i]);
+    if(d<best){best=d;bi=i;}
+  }
+  return {d:best,i:bi};
+}
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const sx=W/r.width, sy=H/r.height;
+  const t=e.touches?e.touches[0]:e;
+  return {x:(t.clientX-r.left)*sx,y:(t.clientY-r.top)*sy};
+}
+
+function tryStart(p){
+  if(!started){started=true;}
+  if(gameOver){ if(won||ink<=0){ resetAndSave(); } return; }
+  const startPt=path[0];
+  if(dist(p,startPt)<28){
+    drawing=true;
+    SFX.click();
+  }
+}
+
+function moveDraw(p){
+  if(!drawing||gameOver)return;
+  const {d,i}=nearestOnPath(p);
+  const TOL=16;
+  if(i>coverIdx)coverIdx=i;
+  accSum+=Math.max(0,1-Math.min(d,60)/60);
+  accCount++;
+  if(d>TOL){
+    ink-=0.35+Math.min(d,80)/80*0.9;
+    deviationFlash=8;
+  } else {
+    ink-=0.06;
+  }
+  if(ink<=0){
+    ink=0;endGame(false);
+    return;
+  }
+  if(coverIdx>=path.length-3){
+    completeLetter();
+  }
+}
+
+function endDraw(){ drawing=false; }
+
+function completeLetter(){
+  const letterAcc = accCount? Math.round(100*accSum/accCount) : 0;
+  letterAccuracies.push(letterAcc);
+  SFX.success();
+  letterIdx++;
+  ink=Math.min(100,ink+6); // small ink refill bonus for finishing a letter
+  if(letterIdx>=TOTAL_LETTERS){
+    endGame(true);
+  } else {
+    newLetter();
+  }
+}
+
+function overallAccuracy(){
+  if(!letterAccuracies.length)return 0;
+  return Math.round(letterAccuracies.reduce((a,b)=>a+b,0)/letterAccuracies.length);
+}
+
+function endGame(win){
+  gameOver=true;won=win;
+  const finalScore = win ? 100+overallAccuracy() : overallAccuracy();
+  if(finalScore>hi){hi=finalScore;localStorage.setItem(HS,String(hi));}
+  if(win)SFX.win(); else SFX.lose();
+}
+
+function resetAndSave(){ reset(); }
+
+c.addEventListener('mousedown',e=>{tryStart(pointerPos(e));});
+c.addEventListener('mousemove',e=>{cursor=pointerPos(e); moveDraw(cursor);});
+window.addEventListener('mouseup',endDraw);
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=pointerPos(e);cursor=p;tryStart(p);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();const p=pointerPos(e);cursor=p;moveDraw(p);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();endDraw();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&gameOver){e.preventDefault();resetAndSave();}
+});
+
+function drawPath(){
+  ctx.save();
+  ctx.strokeStyle='rgba(80,60,20,0.18)';
+  ctx.lineWidth=20;
+  ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();
+  path.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+  ctx.stroke();
+
+  // traced portion glow
+  ctx.strokeStyle='#c9a227';
+  ctx.lineWidth=10;
+  ctx.beginPath();
+  for(let i=0;i<=coverIdx&&i<path.length;i++){
+    const p=path[i];
+    if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y);
+  }
+  ctx.stroke();
+  ctx.restore();
+
+  // start dot
+  ctx.fillStyle= coverIdx>3 ? '#7ec850' : '#e94560';
+  ctx.beginPath();ctx.arc(path[0].x,path[0].y,12,0,Math.PI*2);ctx.fill();
+  // end dot
+  ctx.fillStyle='#3b6fd4';
+  ctx.beginPath();ctx.arc(path[path.length-1].x,path[path.length-1].y,10,0,Math.PI*2);ctx.fill();
+}
+
+function drawQuill(){
+  if(!cursor)return;
+  ctx.save();
+  ctx.fillStyle= deviationFlash>0 ? '#e94560' : '#1a1a2e';
+  ctx.beginPath();ctx.arc(cursor.x,cursor.y,7,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#1a1a2e';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(cursor.x,cursor.y);ctx.lineTo(cursor.x-18,cursor.y-24);ctx.stroke();
+  ctx.restore();
+  if(deviationFlash>0)deviationFlash--;
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#f2e6c9';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(120,90,40,0.15)';
+  for(let y=40;y<H;y+=40){ctx.beginPath();ctx.moveTo(20,y);ctx.lineTo(W-20,y);ctx.stroke();}
+
+  drawPath();
+  drawQuill();
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='rgba(30,20,10,0.75)';ctx.font='bold 22px Georgia';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press & drag from the red dot to begin'),W/2,40);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(20,15,5,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Georgia';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('page_done_title','PAGE COMPLETE!'):I18N.t('out_of_ink_title','OUT OF INK!'),W/2,H/2-30);
+    ctx.font='20px Georgia';
+    ctx.fillText(I18N.t('final_accuracy_label','Accuracy: {a}%').replace('{a}',overallAccuracy()),W/2,H/2+8);
+    ctx.fillText(I18N.t('restart_hint2','Tap or press Space to try again'),W/2,H/2+38);
+  }
+
+  document.getElementById('acc').textContent=(accCount?Math.round(100*accSum/accCount):100)+'%';
+  document.getElementById('inkbar').style.width=Math.max(0,ink)+'%';
+  document.getElementById('letterTotal').textContent=TOTAL_LETTERS;
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

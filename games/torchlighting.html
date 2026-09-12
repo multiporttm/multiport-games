@@ -1,0 +1,248 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Torch Lighting - Multiport Games</title><meta name="description" content="Play Torch Lighting free online — Run the castle corridors with a lit taper and light every numbered wall torch in order before your taper burns out and time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/torchlighting"><meta property="og:title" content="Torch Lighting - Multiport Games"><meta property="og:description" content="Play Torch Lighting free online — Run the castle corridors with a lit taper and light every numbered wall torch in order before your taper burns out and time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/torchlighting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Torch Lighting","description":"Play Torch Lighting free online instantly. Race through maze-like castle corridors carrying a lit taper, lighting a fixed sequence of wall torches before the taper burns out and before time expires — relight the taper at a brazier when it goes dark. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/torchlighting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1410;display:block;border-radius:8px;margin:0 auto;touch-action:none}
+#hud{color:#ffd54f;font-size:1.05rem;font-weight:800;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span{color:#fff}
+#pad{display:none;grid-template-columns:56px 56px 56px;grid-template-rows:56px 56px 56px;gap:4px;justify-content:center;margin:10px auto}
+#pad button{background:#3a2a1a;color:#ffd54f;border:2px solid #5a4428;border-radius:10px;font-size:1.4rem;cursor:pointer}
+#pad .up{grid-column:2;grid-row:1}
+#pad .left{grid-column:1;grid-row:2}
+#pad .right{grid-column:3;grid-row:2}
+#pad .down{grid-column:2;grid-row:3}
+@media(pointer:coarse){#pad{display:grid}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Torch Lighting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div>Level: <span id="lvl">1</span></div>
+      <div>Next torch: <span id="next">1</span>/<span id="total">0</span></div>
+      <div>Taper: <span id="fuel">100</span>%</div>
+      <div>Time: <span id="time">0</span>s</div>
+      <div>Hi Level: <span id="hi">1</span></div>
+    </div>
+    <canvas id="c" width="480" height="480"></canvas>
+    <div id="pad">
+      <button class="up" data-d="0,-1">▲</button>
+      <button class="left" data-d="-1,0">◀</button>
+      <button class="right" data-d="1,0">▶</button>
+      <button class="down" data-d="0,1">▼</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Move with <b>Arrow Keys / WASD</b> or the on-screen pad. You carry a lit taper — walk into the <b>numbered torches</b> in the correct order (1, 2, 3...) to light them. Your taper burns down over time; if it goes out, return to the glowing <b>brazier</b> to relight it before you can light any more torches. Light every torch before the timer hits zero to win the level!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const CELL=40,COLS=12,ROWS=12;
+let level=1,hi=parseInt(localStorage.getItem('torchlighting_hi')||'1',10);
+document.getElementById('hi').textContent=hi;
+let maze,player,torches,brazier,nextIdx,fuel,timeLeft,gameActive=false,timerId,frame=0;
+
+function genMaze(){
+  // simple random walls, ensure connectivity via carving from center outward (not a perfect maze, just obstacles)
+  const m=[];
+  for(let y=0;y<ROWS;y++){const row=[];for(let x=0;x<COLS;x++)row.push(0);m.push(row);}
+  const wallCount=Math.min(30,14+level*2);
+  for(let i=0;i<wallCount;i++){
+    const x=1+Math.floor(Math.random()*(COLS-2));
+    const y=1+Math.floor(Math.random()*(ROWS-2));
+    m[y][x]=1;
+  }
+  return m;
+}
+
+function freeCell(m,avoid){
+  let x,y,tries=0;
+  do{
+    x=Math.floor(Math.random()*COLS);
+    y=Math.floor(Math.random()*ROWS);
+    tries++;
+  }while((m[y][x]===1||avoid.some(p=>p.x===x&&p.y===y))&&tries<500);
+  return {x,y};
+}
+
+function buildLevel(){
+  clearInterval(timerId);
+  maze=genMaze();
+  const used=[];
+  brazier=freeCell(maze,used);used.push(brazier);
+  player={x:brazier.x,y:brazier.y,px:brazier.x,py:brazier.y};
+  const torchCount=Math.min(8,3+level);
+  torches=[];
+  for(let i=0;i<torchCount;i++){
+    const p=freeCell(maze,used);
+    used.push(p);
+    torches.push({x:p.x,y:p.y,lit:false,order:i+1});
+  }
+  nextIdx=0;
+  fuel=100;
+  timeLeft=Math.max(25,55-level*2);
+  gameActive=true;
+  document.getElementById('lvl').textContent=level;
+  document.getElementById('total').textContent=torchCount;
+  document.getElementById('next').textContent=1;
+  document.getElementById('fuel').textContent=100;
+  document.getElementById('time').textContent=timeLeft;
+  timerId=setInterval(()=>{
+    if(!gameActive)return;
+    timeLeft--;
+    document.getElementById('time').textContent=timeLeft;
+    if(timeLeft<=5&&timeLeft>0)SFX.tick();
+    if(timeLeft<=0)endLevel(false,'time');
+  },1000);
+}
+
+function tryMove(dx,dy){
+  if(!gameActive)return;
+  const nx=player.x+dx,ny=player.y+dy;
+  if(nx<0||ny<0||nx>=COLS||ny>=ROWS)return;
+  if(maze[ny][nx]===1)return;
+  player.x=nx;player.y=ny;
+  checkTile();
+}
+
+function checkTile(){
+  if(player.x===brazier.x&&player.y===brazier.y){
+    if(fuel<100){fuel=100;document.getElementById('fuel').textContent=100;SFX.powerup();}
+  }
+  const t=torches[nextIdx];
+  if(t&&!t.lit&&t.x===player.x&&t.y===player.y){
+    if(fuel<=0){SFX.error();return;}
+    t.lit=true;
+    nextIdx++;
+    SFX.success();
+    document.getElementById('next').textContent=Math.min(nextIdx+1,torches.length);
+    if(nextIdx>=torches.length){
+      endLevel(true);
+    }
+  }
+}
+
+function endLevel(won,reason){
+  gameActive=false;
+  clearInterval(timerId);
+  if(won){
+    SFX.win();
+    level++;
+    if(level-1>hi){hi=level-1;localStorage.setItem('torchlighting_hi',hi);document.getElementById('hi').textContent=hi;}
+    setTimeout(buildLevel,1200);
+  }else{
+    SFX.lose();
+    if(level>hi){hi=level;localStorage.setItem('torchlighting_hi',hi);document.getElementById('hi').textContent=hi;}
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  const map={ArrowUp:[0,-1],ArrowDown:[0,1],ArrowLeft:[-1,0],ArrowRight:[1,0],
+    KeyW:[0,-1],KeyS:[0,1],KeyA:[-1,0],KeyD:[1,0]};
+  if(map[e.code]){e.preventDefault();
+    if(!gameActive){buildLevel();return;}
+    tryMove(map[e.code][0],map[e.code][1]);
+  }
+  if(e.code==='Enter'&&!gameActive)buildLevel();
+});
+
+document.querySelectorAll('#pad button').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    if(!gameActive){buildLevel();return;}
+    const [dx,dy]=btn.dataset.d.split(',').map(Number);
+    tryMove(dx,dy);
+  });
+});
+
+let touchStart=null;
+c.addEventListener('touchstart',e=>{const t=e.touches[0];touchStart={x:t.clientX,y:t.clientY};},{passive:true});
+c.addEventListener('touchend',e=>{
+  if(!touchStart)return;
+  const t=e.changedTouches[0];
+  const dx=t.clientX-touchStart.x,dy=t.clientY-touchStart.y;
+  if(!gameActive){buildLevel();return;}
+  if(Math.abs(dx)>Math.abs(dy)){
+    if(Math.abs(dx)>16)tryMove(dx>0?1:-1,0);
+  }else{
+    if(Math.abs(dy)>16)tryMove(0,dy>0?1:-1);
+  }
+  touchStart=null;
+},{passive:true});
+c.addEventListener('click',()=>{if(!gameActive)buildLevel();});
+
+function draw(){
+  frame++;
+  ctx.clearRect(0,0,480,480);
+  ctx.fillStyle='#241a12';
+  ctx.fillRect(0,0,480,480);
+  for(let y=0;y<ROWS;y++){
+    for(let x=0;x<COLS;x++){
+      if(maze[y][x]===1){
+        ctx.fillStyle='#4a3a28';
+        ctx.fillRect(x*CELL,y*CELL,CELL,CELL);
+        ctx.strokeStyle='#2a2015';
+        ctx.strokeRect(x*CELL,y*CELL,CELL,CELL);
+      }
+    }
+  }
+  // brazier
+  const bx=brazier.x*CELL+CELL/2,by=brazier.y*CELL+CELL/2;
+  const flick=6+Math.sin(frame*0.3)*3;
+  ctx.fillStyle='#555';
+  ctx.fillRect(bx-8,by-4,16,16);
+  ctx.fillStyle='#ff9d3a';
+  ctx.beginPath();ctx.arc(bx,by-10,10+flick*0.3,0,7);ctx.fill();
+
+  torches.forEach(t=>{
+    const tx=t.x*CELL+CELL/2,ty=t.y*CELL+CELL/2;
+    ctx.fillStyle='#7a5a3a';
+    ctx.fillRect(tx-4,ty-4,8,20);
+    if(t.lit){
+      const fl=4+Math.sin(frame*0.4+t.x)*2;
+      ctx.fillStyle='#ffcc00';
+      ctx.beginPath();ctx.arc(tx,ty-14,7+fl*0.3,0,7);ctx.fill();
+      ctx.fillStyle='#ff6b1a';
+      ctx.beginPath();ctx.arc(tx,ty-14,4,0,7);ctx.fill();
+    }else{
+      ctx.fillStyle='#333';
+      ctx.beginPath();ctx.arc(tx,ty-14,6,0,7);ctx.fill();
+    }
+    ctx.fillStyle=t.order===nextIdx+1&&!t.lit?'#fff':'#999';
+    ctx.font='bold 13px Arial';ctx.textAlign='center';
+    ctx.fillText(t.order,tx,ty+16);
+  });
+
+  // player
+  const px=player.x*CELL+CELL/2,py=player.y*CELL+CELL/2;
+  ctx.fillStyle='#c9a35a';
+  ctx.beginPath();ctx.arc(px,py,11,0,7);ctx.fill();
+  // taper flame color depends on fuel
+  if(fuel>0){
+    ctx.fillStyle=fuel>30?'#ffd54f':'#ff6b1a';
+    ctx.beginPath();ctx.arc(px+10,py-10,5,0,7);ctx.fill();
+  }else{
+    ctx.fillStyle='#555';
+    ctx.beginPath();ctx.arc(px+10,py-10,4,0,7);ctx.fill();
+  }
+
+  if(gameActive){
+    fuel=Math.max(0,fuel-0.12);
+    document.getElementById('fuel').textContent=Math.round(fuel);
+  }else{
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,480,480);
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title2','TAP OR PRESS ENTER'),240,230);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','to continue'),240,262);
+  }
+  requestAnimationFrame(draw);
+}
+buildLevel();
+draw();
+</script></body></html>

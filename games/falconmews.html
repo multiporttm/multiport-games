@@ -1,0 +1,203 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Falcon Mews</title><meta name="description" content="Play Falcon Mews free online — After each hunting flight, swing the lure and press Space or tap at the perfect moment to call your falcon back to the glove. Then feed and care for your falcon between hunts to keep its weight and condition ideal for the next round."><link rel="canonical" href="https://games.multiportllc.com/games/falconmews"><meta property="og:title" content="Falcon Mews - Multiport Games"><meta property="og:description" content="Play Falcon Mews free online — After each hunting flight, swing the lure and press Space or tap at the perfect moment to call your falcon back to the glove. Then feed and care for your falcon between hunts to keep its weight and condition ideal for the next round."><meta property="og:url" content="https://games.multiportllc.com/games/falconmews"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Falcon Mews","description":"Play Falcon Mews free online instantly. After each hunting flight, swing the lure and press Space or tap at the perfect moment to call your falcon back to the glove. Then feed and care for your falcon between hunts to keep its weight and condition ideal for the next round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/falconmews","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#8fae6e;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:center;flex-wrap:wrap;gap:16px;color:#fff;font-size:1rem;font-weight:800;padding:8px}
+#hud span{color:#ffd54f}
+#feedPanel{display:none;text-align:center;margin:10px auto;max-width:520px}
+#feedPanel.show{display:block}
+#feedPanel button{padding:10px 16px;margin:4px;border-radius:10px;border:none;background:#7ec850;color:#12210c;font-weight:800;cursor:pointer;font-size:.95rem}
+#feedPanel button:hover{filter:brightness(1.1)}
+#feedStatus{color:#ffe9b0;min-height:1.4em;margin-top:6px;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Falcon Mews</div>
+  <div class="game-frame">
+    <div id="hud">Round: <span id="round">1</span>/<span id="totalRounds">8</span> &nbsp; Score: <span id="score">0</span> &nbsp; Hi: <span id="hi">0</span> &nbsp; Condition: <span id="condition">100</span>% &nbsp; Weight: <span id="weight">Ideal</span></div>
+    <canvas id="c" width="800" height="320"></canvas>
+    <div id="feedPanel">
+      <div id="feedStatus">Choose how to feed your falcon before the next flight.</div>
+      <button id="lightBtn">Light Snack (tirings)</button>
+      <button id="fullBtn">Full Meal</button>
+      <button id="skipBtn">Skip Feeding</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">The lure swings back and forth over the glove — press <b>Space</b> or <b>tap</b> the canvas the instant it passes over the <b>gold zone</b> to call your falcon in cleanly. Between hunts, choose how much to feed your falcon: keep its weight in the ideal range and condition high, since an overfed or exhausted falcon won't answer the lure. Survive all rounds with good condition to win!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320;
+const HS='falconmews_hi';
+let hi=parseInt(localStorage.getItem(HS)||'0',10);
+document.getElementById('hi').textContent=hi;
+
+const TOTAL_ROUNDS=8;
+let round=1,score=0,condition=100,weight=50; // weight 0-100, ideal 40-60
+let phase='lure'; // 'lure' | 'result' | 'feed' | 'gameover'
+let luretime=0,lureSpeed=0.0028,lureDone=false,lastResultText='',gameWon=false;
+let flashTimer=0;
+
+const ZONE_HALF=0.09; // fraction of swing half-width considered "gold"
+
+function lureX(t){
+  // oscillate between left (100) and right (700)
+  const cx=W/2, amp=300;
+  return cx+Math.sin(t)*amp;
+}
+
+function startRound(){
+  phase='lure';
+  luretime=-Math.PI/2; // start at left extreme moving right
+  lureDone=false;
+  lastResultText='';
+  document.getElementById('feedPanel').classList.remove('show');
+}
+
+function attemptRecall(){
+  if(phase!=='lure'||lureDone)return;
+  lureDone=true;
+  const cx=W/2;
+  const x=lureX(luretime);
+  const distFrac=Math.abs(x-cx)/300; // 0 = center, 1 = extreme
+  let quality=Math.max(0,1-distFrac/ZONE_HALF/3); // rough scaling
+  quality=Math.max(0,Math.min(1,1-distFrac*2.2));
+  // Condition and weight modulate whether falcon even responds
+  const responsive = condition>25 && weight>=15 && weight<=90;
+  if(!responsive){
+    quality=0;
+  }
+  const points=Math.round(quality*100);
+  score+=points;
+  if(quality>0.75){ SFX.success(); lastResultText=I18N.t('recall_perfect','Perfect recall! The falcon glides straight to the glove.'); condition=Math.min(100,condition+2);}
+  else if(quality>0.4){ SFX.catch(); lastResultText=I18N.t('recall_ok','Decent recall — the falcon comes back a little ragged.'); }
+  else if(quality>0){ SFX.hit(); lastResultText=I18N.t('recall_poor','Poor timing — the falcon barely notices the lure.'); condition=Math.max(0,condition-8);}
+  else { SFX.fail(); lastResultText = responsive? I18N.t('recall_miss','Missed the swing entirely! The falcon circles away.') : I18N.t('recall_unresponsive','The falcon is too tired or too full to respond!'); condition=Math.max(0,condition-15); }
+
+  // natural weight drift from exertion
+  weight=Math.max(0,weight-6);
+  phase='result';
+  flashTimer=40;
+  setTimeout(()=>{
+    if(condition<=0){ endGame(false); return; }
+    if(round>=TOTAL_ROUNDS){ endGame(true); return; }
+    phase='feed';
+    document.getElementById('feedPanel').classList.add('show');
+    document.getElementById('feedStatus').textContent=I18N.t('feed_prompt','Choose how to feed your falcon before the next flight.');
+  },1200);
+}
+
+function feed(kind){
+  if(phase!=='feed')return;
+  if(kind==='light'){ weight=Math.min(100,weight+12); condition=Math.min(100,condition+6); SFX.click(); }
+  else if(kind==='full'){ weight=Math.min(100,weight+30); condition=Math.min(100,condition+3); SFX.click(); }
+  else { condition=Math.max(0,condition-4); SFX.click(); }
+  document.getElementById('feedPanel').classList.remove('show');
+  round++;
+  startRound();
+}
+
+document.getElementById('lightBtn').onclick=()=>feed('light');
+document.getElementById('fullBtn').onclick=()=>feed('full');
+document.getElementById('skipBtn').onclick=()=>feed('skip');
+
+function endGame(win){
+  phase='gameover';gameWon=win;
+  document.getElementById('feedPanel').classList.remove('show');
+  if(win){score+=150;SFX.win();} else {SFX.lose();}
+  if(score>hi){hi=score;localStorage.setItem(HS,String(hi));}
+}
+
+function reset(){
+  round=1;score=0;condition=100;weight=50;gameWon=false;
+  startRound();
+}
+
+function keyOrTap(){
+  if(phase==='lure'){ attemptRecall(); }
+  else if(phase==='gameover'){ reset(); }
+}
+
+document.addEventListener('keydown',e=>{ if(e.code==='Space'){e.preventDefault();keyOrTap();} });
+c.addEventListener('click',keyOrTap);
+c.addEventListener('touchstart',e=>{e.preventDefault();keyOrTap();},{passive:false});
+
+function weightLabel(){
+  if(weight<15)return I18N.t('weight_low','Too Light');
+  if(weight>90)return I18N.t('weight_high','Too Heavy');
+  if(weight>=40&&weight<=60)return I18N.t('weight_ideal','Ideal');
+  return weight<40? I18N.t('weight_lean','Lean') : I18N.t('weight_heavy','Heavy');
+}
+
+function drawGlove(){
+  ctx.fillStyle='#7a5230';
+  ctx.fillRect(W/2-30,H-70,60,40);
+  ctx.fillStyle='#c9a227';
+  ctx.fillRect(W/2-34,H-96,68,10);
+}
+
+function drawLure(){
+  if(phase!=='lure')return;
+  const x=lureX(luretime);
+  const y=H-140;
+  ctx.strokeStyle='#3a2b1a';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(W/2,H-96);ctx.lineTo(x,y);ctx.stroke();
+  ctx.fillStyle='#e94560';
+  ctx.beginPath();ctx.arc(x,y,14,0,Math.PI*2);ctx.fill();
+}
+
+function drawZone(){
+  const cx=W/2;
+  ctx.fillStyle='rgba(255,213,79,0.35)';
+  ctx.fillRect(cx-300*ZONE_HALF,H-160,600*ZONE_HALF,40);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#bcdff5');sky.addColorStop(1,'#8fae6e');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#6b8f4e';ctx.fillRect(0,H-40,W,40);
+
+  drawZone();
+  drawGlove();
+  drawLure();
+
+  if(phase==='lure'){
+    luretime+=lureSpeed*(16.67);
+    ctx.fillStyle='#12210c';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('lure_hint','Tap / Space when the lure crosses the gold zone!'),W/2,40);
+  }
+
+  if(phase==='result'||phase==='feed'){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,H/2-40,W,80);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(lastResultText,W/2,H/2+8);
+  }
+
+  if(phase==='gameover'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(gameWon?I18N.t('mews_win_title','ALL HUNTS COMPLETE!'):I18N.t('mews_lose_title','THE FALCON WON\'T RETURN'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('score_label2','Score: {s}').replace('{s}',score),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint3','Tap or press Space to play again'),W/2,H/2+44);
+  }
+
+  document.getElementById('round').textContent=Math.min(round,TOTAL_ROUNDS);
+  document.getElementById('totalRounds').textContent=TOTAL_ROUNDS;
+  document.getElementById('score').textContent=score;
+  document.getElementById('condition').textContent=Math.round(condition);
+  document.getElementById('weight').textContent=weightLabel();
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

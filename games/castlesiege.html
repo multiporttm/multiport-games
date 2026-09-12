@@ -1,0 +1,200 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Castle Siege - Multiport Games</title><meta name="description" content="Play Castle Siege free online — Press 1/2/3 (or tap the buttons) to pick Oil, Rocks, or Arrows, then click the matching attacker before it reaches the wall."><link rel="canonical" href="https://games.multiportllc.com/games/castlesiege"><meta property="og:title" content="Castle Siege - Multiport Games"><meta property="og:description" content="Play Castle Siege free online — Press 1/2/3 (or tap the buttons) to pick Oil, Rocks, or Arrows, then click the matching attacker before it reaches the wall."><meta property="og:url" content="https://games.multiportllc.com/games/castlesiege"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Castle Siege","description":"Play Castle Siege free online instantly. Defend the castle wall by picking the right weapon — boiling Oil for ladder climbers, Rocks for the battering ram, Arrows for catapult crews — and striking each attacker before it breaches the wall. Waves escalate as you survive. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/castlesiege","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a2a3a;display:block;border-radius:8px;touch-action:none;max-width:100%;height:auto}
+#hud{color:#e8d9b0;font-size:1.05rem;font-weight:700;text-align:center;padding:6px 0;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#weapons{display:flex;justify-content:center;gap:10px;margin:10px 0;flex-wrap:wrap}
+.wbtn{padding:9px 16px;border-radius:10px;border:2px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.08);color:#fff;font-weight:800;font-size:.95rem;cursor:pointer;font-family:inherit}
+.wbtn.active{background:#e94560;border-color:#ff8fa3;box-shadow:0 0 14px rgba(233,69,96,.5)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Castle Siege</div>
+  <div class="game-frame">
+    <div id="hud"><span>Wave <b id="wave">1</b></span><span>Score: <b id="score">0</b></span><span>Wall: <b id="hp">5</b>/5</span><span>Hi: <b id="hi">0</b></span></div>
+    <canvas id="c" width="800" height="320"></canvas>
+    <div id="weapons">
+      <button class="wbtn active" id="w1" data-w="oil">🛢️ Oil (1)</button>
+      <button class="wbtn" id="w2" data-w="rock">🪨 Rocks (2)</button>
+      <button class="wbtn" id="w3" data-w="arrow">🏹 Arrows (3)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Pick the right weapon — <b>1</b>/<b>Oil</b> for ladder climbers, <b>2</b>/<b>Rocks</b> for the battering ram, <b>3</b>/<b>Arrows</b> for catapult crews — then click or tap the matching attacker before it reaches the wall. Wrong weapon does nothing!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320,wallX=90;
+const KEY='mp_hi_castlesiege';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let weapon='oil';
+let score=0,wave=1,hp=5,enemies=[],spawnTimer=0,waveTimer=0,gameOver=false,started=false,shakeT=0;
+
+const TYPES={
+  oil:{kind:'ladder',color:'#8fae5d',label:'Climber'},
+  rock:{kind:'ram',color:'#8a6a4a',label:'Ram'},
+  arrow:{kind:'catapult',color:'#b0563e',label:'Catapult'}
+};
+const WEAPON_FOR_KIND={ladder:'oil',ram:'rock',catapult:'arrow'};
+
+function setWeapon(w){weapon=w;document.querySelectorAll('.wbtn').forEach(b=>b.classList.toggle('active',b.dataset.w===w));SFX.select();}
+document.getElementById('w1').onclick=()=>setWeapon('oil');
+document.getElementById('w2').onclick=()=>setWeapon('rock');
+document.getElementById('w3').onclick=()=>setWeapon('arrow');
+document.addEventListener('keydown',e=>{
+  if(e.key==='1')setWeapon('oil');
+  else if(e.key==='2')setWeapon('rock');
+  else if(e.key==='3')setWeapon('arrow');
+  else if(e.code==='Space'&&(!started||gameOver)){e.preventDefault();startOrRestart();}
+});
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver){reset();started=true;}
+}
+
+function reset(){score=0;wave=1;hp=5;enemies=[];spawnTimer=0;waveTimer=0;gameOver=false;}
+
+function spawnEnemy(){
+  const kinds=['ladder','ram','catapult'];
+  let kind=kinds[Math.floor(Math.random()*kinds.length)];
+  if(wave<2&&kind==='catapult')kind='ladder';
+  const lane=40+Math.random()*(H-160);
+  const speed=(kind==='ram'?0.55:kind==='catapult'?0.75:0.9)*(0.9+wave*0.12);
+  enemies.push({kind,x:W+20,y:lane,speed,hp:kind==='ram'?2:1,dead:false,hitFlash:0});
+}
+
+function rectHit(mx,my,e){
+  return mx>=e.x-26&&mx<=e.x+26&&my>=e.y-22&&my<=e.y+22;
+}
+
+function attackAt(mx,my){
+  if(!started||gameOver){startOrRestart();return;}
+  for(let i=enemies.length-1;i>=0;i--){
+    const e=enemies[i];
+    if(e.dead)continue;
+    if(rectHit(mx,my,e)){
+      const needed=WEAPON_FOR_KIND[e.kind];
+      if(needed===weapon){
+        e.hp--;
+        e.hitFlash=8;
+        if(e.hp<=0){
+          e.dead=true;
+          score+=10+wave*2;
+          if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+          SFX.success();
+        }else{
+          SFX.hit();
+        }
+      }else{
+        SFX.error();
+      }
+      return;
+    }
+  }
+}
+
+function canvasPos(evt){
+  const r=c.getBoundingClientRect();
+  const cx=(evt.touches?evt.touches[0].clientX:evt.clientX)-r.left;
+  const cy=(evt.touches?evt.touches[0].clientY:evt.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+c.addEventListener('click',e=>{const p=canvasPos(e);attackAt(p.x,p.y);});
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=canvasPos(e);attackAt(p.x,p.y);},{passive:false});
+
+function drawWall(){
+  ctx.fillStyle='#4a4a58';
+  ctx.fillRect(0,0,wallX,H);
+  ctx.fillStyle='#3a3a48';
+  for(let y=10;y<H;y+=30)ctx.fillRect(wallX-14,y,14,18);
+  ctx.fillStyle=hp>2?'#7ec850':'#e94560';
+  ctx.fillRect(0,H-14,wallX*(hp/5),14);
+}
+
+function drawEnemy(e){
+  ctx.save();
+  const t=TYPES[e.kind];
+  ctx.fillStyle=e.hitFlash>0?'#fff':t===undefined?'#fff':({ladder:'#8fae5d',ram:'#8a6a4a',catapult:'#b0563e'})[e.kind];
+  if(e.kind==='ladder'){
+    ctx.fillRect(e.x-6,e.y-24,12,48);
+    for(let i=-20;i<=20;i+=10)ctx.fillRect(e.x-10,e.y+i,20,4);
+  }else if(e.kind==='ram'){
+    ctx.fillRect(e.x-26,e.y-14,52,28);
+    ctx.fillStyle='#555';ctx.fillRect(e.x-30,e.y-6,10,12);
+  }else{
+    ctx.beginPath();ctx.moveTo(e.x-22,e.y+16);ctx.lineTo(e.x+22,e.y+16);ctx.lineTo(e.x,e.y-20);ctx.closePath();ctx.fill();
+  }
+  ctx.restore();
+}
+
+function update(dt){
+  if(!started||gameOver)return;
+  waveTimer+=dt;
+  const waveLen=600;
+  if(waveTimer>=waveLen){waveTimer=0;wave++;SFX.levelup();}
+  spawnTimer+=dt;
+  const interval=Math.max(35,90-wave*6);
+  if(spawnTimer>=interval){spawnTimer=0;spawnEnemy();}
+
+  enemies.forEach(e=>{
+    if(e.dead)return;
+    e.x-=e.speed*dt;
+    if(e.hitFlash>0)e.hitFlash-=dt;
+    if(e.x<=wallX+10){
+      e.dead=true;
+      hp--;
+      shakeT=10;
+      SFX.hurt();
+      if(hp<=0){gameOver=true;SFX.lose();}
+    }
+  });
+  enemies=enemies.filter(e=>!e.dead);
+  if(shakeT>0)shakeT-=dt;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#25384f');sky.addColorStop(1,'#3d5670');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.save();
+  if(shakeT>0){ctx.translate((Math.random()-0.5)*6,(Math.random()-0.5)*6);}
+  drawWall();
+  enemies.forEach(drawEnemy);
+  ctx.restore();
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='bold 28px Arial';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Space to start the defense'),W/2,H/2);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='bold 36px Arial';
+    ctx.fillText(I18N.t('game_over_title','THE WALL HAS FALLEN'),W/2,H/2-16);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click / Tap / Space to try again'),W/2,H/2+22);
+  }
+  document.getElementById('score').textContent=Math.floor(score);
+  document.getElementById('wave').textContent=wave;
+  document.getElementById('hp').textContent=Math.max(0,hp);
+  document.getElementById('hi').textContent=Math.floor(hi);
+}
+
+let last=null;
+function loop(ts){
+  if(last===null)last=ts;
+  const dt=Math.min((ts-last)/16.6667,3);
+  last=ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

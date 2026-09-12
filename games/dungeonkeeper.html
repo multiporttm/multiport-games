@@ -1,0 +1,221 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Dungeon Keeper - Multiport Games</title><meta name="description" content="Play Dungeon Keeper free online — Drag or tap prisoners into the right cells, matching cell size and keeping rival factions apart, while your guards patrol to stop escapes."><link rel="canonical" href="https://games.multiportllc.com/games/dungeonkeeper"><meta property="og:title" content="Dungeon Keeper - Multiport Games"><meta property="og:description" content="Play Dungeon Keeper free online — Drag or tap prisoners into the right cells, matching cell size and keeping rival factions apart, while your guards patrol to stop escapes."><meta property="og:url" content="https://games.multiportllc.com/games/dungeonkeeper"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Dungeon Keeper","description":"Play Dungeon Keeper free online instantly. Manage a castle dungeon's cell assignments — place captured prisoners into appropriately sized cells, keep rival factions separated, and spend limited guard patrol coverage wisely to prevent escape attempts before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/dungeonkeeper","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#16213e;border-radius:14px;padding:16px;text-align:center}
+#hud{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;color:#fff;font-weight:800;margin-bottom:10px;font-size:1rem}
+#hud span{color:#ffd54f}
+#layout{display:flex;gap:18px;justify-content:center;flex-wrap:wrap;align-items:flex-start}
+#queue{display:flex;flex-direction:column;gap:8px;min-width:120px}
+#queue h4{color:#ffd54f;margin:0 0 4px}
+.prisoner{width:100px;padding:8px 6px;border-radius:8px;font-weight:800;font-size:.85rem;cursor:grab;color:#fff;user-select:none;border:2px solid rgba(255,255,255,.3)}
+.prisoner.faction-red{background:#a53838}
+.prisoner.faction-blue{background:#2f5fa3}
+.prisoner.faction-green{background:#2f7a3f}
+.prisoner.selected{outline:3px solid #ffd54f}
+#cells{display:grid;grid-template-columns:repeat(3,120px);gap:10px}
+.cell{background:#3d2b1e;border:3px solid #5a4428;border-radius:10px;min-height:90px;padding:6px;display:flex;flex-direction:column;gap:4px;align-items:center;justify-content:flex-start;position:relative}
+.cell.overcap{border-color:#e94560}
+.cell .cap{position:absolute;top:2px;right:6px;font-size:.7rem;color:#ffd54f}
+.cell .occupant{width:90%;font-size:.75rem;padding:4px;border-radius:6px;color:#fff;font-weight:700}
+.guard-badge{position:absolute;bottom:2px;left:6px;font-size:.9rem}
+#msg{color:#fff;font-weight:800;min-height:1.6em;margin:12px 0}
+#controls button{padding:9px 20px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:0 5px}
+@media(max-width:560px){#cells{grid-template-columns:repeat(2,110px)}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Dungeon Keeper</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud">
+        <div>Level: <span id="lvl">1</span></div>
+        <div>Guard points: <span id="guards">0</span></div>
+        <div>Time: <span id="time">0</span>s</div>
+        <div>Hi Level: <span id="hi">1</span></div>
+      </div>
+      <div id="layout">
+        <div id="queue"><h4>Prisoners</h4></div>
+        <div id="cells"></div>
+      </div>
+      <div id="msg">Tap a prisoner, then tap a cell to assign them.</div>
+      <div id="controls"><button id="lockBtn">Lock In &amp; Check</button> <button id="restartBtn">Restart</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Tap (or drag) a prisoner from the queue onto a cell to assign them. Each cell has a capacity — don't overfill it — and rival factions (red/blue/green) must never share a cell. Spend your limited <b>guard points</b> on cells holding risky prisoners to boost patrol coverage and stop escapes. When every prisoner is placed, click <b>Lock In</b> before time runs out to see if your dungeon holds!
+  </div>
+</div>
+<script>
+const FACTIONS=['red','blue','green'];
+let level=1,hi=parseInt(localStorage.getItem('dungeonkeeper_hi')||'1',10);
+document.getElementById('hi').textContent=hi;
+let cells,prisoners,selectedPid,guardPoints,timeLeft,gameActive,timerId;
+
+function buildLevel(){
+  clearInterval(timerId);
+  const cellCount=Math.min(6,3+Math.floor(level/2));
+  cells=[];
+  for(let i=0;i<cellCount;i++){
+    cells.push({id:i,capacity:2+Math.floor(Math.random()*2),occupants:[],guarded:false});
+  }
+  const prisonerCount=Math.min(cellCount*2,4+level);
+  prisoners=[];
+  for(let i=0;i<prisonerCount;i++){
+    const faction=FACTIONS[Math.floor(Math.random()*FACTIONS.length)];
+    const risky=Math.random()<0.35+level*0.02;
+    prisoners.push({id:i,faction,risky,placedCell:null});
+  }
+  selectedPid=null;
+  guardPoints=Math.max(1,Math.floor(prisonerCount*0.4));
+  timeLeft=Math.max(40,90-level*3);
+  gameActive=true;
+  document.getElementById('lvl').textContent=level;
+  document.getElementById('guards').textContent=guardPoints;
+  document.getElementById('time').textContent=timeLeft;
+  setMsg(I18N.t('level_start','Assign every prisoner, then Lock In before time runs out.'));
+  render();
+  timerId=setInterval(()=>{
+    if(!gameActive)return;
+    timeLeft--;
+    document.getElementById('time').textContent=timeLeft;
+    if(timeLeft<=5&&timeLeft>0)SFX.tick();
+    if(timeLeft<=0)finish(false,I18N.t('time_up','Time ran out before the dungeon was locked down!'));
+  },1000);
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function render(){
+  const queueEl=document.getElementById('queue');
+  queueEl.querySelectorAll('.prisoner').forEach(e=>e.remove());
+  prisoners.filter(p=>p.placedCell===null).forEach(p=>{
+    const el=document.createElement('div');
+    el.className='prisoner faction-'+p.faction+(p.id===selectedPid?' selected':'');
+    el.textContent=(p.risky?'⚠ ':'')+p.faction.toUpperCase()+' #'+p.id;
+    el.draggable=true;
+    el.onclick=()=>{selectedPid=p.id;SFX.select();render();};
+    el.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',p.id);});
+    queueEl.appendChild(el);
+  });
+
+  const cellsEl=document.getElementById('cells');
+  cellsEl.innerHTML='';
+  cells.forEach(cell=>{
+    const el=document.createElement('div');
+    el.className='cell'+(cell.occupants.length>cell.capacity?' overcap':'');
+    const cap=document.createElement('div');
+    cap.className='cap';
+    cap.textContent=cell.occupants.length+'/'+cell.capacity;
+    el.appendChild(cap);
+    cell.occupants.forEach(pid=>{
+      const p=prisoners.find(x=>x.id===pid);
+      const oc=document.createElement('div');
+      oc.className='occupant faction-'+p.faction;
+      oc.style.background=p.faction==='red'?'#a53838':p.faction==='blue'?'#2f5fa3':'#2f7a3f';
+      oc.textContent=(p.risky?'⚠ ':'')+p.faction.toUpperCase()+' #'+p.id;
+      oc.onclick=(e)=>{e.stopPropagation();unassign(p.id);};
+      el.appendChild(oc);
+    });
+    const guardBadge=document.createElement('div');
+    guardBadge.className='guard-badge';
+    guardBadge.textContent=cell.guarded?'🛡️':'';
+    el.appendChild(guardBadge);
+    el.onclick=()=>assignToCell(cell.id);
+    el.addEventListener('dragover',e=>e.preventDefault());
+    el.addEventListener('drop',e=>{
+      e.preventDefault();
+      const pid=parseInt(e.dataTransfer.getData('text/plain'),10);
+      selectedPid=pid;
+      assignToCell(cell.id);
+    });
+    el.addEventListener('contextmenu',e=>{e.preventDefault();toggleGuard(cell.id);});
+    el.addEventListener('dblclick',()=>toggleGuard(cell.id));
+    cellsEl.appendChild(el);
+  });
+}
+
+function toggleGuard(cellId){
+  if(!gameActive)return;
+  const cell=cells.find(c=>c.id===cellId);
+  if(cell.guarded){cell.guarded=false;guardPoints++;SFX.click();}
+  else{
+    if(guardPoints<=0){setMsg(I18N.t('no_guards','No guard points left!'));SFX.error();return;}
+    cell.guarded=true;guardPoints--;SFX.powerup();
+  }
+  document.getElementById('guards').textContent=guardPoints;
+  render();
+}
+
+function unassign(pid){
+  if(!gameActive)return;
+  const p=prisoners.find(x=>x.id===pid);
+  const cell=cells.find(c=>c.id===p.placedCell);
+  if(cell)cell.occupants=cell.occupants.filter(id=>id!==pid);
+  p.placedCell=null;
+  SFX.click();
+  render();
+}
+
+function assignToCell(cellId){
+  if(!gameActive||selectedPid===null)return;
+  const p=prisoners.find(x=>x.id===selectedPid);
+  if(!p||p.placedCell!==null)return;
+  const cell=cells.find(c=>c.id===cellId);
+  cell.occupants.push(p.id);
+  p.placedCell=cellId;
+  selectedPid=null;
+  SFX.click();
+  render();
+}
+
+document.getElementById('lockBtn').addEventListener('click',()=>{
+  if(!gameActive)return;
+  if(prisoners.some(p=>p.placedCell===null)){
+    setMsg(I18N.t('unplaced','Every prisoner must be assigned to a cell first!'));
+    SFX.error();
+    return;
+  }
+  lockIn();
+});
+document.getElementById('restartBtn').addEventListener('click',()=>{SFX.click();buildLevel();});
+
+function lockIn(){
+  let violations=0;
+  cells.forEach(cell=>{
+    if(cell.occupants.length>cell.capacity)violations++;
+    const factionsHere=new Set(cell.occupants.map(pid=>prisoners.find(p=>p.id===pid).faction));
+    if(factionsHere.size>1)violations++;
+    const riskyHere=cell.occupants.some(pid=>prisoners.find(p=>p.id===pid).risky);
+    if(riskyHere&&!cell.guarded)violations++;
+  });
+  if(violations===0){
+    finish(true,I18N.t('dungeon_secure','The dungeon is secure! No escapes tonight.'));
+  }else{
+    finish(false,I18N.t('escape',`${violations} problem cell(s) led to an escape attempt!`));
+  }
+}
+
+function finish(won,message){
+  gameActive=false;
+  clearInterval(timerId);
+  if(won){
+    SFX.win();
+    level++;
+    if(level-1>hi){hi=level-1;localStorage.setItem('dungeonkeeper_hi',hi);document.getElementById('hi').textContent=hi;}
+    setMsg(message+' '+I18N.t('advancing','Advancing to the next level...'));
+    setTimeout(buildLevel,1500);
+  }else{
+    SFX.lose();
+    if(level>hi){hi=level;localStorage.setItem('dungeonkeeper_hi',hi);document.getElementById('hi').textContent=hi;}
+    setMsg(message+' '+I18N.t('try_again','Click Restart to try again.'));
+  }
+}
+
+buildLevel();
+</script></body></html>

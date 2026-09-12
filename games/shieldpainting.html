@@ -1,0 +1,307 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Shield Painting</title><meta name="description" content="Play Shield Painting free online — Pick the matching paint color and heraldic shape, then click the quadrant on the shield to match the reference pattern before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/shieldpainting"><meta property="og:title" content="Shield Painting - Multiport Games"><meta property="og:description" content="Play Shield Painting free online — Pick the matching paint color and heraldic shape, then click the quadrant on the shield to match the reference pattern before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/shieldpainting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Shield Painting","description":"Play Shield Painting free online instantly. Match a reference heraldic pattern by selecting the right paint color and shape, then stamping each quadrant of a knight's shield correctly before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/shieldpainting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{display:flex;flex-wrap:wrap;gap:20px;justify-content:center;align-items:flex-start;padding:10px}
+#refCard{background:#16213e;border-radius:12px;padding:12px;text-align:center}
+#refCard canvas{background:#0e1730;border-radius:8px}
+#refCard div{color:#ffd54f;font-weight:800;margin-top:6px;font-size:.9rem}
+#c{background:#0e1730;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffd54f;font-size:1.05rem;font-weight:700;text-align:center;padding:8px}
+#palettes{display:flex;flex-direction:column;gap:10px;align-items:center}
+.palette-row{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:280px}
+.swatch{width:34px;height:34px;border-radius:6px;border:3px solid transparent;cursor:pointer}
+.swatch.selected{border-color:#fff}
+.shapebtn{width:44px;height:44px;border-radius:6px;background:#1c2b4a;border:3px solid transparent;cursor:pointer;color:#fff;font-size:1.3rem;display:flex;align-items:center;justify-content:center}
+.shapebtn.selected{border-color:#ffd54f}
+.palette-label{color:#9fb0d0;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Shield Painting</div>
+  <div class="game-frame">
+    <div id="hud">Score: 0 | Time: 60 | Hi: 0</div>
+    <div id="wrap">
+      <div id="refCard">
+        <div class="palette-label" data-i18n="reference_label">Reference</div>
+        <canvas id="ref" width="140" height="160"></canvas>
+      </div>
+      <canvas id="c" width="320" height="360"></canvas>
+      <div id="palettes">
+        <div class="palette-label" data-i18n="color_label">Color (keys 1-6)</div>
+        <div class="palette-row" id="colorRow"></div>
+        <div class="palette-label" data-i18n="shape_label">Shape (keys Q W E R)</div>
+        <div class="palette-row" id="shapeRow"></div>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Match the <b>reference shield</b>: pick the correct <b>paint color</b> and <b>heraldic shape</b> from the palettes (keys <b>1-6</b> for color, <b>Q W E R</b> for shape), then click or tap the matching quadrant — keys <b>Z X C V</b> also work for top-left, top-right, bottom-left, bottom-right. Paint all 4 quadrants correctly before time runs out!</div>
+</div>
+<script>
+const ref=document.getElementById('ref'),rctx=ref.getContext('2d');
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const hud=document.getElementById('hud');
+const HI_KEY='shieldpainting_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+
+const COLORS=['#e94560','#3a7bd5','#ffd54f','#2ecc71','#1a1a2e','#f5f5f5'];
+const SHAPES=['star','cross','diamond','chevron'];
+const SHAPE_GLYPH={star:'★',cross:'✚',diamond:'◆',chevron:'▲'};
+
+let selColor=null,selShape=null;
+let score=0,timeLeft=60,lives=3,gameOver=false,started=false;
+let quadrants=[]; // {color,shape}
+let painted=[]; // {color,shape} or null
+let lastTime=null;
+let flashTimer=0,flashText='',flashColor='#fff';
+
+function buildColorRow(){
+  const row=document.getElementById('colorRow');
+  row.innerHTML='';
+  COLORS.forEach((col,i)=>{
+    const b=document.createElement('div');
+    b.className='swatch';b.style.background=col;
+    b.onclick=()=>{selColor=i;render();};
+    row.appendChild(b);
+  });
+}
+function buildShapeRow(){
+  const row=document.getElementById('shapeRow');
+  row.innerHTML='';
+  SHAPES.forEach((sh,i)=>{
+    const b=document.createElement('div');
+    b.className='shapebtn';b.textContent=SHAPE_GLYPH[sh];
+    b.onclick=()=>{selShape=i;render();};
+    row.appendChild(b);
+  });
+}
+buildColorRow();buildShapeRow();
+
+function randQuadrants(){
+  const q=[];
+  for(let i=0;i<4;i++)q.push({color:Math.floor(Math.random()*COLORS.length),shape:Math.floor(Math.random()*SHAPES.length)});
+  return q;
+}
+
+function newShield(){
+  quadrants=randQuadrants();
+  painted=[null,null,null,null];
+}
+
+function reset(){
+  score=0;timeLeft=60;lives=3;gameOver=false;started=false;
+  selColor=null;selShape=null;
+  newShield();
+  lastTime=null;
+}
+reset();
+
+function drawShieldShape(g,cx,cy,w,h){
+  g.beginPath();
+  g.moveTo(cx-w/2,cy-h/2);
+  g.lineTo(cx+w/2,cy-h/2);
+  g.lineTo(cx+w/2,cy+h*0.15);
+  g.quadraticCurveTo(cx+w/2,cy+h*0.55,cx,cy+h/2);
+  g.quadraticCurveTo(cx-w/2,cy+h*0.55,cx-w/2,cy+h*0.15);
+  g.closePath();
+}
+
+function drawShapeGlyph(g,shape,x,y,size,color){
+  g.fillStyle=color;g.strokeStyle='rgba(0,0,0,.35)';g.lineWidth=1.5;
+  g.save();g.translate(x,y);
+  if(shape==='star'){
+    g.beginPath();
+    for(let i=0;i<10;i++){
+      const r=i%2===0?size:size*0.45;
+      const a=Math.PI/5*i-Math.PI/2;
+      g.lineTo(Math.cos(a)*r,Math.sin(a)*r);
+    }
+    g.closePath();g.fill();g.stroke();
+  } else if(shape==='cross'){
+    const t=size*0.4;
+    g.fillRect(-t/2,-size,t,size*2);
+    g.fillRect(-size,-t/2,size*2,t);
+    g.strokeRect(-t/2,-size,t,size*2);
+  } else if(shape==='diamond'){
+    g.beginPath();
+    g.moveTo(0,-size);g.lineTo(size,0);g.lineTo(0,size);g.lineTo(-size,0);g.closePath();
+    g.fill();g.stroke();
+  } else if(shape==='chevron'){
+    g.beginPath();
+    g.moveTo(-size,size*0.6);g.lineTo(0,-size*0.7);g.lineTo(size,size*0.6);
+    g.lineTo(size*0.5,size*0.6);g.lineTo(0,-size*0.1);g.lineTo(-size*0.5,size*0.6);
+    g.closePath();g.fill();g.stroke();
+  }
+  g.restore();
+}
+
+function paintQuadrant(idx){
+  if(gameOver||!started)return;
+  if(selColor===null||selShape===null){
+    flashText=I18N.t('pick_both_msg','Pick a color AND a shape first!');flashColor='#ffd54f';flashTimer=45;
+    SFX.error();return;
+  }
+  if(painted[idx])return;
+  const target=quadrants[idx];
+  if(target.color===selColor&&target.shape===selShape){
+    painted[idx]={color:selColor,shape:selShape};
+    score+=25;
+    flashText=I18N.t('match_msg','Match!');flashColor='#7ec850';flashTimer=35;
+    SFX.success();
+    if(painted.every(p=>p))completeShield();
+  } else {
+    timeLeft=Math.max(0,timeLeft-5);
+    flashText=I18N.t('wrong_msg','Wrong! -5s');flashColor='#e94560';flashTimer=40;
+    SFX.error();
+  }
+}
+
+function completeShield(){
+  score+=50;
+  timeLeft=Math.min(90,timeLeft+8);
+  SFX.levelup();
+  newShield();
+}
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  SFX.lose();
+}
+
+// input
+document.addEventListener('keydown',e=>{
+  if(!started&&!gameOver&&(e.code==='Space'||e.code==='Enter')){started=true;return;}
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){reset();started=true;return;}
+  const num=parseInt(e.key,10);
+  if(!isNaN(num)&&num>=1&&num<=6){selColor=num-1;render();return;}
+  const shapeKeys={'q':0,'w':1,'e':2,'r':3};
+  if(shapeKeys[e.key.toLowerCase()]!==undefined){selShape=shapeKeys[e.key.toLowerCase()];render();return;}
+  const quadKeys={'z':0,'x':1,'c':2,'v':3};
+  if(quadKeys[e.key.toLowerCase()]!==undefined){paintQuadrant(quadKeys[e.key.toLowerCase()]);}
+});
+
+function quadFromPoint(px,py){
+  const cx=160,cy=180;
+  if(px<cx&&py<cy)return 0;
+  if(px>=cx&&py<cy)return 1;
+  if(px<cx&&py>=cy)return 2;
+  return 3;
+}
+function handlePointer(clientX,clientY){
+  if(!started){started=true;return;}
+  if(gameOver){reset();started=true;return;}
+  const rect=c.getBoundingClientRect();
+  const px=(clientX-rect.left)*(c.width/rect.width);
+  const py=(clientY-rect.top)*(c.height/rect.height);
+  paintQuadrant(quadFromPoint(px,py));
+}
+c.addEventListener('click',e=>handlePointer(e.clientX,e.clientY));
+c.addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[0];handlePointer(t.clientX,t.clientY);},{passive:false});
+
+function drawReference(){
+  rctx.clearRect(0,0,140,160);
+  rctx.save();
+  drawShieldShape(rctx,70,80,110,130);
+  rctx.clip();
+  const cx=70,cy=80;
+  for(let i=0;i<4;i++){
+    const q=quadrants[i];
+    const ox=i%2===0?cx-55:cx;
+    const oy=i<2?cy-65:cy;
+    rctx.fillStyle=COLORS[q.color];
+    rctx.fillRect(ox,oy,55,65);
+  }
+  rctx.restore();
+  rctx.strokeStyle='#fff';rctx.lineWidth=2;
+  drawShieldShape(rctx,70,80,110,130);rctx.stroke();
+  for(let i=0;i<4;i++){
+    const q=quadrants[i];
+    const ox=i%2===0?cx-27:cx+27;
+    const oy=i<2?cy-32:cy+32;
+    drawShapeGlyph(rctx,SHAPES[q.shape],ox,oy,12,'#1a1a2e');
+  }
+}
+
+function render(){
+  document.querySelectorAll('#colorRow .swatch').forEach((el,i)=>el.classList.toggle('selected',selColor===i));
+  document.querySelectorAll('#shapeRow .shapebtn').forEach((el,i)=>el.classList.toggle('selected',selShape===i));
+}
+render();
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,320,360);
+  const bg=ctx.createLinearGradient(0,0,0,360);
+  bg.addColorStop(0,'#1c2b4a');bg.addColorStop(1,'#0e1730');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,320,360);
+
+  drawReference();
+
+  if(!started){
+    ctx.fillStyle='#ffd54f';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('shield_start_hint','Click / Tap / Space to start'),160,180);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),160,150);
+    ctx.font='bold 22px Arial';ctx.fillStyle='#ffd54f';
+    ctx.fillText(I18N.t('final_score_label','Score: {s}').replace('{s}',score),160,190);
+    ctx.font='16px Arial';ctx.fillStyle='#ddd';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to play again'),160,225);
+    hud.textContent=I18N.t('hud_final_label2','Final Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+    requestAnimationFrame(loop);return;
+  }
+
+  timeLeft-=dt/60;
+  if(timeLeft<=0||lives<=0){timeLeft=0;endGame();}
+
+  const cx=160,cy=180;
+  ctx.save();
+  drawShieldShape(ctx,cx,cy,220,260);
+  ctx.clip();
+  for(let i=0;i<4;i++){
+    const ox=i%2===0?cx-110:cx;
+    const oy=i<2?cy-130:cy;
+    const p=painted[i];
+    ctx.fillStyle=p?COLORS[p.color]:'#3b4a6b';
+    ctx.fillRect(ox,oy,110,130);
+  }
+  ctx.restore();
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+  drawShieldShape(ctx,cx,cy,220,260);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(cx-110,cy);ctx.lineTo(cx+110,cy);ctx.moveTo(cx,cy-130);ctx.lineTo(cx,cy+70);ctx.stroke();
+
+  for(let i=0;i<4;i++){
+    const p=painted[i];
+    if(!p)continue;
+    const ox=i%2===0?cx-55:cx+55;
+    const oy=i<2?cy-65:cy+65;
+    drawShapeGlyph(ctx,SHAPES[p.shape],ox,oy,20,'#fff');
+  }
+
+  if(flashTimer>0){
+    flashTimer-=dt;
+    ctx.globalAlpha=Math.min(1,flashTimer/20);
+    ctx.font='bold 20px Arial';ctx.fillStyle=flashColor;ctx.textAlign='center';
+    ctx.fillText(flashText,160,40);
+    ctx.globalAlpha=1;
+  }
+
+  hud.textContent=I18N.t('hud_shield_label','Score: {s} | Time: {t} | Hi: {h}')
+    .replace('{s}',score).replace('{t}',Math.ceil(timeLeft)).replace('{h}',hi);
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

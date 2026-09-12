@@ -1,0 +1,243 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Court Jester - Multiport Games</title><meta name="description" content="Play Court Jester free online — Click/tap or press Space to juggle balls and keep them in the air, then press Space at the right moment to land your punchlines. Keep the crowd meter up to survive the whole act!"><link rel="canonical" href="https://games.multiportllc.com/games/courtjester"><meta property="og:title" content="Court Jester - Multiport Games"><meta property="og:description" content="Play Court Jester free online — Click/tap or press Space to juggle balls and keep them in the air, then press Space at the right moment to land your punchlines. Keep the crowd meter up to survive the whole act!"><meta property="og:url" content="https://games.multiportllc.com/games/courtjester"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Court Jester","description":"Play Court Jester free online instantly. Juggle colored balls to keep them from hitting the ground and time your punchlines to keep the royal court's laughter meter high for the whole performance. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/courtjester","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:linear-gradient(#3a1f5d,#6b2d5c);display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;max-width:800px;margin:0 auto 8px;color:#ffd54f;font-weight:700;font-size:1.05rem;flex-wrap:wrap;gap:4px}
+#meterWrap{max-width:800px;margin:0 auto 8px;background:#1a1a2e;border-radius:10px;height:18px;overflow:hidden;border:2px solid #ffd54f44}
+#meter{height:100%;background:linear-gradient(90deg,#e94560,#ffd54f,#4caf50);width:60%;transition:width .15s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Court Jester</div>
+  <div class="game-frame">
+    <div id="hud"><span id="phaseLabel">Juggling</span><span id="scoreLabel">Score: 0 | Hi: 0</span><span id="timeLabel">Time: 60</span></div>
+    <div id="meterWrap"><div id="meter"></div></div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click/Tap the lane under a falling <b>ball</b> (or press <b>1</b>/<b>2</b>/<b>3</b>) to juggle it back up before it hits the ground. When a <b>punchline cue</b> appears, press <b>Space</b> or tap the stage right as the target lights up. Keep the laughter meter above the line for the full 60-second act to win!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const KEY='cj_hiscore';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+const W=800,H=400,groundY=360;
+const LANES=[150,400,650];
+let balls,meter,score,timeLeft,phase,gameOver,started,win;
+let jokeCue,jokeTimer,jokeState;
+let lastTime=null;
+const colors=['#ff6b6b','#4ecdc4','#ffd93d'];
+
+function reset(){
+  balls=LANES.map((x,i)=>({x,y:150+i*20,vy:-2-Math.random(),lane:i,color:colors[i],alive:true}));
+  meter=60;score=0;timeLeft=60;phase='juggle';gameOver=false;started=false;win=false;
+  jokeCue=false;jokeTimer=0;jokeState='idle';
+  lastTime=null;
+}
+reset();
+
+function updateHud(){
+  document.getElementById('scoreLabel').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  document.getElementById('timeLabel').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+  document.getElementById('phaseLabel').textContent=phase==='juggle'?I18N.t('phase_juggle','Juggling'):I18N.t('phase_joke','Telling a Joke!');
+  document.getElementById('meter').style.width=Math.max(0,Math.min(100,meter))+'%';
+}
+
+function hitLane(lane){
+  if(gameOver){if(started)reset();return;}
+  started=true;
+  if(phase==='joke'){
+    // timing hit during joke phase acts as punchline delivery attempt regardless of lane
+    tryPunchline();
+    return;
+  }
+  const b=balls[lane];
+  if(!b||!b.alive)return;
+  if(b.y>200&&b.y<360){
+    b.vy=-9-Math.random()*1.5;
+    score+=5;
+    meter=Math.min(100,meter+2);
+    SFX.point();
+  }
+}
+
+function tryPunchline(){
+  if(jokeState!=='live')return;
+  const dist=Math.abs(jokeCue-jokeTarget);
+  if(dist<8){
+    score+=50;meter=Math.min(100,meter+18);SFX.success();
+  }else if(dist<20){
+    score+=20;meter=Math.min(100,meter+8);SFX.coin();
+  }else{
+    meter-=12;SFX.error();
+  }
+  jokeState='resolved';
+  jokeTimer=40;
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Digit1'){hitLane(0);}
+  else if(e.code==='Digit2'){hitLane(1);}
+  else if(e.code==='Digit3'){hitLane(2);}
+  else if(e.code==='Space'){e.preventDefault();
+    if(gameOver){if(started)reset();return;}
+    started=true;
+    if(phase==='joke')tryPunchline();
+    else{
+      // space juggles whichever ball is lowest/most urgent
+      let best=-1,bestY=-1;
+      balls.forEach((b,i)=>{if(b.alive&&b.y>bestY){bestY=b.y;best=i;}});
+      if(best>=0)hitLane(best);
+    }
+  }
+});
+
+function laneFromX(x){
+  if(x<W/3)return 0;
+  if(x<2*W/3)return 1;
+  return 2;
+}
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width);
+  if(gameOver){if(started)reset();return;}
+  started=true;
+  if(phase==='joke')tryPunchline();
+  else hitLane(laneFromX(x));
+});
+
+let jokeTarget=50;
+function startJokePhase(){
+  phase='joke';
+  jokeState='live';
+  jokeCue=0;
+  jokeTarget=30+Math.random()*40;
+  jokeDir=1;
+}
+let jokeDir=1;
+let phaseTimer=0;
+
+function endJokePhase(){
+  phase='juggle';
+  balls.forEach((b,i)=>{b.y=150+i*20;b.vy=-2-Math.random();b.alive=true;});
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#3a1f5d');sky.addColorStop(1,'#6b2d5c');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#4a2540';ctx.fillRect(0,groundY,W,H-groundY);
+  ctx.fillStyle='#2d1a35';ctx.fillRect(0,groundY,W,4);
+
+  // Jester figure
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(W/2-25,groundY-70,50,70);
+  ctx.beginPath();ctx.arc(W/2,groundY-85,22,0,Math.PI*2);ctx.fillStyle='#ffe0bd';ctx.fill();
+  ctx.fillStyle='#4a2540';
+  ctx.fillRect(W/2-30,groundY-95,15,20);
+  ctx.fillRect(W/2+15,groundY-95,15,20);
+
+  if(!started){
+    ctx.fillStyle='#ffd54f';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click a lane or press Space to start juggling!'),W/2,60);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 40px Arial';ctx.textAlign='center';
+    ctx.fillText(win?I18N.t('you_win_title','THE COURT ADORES YOU!'):I18N.t('game_over_title','THE COURT JEERS...'),W/2,150);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to try again'),W/2,190);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  timeLeft-=dt/60;
+  meter-=dt*0.08;
+  if(meter>hi)hi=score;
+  if(score>hi)hi=score;
+
+  if(timeLeft<=0){
+    gameOver=true;
+    win=meter>=40;
+    if(win){SFX.win();localStorage.setItem(KEY,String(Math.floor(hi)));}else{SFX.lose();}
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+  if(meter<=0){
+    gameOver=true;win=false;SFX.lose();
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  phaseTimer+=dt;
+  if(phase==='juggle'){
+    balls.forEach((b,i)=>{
+      if(!b.alive)return;
+      b.vy+=0.25*dt;
+      b.y+=b.vy*dt;
+      if(b.y>groundY-20){
+        b.alive=false;
+        meter-=15;
+        SFX.hit();
+      }
+    });
+    if(phaseTimer>360){
+      phaseTimer=0;
+      startJokePhase();
+    }
+  } else if(phase==='joke'){
+    if(jokeState==='live'){
+      jokeCue+=jokeDir*1.6*dt;
+      if(jokeCue>=100){jokeCue=100;jokeDir=-1;}
+      if(jokeCue<=0){jokeCue=0;jokeDir=1;}
+    } else if(jokeState==='resolved'){
+      jokeTimer-=dt;
+      if(jokeTimer<=0){phaseTimer=0;endJokePhase();}
+    }
+  }
+
+  // Draw balls
+  balls.forEach((b,i)=>{
+    if(!b.alive)return;
+    ctx.beginPath();ctx.arc(b.x,b.y,16,0,Math.PI*2);
+    ctx.fillStyle=b.color;ctx.fill();
+    ctx.strokeStyle='#fff3';ctx.lineWidth=2;ctx.stroke();
+  });
+  // Lane markers
+  ctx.fillStyle='#ffffff22';
+  LANES.forEach(x=>{ctx.fillRect(x-40,groundY-10,80,6);});
+
+  if(phase==='joke'){
+    // Timing bar
+    const barX=150,barY=250,barW=500;
+    ctx.fillStyle='#00000055';ctx.fillRect(barX,barY,barW,26);
+    ctx.fillStyle='#4caf5077';
+    ctx.fillRect(barX+barW*(jokeTarget-8)/100,barY,barW*16/100,26);
+    const cx=barX+barW*jokeCue/100;
+    ctx.fillStyle='#ffd54f';
+    ctx.fillRect(cx-4,barY-6,8,38);
+    ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('joke_prompt','Press SPACE / Tap when the marker hits the green zone!'),W/2,220);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>
