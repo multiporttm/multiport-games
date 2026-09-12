@@ -1,0 +1,278 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Hieroglyph Decoding - Multiport Games</title><meta name="description" content="Play Hieroglyph Decoding free online — Match each glowing hieroglyph on the wall to its correct meaning from the key below. Decode the full message before the sandstorm buries the wall."><link rel="canonical" href="https://games.multiportllc.com/games/hieroglyphdecoding"><meta property="og:title" content="Hieroglyph Decoding - Multiport Games"><meta property="og:description" content="Play Hieroglyph Decoding free online — Match each glowing hieroglyph on the wall to its correct meaning from the key below. Decode the full message before the sandstorm buries the wall."><meta property="og:url" content="https://games.multiportllc.com/games/hieroglyphdecoding"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Hieroglyph Decoding","description":"Play Hieroglyph Decoding free online instantly. Match each glowing hieroglyph on the wall to its correct meaning from the key below. Decode the full message before the sandstorm buries the wall. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/hieroglyphdecoding","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px}
+#hud{color:#f4d58d;font-size:1.05rem;font-weight:800;display:flex;gap:18px;flex-wrap:wrap;justify-content:center}
+#hud span b{color:#fff}
+#sandBarOuter{width:100%;max-width:560px;height:14px;background:#3a2a15;border-radius:7px;overflow:hidden;border:2px solid #8a6a30}
+#sandBarInner{height:100%;width:0%;background:linear-gradient(90deg,#d9a556,#c96b2e);transition:width .25s}
+#pcHolder{position:relative;max-width:100%}
+canvas#pc{background:linear-gradient(#e8c98a,#c99a54);border-radius:8px;max-width:100%}
+#choices{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;width:100%;max-width:520px}
+.choiceBtn{padding:12px 8px;background:#16213e;border:2px solid #d8b45c;border-radius:10px;color:#fff;font-weight:700;font-size:.95rem;cursor:pointer;transition:transform .1s,background .15s}
+.choiceBtn:hover{background:#233158;transform:translateY(-2px)}
+.choiceBtn.correct{background:#2e7d32;border-color:#7ee787}
+.choiceBtn.wrong{background:#8a3b3b;border-color:#c96b6b}
+#msg{color:#fff;font-size:1rem;min-height:1.4em;font-weight:700;text-align:center}
+#overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.8);border-radius:8px;color:#fff;text-align:center;flex-direction:column;gap:10px}
+#overlay.show{display:flex}
+#overlay button{padding:10px 24px;background:#e94560;border:none;border-radius:20px;color:#fff;font-size:1rem;cursor:pointer;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Hieroglyph Decoding</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span>Message: <b id="msgLbl">1</b></span><span>Score: <b id="scoreLbl">0</b></span><span>Hi: <b id="hiLbl">0</b></span></div>
+      <div id="sandBarOuter"><div id="sandBarInner"></div></div>
+      <div id="pcHolder">
+        <canvas id="pc" width="560" height="180"></canvas>
+        <div id="overlay">
+          <div id="overlayTitle" style="font-size:1.6rem;font-weight:900"></div>
+          <div id="overlayMsg"></div>
+          <button id="overlayBtn">Play Again</button>
+        </div>
+      </div>
+      <div id="msg">Choose the meaning of the highlighted symbol.</div>
+      <div id="choices"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">A wall of hieroglyphs must be decoded before the sandstorm bar fills up. The highlighted symbol needs its meaning — click the correct answer from the four choices (or press <b>1-4</b>). Wrong guesses fill the sandstorm bar faster; correct ones push it back!</div>
+</div>
+<script>
+const canvas=document.getElementById('pc'),ctx=canvas.getContext('2d');
+const overlay=document.getElementById('overlay');
+const overlayTitle=document.getElementById('overlayTitle');
+const overlayMsg=document.getElementById('overlayMsg');
+const overlayBtn=document.getElementById('overlayBtn');
+const choicesEl=document.getElementById('choices');
+const msgEl=document.getElementById('msg');
+const sandInner=document.getElementById('sandBarInner');
+const HI_KEY='hieroglyphdecoding_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+document.getElementById('hiLbl').textContent=hi;
+
+const GLYPHS=[
+  {id:'sun',    meaning:'Sun (Ra)',    draw:drawSun},
+  {id:'ankh',   meaning:'Life',        draw:drawAnkh},
+  {id:'eye',    meaning:'Protection',  draw:drawEye},
+  {id:'bird',   meaning:'Falcon',      draw:drawBird},
+  {id:'wave',   meaning:'Water',       draw:drawWave},
+  {id:'snake',  meaning:'Cobra',       draw:drawSnake},
+  {id:'scarab', meaning:'Rebirth',     draw:drawScarab},
+  {id:'pyramid',meaning:'Eternity',    draw:drawPyramid}
+];
+
+let round,sequence,curIdx,score,gameOver,sand,sandTimer,answering;
+
+function initGame(){
+  round=1;score=0;gameOver=false;sand=0;
+  overlay.classList.remove('show');
+  startRound();
+  clearInterval(sandTimer);
+  sandTimer=setInterval(sandTick,500);
+  updateHud();
+}
+
+function msgLen(){ return Math.min(4+Math.floor(round/2),8); }
+
+function startRound(){
+  sequence=[];
+  const n=msgLen();
+  for(let i=0;i<n;i++) sequence.push(GLYPHS[Math.floor(Math.random()*GLYPHS.length)]);
+  curIdx=0;
+  answering=false;
+  document.getElementById('msgLbl').textContent=round;
+  render();
+  renderChoices();
+}
+
+function sandTick(){
+  if(gameOver)return;
+  sand=Math.min(100,sand+2.5);
+  updateSandBar();
+  if(sand>=100) loseGame();
+}
+
+function updateSandBar(){ sandInner.style.width=sand+'%'; }
+
+function renderChoices(){
+  choicesEl.innerHTML='';
+  const correct=sequence[curIdx];
+  const opts=new Set([correct.meaning]);
+  while(opts.size<4){
+    opts.add(GLYPHS[Math.floor(Math.random()*GLYPHS.length)].meaning);
+  }
+  const arr=Array.from(opts).sort(()=>Math.random()-0.5);
+  arr.forEach((m,i)=>{
+    const b=document.createElement('button');
+    b.className='choiceBtn';
+    b.textContent=(i+1)+'. '+I18N.t('glyph_'+m.replace(/[^a-zA-Z]/g,''),m);
+    b.addEventListener('click',()=>answer(m,b));
+    choicesEl.appendChild(b);
+  });
+}
+
+function answer(meaning,btnEl){
+  if(gameOver||answering)return;
+  answering=true;
+  const correct=sequence[curIdx];
+  const btns=[...choicesEl.children];
+  if(meaning===correct.meaning){
+    SFX.point();
+    score+=20;
+    sand=Math.max(0,sand-8);
+    updateSandBar();
+    if(btnEl)btnEl.classList.add('correct');
+    msgEl.textContent=I18N.t('correct_msg','Correct! The symbol means "'+correct.meaning+'".');
+    setTimeout(()=>{
+      curIdx++;
+      answering=false;
+      if(curIdx>=sequence.length){
+        completeRound();
+      } else {
+        render();
+        renderChoices();
+      }
+      updateHud();
+    },350);
+  } else {
+    SFX.error();
+    sand=Math.min(100,sand+10);
+    updateSandBar();
+    if(btnEl)btnEl.classList.add('wrong');
+    msgEl.textContent=I18N.t('wrong_msg','Not quite — the sandstorm grows stronger!');
+    setTimeout(()=>{ answering=false; if(sand>=100){loseGame();return;} },400);
+    if(sand>=100){ setTimeout(loseGame,420); }
+  }
+  updateHud();
+}
+
+function completeRound(){
+  SFX.success();
+  score+=60;
+  round++;
+  sand=Math.max(0,sand-15);
+  updateSandBar();
+  msgEl.textContent=I18N.t('round_done_msg','Message decoded! A new inscription appears.');
+  startRound();
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('scoreLbl').textContent=score;
+}
+
+function loseGame(){
+  if(gameOver)return;
+  gameOver=true;
+  clearInterval(sandTimer);
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  document.getElementById('hiLbl').textContent=hi;
+  SFX.lose();
+  overlayTitle.textContent=I18N.t('lose_title','WALL BURIED');
+  overlayMsg.textContent=I18N.t('final_score_label','Final score: {s}').replace('{s}',score);
+  overlay.classList.add('show');
+}
+
+overlayBtn.addEventListener('click',initGame);
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){initGame();return;}
+  const n=parseInt(e.key,10);
+  if(n>=1&&n<=4){
+    const btn=choicesEl.children[n-1];
+    if(btn)btn.click();
+  }
+});
+
+function drawSun(x,y,s){ ctx.beginPath();ctx.arc(x,y,s*0.3,0,Math.PI*2);ctx.fill();
+  for(let a=0;a<8;a++){const ang=a/8*Math.PI*2;ctx.beginPath();ctx.moveTo(x+Math.cos(ang)*s*0.35,y+Math.sin(ang)*s*0.35);ctx.lineTo(x+Math.cos(ang)*s*0.5,y+Math.sin(ang)*s*0.5);ctx.lineWidth=s*0.06;ctx.stroke();}
+}
+function drawAnkh(x,y,s){
+  ctx.lineWidth=s*0.1;
+  ctx.beginPath();ctx.arc(x,y-s*0.22,s*0.16,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(x,y-s*0.06);ctx.lineTo(x,y+s*0.45);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(x-s*0.28,y+s*0.12);ctx.lineTo(x+s*0.28,y+s*0.12);ctx.stroke();
+}
+function drawEye(x,y,s){
+  ctx.beginPath();ctx.ellipse(x,y,s*0.4,s*0.2,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(x,y,s*0.1,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle=ctx.fillStyle==='#fff'?'#000':'#000';
+}
+function drawBird(x,y,s){
+  ctx.beginPath();ctx.ellipse(x,y,s*0.32,s*0.2,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.moveTo(x+s*0.28,y-s*0.05);ctx.lineTo(x+s*0.48,y);ctx.lineTo(x+s*0.28,y+s*0.08);ctx.closePath();ctx.fill();
+  ctx.beginPath();ctx.moveTo(x-s*0.1,y-s*0.15);ctx.lineTo(x-s*0.35,y-s*0.4);ctx.lineTo(x-s*0.05,y-s*0.22);ctx.closePath();ctx.fill();
+}
+function drawWave(x,y,s){
+  ctx.lineWidth=s*0.09;
+  for(let i=-1;i<=1;i++){
+    ctx.beginPath();
+    const yy=y+i*s*0.18;
+    ctx.moveTo(x-s*0.4,yy);
+    ctx.quadraticCurveTo(x-s*0.2,yy-s*0.12,x,yy);
+    ctx.quadraticCurveTo(x+s*0.2,yy+s*0.12,x+s*0.4,yy);
+    ctx.stroke();
+  }
+}
+function drawSnake(x,y,s){
+  ctx.lineWidth=s*0.1;
+  ctx.beginPath();
+  ctx.moveTo(x-s*0.3,y+s*0.35);
+  ctx.quadraticCurveTo(x,y-s*0.1,x+s*0.28,y+s*0.05);
+  ctx.quadraticCurveTo(x+s*0.1,y-s*0.35,x-s*0.05,y-s*0.42);
+  ctx.stroke();
+  ctx.beginPath();ctx.arc(x-s*0.05,y-s*0.42,s*0.07,0,Math.PI*2);ctx.fill();
+}
+function drawScarab(x,y,s){
+  ctx.beginPath();ctx.ellipse(x,y+s*0.05,s*0.35,s*0.22,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x,y-s*0.22,s*0.15,0,Math.PI*2);ctx.fill();
+  ctx.lineWidth=s*0.05;
+  ctx.beginPath();ctx.moveTo(x-s*0.4,y-s*0.15);ctx.lineTo(x-s*0.55,y-s*0.35);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(x+s*0.4,y-s*0.15);ctx.lineTo(x+s*0.55,y-s*0.35);ctx.stroke();
+}
+function drawPyramid(x,y,s){
+  ctx.beginPath();ctx.moveTo(x,y-s*0.4);ctx.lineTo(x+s*0.42,y+s*0.35);ctx.lineTo(x-s*0.42,y+s*0.35);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='#3a2a0e';ctx.lineWidth=s*0.03;
+  ctx.beginPath();ctx.moveTo(x,y-s*0.4);ctx.lineTo(x,y+s*0.35);ctx.stroke();
+}
+
+function render(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const bg=ctx.createLinearGradient(0,0,0,canvas.height);
+  bg.addColorStop(0,'#e8c98a');bg.addColorStop(1,'#c99a54');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  const n=sequence.length;
+  const gap=canvas.width/(n+1);
+  const y=canvas.height/2+6;
+  sequence.forEach((g,i)=>{
+    const x=gap*(i+1);
+    const done=i<curIdx;
+    const active=i===curIdx;
+    ctx.save();
+    ctx.fillStyle=done?'#7a9a5a':(active?'#3a2a0e':'#8a6a40');
+    ctx.strokeStyle=ctx.fillStyle;
+    if(active){
+      ctx.fillStyle='#3a2a0e';
+      ctx.strokeStyle='#fff2c9';
+      ctx.beginPath();ctx.arc(x,y,32,0,Math.PI*2);ctx.lineWidth=4;ctx.stroke();
+    }
+    g.draw(x,y,50);
+    ctx.restore();
+  });
+
+  ctx.fillStyle='#3a2a0e';
+  ctx.font='bold 13px Arial';
+  ctx.textAlign='center';
+  ctx.fillText(I18N.t('progress_label','Symbol {a} of {b}').replace('{a}',Math.min(curIdx+1,n)).replace('{b}',n),canvas.width/2,20);
+}
+
+initGame();
+</script></body></html>

@@ -1,0 +1,275 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mummy Wrapping - Multiport Games</title><meta name="description" content="Play Mummy Wrapping free online — Follow the diagram: click each body part in the shown order to wrap it, then place amulets when prompted. Finish the ritual before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/mummywrapping"><meta property="og:title" content="Mummy Wrapping - Multiport Games"><meta property="og:description" content="Play Mummy Wrapping free online — Follow the diagram: click each body part in the shown order to wrap it, then place amulets when prompted. Finish the ritual before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/mummywrapping"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mummy Wrapping","description":"Play Mummy Wrapping free online instantly. Follow the diagram: click each body part in the shown order to wrap it, then place amulets when prompted. Finish the ritual before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/mummywrapping","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px}
+#hud{color:#f4d58d;font-size:1.05rem;font-weight:800;display:flex;gap:18px;flex-wrap:wrap;justify-content:center}
+#hud span b{color:#fff}
+#diagram{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;background:rgba(0,0,0,.3);padding:8px 12px;border-radius:10px;min-height:2.2em;align-items:center}
+.diagStep{width:34px;height:34px;border-radius:6px;background:#3a2a0e;border:2px solid #d8b45c;display:flex;align-items:center;justify-content:center;font-size:1rem;color:#f4d58d}
+.diagStep.done{opacity:.35;background:#1a5c3a;border-color:#4caf50}
+.diagStep.amulet{background:#5c2a7a;border-color:#c98fff}
+#pcHolder{position:relative;max-width:100%}
+canvas#pc{background:linear-gradient(#1c1030,#2e1a4a);border-radius:8px;touch-action:none;max-width:100%}
+#msg{color:#fff;font-size:1rem;min-height:1.4em;font-weight:700;text-align:center}
+#overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.8);border-radius:8px;color:#fff;text-align:center;flex-direction:column;gap:10px}
+#overlay.show{display:flex}
+#overlay button{padding:10px 24px;background:#e94560;border:none;border-radius:20px;color:#fff;font-size:1rem;cursor:pointer;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mummy Wrapping</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span>Round: <b id="roundLbl">1</b></span><span>Time: <b id="timeLbl">60</b>s</span><span>Score: <b id="scoreLbl">0</b></span><span>Hi: <b id="hiLbl">0</b></span></div>
+      <div id="diagram"></div>
+      <div id="pcHolder">
+        <canvas id="pc" width="360" height="420"></canvas>
+        <div id="overlay">
+          <div id="overlayTitle" style="font-size:1.6rem;font-weight:900"></div>
+          <div id="overlayMsg"></div>
+          <button id="overlayBtn">Play Again</button>
+        </div>
+      </div>
+      <div id="msg">Click the highlighted body part next, in diagram order.</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">A diagram shows the wrap order for this mummy. Click each body part <b>in that exact order</b>. When a purple amulet step appears, click the <b>glowing amulet slot</b> on the body instead. Finish the full sequence before time runs out — mistakes cost precious seconds!</div>
+</div>
+<script>
+const canvas=document.getElementById('pc'),ctx=canvas.getContext('2d');
+const overlay=document.getElementById('overlay');
+const overlayTitle=document.getElementById('overlayTitle');
+const overlayMsg=document.getElementById('overlayMsg');
+const overlayBtn=document.getElementById('overlayBtn');
+const diagramEl=document.getElementById('diagram');
+const msgEl=document.getElementById('msg');
+const HI_KEY='mummywrapping_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+document.getElementById('hiLbl').textContent=hi;
+
+// Body parts with hit regions on the 360x420 canvas
+const PARTS=[
+  {id:'feet',   label:'Feet',   x:130,y:370,w:100,h:34},
+  {id:'legs',   label:'Legs',   x:120,y:300,w:120,h:65},
+  {id:'torso',  label:'Torso',  x:105,y:190,w:150,h:105},
+  {id:'larm',   label:'L.Arm',  x:70, y:200,w:35, h:95},
+  {id:'rarm',   label:'R.Arm',  x:255,y:200,w:35, h:95},
+  {id:'head',   label:'Head',   x:135,y:110,w:90, h:75}
+];
+const AMULET_SPOTS=[
+  {id:'a-chest', label:'Chest amulet', x:150,y:220,w:60,h:40, part:'torso'},
+  {id:'a-throat',label:'Throat amulet',x:150,y:150,w:60,h:30, part:'head'},
+  {id:'a-waist', label:'Waist amulet', x:135,y:280,w:90,h:26, part:'torso'}
+];
+
+let round,timeLeft,score,gameOver,sequence,seqIdx,wrapped,amuletsPlaced,timerHandle;
+
+function buildSequence(){
+  // Random order of body parts, with amulet checkpoints inserted after some steps
+  const parts=[...PARTS].sort(()=>Math.random()-0.5);
+  const seq=[];
+  let amuletPool=[...AMULET_SPOTS].sort(()=>Math.random()-0.5);
+  parts.forEach((p,i)=>{
+    seq.push({type:'part',id:p.id});
+    if(i===1&&amuletPool.length){ seq.push({type:'amulet',id:amuletPool.pop().id}); }
+    if(i===3&&amuletPool.length){ seq.push({type:'amulet',id:amuletPool.pop().id}); }
+  });
+  return seq;
+}
+
+function initGame(){
+  round=1;score=0;gameOver=false;
+  timeLeft=60;
+  overlay.classList.remove('show');
+  startRound();
+  clearInterval(timerHandle);
+  timerHandle=setInterval(tick,1000);
+  updateHud();
+}
+
+function startRound(){
+  sequence=buildSequence();
+  seqIdx=0;
+  wrapped={};
+  amuletsPlaced={};
+  renderDiagram();
+  render();
+}
+
+function tick(){
+  if(gameOver)return;
+  timeLeft--;
+  SFX.tick();
+  if(timeLeft<=0){
+    timeLeft=0;
+    loseGame();
+  }
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('roundLbl').textContent=round;
+  document.getElementById('timeLbl').textContent=Math.max(0,timeLeft);
+  document.getElementById('scoreLbl').textContent=score;
+}
+
+function renderDiagram(){
+  diagramEl.innerHTML='';
+  sequence.forEach((step,i)=>{
+    const d=document.createElement('div');
+    d.className='diagStep'+(i<seqIdx?' done':'')+(step.type==='amulet'?' amulet':'');
+    d.textContent=step.type==='amulet'?'✦':(i+1);
+    diagramEl.appendChild(d);
+  });
+}
+
+function currentStep(){ return sequence[seqIdx]; }
+
+function pointInRect(px,py,r){ return px>=r.x&&px<=r.x+r.w&&py>=r.y&&py<=r.y+r.h; }
+
+function handleClick(px,py){
+  if(gameOver)return;
+  const step=currentStep();
+  if(!step)return;
+  if(step.type==='part'){
+    const part=PARTS.find(p=>p.id===step.id);
+    const hitPart=PARTS.find(p=>pointInRect(px,py,p));
+    if(hitPart&&hitPart.id===part.id){
+      wrapped[part.id]=true;
+      advance('Wrapped the '+part.label+'.');
+    } else if(hitPart){
+      penalize('Wrong part! Follow the diagram order.');
+    }
+  } else {
+    const spot=AMULET_SPOTS.find(a=>a.id===step.id);
+    const hitSpot=AMULET_SPOTS.find(a=>pointInRect(px,py,a));
+    if(hitSpot&&hitSpot.id===spot.id){
+      amuletsPlaced[spot.id]=true;
+      advance('Amulet placed: '+spot.label+'.');
+    } else {
+      penalize('Not the right amulet spot!');
+    }
+  }
+}
+
+function advance(text){
+  SFX.point();
+  score+=15;
+  seqIdx++;
+  msgEl.textContent=I18N.t('step_ok_msg',text);
+  renderDiagram();
+  render();
+  if(seqIdx>=sequence.length){
+    completeRound();
+  }
+  updateHud();
+}
+
+function penalize(text){
+  SFX.error();
+  timeLeft=Math.max(0,timeLeft-4);
+  msgEl.textContent=I18N.t('step_wrong_msg',text);
+  updateHud();
+  if(timeLeft<=0)loseGame();
+}
+
+function completeRound(){
+  SFX.success();
+  score+=40;
+  round++;
+  timeLeft=Math.min(90,timeLeft+20);
+  msgEl.textContent=I18N.t('round_done_msg','Ritual layer complete! A new mummy awaits.');
+  startRound();
+  updateHud();
+}
+
+function loseGame(){
+  gameOver=true;
+  clearInterval(timerHandle);
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  document.getElementById('hiLbl').textContent=hi;
+  SFX.lose();
+  overlayTitle.textContent=I18N.t('lose_title','TIME EXPIRED');
+  overlayMsg.textContent=I18N.t('final_score_label','Final score: {s}').replace('{s}',score);
+  overlay.classList.add('show');
+}
+
+function canvasCoords(e){
+  const rect=canvas.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(canvas.width/rect.width), y:cy*(canvas.height/rect.height)};
+}
+canvas.addEventListener('click',e=>{ const p=canvasCoords(e); handleClick(p.x,p.y); });
+canvas.addEventListener('touchstart',e=>{ e.preventDefault(); const p=canvasCoords(e); handleClick(p.x,p.y); },{passive:false});
+
+overlayBtn.addEventListener('click',initGame);
+document.addEventListener('keydown',e=>{ if(gameOver&&(e.code==='Space'||e.code==='Enter'))initGame(); });
+
+function render(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const bg=ctx.createLinearGradient(0,0,0,canvas.height);
+  bg.addColorStop(0,'#1c1030');bg.addColorStop(1,'#2e1a4a');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  const step=currentStep();
+  PARTS.forEach(p=>{
+    ctx.fillStyle=wrapped[p.id]?'#e9d9b8':'#8f7350';
+    ctx.strokeStyle='#4a3620';
+    ctx.lineWidth=2;
+    roundRect(p.x,p.y,p.w,p.h,10);
+    ctx.fill();ctx.stroke();
+    if(step&&step.type==='part'&&step.id===p.id&&!wrapped[p.id]){
+      ctx.strokeStyle='#ffd54f';
+      ctx.lineWidth=4;
+      roundRect(p.x-3,p.y-3,p.w+6,p.h+6,12);
+      ctx.stroke();
+    }
+    if(wrapped[p.id]){
+      ctx.strokeStyle='#c9a86a';
+      ctx.lineWidth=2;
+      for(let ly=p.y+8;ly<p.y+p.h-4;ly+=10){
+        ctx.beginPath();ctx.moveTo(p.x+3,ly);ctx.lineTo(p.x+p.w-3,ly+4);ctx.stroke();
+      }
+    }
+  });
+
+  AMULET_SPOTS.forEach(a=>{
+    const placed=amuletsPlaced[a.id];
+    const active=step&&step.type==='amulet'&&step.id===a.id;
+    if(placed){
+      ctx.fillStyle='#c98fff';
+      ctx.beginPath();ctx.arc(a.x+a.w/2,a.y+a.h/2,10,0,Math.PI*2);ctx.fill();
+    } else if(active){
+      ctx.strokeStyle='#c98fff';
+      ctx.lineWidth=3;
+      ctx.beginPath();ctx.arc(a.x+a.w/2,a.y+a.h/2,12,0,Math.PI*2);ctx.stroke();
+      ctx.fillStyle='rgba(201,143,255,.3)';
+      ctx.beginPath();ctx.arc(a.x+a.w/2,a.y+a.h/2,12,0,Math.PI*2);ctx.fill();
+    }
+  });
+
+  ctx.fillStyle='#fff';
+  ctx.font='bold 14px Arial';
+  ctx.textAlign='center';
+  ctx.fillText(I18N.t('progress_label','Step {a}/{b}').replace('{a}',Math.min(seqIdx+1,sequence.length)).replace('{b}',sequence.length),canvas.width/2,24);
+}
+
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+initGame();
+</script></body></html>

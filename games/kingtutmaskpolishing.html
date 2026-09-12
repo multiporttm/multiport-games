@@ -1,0 +1,232 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>King Tut Mask Polishing - Multiport Games</title><meta name="description" content="Play King Tut Mask Polishing free online — Drag in circular motions to buff tarnished gold sections of the death mask back to a shine, but go gently over the delicate gem inlays."><link rel="canonical" href="https://games.multiportllc.com/games/kingtutmaskpolishing"><meta property="og:title" content="King Tut Mask Polishing - Multiport Games"><meta property="og:description" content="Play King Tut Mask Polishing free online — Drag in circular motions to buff tarnished gold sections of the death mask back to a shine, but go gently over the delicate gem inlays."><meta property="og:url" content="https://games.multiportllc.com/games/kingtutmaskpolishing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"King Tut Mask Polishing","description":"Play King Tut Mask Polishing free online instantly. Drag in circular motions to buff tarnished gold sections of the death mask back to a shine, but go gently over the delicate gem inlays. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/kingtutmaskpolishing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1206;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#ffe9b0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span{color:#ffd166}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">King Tut Mask Polishing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div id="shine-display">Shine: 0%</div>
+      <div id="damage-display">Gem risk: 0%</div>
+      <div id="hi-display">Best: 0</div>
+    </div>
+    <canvas id="c" width="700" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Click/tap and drag in small circular motions over the tarnished (dull, dark) gold areas of the mask to buff them to a shine. Restore the whole mask's <b>shine</b> to 100% to win. Be careful over the striped <b>beard</b> and blue-and-gold <b>eyes</b> — those delicate gem inlays crack if you scrub them too hard, and cracking three of them ends the restoration. Move gently and deliberately, not fast strokes, over the gem sections!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=700,H=480;
+const HI_KEY='kingtutmaskpolishing_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+
+// Define gold zones (grid cells) and gem zones (circles) over the mask silhouette.
+const CELL=28;
+const cols=Math.floor(W/CELL),rows=Math.floor(H/CELL);
+let tarnish=[]; // per-cell tarnish 0..1 (0 = shiny)
+let isGold=[]; // whether cell belongs to mask gold area
+let gemZones=[
+  {x:270,y:190,r:26,name:'left eye',damage:0,cracked:false},
+  {x:430,y:190,r:26,name:'right eye',damage:0,cracked:false},
+  {x:350,y:400,r:70,name:'beard',damage:0,cracked:false}
+];
+let gameOver=false,won=false,crackedCount=0;
+let pointerDown=false,lastPt=null,strokeSpeedAccum=0;
+
+function maskShapeAt(x,y){
+  // Rough mask silhouette: rounded head + trapezoidal beard
+  const cx=350,headCy=190,headRX=170,headRY=200;
+  const inHead=((x-cx)*(x-cx))/(headRX*headRX)+((y-headCy)*(y-headCy))/(headRY*headRY)<=1 && y<380;
+  const beard=(y>=330&&y<=470 && x>=300-((y-330)*0.15) && x<=400+((y-330)*0.15));
+  return inHead||beard;
+}
+
+function init(){
+  tarnish=[];isGold=[];
+  for(let r=0;r<rows;r++){
+    const rowT=[],rowG=[];
+    for(let col=0;col<cols;col++){
+      const cx=col*CELL+CELL/2,cy=r*CELL+CELL/2;
+      const gold=maskShapeAt(cx,cy);
+      rowG.push(gold);
+      rowT.push(gold?1:0); // 1 = fully tarnished
+    }
+    tarnish.push(rowT);isGold.push(rowG);
+  }
+  gemZones.forEach(g=>{g.damage=0;g.cracked=false;});
+  crackedCount=0;gameOver=false;won=false;
+}
+
+function overallShine(){
+  let total=0,sum=0;
+  for(let r=0;r<rows;r++)for(let col=0;col<cols;col++){
+    if(isGold[r][col]){total++;sum+=(1-tarnish[r][col]);}
+  }
+  return total?Math.round(sum/total*100):0;
+}
+
+function inGem(x,y){
+  return gemZones.find(g=>!g.cracked&&Math.hypot(x-g.x,y-g.y)<g.r);
+}
+
+function polishAt(x,y,speed){
+  const gem=inGem(x,y);
+  if(gem){
+    // gentle motion is safe, fast motion damages
+    const dmg=Math.max(0,speed-2.2)*1.6;
+    if(dmg>0){
+      gem.damage+=dmg;
+      if(gem.damage>=100&&!gem.cracked){
+        gem.cracked=true;crackedCount++;
+        SFX.hit();
+        if(crackedCount>=3)loseGame();
+      }
+    }
+    return;
+  }
+  const col=Math.floor(x/CELL),r=Math.floor(y/CELL);
+  if(r<0||r>=rows||col<0||col>=cols||!isGold[r][col])return;
+  const radiusCells=1;
+  for(let dr=-radiusCells;dr<=radiusCells;dr++){
+    for(let dc=-radiusCells;dc<=radiusCells;dc++){
+      const rr=r+dr,cc=col+dc;
+      if(rr<0||rr>=rows||cc<0||cc>=cols||!isGold[rr][cc])continue;
+      const d=Math.hypot(dr,dc);
+      if(d>radiusCells+0.4)continue;
+      tarnish[rr][cc]=Math.max(0,tarnish[rr][cc]-0.045);
+    }
+  }
+}
+
+function pos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.clientX-rect.left)*(W/rect.width);
+  const cy=(e.clientY-rect.top)*(H/rect.height);
+  return {x:cx,y:cy};
+}
+
+function onDown(e){
+  if(gameOver){restart();return;}
+  pointerDown=true;
+  const p=pos(e);
+  lastPt=p;
+  polishAt(p.x,p.y,0);
+}
+function onMove(e){
+  if(!pointerDown||gameOver)return;
+  const p=pos(e);
+  if(lastPt){
+    const speed=Math.hypot(p.x-lastPt.x,p.y-lastPt.y);
+    polishAt(p.x,p.y,speed);
+  }
+  lastPt=p;
+}
+function onUp(){pointerDown=false;lastPt=null;}
+
+c.addEventListener('pointerdown',e=>{onDown(e);});
+c.addEventListener('pointermove',e=>{onMove(e);});
+window.addEventListener('pointerup',onUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();onDown(e.touches[0]);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();onMove(e.touches[0]);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();onUp();},{passive:false});
+
+// Keyboard alternative: arrow keys nudge a virtual buffer cursor and space polishes
+let kx=350,ky=250;
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){restart();return;}
+  const step=14;
+  if(e.code==='ArrowLeft'){kx-=step;e.preventDefault();}
+  else if(e.code==='ArrowRight'){kx+=step;e.preventDefault();}
+  else if(e.code==='ArrowUp'){ky-=step;e.preventDefault();}
+  else if(e.code==='ArrowDown'){ky+=step;e.preventDefault();}
+  else if(e.code==='Space'){polishAt(kx,ky,1);e.preventDefault();}
+  kx=Math.max(0,Math.min(W,kx));ky=Math.max(0,Math.min(H,ky));
+});
+
+function updateHud(){
+  document.getElementById('shine-display').textContent=I18N.t('ktm_shine','Shine: {s}%').replace('{s}',overallShine());
+  const maxDmg=Math.max(0,...gemZones.map(g=>g.cracked?100:g.damage));
+  document.getElementById('damage-display').textContent=I18N.t('ktm_risk','Gem risk: {d}%').replace('{d}',Math.round(Math.min(100,maxDmg)));
+  document.getElementById('hi-display').textContent=I18N.t('ktm_best','Best: {h}').replace('{h}',hi);
+}
+
+function drawMask(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#241a0d';
+  ctx.fillRect(0,0,W,H);
+  for(let r=0;r<rows;r++){
+    for(let col=0;col<cols;col++){
+      if(!isGold[r][col])continue;
+      const shine=1-tarnish[r][col];
+      const g=Math.floor(90+shine*130);
+      ctx.fillStyle=`rgb(${Math.floor(70+shine*180)},${Math.floor(50+shine*140)},${Math.floor(10+shine*40)})`;
+      ctx.fillRect(col*CELL,r*CELL,CELL-1,CELL-1);
+      if(shine>0.6){
+        ctx.fillStyle=`rgba(255,255,255,${(shine-0.6)*0.5})`;
+        ctx.fillRect(col*CELL,r*CELL,CELL-1,4);
+      }
+    }
+  }
+  gemZones.forEach(g=>{
+    ctx.save();
+    ctx.beginPath();ctx.arc(g.x,g.y,g.r,0,Math.PI*2);
+    if(g.cracked){
+      ctx.fillStyle='#3a3a3a';
+      ctx.fill();
+      ctx.strokeStyle='#000';ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(g.x-g.r,g.y);ctx.lineTo(g.x+g.r,g.y+g.r*0.5);ctx.stroke();
+    }else{
+      const t=Math.min(1,g.damage/100);
+      ctx.fillStyle=`rgb(${Math.floor(20+t*200)},${Math.floor(40*(1-t))},${Math.floor(150*(1-t))})`;
+      ctx.fill();
+      ctx.strokeStyle='#ffd166';ctx.lineWidth=3;ctx.stroke();
+    }
+    ctx.restore();
+  });
+  ctx.strokeStyle='#000';ctx.lineWidth=3;
+  ctx.beginPath();ctx.ellipse(350,190,170,200,0,0,Math.PI*2);ctx.stroke();
+}
+
+function winGame(){
+  won=true;gameOver=true;
+  const score=Math.round(overallShine());
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  SFX.win();
+}
+function loseGame(){
+  gameOver=true;
+  SFX.lose();
+}
+function restart(){init();updateHud();}
+
+function loop(){
+  drawMask();
+  if(!gameOver){
+    const shine=overallShine();
+    if(shine>=97&&!won){winGame();}
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('ktm_win_title','MASK RESTORED!'):I18N.t('ktm_lose_title','TOO MANY GEMS CRACKED'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+24);
+  }
+  updateHud();
+  requestAnimationFrame(loop);
+}
+init();
+requestAnimationFrame(loop);
+</script></body></html>

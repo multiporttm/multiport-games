@@ -1,0 +1,234 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Royal Tomb Security - Multiport Games</title><meta name="description" content="Play Royal Tomb Security free online — Design a pharaoh's burial chamber defenses on a blueprint grid: place traps, false passages, and sealed doors within budget, then test a robber's pathfinding to maximize the delay."><link rel="canonical" href="https://games.multiportllc.com/games/royaltombsecurity"><meta property="og:title" content="Royal Tomb Security - Multiport Games"><meta property="og:description" content="Play Royal Tomb Security free online — Design a pharaoh's burial chamber defenses on a blueprint grid: place traps, false passages, and sealed doors within budget, then test a robber's pathfinding to maximize the delay."><meta property="og:url" content="https://games.multiportllc.com/games/royaltombsecurity"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Royal Tomb Security","description":"Play Royal Tomb Security free online instantly. As a tomb architect, design a pharaoh's burial chamber anti-theft defenses by placing traps, false passages, and sealed doors on a blueprint grid to protect the treasure room from a simulated tomb robber's pathfinding. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/royaltombsecurity","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#241a10;border-radius:14px;padding:16px;text-align:center}
+#status{color:#fff;font-size:1rem;font-weight:800;margin:6px 0;min-height:1.6em}
+#hud{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;color:#f0d9a8;font-weight:700;margin-bottom:8px}
+#hud span{background:rgba(0,0,0,.35);padding:4px 12px;border-radius:8px}
+#grid{display:inline-grid;grid-template-columns:repeat(8,44px);grid-template-rows:repeat(8,44px);gap:3px;background:#3a2b1a;padding:8px;border-radius:10px;margin:10px auto}
+.cell{width:44px;height:44px;border-radius:6px;background:#c9a876;display:flex;align-items:center;justify-content:center;font-size:1.3rem;cursor:pointer;position:relative}
+.cell.entrance{background:#4fc3f7}
+.cell.treasure{background:#ffd54f}
+.cell.trap{background:#c0392b}
+.cell.passage{background:#8e44ad}
+.cell.door{background:#2c2c2c}
+.cell.path{outline:3px solid #2ecc71}
+#toolbar{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin:10px 0}
+#toolbar button{padding:8px 14px;border:none;border-radius:10px;background:#5a4530;color:#f0d9a8;font-weight:700;cursor:pointer;font-size:.9rem}
+#toolbar button.active{background:#c9954a;color:#241a10}
+#controls{margin:10px 0}
+#controls button{padding:9px 22px;background:#8a5a2c;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:0 5px}
+@media(max-width:480px){
+  #grid{grid-template-columns:repeat(8,34px);grid-template-rows:repeat(8,34px)}
+  .cell{width:34px;height:34px;font-size:1rem}
+}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Royal Tomb Security</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="hud">
+        <span id="budgetLabel">Budget: 15 / 15</span>
+        <span id="hiLabel">Best Delay: 0</span>
+      </div>
+      <div id="status">Select a tool, then click empty cells on the blueprint to place defenses</div>
+      <div id="grid"></div>
+      <div id="toolbar">
+        <button id="toolTrap" class="tool active" data-tool="trap">🪤 Trap (2)</button>
+        <button id="toolPassage" class="tool" data-tool="passage">🌀 False Passage (3)</button>
+        <button id="toolDoor" class="tool" data-tool="door">🚪 Sealed Door (4)</button>
+        <button id="toolErase" class="tool" data-tool="erase">🧹 Erase</button>
+      </div>
+      <div id="controls">
+        <button id="testBtn">Test Robber</button>
+        <button id="newBtn">New Blueprint</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Pick a tool (<b>1</b> Trap, <b>2</b> False Passage, <b>3</b> Sealed Door, <b>0</b> Erase — or tap the buttons) and click empty blueprint cells to place defenses within your budget. Traps and false passages slow the robber down; sealed doors block a cell entirely. Click <b>Test Robber</b> to run the shortest-path search and see how long the robber is delayed. Maximize the delay!</div>
+</div>
+<script>
+const HS_KEY='hs_royaltombsecurity';
+const SIZE=8;
+const COST={trap:2,passage:3,door:4};
+const WEIGHT={trap:4,passage:6,door:Infinity};
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+
+let grid=[]; // grid[r][c] = null|'trap'|'passage'|'door'
+let entrance={r:0,c:0}, treasure={r:SIZE-1,c:SIZE-1};
+let budgetMax=15, budgetUsed=0;
+let currentTool='trap';
+let testing=false, pathCells=null;
+
+function newBlueprint(){
+  grid=Array.from({length:SIZE},()=>Array(SIZE).fill(null));
+  budgetUsed=0;
+  testing=false;pathCells=null;
+  setStatus(I18N.t('place_prompt','Place your defenses, then test the robber.'));
+  render();
+  updateHud();
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+function updateHud(){
+  document.getElementById('budgetLabel').textContent=I18N.t('budget_label','Budget: {u} / {m}').replace('{u}',budgetMax-budgetUsed).replace('{m}',budgetMax);
+  document.getElementById('hiLabel').textContent=I18N.t('best_delay_label','Best Delay: {h}').replace('{h}',hi);
+}
+
+function isFixed(r,c){
+  return (r===entrance.r&&c===entrance.c)||(r===treasure.r&&c===treasure.c);
+}
+
+function onCellClick(r,c){
+  if(testing)return;
+  if(isFixed(r,c)){SFX.error();return;}
+  const existing=grid[r][c];
+  if(currentTool==='erase'){
+    if(existing){
+      budgetUsed-=COST[existing];
+      grid[r][c]=null;
+      SFX.click();
+    }
+    render();updateHud();
+    return;
+  }
+  if(existing===currentTool){
+    // toggle off / refund
+    budgetUsed-=COST[existing];
+    grid[r][c]=null;
+    SFX.click();
+    render();updateHud();
+    return;
+  }
+  const refund=existing?COST[existing]:0;
+  const cost=COST[currentTool];
+  if(budgetUsed-refund+cost>budgetMax){
+    SFX.error();
+    setStatus(I18N.t('budget_exceeded','Not enough budget for that!'));
+    return;
+  }
+  budgetUsed=budgetUsed-refund+cost;
+  grid[r][c]=currentTool;
+  SFX.select();
+  render();updateHud();
+}
+
+function render(){
+  const gridEl=document.getElementById('grid');
+  gridEl.innerHTML='';
+  const icons={trap:'🪤',passage:'🌀',door:'🚪'};
+  for(let r=0;r<SIZE;r++){
+    for(let c=0;c<SIZE;c++){
+      const d=document.createElement('div');
+      d.className='cell';
+      if(r===entrance.r&&c===entrance.c){d.classList.add('entrance');d.textContent='🚶';}
+      else if(r===treasure.r&&c===treasure.c){d.classList.add('treasure');d.textContent='💰';}
+      else if(grid[r][c]){d.classList.add(grid[r][c]);d.textContent=icons[grid[r][c]];}
+      if(pathCells&&pathCells.some(p=>p.r===r&&p.c===c))d.classList.add('path');
+      d.onclick=()=>onCellClick(r,c);
+      gridEl.appendChild(d);
+    }
+  }
+}
+
+document.querySelectorAll('#toolbar .tool').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('#toolbar .tool').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    currentTool=btn.dataset.tool;
+    SFX.click();
+  });
+});
+
+document.addEventListener('keydown',e=>{
+  const map={'Digit1':'trap','Digit2':'passage','Digit3':'door','Digit0':'erase','Backspace':'erase'};
+  if(map[e.code]){
+    currentTool=map[e.code];
+    document.querySelectorAll('#toolbar .tool').forEach(b=>b.classList.toggle('active',b.dataset.tool===currentTool));
+  }
+});
+
+function dijkstra(){
+  const dist=Array.from({length:SIZE},()=>Array(SIZE).fill(Infinity));
+  const prev=Array.from({length:SIZE},()=>Array(SIZE).fill(null));
+  const visited=Array.from({length:SIZE},()=>Array(SIZE).fill(false));
+  dist[entrance.r][entrance.c]=0;
+  for(let iter=0;iter<SIZE*SIZE;iter++){
+    let br=-1,bc=-1,bd=Infinity;
+    for(let r=0;r<SIZE;r++)for(let c=0;c<SIZE;c++){
+      if(!visited[r][c]&&dist[r][c]<bd){bd=dist[r][c];br=r;bc=c;}
+    }
+    if(br===-1)break;
+    visited[br][bc]=true;
+    const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+    for(const [dr,dc] of dirs){
+      const nr=br+dr,nc=bc+dc;
+      if(nr<0||nc<0||nr>=SIZE||nc>=SIZE)continue;
+      const type=grid[nr][nc];
+      const w=type?WEIGHT[type]:1;
+      if(w===Infinity)continue;
+      const nd=dist[br][bc]+w;
+      if(nd<dist[nr][nc]){dist[nr][nc]=nd;prev[nr][nc]=[br,bc];}
+    }
+  }
+  if(dist[treasure.r][treasure.c]===Infinity)return {reachable:false,delay:0,path:[]};
+  const path=[];
+  let cur=[treasure.r,treasure.c];
+  while(cur){
+    path.unshift({r:cur[0],c:cur[1]});
+    const p=prev[cur[0]][cur[1]];
+    cur=p;
+  }
+  return {reachable:true,delay:dist[treasure.r][treasure.c],path};
+}
+
+function testRobber(){
+  if(testing)return;
+  testing=true;
+  const result=dijkstra();
+  if(!result.reachable){
+    pathCells=[];
+    render();
+    setStatus(I18N.t('trapped_forever','The robber is trapped forever! The tomb is impenetrable.'));
+    SFX.win();
+    const score=999;
+    if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+    updateHud();
+    testing=false;
+    return;
+  }
+  pathCells=[];
+  render();
+  let i=0;
+  const step=()=>{
+    if(i>=result.path.length){
+      testing=false;
+      const delay=Math.round(result.delay);
+      setStatus(I18N.t('robber_delayed','The robber reached the treasure after {d} steps of delay.').replace('{d}',delay));
+      if(delay>hi){hi=delay;localStorage.setItem(HS_KEY,String(hi));SFX.levelup();}
+      else SFX.point();
+      updateHud();
+      return;
+    }
+    pathCells.push(result.path[i]);
+    render();
+    i++;
+    setTimeout(step,120);
+  };
+  setStatus(I18N.t('robber_moving','Simulating the robber\'s route...'));
+  SFX.swoosh();
+  setTimeout(step,300);
+}
+
+document.getElementById('testBtn').addEventListener('click',testRobber);
+document.getElementById('newBtn').addEventListener('click',()=>{newBlueprint();SFX.click();});
+
+newBlueprint();
+</script></body></html>

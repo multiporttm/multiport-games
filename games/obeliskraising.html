@@ -1,0 +1,299 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Obelisk Raising - Multiport Games</title><meta name="description" content="Play Obelisk Raising free online — Hold Space or Up to pull the ropes and raise the obelisk, use Left/Right or A/D to correct its balance, and press S or tap the sandbag button to steady it, all before it topples."><link rel="canonical" href="https://games.multiportllc.com/games/obeliskraising"><meta property="og:title" content="Obelisk Raising - Multiport Games"><meta property="og:description" content="Play Obelisk Raising free online — Hold Space or Up to pull the ropes and raise the obelisk, use Left/Right or A/D to correct its balance, and press S or tap the sandbag button to steady it, all before it topples."><meta property="og:url" content="https://games.multiportllc.com/games/obeliskraising"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Obelisk Raising","description":"Play Obelisk Raising free online instantly. Coordinate ropes, sledges, and counterweight sandbags across multiple crew stations to raise a massive stone obelisk upright into its base socket without letting it topple. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/obeliskraising","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1e3a5f;display:block;border-radius:8px}
+#hud{color:#f4e3c1;font-size:1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:space-between;max-width:800px;margin:0 auto;flex-wrap:wrap}
+#hud span{padding:0 6px}
+#controls-row{display:flex;justify-content:center;gap:10px;padding:10px;flex-wrap:wrap}
+#controls-row button{padding:12px 18px;border:none;border-radius:10px;background:#8a5a2b;color:#fff;font-weight:800;font-size:.95rem;cursor:pointer;user-select:none;touch-action:manipulation}
+#controls-row button:active{background:#e8c98a;color:#3b2a17}
+#controls-row button.sandbag{background:#4a4a52}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Obelisk Raising</div>
+  <div class="game-frame">
+    <div id="hud"><span id="raised">Obelisks raised: 0 | Hi: 0</span><span id="stamina">Crew stamina: 100</span></div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <div id="controls-row">
+      <button id="btnLeft">◀ Left Crew</button>
+      <button id="btnPull">▲ Pull Ropes</button>
+      <button id="btnRight">Right Crew ▶</button>
+      <button id="btnBag" class="sandbag">🪨 Sandbag</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Space</b> or <b>Up Arrow</b> (or tap <b>Pull Ropes</b>) to haul the obelisk upright — it drifts off-balance as it rises. Use <b>Left/Right Arrows</b> or <b>A/D</b> (or the side buttons) to counter-pull the crew on the leaning side, and press <b>S</b> or tap <b>Sandbag</b> to drop a counterweight and steady it. Let the tilt go too far and it topples!</div>
+</div>
+<script>
+const HI_KEY='obeliskraising_hi';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const raisedEl=document.getElementById('raised'),staminaEl=document.getElementById('stamina');
+
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let raised=0,gameOver=true,started=false,won=false;
+let angle=0; // 0..90, 0 = lying flat, 90 = upright
+let tilt=0; // -1..1, 0 = balanced
+let tiltLimit=0.85;
+let stamina=100;
+let sandbagCooldown=0;
+let level=0;
+let driftBase=0.0025;
+let pullHeld=false,leftHeld=false,rightHeld=false;
+let flashTimer=0,flashColor='';
+
+function fmtRaised(){
+  raisedEl.textContent=I18N.t('raised_hi_label','Obelisks raised: {r} | Hi: {h}').replace('{r}',raised).replace('{h}',hi);
+}
+function fmtStamina(){
+  staminaEl.textContent=I18N.t('crew_stamina_label','Crew stamina: {s}').replace('{s}',Math.round(stamina));
+}
+
+function reset(){
+  raised=0;level=0;gameOver=false;started=true;won=false;
+  angle=0;tilt=(Math.random()-0.5)*0.1;stamina=100;sandbagCooldown=0;
+  tiltLimit=0.85;driftBase=0.0025;
+  fmtRaised();fmtStamina();
+}
+
+function nextObelisk(){
+  raised++;level++;
+  SFX.win();
+  flashTimer=20;flashColor='#7ec850';
+  angle=0;tilt=(Math.random()-0.5)*0.12;
+  stamina=100;sandbagCooldown=0;
+  tiltLimit=Math.max(0.45,0.85-level*0.03);
+  driftBase=0.0025+level*0.0004;
+  if(raised>hi){hi=raised;localStorage.setItem(HI_KEY,String(hi));}
+  fmtRaised();
+}
+
+function topple(){
+  gameOver=true;
+  SFX.lose();
+  flashTimer=20;flashColor='#e94560';
+  if(raised>hi){hi=raised;localStorage.setItem(HI_KEY,String(hi));}
+  fmtRaised();
+}
+
+function startOrRestart(){
+  if(gameOver){reset();return;}
+  started=true;
+}
+
+function dropSandbag(){
+  if(gameOver){reset();return;}
+  if(sandbagCooldown>0)return;
+  sandbagCooldown=240;
+  tilt*=0.35;
+  SFX.powerup();
+  flashTimer=10;flashColor='#ffd54f';
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();pullHeld=true;startOrRestart();}
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){leftHeld=true;startOrRestart();}
+  if(e.code==='ArrowRight'||e.code==='KeyD'){rightHeld=true;startOrRestart();}
+  if(e.code==='KeyS'){dropSandbag();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp')pullHeld=false;
+  if(e.code==='ArrowLeft'||e.code==='KeyA')leftHeld=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD')rightHeld=false;
+});
+
+function bindHold(btn,onDown,onUp){
+  btn.addEventListener('pointerdown',e=>{e.preventDefault();startOrRestart();onDown();});
+  btn.addEventListener('pointerup',e=>{e.preventDefault();onUp&&onUp();});
+  btn.addEventListener('pointerleave',e=>{onUp&&onUp();});
+  btn.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();onDown();},{passive:false});
+  btn.addEventListener('touchend',e=>{e.preventDefault();onUp&&onUp();},{passive:false});
+}
+bindHold(document.getElementById('btnPull'),()=>pullHeld=true,()=>pullHeld=false);
+bindHold(document.getElementById('btnLeft'),()=>leftHeld=true,()=>leftHeld=false);
+bindHold(document.getElementById('btnRight'),()=>rightHeld=true,()=>rightHeld=false);
+document.getElementById('btnBag').addEventListener('click',dropSandbag);
+
+c.addEventListener('pointerdown',()=>startOrRestart());
+c.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();},{passive:false});
+
+function drawScene(){
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0d2038');bg.addColorStop(1,'#1e3a5f');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  const groundY=H-60;
+  ctx.fillStyle='#c9a35a';ctx.fillRect(0,groundY,W,H-groundY);
+  ctx.fillStyle='#a3803f';ctx.fillRect(0,groundY,W,6);
+
+  // base socket
+  const baseX=W/2;
+  ctx.fillStyle='#8a7048';
+  ctx.fillRect(baseX-40,groundY-14,80,20);
+
+  // obelisk pivoting from base
+  const rad=(angle)*Math.PI/180;
+  const len=220;
+  const lean=tilt*30; // horizontal skew for visual tilt
+  const tipX=baseX+Math.sin(rad)*len*0.02*0+ (Math.cos(rad)* -0 ) ; // placeholder unused
+  // Represent raising as rotation from lying flat (pointing left) to upright
+  const baseAngle=Math.PI - rad; // starts pointing left (PI), rotates to up (PI/2)
+  const pivotX=baseX,pivotY=groundY-4;
+  const endX=pivotX+Math.cos(baseAngle)*len;
+  const endY=pivotY+Math.sin(baseAngle)*len;
+  const skew=tilt*40*(angle/90);
+
+  ctx.save();
+  ctx.strokeStyle='#5a4a30';
+  ctx.lineWidth=3;
+  // ropes from crew stations to obelisk tip
+  ctx.beginPath();ctx.moveTo(80,groundY-10);ctx.lineTo(endX+skew,endY);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(W-80,groundY-10);ctx.lineTo(endX+skew,endY);ctx.stroke();
+  ctx.restore();
+
+  // obelisk body (rectangle from pivot to end, tapered top)
+  ctx.save();
+  ctx.translate(pivotX,pivotY);
+  ctx.rotate(baseAngle-Math.PI/2+ (skew/len));
+  const w1=34,w2=14;
+  ctx.fillStyle='#b7a06a';
+  ctx.beginPath();
+  ctx.moveTo(-w1/2,0);
+  ctx.lineTo(w1/2,0);
+  ctx.lineTo(w2/2,-len);
+  ctx.lineTo(-w2/2,-len);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle='#8a7a4f';
+  ctx.fillRect(-w1/2,0,6,0);
+  ctx.strokeStyle='#5a4a30';ctx.lineWidth=2;ctx.stroke();
+  // pyramidion tip
+  ctx.fillStyle='#e8c98a';
+  ctx.beginPath();ctx.moveTo(-w2/2,-len);ctx.lineTo(w2/2,-len);ctx.lineTo(0,-len-18);ctx.closePath();ctx.fill();
+  ctx.restore();
+
+  // crew stations
+  ctx.fillStyle=leftHeld?'#ffd54f':'#e8c98a';
+  ctx.beginPath();ctx.arc(80,groundY-10,12,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#3b2a17';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText('L',80,groundY-6);
+
+  ctx.fillStyle=rightHeld?'#ffd54f':'#e8c98a';
+  ctx.beginPath();ctx.arc(W-80,groundY-10,12,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#3b2a17';
+  ctx.fillText('R',W-80,groundY-6);
+
+  ctx.fillStyle=pullHeld?'#ffd54f':'#e8c98a';
+  ctx.fillRect(baseX-40,groundY+10,80,14);
+  ctx.fillStyle='#3b2a17';ctx.font='bold 11px Arial';
+  ctx.fillText(I18N.t('sledge_label','SLEDGE'),baseX,groundY+21);
+}
+
+function drawGauges(){
+  // angle gauge
+  ctx.fillStyle='#f4e3c1';ctx.font='bold 14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('angle_label','Angle: {a}°').replace('{a}',Math.round(angle)),20,26);
+  const gx=20,gy=34,gw=200,gh=14;
+  ctx.fillStyle='#0d2038';ctx.fillRect(gx,gy,gw,gh);
+  ctx.fillStyle='#7ec850';ctx.fillRect(gx,gy,gw*(angle/90),gh);
+  ctx.strokeStyle='#f4e3c1';ctx.strokeRect(gx,gy,gw,gh);
+
+  // tilt gauge (balance bar, center = balanced)
+  const tx=W-220,ty=20,tw=200,th=20;
+  ctx.fillStyle='#f4e3c1';ctx.textAlign='left';
+  ctx.fillText(I18N.t('balance_label','Balance'),tx,ty-6);
+  ctx.fillStyle='#0d2038';ctx.fillRect(tx,ty,tw,th);
+  ctx.strokeStyle='#f4e3c1';ctx.strokeRect(tx,ty,tw,th);
+  // danger zones
+  ctx.fillStyle='rgba(233,69,96,0.35)';
+  ctx.fillRect(tx,ty,tw*(1-tiltLimit)/2,th);
+  ctx.fillRect(tx+tw*(1+tiltLimit)/2,ty,tw*(1-tiltLimit)/2,th);
+  const markerX=tx+tw/2+(tilt/1)*tw/2;
+  ctx.fillStyle=Math.abs(tilt)>tiltLimit*0.75?'#e94560':'#ffd54f';
+  ctx.fillRect(markerX-3,ty-2,6,th+4);
+  ctx.strokeStyle='#111';ctx.beginPath();ctx.moveTo(tx+tw/2,ty);ctx.lineTo(tx+tw/2,ty+th);ctx.stroke();
+
+  if(sandbagCooldown>0){
+    ctx.fillStyle='#f4e3c1';ctx.font='12px Arial';
+    ctx.fillText(I18N.t('sandbag_cooldown_label','Sandbag ready in {n}s').replace('{n}',Math.ceil(sandbagCooldown/60)),tx,ty+th+18);
+  } else {
+    ctx.fillStyle='#7ec850';ctx.font='12px Arial';
+    ctx.fillText(I18N.t('sandbag_ready_label','Sandbag ready! (S)'),tx,ty+th+18);
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+
+  if(!started){
+    drawScene();
+    ctx.fillStyle='rgba(0,0,0,0.35)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start'),W/2,H/2);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawScene();
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','TOPPLED!'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('raised_result_label','Obelisks raised: {r}').replace('{r}',raised),W/2,H/2+14);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+42);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // stamina & pulling
+  if(pullHeld && stamina>0 && angle<90){
+    angle+=0.18;
+    stamina-=0.5;
+    tilt+=(Math.random()-0.5)*driftBase*6;
+  } else {
+    stamina=Math.min(100,stamina+0.3);
+  }
+  angle=Math.min(90,angle);
+
+  // random drift while rising
+  if(angle>0&&angle<90){
+    tilt+=(Math.random()-0.5)*driftBase*(1+angle/60);
+  }
+
+  if(leftHeld){tilt-=0.006;}
+  if(rightHeld){tilt+=0.006;}
+  tilt=Math.max(-1,Math.min(1,tilt));
+
+  if(sandbagCooldown>0)sandbagCooldown--;
+
+  if(Math.abs(tilt)>=tiltLimit){
+    topple();
+  } else if(angle>=90 && !won){
+    won=true;
+    nextObelisk();
+    won=false;
+  }
+
+  drawScene();
+  drawGauges();
+  fmtStamina();
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashColor;
+    ctx.globalAlpha=flashTimer/20*0.35;
+    ctx.fillRect(0,0,W,H);
+    ctx.globalAlpha=1;
+  }
+
+  requestAnimationFrame(loop);
+}
+fmtRaised();fmtStamina();
+loop();
+</script></body></html>

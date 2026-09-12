@@ -1,0 +1,237 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Pyramid Building - Multiport Games</title><meta name="description" content="Play Pyramid Building free online — Click or tap the ramp with the correct block size for each highlighted slot on the pyramid. Complete every layer before you run out of laborer turns."><link rel="canonical" href="https://games.multiportllc.com/games/pyramidbuilding"><meta property="og:title" content="Pyramid Building - Multiport Games"><meta property="og:description" content="Play Pyramid Building free online — Click or tap the ramp with the correct block size for each highlighted slot on the pyramid. Complete every layer before you run out of laborer turns."><meta property="og:url" content="https://games.multiportllc.com/games/pyramidbuilding"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Pyramid Building","description":"Play Pyramid Building free online instantly. Click or tap the ramp with the correct block size for each highlighted slot on the pyramid. Complete every layer before you run out of laborer turns. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/pyramidbuilding","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{display:flex;flex-direction:column;align-items:center;gap:10px;padding:10px}
+#hud{color:#f4d58d;font-size:1.05rem;font-weight:800;text-align:center;display:flex;gap:18px;flex-wrap:wrap;justify-content:center}
+#hud span b{color:#fff}
+canvas#pc{background:linear-gradient(#3a2f1e,#7a5c2e);border-radius:8px;touch-action:none;max-width:100%}
+#ramps{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.ramp{width:64px;height:64px;border-radius:10px;border:3px solid #d8b45c;background:#c9a24b;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:1.3rem;color:#3a2a0e;cursor:pointer;transition:transform .1s,box-shadow .15s;user-select:none}
+.ramp:hover{transform:translateY(-3px);box-shadow:0 4px 10px rgba(0,0,0,.4)}
+.ramp:active{transform:translateY(0)}
+.ramp.wrong{background:#8a3b3b;border-color:#c96b6b;color:#fff}
+#msg{color:#fff;font-size:1rem;min-height:1.4em;font-weight:700}
+#overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.75);border-radius:8px;color:#fff;text-align:center;flex-direction:column;gap:10px}
+#overlay.show{display:flex}
+#pcHolder{position:relative;max-width:100%}
+#overlay button{padding:10px 24px;background:#e94560;border:none;border-radius:20px;color:#fff;font-size:1rem;cursor:pointer;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Pyramid Building</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><span>Layer: <b id="layerLbl">1</b>/<b id="layerTotal">5</b></span><span>Turns left: <b id="turnsLbl">0</b></span><span>Hi: <b id="hiLbl">0</b></span></div>
+      <div id="pcHolder">
+        <canvas id="pc" width="640" height="360"></canvas>
+        <div id="overlay">
+          <div id="overlayTitle" style="font-size:1.6rem;font-weight:900"></div>
+          <div id="overlayMsg"></div>
+          <button id="overlayBtn">Play Again</button>
+        </div>
+      </div>
+      <div id="msg">Match each glowing slot to the correct block size below.</div>
+      <div id="ramps"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Each pyramid layer needs blocks of a specific size placed into its glowing slots. Click the ramp below carrying the <b>matching size number</b> to place a block. A wrong block wastes a laborer turn. Complete all layers before your limited turns run out!</div>
+</div>
+<script>
+const canvas=document.getElementById('pc'),ctx=canvas.getContext('2d');
+const LAYERS=5; // base layer 5 slots down to apex 1 slot
+const overlay=document.getElementById('overlay');
+const overlayTitle=document.getElementById('overlayTitle');
+const overlayMsg=document.getElementById('overlayMsg');
+const overlayBtn=document.getElementById('overlayBtn');
+const rampsEl=document.getElementById('ramps');
+const msgEl=document.getElementById('msg');
+const HI_KEY='pyramidbuilding_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+document.getElementById('hiLbl').textContent=hi;
+
+let layerIdx,slots,turns,maxTurns,score,gameOver,placedThisLayer,blockSizes;
+
+function layerSlotCount(li){ return LAYERS-li; } // layer 0 (base) has 5 slots, apex layer4 has 1
+function totalSlots(){ let t=0; for(let i=0;i<LAYERS;i++)t+=layerSlotCount(i); return t; }
+
+function initGame(){
+  layerIdx=0;
+  score=0;
+  gameOver=false;
+  maxTurns=Math.round(totalSlots()*1.6);
+  turns=maxTurns;
+  document.getElementById('layerTotal').textContent=LAYERS;
+  setupLayer();
+  updateHud();
+  overlay.classList.remove('show');
+  render();
+}
+
+function setupLayer(){
+  const count=layerSlotCount(layerIdx);
+  // sizes required: each slot needs a size 1..3 (small/med/large), randomized but block set must satisfy
+  slots=[];
+  for(let i=0;i<count;i++){
+    slots.push({size:1+Math.floor(Math.random()*3),filled:false});
+  }
+  blockSizes=[1,2,3];
+  placedThisLayer=0;
+  renderRamps();
+}
+
+function renderRamps(){
+  rampsEl.innerHTML='';
+  const labels={1:'S',2:'M',3:'L'};
+  blockSizes.forEach(sz=>{
+    const d=document.createElement('div');
+    d.className='ramp';
+    d.textContent=labels[sz];
+    d.title='Size '+sz;
+    d.addEventListener('click',()=>chooseBlock(sz));
+    rampsEl.appendChild(d);
+  });
+}
+
+function nextEmptySlot(){
+  return slots.find(s=>!s.filled);
+}
+
+function chooseBlock(sz){
+  if(gameOver)return;
+  const slot=nextEmptySlot();
+  if(!slot)return;
+  if(slot.size===sz){
+    slot.filled=true;
+    placedThisLayer++;
+    score+=10;
+    SFX.point();
+    msgEl.textContent=I18N.t('correct_msg','Block placed correctly!');
+    if(placedThisLayer>=slots.length){
+      SFX.success();
+      layerIdx++;
+      if(layerIdx>=LAYERS){
+        winGame();
+        return;
+      }
+      score+=25;
+      setupLayer();
+      msgEl.textContent=I18N.t('layer_done_msg','Layer complete! Onward and upward.');
+    }
+  } else {
+    turns--;
+    SFX.error();
+    msgEl.textContent=I18N.t('wrong_msg','Wrong size! A laborer turn is wasted.');
+    flashRamp(sz);
+    if(turns<=0){
+      loseGame();
+      return;
+    }
+  }
+  updateHud();
+  render();
+}
+
+function flashRamp(sz){
+  const labels={1:'S',2:'M',3:'L'};
+  [...rampsEl.children].forEach(el=>{
+    if(el.textContent===labels[sz]){
+      el.classList.add('wrong');
+      setTimeout(()=>el.classList.remove('wrong'),250);
+    }
+  });
+}
+
+function updateHud(){
+  document.getElementById('layerLbl').textContent=Math.min(layerIdx+1,LAYERS);
+  document.getElementById('turnsLbl').textContent=Math.max(0,turns);
+}
+
+function winGame(){
+  gameOver=true;
+  score+=turns*5;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  document.getElementById('hiLbl').textContent=hi;
+  SFX.win();
+  overlayTitle.textContent=I18N.t('win_title','PYRAMID COMPLETE!');
+  overlayMsg.textContent=I18N.t('final_score_label','Final score: {s}').replace('{s}',score);
+  overlay.classList.add('show');
+}
+
+function loseGame(){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  document.getElementById('hiLbl').textContent=hi;
+  SFX.lose();
+  overlayTitle.textContent=I18N.t('lose_title','OUT OF TURNS');
+  overlayMsg.textContent=I18N.t('final_score_label','Final score: {s}').replace('{s}',score);
+  overlay.classList.add('show');
+}
+
+overlayBtn.addEventListener('click',initGame);
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){initGame();return;}
+  if(e.key==='1')chooseBlock(1);
+  else if(e.key==='2')chooseBlock(2);
+  else if(e.key==='3')chooseBlock(3);
+});
+
+function render(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  const sky=ctx.createLinearGradient(0,0,0,canvas.height);
+  sky.addColorStop(0,'#e8b76a');sky.addColorStop(1,'#c98f3f');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#d9a556';ctx.fillRect(0,canvas.height-30,canvas.width,30);
+
+  const baseW=560,baseH=42,cx=canvas.width/2;
+  const bottomY=canvas.height-40;
+  for(let li=0;li<LAYERS;li++){
+    const count=layerSlotCount(li);
+    const layerW=baseW*(count/LAYERS);
+    const y=bottomY-li*baseH-baseH;
+    const blockW=layerW/count;
+    for(let i=0;i<count;i++){
+      const x=cx-layerW/2+i*blockW;
+      let fillColor='#e2c07f';
+      let stroke='#8a6a30';
+      let target=null;
+      if(li===layerIdx){
+        target=slots[i];
+      } else if(li<layerIdx){
+        target={filled:true};
+      }
+      if(target&&target.filled){
+        fillColor='#f0d9a0';
+      } else if(target){
+        fillColor='#b98a3d';
+        stroke='#fff2c9';
+      } else {
+        fillColor='#6d552a';
+      }
+      ctx.fillStyle=fillColor;
+      ctx.strokeStyle=stroke;
+      ctx.lineWidth=li===layerIdx&&target&&!target.filled?3:1.5;
+      ctx.fillRect(x+2,y+2,blockW-4,baseH-4);
+      ctx.strokeRect(x+2,y+2,blockW-4,baseH-4);
+      if(li===layerIdx&&target&&!target.filled){
+        ctx.fillStyle='#3a2a0e';
+        ctx.font='bold 16px Arial';
+        ctx.textAlign='center';
+        const labels={1:'S',2:'M',3:'L'};
+        ctx.fillText(labels[target.size],x+blockW/2,y+baseH/2+6);
+      }
+    }
+  }
+  ctx.fillStyle='#3a2a0e';
+  ctx.font='bold 14px Arial';
+  ctx.textAlign='center';
+  ctx.fillText(I18N.t('score_label','Score: {s}').replace('{s}',score),cx,24);
+}
+
+initGame();
+</script></body></html>
