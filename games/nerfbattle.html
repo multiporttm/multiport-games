@@ -1,0 +1,379 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Nerf Battle</title><meta name="description" content="Play Nerf Battle free online — Move with WASD/Arrows or the on-screen stick, aim with your mouse or drag, click/tap to fire foam darts. Collect scattered darts around the living room to reload — ammo is scarce!"><link rel="canonical" href="https://games.multiportllc.com/games/nerfbattle"><meta property="og:title" content="Nerf Battle - Multiport Games"><meta property="og:description" content="Play Nerf Battle free online — Move with WASD/Arrows or the on-screen stick, aim with your mouse or drag, click/tap to fire foam darts. Collect scattered darts around the living room to reload — ammo is scarce!"><meta property="og:url" content="https://games.multiportllc.com/games/nerfbattle"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Nerf Battle","description":"Play Nerf Battle free online instantly. Battle AI opponents with a foam dart blaster across a living-room-turned-battlefield full of couch forts and pillow barricades. Ammo is very limited, so scavenge scattered darts off the floor to keep firing in this fast free-for-all. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/nerfbattle","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0a0603}
+#c{background:#4a3728;display:block;border-radius:8px;touch-action:none;max-width:100%;height:auto}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#ffd08a;font-size:1rem;font-weight:700;padding:6px 10px;flex-wrap:wrap;gap:6px}
+#healthBar{width:110px;height:12px;background:#1a1a2e;border-radius:6px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+#healthFill{height:100%;background:linear-gradient(90deg,#ff5577,#ff2244);width:100%}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Nerf Battle</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Hits: 0 | Hi: 0</span>
+      <span id="ammoDisp">Darts: 6</span>
+      <span>HP <span id="healthBar"><span id="healthFill"></span></span></span>
+    </div>
+    <canvas id="c" width="800" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>WASD/Arrows</b> or the on-screen stick to move. Aim with your <b>mouse</b> (or drag on mobile), <b>click/tap</b> to fire a dart. Ammo is scarce — run over the yellow darts scattered around the room to reload. Score points by hitting opponents before they hit you!</div>
+</div>
+<script>
+const HS_KEY='nerfbattle_hi';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480;
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+
+const MAX_AMMO=6,MAX_HP=100;
+let player,bots,cover,darts,bullets,particles;
+let score=0,ammo=MAX_AMMO,hp=MAX_HP,started=false,gameOver=false,lastTime=null,fireTimer=0,dartSpawnTimer=0;
+let keys={};
+let aim={x:W/2+100,y:H/2};
+let mouseDown=false;
+
+function buildCover(){
+  return [
+    {x:100,y:90,w:100,h:40,color:'#7a5a3c'}, // couch fort
+    {x:600,y:90,w:100,h:40,color:'#7a5a3c'},
+    {x:100,y:350,w:100,h:40,color:'#7a5a3c'},
+    {x:600,y:350,w:100,h:40,color:'#7a5a3c'},
+    {x:360,y:220,w:80,h:40,color:'#c9a86a'}, // pillow barricade
+  ];
+}
+
+function dist(x1,y1,x2,y2){return Math.hypot(x1-x2,y1-y2);}
+
+function rectsOverlapCircle(cx,cy,cr,r){
+  const nx=Math.max(r.x,Math.min(cx,r.x+r.w));
+  const ny=Math.max(r.y,Math.min(cy,r.y+r.h));
+  return dist(cx,cy,nx,ny)<cr;
+}
+
+function moveEntity(ent,dx,dy){
+  let nx=ent.x+dx,ny=ent.y+dy;
+  nx=Math.max(20,Math.min(W-20,nx));ny=Math.max(20,Math.min(H-20,ny));
+  if(!cover.some(o=>rectsOverlapCircle(nx,ent.y,ent.r,o)))ent.x=nx;
+  if(!cover.some(o=>rectsOverlapCircle(ent.x,ny,ent.r,o)))ent.y=ny;
+}
+
+function spawnDart(){
+  let x,y,tries=0;
+  do{x=40+Math.random()*(W-80);y=40+Math.random()*(H-80);tries++;}while(tries<20&&cover.some(o=>rectsOverlapCircle(x,y,20,o)));
+  darts.push({x,y,r:8,bob:Math.random()*Math.PI*2});
+}
+
+function spawnBot(){
+  let x,y,tries=0;
+  do{x=100+Math.random()*(W-200);y=100+Math.random()*(H-200);tries++;}while(tries<20&&(dist(x,y,player.x,player.y)<180||cover.some(o=>rectsOverlapCircle(x,y,16,o))));
+  bots.push({x,y,r:14,hp:1,ammo:3,fireCd:60+Math.random()*40,moveAngle:Math.random()*Math.PI*2,moveTimer:0,color:['#ff5577','#4dc9ff','#ffe14d'][Math.floor(Math.random()*3)]});
+}
+
+function reset(){
+  player={x:80,y:H/2,r:14,hurtCd:0};
+  cover=buildCover();
+  bots=[];darts=[];bullets=[];particles=[];
+  for(let i=0;i<3;i++)spawnBot();
+  for(let i=0;i<4;i++)spawnDart();
+  score=0;ammo=MAX_AMMO;hp=MAX_HP;gameOver=false;started=false;lastTime=null;fireTimer=0;dartSpawnTimer=0;
+}
+
+function segCircleHit(x1,y1,x2,y2,cx,cy,cr){
+  const dx=x2-x1,dy=y2-y1;
+  const len2=dx*dx+dy*dy;
+  let t=len2===0?0:((cx-x1)*dx+(cy-y1)*dy)/len2;
+  t=Math.max(0,Math.min(1,t));
+  const px=x1+t*dx,py=y1+t*dy;
+  return dist(px,py,cx,cy)<cr;
+}
+
+function segCoverHit(x1,y1,x2,y2){
+  for(const o of cover){
+    const steps=14;
+    for(let i=0;i<=steps;i++){
+      const t=i/steps;
+      const px=x1+(x2-x1)*t,py=y1+(y2-y1)*t;
+      if(px>=o.x&&px<=o.x+o.w&&py>=o.y&&py<=o.y+o.h)return {x:px,y:py};
+    }
+  }
+  return null;
+}
+
+function fireDart(from,angle,fromPlayer){
+  const range=900;
+  const x2=from.x+Math.cos(angle)*range,y2=from.y+Math.sin(angle)*range;
+  const coverHit=segCoverHit(from.x,from.y,x2,y2);
+  let endX=coverHit?coverHit.x:x2,endY=coverHit?coverHit.y:y2;
+  let hitTarget=null;
+  if(fromPlayer){
+    for(const b of bots){
+      if(segCircleHit(from.x,from.y,endX,endY,b.x,b.y,b.r)){
+        const d=dist(from.x,from.y,b.x,b.y);
+        if(!hitTarget||d<hitTarget.d){hitTarget={bot:b,d};endX=b.x;endY=b.y;}
+      }
+    }
+  }else{
+    if(player.hurtCd<=0&&segCircleHit(from.x,from.y,endX,endY,player.x,player.y,player.r)){
+      hitTarget={player:true};endX=player.x;endY=player.y;
+    }
+  }
+  bullets.push({x1:from.x,y1:from.y,x2:endX,y2:endY,life:12,fromPlayer});
+  SFX.click();
+  if(fromPlayer&&hitTarget&&hitTarget.bot){
+    bots=bots.filter(b=>b!==hitTarget.bot);
+    score+=10;SFX.point();
+    spawnParticles(endX,endY,'#ffd08a');
+    spawnBot();
+    if(Math.random()<0.5)spawnDart();
+  }else if(!fromPlayer&&hitTarget&&hitTarget.player){
+    hp=Math.max(0,hp-15);
+    player.hurtCd=40;
+    SFX.hurt();
+    spawnParticles(player.x,player.y,'#ff5577');
+    if(hp<=0)endGame();
+  }
+}
+
+function spawnParticles(x,y,color){
+  for(let i=0;i<10;i++){
+    const a=Math.random()*Math.PI*2,sp=1+Math.random()*3;
+    particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:20,color});
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+  SFX.lose();
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  if(!started)started=true;
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){reset();started=true;}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function canvasPos(e){
+  const rect=c.getBoundingClientRect();
+  return {x:(e.clientX-rect.left)*(W/rect.width),y:(e.clientY-rect.top)*(H/rect.height)};
+}
+c.addEventListener('mousemove',e=>{ if(!started||gameOver)return; const p=canvasPos(e);aim.x=p.x;aim.y=p.y; });
+c.addEventListener('mousedown',e=>{
+  if(gameOver){reset();started=true;return;}
+  if(!started){started=true;return;}
+  mouseDown=true;
+});
+document.addEventListener('mouseup',()=>{mouseDown=false;});
+
+let touchMoveId=null,touchAimId=null;
+let joy={active:false,baseX:0,baseY:0,x:0,y:0};
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){reset();started=true;return;}
+  started=true;
+  for(const t of e.changedTouches){
+    const p=canvasPos(t);
+    if(p.x<W/2&&touchMoveId===null){touchMoveId=t.identifier;joy.active=true;joy.baseX=p.x;joy.baseY=p.y;joy.x=p.x;joy.y=p.y;}
+    else if(touchAimId===null){touchAimId=t.identifier;aim.x=p.x;aim.y=p.y;mouseDown=true;}
+  }
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const p=canvasPos(t);
+    if(t.identifier===touchMoveId){joy.x=p.x;joy.y=p.y;}
+    else if(t.identifier===touchAimId){aim.x=p.x;aim.y=p.y;}
+  }
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  for(const t of e.changedTouches){
+    if(t.identifier===touchMoveId){touchMoveId=null;joy.active=false;}
+    if(t.identifier===touchAimId){touchAimId=null;mouseDown=false;}
+  }
+},{passive:false});
+
+function drawCover(){
+  cover.forEach(o=>{
+    ctx.fillStyle=o.color;
+    ctx.fillRect(o.x,o.y,o.w,o.h);
+    ctx.fillStyle='rgba(255,255,255,0.15)';
+    ctx.fillRect(o.x,o.y,o.w,6);
+  });
+}
+
+function drawDarts(){
+  darts.forEach(d=>{
+    d.bob+=0.08;
+    const yy=d.y+Math.sin(d.bob)*3;
+    ctx.save();
+    ctx.translate(d.x,yy);
+    ctx.fillStyle='#ffd54f';
+    ctx.fillRect(-10,-3,20,6);
+    ctx.fillStyle='#ff8a3d';
+    ctx.beginPath();ctx.arc(10,0,5,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  });
+}
+
+function drawPlayer(){
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  const angle=Math.atan2(aim.y-player.y,aim.x-player.x);
+  ctx.fillStyle=player.hurtCd>0?'#ff8899':'#ffd08a';
+  ctx.beginPath();ctx.arc(0,0,player.r,0,Math.PI*2);ctx.fill();
+  ctx.rotate(angle);
+  ctx.fillStyle='#ff8a3d';
+  ctx.fillRect(0,-4,24,8);
+  ctx.restore();
+}
+
+function drawBot(b){
+  ctx.save();
+  ctx.translate(b.x,b.y);
+  ctx.fillStyle=b.color;
+  ctx.beginPath();ctx.arc(0,0,b.r,0,Math.PI*2);ctx.fill();
+  const angle=Math.atan2(player.y-b.y,player.x-b.x);
+  ctx.rotate(angle);
+  ctx.fillStyle='#444';
+  ctx.fillRect(0,-3,18,6);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#4a3728';ctx.fillRect(0,0,W,H);
+  // floor pattern
+  ctx.strokeStyle='rgba(0,0,0,0.08)';ctx.lineWidth=1;
+  for(let i=0;i<W;i+=40){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,H);ctx.stroke();}
+  drawCover();
+  drawDarts();
+
+  if(!started){
+    ctx.fillStyle='#ffd08a';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Move or Click / Tap to start'),W/2,H/2);
+    drawPlayer();bots.forEach(drawBot);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    bots.forEach(drawBot);drawPlayer();
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 40px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('score_hi_label','Hits: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Click / Tap / Space to restart'),W/2,H/2+48);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  let dx=0,dy=0;
+  if(keys['KeyW']||keys['ArrowUp'])dy-=1;
+  if(keys['KeyS']||keys['ArrowDown'])dy+=1;
+  if(keys['KeyA']||keys['ArrowLeft'])dx-=1;
+  if(keys['KeyD']||keys['ArrowRight'])dx+=1;
+  if(joy.active){
+    const jdx=joy.x-joy.baseX,jdy=joy.y-joy.baseY;
+    const jd=Math.hypot(jdx,jdy);
+    if(jd>10){dx=jdx/jd;dy=jdy/jd;}
+  }
+  const len=Math.hypot(dx,dy);
+  if(len>0){dx/=len;dy/=len;moveEntity(player,dx*3.6*dt,dy*3.6*dt);}
+  if(player.hurtCd>0)player.hurtCd-=dt;
+
+  // pickup darts
+  darts=darts.filter(d=>{
+    if(dist(d.x,d.y,player.x,player.y)<player.r+d.r+4){
+      ammo=Math.min(MAX_AMMO,ammo+2);
+      SFX.coin();
+      return false;
+    }
+    return true;
+  });
+  dartSpawnTimer+=dt;
+  if(dartSpawnTimer>150&&darts.length<6){dartSpawnTimer=0;spawnDart();}
+
+  fireTimer-=dt;
+  if(mouseDown&&fireTimer<=0&&ammo>=1){
+    const angle=Math.atan2(aim.y-player.y,aim.x-player.x);
+    fireDart(player,angle,true);
+    ammo-=1;
+    fireTimer=18;
+  }
+
+  bots.forEach(b=>{
+    b.moveTimer-=dt;
+    if(b.moveTimer<=0){
+      // seek darts if low on ammo
+      let target=null;
+      if(b.ammo<=0&&darts.length){
+        target=darts.reduce((a,d)=>!a||dist(b.x,b.y,d.x,d.y)<dist(b.x,b.y,a.x,a.y)?d:a,null);
+      }
+      if(target){b.moveAngle=Math.atan2(target.y-b.y,target.x-b.x);}
+      else{b.moveAngle=Math.atan2(player.y-b.y,player.x-b.x)+(Math.random()-0.5)*1.4;}
+      b.moveTimer=25+Math.random()*30;
+    }
+    moveEntity(b,Math.cos(b.moveAngle)*1.7*dt,Math.sin(b.moveAngle)*1.7*dt);
+    darts=darts.filter(d=>{
+      if(dist(d.x,d.y,b.x,b.y)<b.r+d.r+4){b.ammo=Math.min(6,b.ammo+2);return false;}
+      return true;
+    });
+    b.fireCd-=dt;
+    if(b.fireCd<=0&&b.ammo>0&&dist(b.x,b.y,player.x,player.y)<380){
+      const angle=Math.atan2(player.y-b.y,player.x-b.x);
+      fireDart(b,angle,false);
+      b.ammo--;
+      b.fireCd=65+Math.random()*45;
+    }
+  });
+  while(bots.length<3)spawnBot();
+
+  bullets=bullets.filter(bl=>bl.life>0);
+  bullets.forEach(bl=>{
+    bl.life-=dt;
+    ctx.strokeStyle=bl.fromPlayer?'#ffd08a':'#ff5577';
+    ctx.lineWidth=4;
+    ctx.globalAlpha=Math.max(0,bl.life/12);
+    ctx.beginPath();ctx.moveTo(bl.x1,bl.y1);ctx.lineTo(bl.x2,bl.y2);ctx.stroke();
+    ctx.globalAlpha=1;
+  });
+
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;
+    ctx.fillStyle=p.color;ctx.globalAlpha=Math.max(0,p.life/20);
+    ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+  });
+
+  bots.forEach(drawBot);
+  drawPlayer();
+
+  if(joy.active){
+    ctx.strokeStyle='rgba(255,208,138,0.5)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(joy.baseX,joy.baseY,36,0,Math.PI*2);ctx.stroke();
+    ctx.beginPath();ctx.arc(joy.x,joy.y,16,0,Math.PI*2);ctx.fillStyle='rgba(255,208,138,0.3)';ctx.fill();
+  }
+
+  document.getElementById('scoreDisp').textContent=I18N.t('score_hi_label','Hits: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('ammoDisp').textContent=I18N.t('ammo_label','Darts: {a}').replace('{a}',Math.floor(ammo));
+  document.getElementById('healthFill').style.width=Math.max(0,hp)+'%';
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

@@ -1,0 +1,219 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Capture The Flag Run - Multiport Games</title><meta name="description" content="Play Capture The Flag Run free online — Sneak across the field, grab the enemy flag, and sprint it back to your base while dodging AI defenders."><link rel="canonical" href="https://games.multiportllc.com/games/capturetheflagrun"><meta property="og:title" content="Capture The Flag Run - Multiport Games"><meta property="og:description" content="Play Capture The Flag Run free online — Sneak across the field, grab the enemy flag, and sprint it back to your base while dodging AI defenders."><meta property="og:url" content="https://games.multiportllc.com/games/capturetheflagrun"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Capture The Flag Run","description":"Play Capture The Flag Run free online instantly. Sneak across a top-down field into enemy territory, grab the opposing flag, and race it back to your own base while avoiding being tagged by AI defenders. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/capturetheflagrun","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2d5a27;display:block;border-radius:8px;touch-action:none;margin:0 auto}
+#score-display{color:#7ec850;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#dpad{display:none;justify-content:center;margin-top:8px}
+@media(pointer:coarse){#dpad{display:grid;grid-template-columns:60px 60px 60px;grid-template-rows:60px 60px 60px;gap:4px;justify-content:center;margin-top:10px}}
+#dpad button{font-size:1.4rem;border:none;border-radius:10px;background:#16213e;color:#fff;opacity:.85}
+#dpad button:active{background:#e94560}
+.dpad-up{grid-column:2;grid-row:1}
+.dpad-left{grid-column:1;grid-row:2}
+.dpad-right{grid-column:3;grid-row:2}
+.dpad-down{grid-column:2;grid-row:3}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Capture The Flag Run</div>
+  <div class="game-frame">
+    <div id="score-display">Captures: 0 | Hi: 0</div>
+    <canvas id="c" width="760" height="420"></canvas>
+    <div id="dpad">
+      <button class="dpad-up" id="du">▲</button>
+      <button class="dpad-left" id="dl">◀</button>
+      <button class="dpad-right" id="dr">▶</button>
+      <button class="dpad-down" id="dd">▼</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or the <b>on-screen D-pad</b> to move. Sneak into the red zone, grab the enemy flag, then race it back to your blue base. Avoid the red defenders — getting tagged sends the flag back home!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const KEY='capturetheflagrun_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let captures=0;
+
+const player={x:80,y:H/2,r:12,speed:2.6,hasFlag:false};
+const homeBase={x:60,y:H/2,r:34};
+const enemyBase={x:W-60,y:H/2,r:34};
+let flag={x:W-60,y:H/2,taken:false};
+let defenders=[];
+let keys={};
+let gameOver=false,tagFlashT=0;
+let lastTime=null;
+
+function spawnDefenders(n){
+  defenders=[];
+  for(let i=0;i<n;i++){
+    defenders.push({
+      x:W*0.55+Math.random()*(W*0.4),
+      y:60+Math.random()*(H-120),
+      r:11,
+      speed:1.3+Math.random()*0.6+captures*0.08,
+      angle:Math.random()*Math.PI*2,
+      patrolT:Math.random()*100
+    });
+  }
+}
+spawnDefenders(4);
+
+function resetPositions(){
+  player.x=80;player.y=H/2;player.hasFlag=false;
+  flag.x=enemyBase.x;flag.y=enemyBase.y;flag.taken=false;
+}
+resetPositions();
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d','W','A','S','D'].forEach(()=>{});
+document.addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function bindHold(id,key){
+  const el=document.getElementById(id);
+  const on=e=>{e.preventDefault();keys[key]=true;};
+  const off=e=>{e.preventDefault();keys[key]=false;};
+  el.addEventListener('touchstart',on,{passive:false});
+  el.addEventListener('touchend',off,{passive:false});
+  el.addEventListener('mousedown',on);
+  el.addEventListener('mouseup',off);
+  el.addEventListener('mouseleave',off);
+}
+bindHold('du','arrowup');bindHold('dd','arrowdown');bindHold('dl','arrowleft');bindHold('dr','arrowright');
+
+// swipe support directly on canvas
+let touchStartX=null,touchStartY=null;
+c.addEventListener('touchstart',e=>{const t=e.touches[0];touchStartX=t.clientX;touchStartY=t.clientY;},{passive:true});
+c.addEventListener('touchmove',e=>{
+  if(touchStartX===null)return;
+  const t=e.touches[0];
+  const dx=t.clientX-touchStartX, dy=t.clientY-touchStartY;
+  keys['arrowleft']=dx<-10;keys['arrowright']=dx>10;
+  keys['arrowup']=dy<-10;keys['arrowdown']=dy>10;
+  e.preventDefault();
+},{passive:false});
+c.addEventListener('touchend',()=>{touchStartX=null;keys['arrowleft']=keys['arrowright']=keys['arrowup']=keys['arrowdown']=false;});
+
+function updatePlayer(dt){
+  let dx=0,dy=0;
+  if(keys['arrowup']||keys['w'])dy-=1;
+  if(keys['arrowdown']||keys['s'])dy+=1;
+  if(keys['arrowleft']||keys['a'])dx-=1;
+  if(keys['arrowright']||keys['d'])dx+=1;
+  const len=Math.hypot(dx,dy)||1;
+  player.x+=dx/len*player.speed*dt;
+  player.y+=dy/len*player.speed*dt;
+  player.x=Math.max(player.r,Math.min(W-player.r,player.x));
+  player.y=Math.max(player.r,Math.min(H-player.r,player.y));
+}
+
+function updateDefenders(dt){
+  defenders.forEach(d=>{
+    d.patrolT+=dt;
+    let targetX,targetY;
+    const distToPlayer=dist(d,player);
+    if(distToPlayer<140){
+      targetX=player.x;targetY=player.y;
+    } else {
+      targetX=d.x+Math.cos(d.angle)*40;
+      targetY=d.y+Math.sin(d.angle)*40;
+      if(d.patrolT>90){d.angle=Math.random()*Math.PI*2;d.patrolT=0;}
+    }
+    const ang=Math.atan2(targetY-d.y,targetX-d.x);
+    d.x+=Math.cos(ang)*d.speed*dt;
+    d.y+=Math.sin(ang)*d.speed*dt;
+    d.x=Math.max(d.r,Math.min(W-d.r,d.x));
+    d.y=Math.max(d.r,Math.min(H-d.r,d.y));
+  });
+}
+
+function checkCollisions(){
+  if(!player.hasFlag&&!flag.taken&&dist(player,flag)<player.r+16&&player.x>W*0.55){
+    flag.taken=true;player.hasFlag=true;SFX.powerup();
+  }
+  if(player.hasFlag&&dist(player,homeBase)<player.r+homeBase.r){
+    captures++;SFX.success();
+    if(captures>hi){hi=captures;localStorage.setItem(KEY,String(hi));}
+    updateScore();
+    spawnDefenders(Math.min(8,4+Math.floor(captures/2)));
+    resetPositions();
+  }
+  defenders.forEach(d=>{
+    if(dist(player,d)<player.r+d.r){
+      SFX.hurt();tagFlashT=1;
+      if(player.hasFlag){
+        player.hasFlag=false;flag.taken=false;flag.x=enemyBase.x;flag.y=enemyBase.y;
+      }
+      player.x=80;player.y=H/2;
+    }
+  });
+}
+
+function updateScore(){
+  document.getElementById('score-display').textContent=I18N.t('captures_hi_label','Captures: {c} | Hi: {h}').replace('{c}',captures).replace('{h}',hi);
+}
+updateScore();
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // field halves
+  ctx.fillStyle='#2d5a27';ctx.fillRect(0,0,W/2,H);
+  ctx.fillStyle='#5a2727';ctx.fillRect(W/2,0,W/2,H);
+  ctx.strokeStyle='rgba(255,255,255,0.3)';ctx.setLineDash([8,8]);
+  ctx.beginPath();ctx.moveTo(W/2,0);ctx.lineTo(W/2,H);ctx.stroke();ctx.setLineDash([]);
+
+  // bases
+  ctx.fillStyle='#2f6fbb';ctx.beginPath();ctx.arc(homeBase.x,homeBase.y,homeBase.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#e94560';ctx.beginPath();ctx.arc(enemyBase.x,enemyBase.y,enemyBase.r,0,Math.PI*2);ctx.fill();
+
+  // flag
+  if(!player.hasFlag){
+    ctx.save();ctx.translate(flag.x,flag.y);
+    ctx.strokeStyle='#fff';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(0,-20);ctx.lineTo(0,15);ctx.stroke();
+    ctx.fillStyle='#ffd54f';ctx.beginPath();ctx.moveTo(0,-20);ctx.lineTo(18,-13);ctx.lineTo(0,-6);ctx.closePath();ctx.fill();
+    ctx.restore();
+  }
+
+  // defenders
+  defenders.forEach(d=>{
+    ctx.fillStyle='#ff6b35';ctx.beginPath();ctx.arc(d.x,d.y,d.r,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+  });
+
+  // player
+  ctx.save();
+  if(tagFlashT>0)ctx.globalAlpha=0.5+0.5*Math.sin(tagFlashT*40);
+  ctx.fillStyle='#7ec850';ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+  if(player.hasFlag){
+    ctx.fillStyle='#ffd54f';ctx.beginPath();ctx.moveTo(player.x,player.y-24);ctx.lineTo(player.x+16,player.y-18);ctx.lineTo(player.x,player.y-12);ctx.closePath();ctx.fill();
+    ctx.strokeStyle='#fff';ctx.beginPath();ctx.moveTo(player.x,player.y-24);ctx.lineTo(player.x,player.y-10);ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.fillStyle='rgba(255,255,255,0.85)';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('your_base_label','Your Base'),10,20);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('enemy_base_label','Enemy Base'),W-10,20);
+}
+
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  if(tagFlashT>0)tagFlashT=Math.max(0,tagFlashT-dt/20);
+  updatePlayer(dt);
+  updateDefenders(dt);
+  checkCollisions();
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

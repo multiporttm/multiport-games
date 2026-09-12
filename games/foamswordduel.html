@@ -1,0 +1,249 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Foam Sword Duel - Multiport Games</title><meta name="description" content="Play Foam Sword Duel free online — Time your attacks, blocks, and dodges against an AI duelist. Land hits to drain their health bar before they drain yours!"><link rel="canonical" href="https://games.multiportllc.com/games/foamswordduel"><meta property="og:title" content="Foam Sword Duel - Multiport Games"><meta property="og:description" content="Play Foam Sword Duel free online — Time your attacks, blocks, and dodges against an AI duelist. Land hits to drain their health bar before they drain yours!"><meta property="og:url" content="https://games.multiportllc.com/games/foamswordduel"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Foam Sword Duel","description":"Play Foam Sword Duel free online instantly. Time your attacks, blocks, and dodges against an AI duelist in quick reflex-timed exchanges. Land hits to drain their health bar before they drain yours. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/foamswordduel","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a2a1f;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;max-width:800px;margin:0 auto 6px;padding:0 6px;color:#fff;font-weight:700}
+.bar-wrap{flex:1;margin:0 10px;background:#222;border-radius:8px;overflow:hidden;height:18px;position:relative}
+.bar-wrap.you{order:1}
+.bar-fill{height:100%;transition:width .15s}
+.bar-fill.you{background:linear-gradient(90deg,#4caf50,#8bc34a)}
+.bar-fill.foe{background:linear-gradient(90deg,#e94560,#ff6b35)}
+#moves{display:flex;gap:10px;justify-content:center;margin-top:10px;flex-wrap:wrap}
+#moves button{padding:14px 20px;font-size:1rem;font-weight:800;border:none;border-radius:12px;cursor:pointer;color:#fff;min-width:110px}
+#moves button:active{transform:scale(.95)}
+#atk{background:#e94560}
+#blk{background:#2f6fbb}
+#dge{background:#c98a1f}
+#status{color:#ffd54f;text-align:center;font-weight:800;min-height:1.6em;margin-top:6px}
+#score-display{color:#8bc34a;text-align:center;padding:6px;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Foam Sword Duel</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>You</span>
+      <div class="bar-wrap you"><div class="bar-fill you" id="youBar" style="width:100%"></div></div>
+      <div class="bar-wrap"><div class="bar-fill foe" id="foeBar" style="width:100%"></div></div>
+      <span>Foe</span>
+    </div>
+    <canvas id="c" width="800" height="300"></canvas>
+    <div id="status">Get ready...</div>
+    <div id="moves">
+      <button id="atk">⚔️ Attack</button>
+      <button id="blk">🛡️ Block</button>
+      <button id="dge">💨 Dodge</button>
+    </div>
+    <div id="score-display">Wins: 0 | Hi Streak: 0</div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch the foe's <b>windup</b>: Attack when they're open, Block a swing aimed at you, or Dodge a wide swing. Use <b>A</b>/<b>S</b>/<b>D</b> keys, tap the buttons, or swipe. Drain the foe's health bar to win the duel!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const KEY='foamswordduel_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let wins=0;
+
+const you={hp:100,x:180,y:190,action:null,flashT:0,anim:0};
+const foe={hp:100,x:600,y:190,action:null,flashT:0,anim:0,intent:null,windup:0};
+
+let phase='intro'; // intro, windup, resolve, gameover
+let phaseTimer=0, lastTime=null;
+let statusText='Get ready...';
+let roundOver=false;
+let shake=0;
+
+function reset(){
+  you.hp=100;foe.hp=100;phase='intro';phaseTimer=600;statusText=I18N.t('get_ready','Get ready...');roundOver=false;wins=0;
+  updateBars();updateScore();
+}
+
+function updateBars(){
+  document.getElementById('youBar').style.width=Math.max(0,you.hp)+'%';
+  document.getElementById('foeBar').style.width=Math.max(0,foe.hp)+'%';
+}
+function updateScore(){
+  document.getElementById('score-display').textContent=I18N.t('wins_hi_label','Wins: {w} | Hi Streak: {h}').replace('{w}',wins).replace('{h}',hi);
+}
+function setStatus(t){statusText=t;document.getElementById('status').textContent=t;}
+
+// AI picks an intent: 'attack-left','attack-right','attack-wide' (must dodge), or 'feint' (bait attack)
+function startWindup(){
+  phase='windup';
+  const r=Math.random();
+  if(r<0.45)foe.intent='attack';
+  else if(r<0.75)foe.intent='wide';
+  else foe.intent='feint';
+  foe.windup=1;
+  phaseTimer=700+Math.random()*500;
+  you.action=null;
+  setStatus(I18N.t('foe_winding_up','The foe winds up... choose your move!'));
+}
+
+function playerChoose(move){
+  if(phase!=='windup'||you.action)return;
+  you.action=move;
+}
+
+function resolveRound(){
+  phase='resolve';
+  phaseTimer=900;
+  const intent=foe.intent;
+  const action=you.action;
+  let msg='';
+  if(!action){
+    // player did nothing -> gets hit unless intent was feint
+    if(intent==='feint'){
+      msg=I18N.t('foe_feinted_safe','The foe feinted — nobody got hit!');
+    } else {
+      you.hp-=18;you.flashT=1;shake=8;SFX.hit();
+      msg=I18N.t('you_got_hit','Too slow! You took a hit.');
+    }
+  } else if(intent==='feint'){
+    if(action==='attack'){
+      foe.hp-=22;foe.flashT=1;shake=6;SFX.hit();
+      msg=I18N.t('you_punish_feint','You saw through the feint and struck!');
+    } else {
+      msg=I18N.t('nothing_happens','Nothing happens — the foe was bluffing.');
+    }
+  } else if(intent==='attack'){
+    if(action==='block'){
+      SFX.click();
+      msg=I18N.t('you_blocked','You blocked the strike!');
+    } else if(action==='dodge'){
+      SFX.swoosh();
+      msg=I18N.t('you_dodged','You dodged out of the way!');
+    } else {
+      // both attack -> trade hits, you also land counter chance
+      you.hp-=12;foe.hp-=10;you.flashT=1;foe.flashT=1;shake=8;SFX.hit();
+      msg=I18N.t('trade_hits','You clashed swords — both take a hit!');
+    }
+  } else if(intent==='wide'){
+    // wide swing: must dodge, blocking fails
+    if(action==='dodge'){
+      SFX.swoosh();
+      msg=I18N.t('you_dodged_wide','You dove clear of the wide swing!');
+    } else if(action==='attack'){
+      you.hp-=16;foe.hp-=14;you.flashT=1;foe.flashT=1;shake=8;SFX.hit();
+      msg=I18N.t('wide_trade','You struck through the swing but got clipped!');
+    } else {
+      you.hp-=20;you.flashT=1;shake=10;SFX.hit();
+      msg=I18N.t('block_failed_wide','Blocking a wide swing doesn’t work — you got hit hard!');
+    }
+  }
+  setStatus(msg);
+  updateBars();
+  checkEnd();
+}
+
+function checkEnd(){
+  if(you.hp<=0||foe.hp<=0){
+    roundOver=true;
+    phase='gameover';
+    phaseTimer=99999;
+    if(foe.hp<=0&&you.hp>0){
+      wins++;
+      if(wins>hi){hi=wins;localStorage.setItem(KEY,String(hi));}
+      SFX.win();
+      setStatus(I18N.t('you_win_duel','Victory! Tap/Space to duel again.'));
+    } else {
+      SFX.lose();
+      setStatus(I18N.t('you_lose_duel','Defeated! Tap/Space to try again.'));
+    }
+    updateScore();
+  }
+}
+
+function foeAiAttackNext(){
+  // AI decides its next intent already handled in startWindup
+}
+
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(phase==='gameover'&&(k===' '||k==='enter')){reset();return;}
+  if(k==='a')playerChoose('attack');
+  else if(k==='s')playerChoose('block');
+  else if(k==='d')playerChoose('dodge');
+});
+document.getElementById('atk').addEventListener('click',()=>{if(phase==='gameover')reset();else playerChoose('attack');});
+document.getElementById('blk').addEventListener('click',()=>{if(phase==='gameover')reset();else playerChoose('block');});
+document.getElementById('dge').addEventListener('click',()=>{if(phase==='gameover')reset();else playerChoose('dodge');});
+c.addEventListener('click',()=>{if(phase==='gameover')reset();});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(phase==='gameover')reset();},{passive:false});
+
+function drawFighter(f,facingRight){
+  ctx.save();
+  ctx.translate(f.x,f.y);
+  if(f.flashT>0){ctx.globalAlpha=0.5+0.5*Math.sin(f.flashT*40);}
+  ctx.fillStyle=f===you?'#4caf50':'#e94560';
+  ctx.fillRect(-15,0,30,60); // body
+  ctx.beginPath();ctx.arc(0,-15,16,0,Math.PI*2);ctx.fill(); // head
+  // sword
+  ctx.strokeStyle='#ffe082';ctx.lineWidth=6;
+  const dir=facingRight?1:-1;
+  let swordAngle=0.3*dir;
+  if(f===foe&&phase==='windup'){
+    swordAngle=(foe.intent==='wide'?1.3:0.6)*dir*Math.sin(Date.now()/120);
+  }
+  if(f.action==='attack'||(f===foe&&phase==='resolve'&&foe.intent!=='feint')){
+    swordAngle=1.1*dir;
+  }
+  ctx.beginPath();
+  ctx.moveTo(10*dir,10);
+  ctx.lineTo(10*dir+40*Math.cos(swordAngle)*dir,10-40*Math.sin(swordAngle));
+  ctx.stroke();
+  if(f.action==='block'){
+    ctx.fillStyle='#2f6fbb';ctx.fillRect(-5*dir-10,15,20,30);
+  }
+  ctx.restore();
+}
+
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min(now-lastTime,50);
+  lastTime=now;
+
+  if(you.flashT>0)you.flashT=Math.max(0,you.flashT-dt/300);
+  if(foe.flashT>0)foe.flashT=Math.max(0,foe.flashT-dt/300);
+  if(shake>0)shake=Math.max(0,shake-dt/30);
+
+  if(phase==='intro'){
+    phaseTimer-=dt;
+    if(phaseTimer<=0)startWindup();
+  } else if(phase==='windup'){
+    phaseTimer-=dt;
+    if(phaseTimer<=0)resolveRound();
+  } else if(phase==='resolve'){
+    phaseTimer-=dt;
+    if(phaseTimer<=0&&!roundOver)startWindup();
+  }
+
+  ctx.save();
+  const sx=(Math.random()-0.5)*shake, sy=(Math.random()-0.5)*shake;
+  ctx.clearRect(0,0,800,300);
+  ctx.translate(sx,sy);
+  const sky=ctx.createLinearGradient(0,0,0,240);
+  sky.addColorStop(0,'#0d2b1e');sky.addColorStop(1,'#1a4a2f');
+  ctx.fillStyle=sky;ctx.fillRect(-20,0,840,240);
+  ctx.fillStyle='#3d5a3a';ctx.fillRect(-20,240,840,60);
+
+  drawFighter(you,true);
+  drawFighter(foe,false);
+
+  if(phase==='windup'&&foe.intent==='wide'){
+    ctx.fillStyle='rgba(255,80,80,0.5)';
+    ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('wide_swing_warn','WIDE SWING!'),foe.x,foe.y-60);
+  }
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

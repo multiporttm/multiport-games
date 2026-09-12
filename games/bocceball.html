@@ -1,0 +1,334 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bocce Ball - Multiport Games</title><meta name="description" content="Play Bocce Ball free online — Drag back and release to roll your ball toward the pallino on a sloped, obstacle-filled court. Closest ball(s) score points across 4 rounds against an AI who knocks your balls away."><link rel="canonical" href="https://games.multiportllc.com/games/bocceball"><meta property="og:title" content="Bocce Ball - Multiport Games"><meta property="og:description" content="Play Bocce Ball free online — Drag back and release to roll your ball toward the pallino on a sloped, obstacle-filled court. Closest ball(s) score points across 4 rounds against an AI who knocks your balls away."><meta property="og:url" content="https://games.multiportllc.com/games/bocceball"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bocce Ball","description":"Play Bocce Ball free online instantly. Drag back to roll your ball toward the pallino across a curved, sloped court dotted with obstacles. Closest balls to the pallino score points each round, and the AI opponent will actively try to knock your balls away. Best of 4 rounds wins. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/bocceball","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#8a7a4a;display:block;border-radius:8px;touch-action:none;max-width:100%;height:auto}
+#hud{color:#fff8e0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:22px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#msg{color:#cbe8b0;text-align:center;font-size:.95rem;min-height:1.4em;padding-bottom:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bocce Ball</div>
+  <div class="game-frame">
+    <div id="hud"><span>Round <b id="roundDisp">1</b>/4</span><span>You: <b id="youScore">0</b></span><span>AI: <b id="aiScore">0</b></span><span>Hi: <b id="hiDisp">0</b></span></div>
+    <div id="msg">Drag down from your ball and release to roll</div>
+    <canvas id="c" width="700" height="520"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag down from your ball then release to roll it toward the pallino (small white ball) — pull farther for more power, angle your drag for curve. The court has slopes that bend your roll and rocks that block it. Closest ball to the pallino scores a point per opposing ball it beats; try to knock the AI's balls away too. Best of 4 rounds wins!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=700,H=520;
+const KEY='bocceball_hiscore';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+document.getElementById('hiDisp').textContent=hi;
+
+const throwX=W/2, throwY=470;
+const courtTop=60, courtBottom=500, courtLeft=60, courtRight=W-60;
+
+let pallino={x:W/2,y:150};
+let balls=[]; // {x,y,vx,vy,team,r}
+let obstacles=[];
+let round=1,totalRounds=4;
+let youScore=0,aiScore=0;
+let turnOrder=[];
+let turnIdx=0;
+let ballsThrown=0;
+let dragging=false,dragStart=null,dragCur=null;
+let animating=false;
+let roundOver=false,matchOver=false;
+let aiPending=false;
+const ballsPerSide=4;
+
+function genObstacles(){
+  obstacles=[];
+  const n=3+Math.floor(Math.random()*2);
+  for(let i=0;i<n;i++){
+    obstacles.push({
+      x:courtLeft+40+Math.random()*(courtRight-courtLeft-80),
+      y:200+Math.random()*220,
+      r:14+Math.random()*8,
+    });
+  }
+}
+
+function genSlope(){
+  // a horizontal slope bias that varies per round: pulls balls left or right as they travel
+  return (Math.random()*2-1)*0.035;
+}
+let slope=0;
+
+function newRound(){
+  balls=[];
+  ballsThrown=0;
+  roundOver=false;
+  turnIdx=0;
+  turnOrder=['you','ai','you','ai','you','ai','you','ai'];
+  pallino={x:courtLeft+60+Math.random()*(courtRight-courtLeft-120),y:130+Math.random()*40};
+  genObstacles();
+  slope=genSlope();
+  setMsg(I18N.t('your_turn','Your turn — drag to roll'));
+  render();
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+function updateHud(){
+  document.getElementById('roundDisp').textContent=round;
+  document.getElementById('youScore').textContent=youScore;
+  document.getElementById('aiScore').textContent=aiScore;
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+
+function canRoll(){
+  return !animating&&!roundOver&&!matchOver&&turnOrder[turnIdx]==='you'&&!aiPending;
+}
+
+c.addEventListener('mousedown',startDrag);
+c.addEventListener('touchstart',e=>{e.preventDefault();startDrag(e);},{passive:false});
+window.addEventListener('mousemove',moveDrag);
+window.addEventListener('touchmove',e=>{if(dragging){e.preventDefault();moveDrag(e);}},{passive:false});
+window.addEventListener('mouseup',endDrag);
+window.addEventListener('touchend',endDrag);
+
+function startDrag(e){
+  if(!canRoll())return;
+  const p=pointerPos(e);
+  if(p.y>throwY-70){dragging=true;dragStart={x:throwX,y:throwY};dragCur=p;}
+}
+function moveDrag(e){ if(!dragging)return; dragCur=pointerPos(e); render(); }
+function endDrag(){
+  if(!dragging)return;
+  dragging=false;
+  const dx=dragStart.x-dragCur.x;
+  const dy=dragStart.y-dragCur.y;
+  let power=Math.hypot(dx,dy);
+  power=Math.min(power,170);
+  if(power<15){dragCur=null;render();return;}
+  rollBall('you',power,-dx*0.06);
+  dragCur=null;
+}
+
+function rollBall(team,power,curve){
+  const ball={x:throwX,y:throwY,vx:curve*0.4,vy:-(power*0.09+2.5),team,r:13};
+  balls.push(ball);
+  SFX.swoosh();
+  animating=true;
+  ballsThrown++;
+  turnIdx++;
+}
+
+function aiRoll(){
+  aiPending=true;
+  setTimeout(()=>{
+    // aim near pallino; sometimes aim at your closest ball to knock it away
+    let targetX=pallino.x,targetY=pallino.y;
+    const yourBalls=balls.filter(b=>b.team==='you');
+    if(yourBalls.length){
+      const closest=yourBalls.map(b=>({b,d:Math.hypot(b.x-pallino.x,b.y-pallino.y)})).sort((a,b)=>a.d-b.d)[0];
+      if(closest&&closest.d<80&&Math.random()<0.6){targetX=closest.b.x;targetY=closest.b.y;}
+    }
+    targetX+=Math.random()*40-20;
+    targetY+=Math.random()*30-15;
+    const dx=throwX-targetX, dy=throwY-targetY;
+    const power=Math.min(170,Math.hypot(dx,dy)*0.95);
+    const curve=-dx*0.06;
+    rollBall('ai',power,curve*0.5+ (Math.random()*6-3));
+    setMsg(I18N.t('ai_turn','AI is rolling...'));
+  },700);
+}
+
+function physicsStep(){
+  let moving=false;
+  const friction=0.985;
+  for(const b of balls){
+    if(Math.abs(b.vx)>0.04||Math.abs(b.vy)>0.04){
+      b.vx+=slope; // slope bends the roll sideways over time
+      b.x+=b.vx;
+      b.y+=b.vy;
+      b.vx*=friction;
+      b.vy*=friction;
+      moving=true;
+    }else{b.vx=0;b.vy=0;}
+    // court walls
+    if(b.x<courtLeft+b.r){b.x=courtLeft+b.r;b.vx=-b.vx*0.5;}
+    if(b.x>courtRight-b.r){b.x=courtRight-b.r;b.vx=-b.vx*0.5;}
+    if(b.y<courtTop+b.r){b.y=courtTop+b.r;b.vy=-b.vy*0.5;}
+    if(b.y>courtBottom-b.r){b.y=courtBottom-b.r;b.vy*=-0.3;}
+  }
+  // obstacles
+  for(const b of balls){
+    for(const o of obstacles){
+      const dx=b.x-o.x,dy=b.y-o.y;
+      const dist=Math.hypot(dx,dy);
+      const minDist=b.r+o.r;
+      if(dist<minDist&&dist>0){
+        const nx=dx/dist,ny=dy/dist;
+        const overlap=minDist-dist;
+        b.x+=nx*overlap;b.y+=ny*overlap;
+        const dot=b.vx*nx+b.vy*ny;
+        b.vx-=2*dot*nx*0.8;b.vy-=2*dot*ny*0.8;
+        SFX.hit();
+        moving=true;
+      }
+    }
+  }
+  // ball-ball collisions
+  for(let i=0;i<balls.length;i++){
+    for(let j=i+1;j<balls.length;j++){
+      const a=balls[i],bb=balls[j];
+      const dx=bb.x-a.x,dy=bb.y-a.y;
+      const dist=Math.hypot(dx,dy);
+      const minDist=a.r+bb.r;
+      if(dist<minDist&&dist>0){
+        moving=true;
+        const nx=dx/dist,ny=dy/dist;
+        const overlap=(minDist-dist)/2;
+        a.x-=nx*overlap;a.y-=ny*overlap;
+        bb.x+=nx*overlap;bb.y+=ny*overlap;
+        const avx=a.vx,avy=a.vy;
+        a.vx=bb.vx*0.9;a.vy=bb.vy*0.9;
+        bb.vx=avx*0.9;bb.vy=avy*0.9;
+        bb.vx+=nx*1.3;bb.vy+=ny*1.3;
+        a.vx-=nx*1.3;a.vy-=ny*1.3;
+        SFX.hit();
+      }
+    }
+  }
+  if(!moving&&animating){
+    animating=false;
+    onRollSettled();
+  }
+}
+
+function onRollSettled(){
+  if(ballsThrown>=ballsPerSide*2){
+    finishRound();
+    return;
+  }
+  const next=turnOrder[turnIdx];
+  if(next==='you'){
+    setMsg(I18N.t('your_turn','Your turn — drag to roll'));
+  }else{
+    aiRoll();
+  }
+}
+
+function finishRound(){
+  roundOver=true;
+  const distances=balls.map(b=>({team:b.team,d:Math.hypot(b.x-pallino.x,b.y-pallino.y)})).sort((a,b)=>a.d-b.d);
+  let roundYou=0,roundAi=0;
+  if(distances.length){
+    const winner=distances[0].team;
+    let count=0;
+    for(const d of distances){
+      if(d.team===winner)count++; else break;
+    }
+    if(winner==='you')roundYou=count; else roundAi=count;
+  }
+  youScore+=roundYou;
+  aiScore+=roundAi;
+  updateHud();
+  if(roundYou>roundAi)SFX.success(); else if(roundAi>roundYou)SFX.fail(); else SFX.point();
+  setMsg(I18N.t('round_result','Round {r} — You +{y}, AI +{a}').replace('{r}',round).replace('{y}',roundYou).replace('{a}',roundAi));
+  if(round>=totalRounds){
+    setTimeout(endMatch,1500);
+  }else{
+    setTimeout(()=>{round++;newRound();},1700);
+  }
+}
+
+function endMatch(){
+  matchOver=true;
+  if(youScore>hi){hi=youScore;localStorage.setItem(KEY,hi);document.getElementById('hiDisp').textContent=hi;}
+  if(youScore>aiScore){SFX.win();setMsg(I18N.t('you_win','You win the match {y} - {a}! Tap to play again').replace('{y}',youScore).replace('{a}',aiScore));}
+  else if(aiScore>youScore){SFX.lose();setMsg(I18N.t('you_lose','AI wins the match {a} - {y}. Tap to play again').replace('{a}',aiScore).replace('{y}',youScore));}
+  else{SFX.point();setMsg(I18N.t('tie_match','Match tied {y} - {a}! Tap to play again').replace('{y}',youScore).replace('{a}',aiScore));}
+}
+
+c.addEventListener('click',()=>{
+  if(matchOver){round=1;youScore=0;aiScore=0;matchOver=false;updateHud();newRound();}
+});
+document.addEventListener('keydown',e=>{
+  if(matchOver&&(e.code==='Space'||e.code==='Enter')){round=1;youScore=0;aiScore=0;matchOver=false;updateHud();newRound();}
+});
+
+function drawCourt(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#5a4a2a');bg.addColorStop(1,'#8a7a4a');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#3a2f18';ctx.lineWidth=5;
+  ctx.strokeRect(courtLeft,courtTop,courtRight-courtLeft,courtBottom-courtTop);
+  ctx.lineWidth=1;
+  // slope arrows to show bias
+  ctx.fillStyle='rgba(255,255,255,.25)';
+  ctx.font='16px Arial';ctx.textAlign='center';
+  const arrow=slope>0.008?'➡':(slope<-0.008?'⬅':'');
+  if(arrow)ctx.fillText(I18N.t('slope_label','Slope {a}').replace('{a}',arrow),W/2,courtTop-14);
+  obstacles.forEach(o=>{
+    ctx.beginPath();ctx.fillStyle='#6b6b6b';ctx.arc(o.x,o.y,o.r,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#3a3a3a';ctx.stroke();
+  });
+  // pallino
+  ctx.beginPath();ctx.fillStyle='#fff';ctx.arc(pallino.x,pallino.y,9,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#0004';ctx.stroke();
+}
+
+function drawBall(b){
+  ctx.beginPath();
+  ctx.fillStyle=b.team==='you'?'#4fd1ff':'#ff6b6b';
+  ctx.arc(b.x,b.y,b.r,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle='#0006';ctx.stroke();
+}
+
+function drawAim(){
+  if(dragging&&dragCur){
+    ctx.strokeStyle='#ffd54f';
+    ctx.lineWidth=3;
+    ctx.setLineDash([6,6]);
+    ctx.beginPath();
+    ctx.moveTo(throwX,throwY);
+    const dx=dragStart.x-dragCur.x,dy=dragStart.y-dragCur.y;
+    const p=Math.min(Math.hypot(dx,dy),170);
+    const ang=Math.atan2(dy,dx);
+    ctx.lineTo(throwX+Math.cos(ang)*p*1.4,throwY+Math.sin(ang)*p*1.4);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function render(){
+  drawCourt();
+  balls.forEach(drawBall);
+  if(!animating&&turnOrder[turnIdx]==='you'&&!roundOver&&!matchOver){
+    drawBall({x:throwX,y:throwY,r:13,team:'you'});
+  }
+  drawAim();
+  if(matchOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(youScore>aiScore?I18N.t('game_over_win','MATCH WON'):(aiScore>youScore?I18N.t('game_over_lose','MATCH LOST'):I18N.t('game_over_tie','TIE MATCH')),W/2,H/2);
+  }
+}
+
+function loop(){
+  if(animating)physicsStep();
+  render();
+  requestAnimationFrame(loop);
+}
+updateHud();
+newRound();
+loop();
+</script></body></html>

@@ -1,0 +1,191 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Skeleton Run - Multiport Games</title><meta name="description" content="Play Skeleton Run free online — Steer with Left/Right Arrow and hold Up to push your risk meter for more speed. Balance speed against crash risk on every curve to post the best time."><link rel="canonical" href="https://games.multiportllc.com/games/skeletonrun"><meta property="og:title" content="Skeleton Run - Multiport Games"><meta property="og:description" content="Play Skeleton Run free online — Steer with Left/Right Arrow and hold Up to push your risk meter for more speed. Balance speed against crash risk on every curve to post the best time."><meta property="og:url" content="https://games.multiportllc.com/games/skeletonrun"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Skeleton Run","description":"Play Skeleton Run free online instantly. Ride a skeleton sled head-first down an icy track using fine head and shoulder steering nudges. Push your risk meter for extra speed or play it safe — going too fast into a curve while your risk is high can send you crashing out. Find the optimal risk balance for the best time. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/skeletonrun","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a2b3a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px}
+#hud span{color:#5ec8f0}
+#riskbar{width:280px;height:16px;background:#333;border-radius:8px;margin:0 auto 4px;overflow:hidden;border:2px solid #444}
+#riskfill{height:100%;width:0%;background:linear-gradient(90deg,#4caf50,#ffca28,#e94560);transition:width .1s}
+#touchctrl{display:flex;gap:10px;justify-content:center;margin-top:10px}
+#touchctrl button{flex:1;max-width:150px;padding:14px 0;font-size:1.1rem;font-weight:900;border:none;border-radius:12px;background:#16213e;color:#fff;cursor:pointer;user-select:none;touch-action:manipulation}
+#touchctrl button.push{background:#e94560}
+#touchctrl button:active{transform:scale(.94)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Skeleton Run</div>
+  <div class="game-frame">
+    <div id="hud">Speed: <span id="spd">0</span> km/h | Time: <span id="time">0.0</span>s | Best: <span id="best">--</span></div>
+    <div id="riskbar"><div id="riskfill"></div></div>
+    <canvas id="c" width="800" height="380"></canvas>
+    <div id="touchctrl">
+      <button id="btnL">◀ STEER</button>
+      <button id="btnPush" class="push">PUSH (RISK)</button>
+      <button id="btnR">STEER ▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Left</b> / <b>Right</b> Arrow (or the steer buttons) to nudge your line, and hold <b>Up Arrow</b> / <b>PUSH</b> to push harder for extra speed — but it raises your <b>risk meter</b>. High risk plus a rough curve means a crash. Release Up to cool down. Balance risk and speed for the best time!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const KEY='skeletonrun_hi';
+let best=parseFloat(localStorage.getItem(KEY)||'0');
+document.getElementById('best').textContent=best>0?best.toFixed(2)+'s':'--';
+
+const SEGMENTS=[
+  {len:350,curve:0},
+  {len:400,curve:0.6},
+  {len:250,curve:0},
+  {len:450,curve:-0.75},
+  {len:300,curve:0},
+  {len:400,curve:0.85},
+  {len:250,curve:0},
+  {len:400,curve:-0.55},
+  {len:350,curve:0},
+];
+const TOTAL_LEN=SEGMENTS.reduce((a,s)=>a+s.len,0);
+
+let state='ready';
+let dist=0,speed=45,pos=0,vel=0,risk=0,elapsed=0,steer=0,pushing=false,lastTs=null;
+
+function curveAt(d){
+  let acc=0;
+  for(const s of SEGMENTS){ if(d<acc+s.len)return s.curve; acc+=s.len; }
+  return 0;
+}
+
+function reset(){
+  state='ready';dist=0;speed=45;pos=0;vel=0;risk=0;elapsed=0;steer=0;pushing=false;lastTs=null;
+}
+reset();
+
+function begin(){
+  if(state==='ready'){state='racing';SFX.click();}
+  else if(state==='finished'||state==='crashed'){reset();state='racing';}
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'){e.preventDefault();steer=-1;begin();}
+  else if(e.code==='ArrowRight'){e.preventDefault();steer=1;begin();}
+  else if(e.code==='ArrowUp'){e.preventDefault();pushing=true;begin();}
+  else if(e.code==='Space'){e.preventDefault();begin();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'&&steer===-1)steer=0;
+  if(e.code==='ArrowRight'&&steer===1)steer=0;
+  if(e.code==='ArrowUp')pushing=false;
+});
+
+function bindHold(id,onDown,onUp){
+  const el=document.getElementById(id);
+  el.addEventListener('pointerdown',e=>{e.preventDefault();onDown();});
+  el.addEventListener('pointerup',e=>{e.preventDefault();onUp&&onUp();});
+  el.addEventListener('pointerleave',e=>{onUp&&onUp();});
+  el.addEventListener('pointercancel',e=>{onUp&&onUp();});
+}
+bindHold('btnL',()=>{steer=-1;begin();},()=>{if(steer===-1)steer=0;});
+bindHold('btnR',()=>{steer=1;begin();},()=>{if(steer===1)steer=0;});
+bindHold('btnPush',()=>{pushing=true;begin();},()=>{pushing=false;});
+
+function drawTrack(){
+  ctx.fillStyle='#1a2b3a';ctx.fillRect(0,0,800,380);
+  const bands=40;
+  for(let i=0;i<bands;i++){
+    const t=i/bands;
+    const d=dist+t*260;
+    const cv=curveAt(d);
+    const y=360-t*320;
+    const w=100*(1-t*0.75)+18;
+    const centerShift=cv*170*(1-t)*t*2.2 - pos*(1-t)*70;
+    const cx=400+centerShift;
+    ctx.fillStyle=i%2===0?'#37536b':'#2f4a60';
+    ctx.fillRect(cx-w,y,w*2,360/bands+1);
+    ctx.fillStyle='#e94560';
+    ctx.fillRect(cx-w-6,y,6,360/bands+1);
+    ctx.fillRect(cx+w,y,6,360/bands+1);
+  }
+}
+
+function drawSkeleton(){
+  const px=400+pos*260;
+  ctx.fillStyle='#c0c0c0';
+  ctx.beginPath();ctx.ellipse(px,340,30,12,0,0,7);ctx.fill();
+  ctx.fillStyle='#f5deb3';
+  ctx.beginPath();ctx.arc(px+18,336,9,0,7);ctx.fill();
+}
+
+function loop(ts){
+  if(lastTs===null)lastTs=ts;
+  const dt=Math.min((ts-lastTs)/16.6667,3);
+  lastTs=ts;
+
+  drawTrack();
+  drawSkeleton();
+
+  ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+
+  if(state==='ready'){
+    ctx.fillText(I18N.t('skel_ready','Press an arrow key or tap to start!'),400,36);
+  }else if(state==='racing'){
+    vel+=steer*0.065*dt;
+    vel*=0.9;
+    pos+=vel*dt;
+    pos=Math.max(-1.3,Math.min(1.3,pos));
+
+    if(pushing){
+      risk=Math.min(100,risk+1.1*dt);
+      speed=Math.min(170,speed+0.35*dt);
+      SFX.tick();
+    }else{
+      risk=Math.max(0,risk-0.6*dt);
+      speed=Math.max(35,speed-0.08*dt);
+    }
+
+    const cv=curveAt(dist);
+    const offWall=Math.abs(pos)>1.05;
+    const curveSeverity=Math.abs(cv);
+    // crash chance scales with risk * curve severity * being off-line
+    const crashChance=(risk/100)*curveSeverity*(0.35+Math.abs(pos)*0.5);
+    if(offWall){
+      speed=Math.max(20,speed-0.7*dt);
+    }
+    if(curveSeverity>0.3&&Math.random()<crashChance*0.02*dt){
+      state='crashed';
+      SFX.lose();
+    }
+
+    dist+=speed*0.085*dt;
+    elapsed+=dt/60;
+
+    if(dist>=TOTAL_LEN){
+      state='finished';
+      if(best===0||elapsed<best){best=elapsed;localStorage.setItem(KEY,best.toString());document.getElementById('best').textContent=best.toFixed(2)+'s';}
+      SFX.win();
+    }
+    document.getElementById('spd').textContent=Math.round(speed*2.2);
+    document.getElementById('time').textContent=elapsed.toFixed(1);
+    document.getElementById('riskfill').style.width=risk+'%';
+  }else if(state==='finished'){
+    ctx.fillStyle='#4caf50';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('skel_finish','Finish!'),400,90);
+    ctx.font='22px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('skel_time','Your time: {t}s').replace('{t}',elapsed.toFixed(2)),400,130);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space to try again'),400,165);
+  }else if(state==='crashed'){
+    ctx.fillStyle='#e94560';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('skel_crash','You crashed! Too much risk.'),400,110);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space to try again'),400,150);
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,263 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Snowmobile Racing - Multiport Games</title><meta name="description" content="Play Snowmobile Racing free online — Steer with Left/Right and manage throttle with Up/Down across open snowy terrain. Avoid deep-snow patches that bog you down and beat 3 AI riders to the finish."><link rel="canonical" href="https://games.multiportllc.com/games/snowmobileracing"><meta property="og:title" content="Snowmobile Racing - Multiport Games"><meta property="og:description" content="Play Snowmobile Racing free online — Steer with Left/Right and manage throttle with Up/Down across open snowy terrain. Avoid deep-snow patches that bog you down and beat 3 AI riders to the finish."><meta property="og:url" content="https://games.multiportllc.com/games/snowmobileracing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Snowmobile Racing","description":"Play Snowmobile Racing free online instantly. Race a snowmobile across open snowy terrain full of jumps, moguls and deep-snow patches that slow you down. Manage your throttle to avoid getting stuck in deep snow while racing against 3 AI snowmobiles to the finish line. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/snowmobileracing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#eaf4fb;display:block;border-radius:8px;touch-action:none}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px}
+#hud span{color:#5ec8f0}
+#touchctrl{display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap}
+#touchctrl button{flex:1;min-width:70px;max-width:130px;padding:14px 0;font-size:1rem;font-weight:900;border:none;border-radius:12px;background:#16213e;color:#fff;cursor:pointer;user-select:none;touch-action:manipulation}
+#touchctrl button.throttle{background:#4caf50}
+#touchctrl button.brake{background:#e94560}
+#touchctrl button:active{transform:scale(.94)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Snowmobile Racing</div>
+  <div class="game-frame">
+    <div id="hud">Place: <span id="place">1st</span> | Progress: <span id="prog">0%</span> | Best: <span id="best">--</span></div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <div id="touchctrl">
+      <button id="btnL">◀ Steer</button>
+      <button id="btnThrottle" class="throttle">Throttle ▲</button>
+      <button id="btnBrake" class="brake">Brake ▼</button>
+      <button id="btnR">Steer ▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Steer with <b>Left</b> / <b>Right</b> Arrow and control speed with <b>Up</b> (throttle) / <b>Down</b> (brake) — or use the on-screen buttons. Watch for darker <b>deep-snow patches</b>: gunning the throttle through them bogs you down, so ease off to power through. Beat all 3 AI snowmobiles to the finish!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const KEY='snowmobileracing_hi';
+let best=parseFloat(localStorage.getItem(KEY)||'0');
+document.getElementById('best').textContent=best>0?best.toFixed(2)+'s':'--';
+
+const RACE_LEN=6000;
+const LANE_W=700;
+
+// Terrain features: jumps, moguls, deep-snow patches scattered along the course
+let hazards=[];
+function genHazards(){
+  hazards=[];
+  let d=400;
+  while(d<RACE_LEN-300){
+    const type=['deep','mogul','jump'][Math.floor(Math.random()*3)];
+    const x=(Math.random()*2-1)*(LANE_W/2-60);
+    const w=type==='deep'?120+Math.random()*100:60+Math.random()*40;
+    hazards.push({d,x,w,type,id:Math.random()});
+    d+=180+Math.random()*220;
+  }
+}
+
+function makeRacer(isPlayer,lane){
+  return {isPlayer,dist:0,x:lane,vx:0,speed:0,throttle:0,stuck:0,finished:false,finishTime:0};
+}
+
+let racers=[];
+let state='ready';
+let elapsed=0,lastTs=null;
+let steer=0,throttleHeld=false,brakeHeld=false;
+
+function reset(){
+  genHazards();
+  racers=[
+    makeRacer(true,0),
+    makeRacer(false,-140),
+    makeRacer(false,0+70),
+    makeRacer(false,140),
+  ];
+  state='ready';elapsed=0;lastTs=null;
+}
+reset();
+
+function begin(){
+  if(state==='ready'){state='racing';SFX.click();}
+  else if(state==='finished'){reset();state='racing';}
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'){e.preventDefault();steer=-1;begin();}
+  else if(e.code==='ArrowRight'){e.preventDefault();steer=1;begin();}
+  else if(e.code==='ArrowUp'){e.preventDefault();throttleHeld=true;begin();}
+  else if(e.code==='ArrowDown'){e.preventDefault();brakeHeld=true;begin();}
+  else if(e.code==='Space'){e.preventDefault();begin();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'&&steer===-1)steer=0;
+  if(e.code==='ArrowRight'&&steer===1)steer=0;
+  if(e.code==='ArrowUp')throttleHeld=false;
+  if(e.code==='ArrowDown')brakeHeld=false;
+});
+function bindHold(id,onDown,onUp){
+  const el=document.getElementById(id);
+  el.addEventListener('pointerdown',e=>{e.preventDefault();onDown();});
+  el.addEventListener('pointerup',e=>{e.preventDefault();onUp&&onUp();});
+  el.addEventListener('pointerleave',()=>{onUp&&onUp();});
+  el.addEventListener('pointercancel',()=>{onUp&&onUp();});
+}
+bindHold('btnL',()=>{steer=-1;begin();},()=>{if(steer===-1)steer=0;});
+bindHold('btnR',()=>{steer=1;begin();},()=>{if(steer===1)steer=0;});
+bindHold('btnThrottle',()=>{throttleHeld=true;begin();},()=>{throttleHeld=false;});
+bindHold('btnBrake',()=>{brakeHeld=true;begin();},()=>{brakeHeld=false;});
+
+function hazardAt(d,x){
+  for(const h of hazards){
+    if(Math.abs(d-h.d)<40 && Math.abs(x-h.x)<h.w/2) return h;
+  }
+  return null;
+}
+
+function updateRacer(r,dt,isPlayerControlled){
+  if(r.finished)return;
+  let throttle,steerInput;
+  if(isPlayerControlled){
+    throttle=throttleHeld?1:(brakeHeld?-1:0.35);
+    steerInput=steer;
+  }else{
+    // simple AI: moderate throttle, dodges hazards ahead when possible, slows in deep snow
+    const ahead=hazards.find(h=>h.d>r.dist&&h.d<r.dist+150);
+    steerInput=0;
+    throttle=0.75+Math.random()*0.2;
+    if(ahead){
+      if(ahead.type==='deep'){
+        // try to steer around, else slow down
+        const wantX=ahead.x>0?ahead.x-ahead.w/2-40:ahead.x+ahead.w/2+40;
+        steerInput=r.x<wantX?1:-1;
+        if(Math.abs(r.x-ahead.x)<ahead.w/2)throttle=0.4;
+      }
+    }
+  }
+
+  r.vx+=steerInput*0.5*dt;
+  r.vx*=0.88;
+  r.x+=r.vx*dt;
+  r.x=Math.max(-LANE_W/2+20,Math.min(LANE_W/2-20,r.x));
+
+  const hz=hazardAt(r.dist,r.x);
+  let accel=0;
+  if(hz&&hz.type==='deep'){
+    if(throttle>0.7){
+      // gunning it through deep snow bogs you down
+      accel=-0.25;
+      r.stuck=Math.min(1,r.stuck+0.04*dt);
+    }else{
+      accel=throttle*0.35-0.05;
+      r.stuck=Math.max(0,r.stuck-0.03*dt);
+    }
+  }else if(hz&&hz.type==='mogul'){
+    accel=throttle*0.45-0.1;
+  }else if(hz&&hz.type==='jump'){
+    accel=throttle*0.55;
+  }else{
+    accel=throttle*0.55;
+    r.stuck=Math.max(0,r.stuck-0.05*dt);
+  }
+
+  r.speed+=accel*dt;
+  r.speed=Math.max(1,Math.min(9,r.speed*(1-r.stuck*0.5)));
+  r.dist+=r.speed*dt;
+
+  if(r.dist>=RACE_LEN&&!r.finished){
+    r.finished=true;
+    r.finishTime=elapsed;
+  }
+}
+
+function drawTerrain(player){
+  ctx.fillStyle='#eaf4fb';ctx.fillRect(0,0,800,420);
+  const bands=40;
+  for(let i=0;i<bands;i++){
+    const t=i/bands;
+    const d=player.dist+t*500;
+    const y=400-t*370;
+    const w=(LANE_W/2)*(1-t*0.6)+40;
+    const cx=400;
+    ctx.fillStyle=i%2===0?'#f4faff':'#e3f0fa';
+    ctx.fillRect(cx-w,y,w*2,370/bands+1);
+    // hazards visible in this band
+    hazards.forEach(h=>{
+      if(h.d>d-40&&h.d<d+40){
+        const hx=cx+h.x*(1-t*0.6);
+        const hw=h.w*(1-t*0.6);
+        ctx.fillStyle=h.type==='deep'?'rgba(120,140,110,0.55)':h.type==='mogul'?'rgba(200,200,220,0.7)':'rgba(255,213,79,0.55)';
+        ctx.fillRect(hx-hw/2,y,hw,370/bands+1);
+      }
+    });
+  }
+}
+
+function drawRacers(player){
+  const sorted=[...racers].sort((a,b)=>a.dist-b.dist); // draw far first
+  sorted.forEach(r=>{
+    const rel=r.dist-player.dist;
+    if(rel<-100||rel>500)return;
+    const t=Math.max(0,Math.min(1,rel/500));
+    const y=400-t*370*0.85;
+    const scale=1-t*0.65;
+    const sx=400+(r.x-player.x)*(1-t*0.5)*0.9;
+    ctx.fillStyle=r.isPlayer?'#e94560':'#1a1a2e';
+    ctx.beginPath();ctx.ellipse(sx,y,22*scale,12*scale,0,0,7);ctx.fill();
+    ctx.fillStyle=r.isPlayer?'#ffd54f':'#5ec8f0';
+    ctx.fillRect(sx-6*scale,y-16*scale,12*scale,10*scale);
+  });
+}
+
+function placement(){
+  const order=[...racers].sort((a,b)=>b.dist-a.dist);
+  const idx=order.findIndex(r=>r.isPlayer);
+  return idx+1;
+}
+
+function ordinal(n){
+  const s=['th','st','nd','rd'];const v=n%100;
+  return n+(s[(v-20)%10]||s[v]||s[0]);
+}
+
+function loop(ts){
+  if(lastTs===null)lastTs=ts;
+  const dt=Math.min((ts-lastTs)/16.6667,3);
+  lastTs=ts;
+  const player=racers[0];
+
+  drawTerrain(player);
+  drawRacers(player);
+
+  ctx.fillStyle='#1a1a2e';ctx.font='bold 20px Arial';ctx.textAlign='center';
+
+  if(state==='ready'){
+    ctx.fillText(I18N.t('snowmo_ready','Press an arrow key or tap to start!'),400,36);
+  }else if(state==='racing'){
+    elapsed+=dt/60;
+    racers.forEach(r=>updateRacer(r,dt,r.isPlayer));
+
+    if(player.stuck>0.5&&Math.random()<0.02*dt)SFX.hit();
+
+    if(player.finished){
+      state='finished';
+      if(best===0||player.finishTime<best){best=player.finishTime;localStorage.setItem(KEY,best.toString());document.getElementById('best').textContent=best.toFixed(2)+'s';}
+      const place=placement();
+      if(place===1)SFX.win();else SFX.fail();
+    }
+
+    document.getElementById('place').textContent=I18N.t('snowmo_place_'+placement(),ordinal(placement()));
+    document.getElementById('prog').textContent=Math.min(100,Math.round(player.dist/RACE_LEN*100))+'%';
+  }else if(state==='finished'){
+    const place=placement();
+    ctx.fillStyle=place===1?'#4caf50':'#e94560';
+    ctx.font='bold 30px Arial';
+    ctx.fillText(place===1?I18N.t('snowmo_win','You won the race!'):I18N.t('snowmo_place_result','You finished {p}').replace('{p}',ordinal(place)),400,90);
+    ctx.font='22px Arial';ctx.fillStyle='#1a1a2e';
+    ctx.fillText(I18N.t('snowmo_time','Your time: {t}s').replace('{t}',player.finishTime.toFixed(2)),400,130);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space to try again'),400,165);
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

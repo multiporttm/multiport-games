@@ -1,0 +1,176 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bubble Wrap Pop - Multiport Games</title><meta name="description" content="Play Bubble Wrap Pop free online — Pop every bubble on the sheet before time runs out. Grab gold bonus bubbles, avoid already-popped traps."><link rel="canonical" href="https://games.multiportllc.com/games/bubblewrappop"><meta property="og:title" content="Bubble Wrap Pop - Multiport Games"><meta property="og:description" content="Play Bubble Wrap Pop free online — Pop every bubble on the sheet before time runs out. Grab gold bonus bubbles, avoid already-popped traps."><meta property="og:url" content="https://games.multiportllc.com/games/bubblewrappop"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bubble Wrap Pop","description":"Play Bubble Wrap Pop free online instantly. Pop a grid of bubble wrap bubbles as fast as you can before the timer runs out. Watch for gold bonus bubbles worth extra points and grey already-popped trap bubbles to avoid, then race to clear each new sheet. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/bubblewrappop","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#eef3f5;border-radius:14px;padding:18px;text-align:center;max-width:640px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#234;font-size:.95rem;font-weight:700;max-width:520px;margin:0 auto 8px}
+#timerWrap{background:#d7e2e6;border-radius:10px;height:14px;overflow:hidden;margin:8px auto;max-width:500px}
+#timerBar{background:#3ea0c9;height:100%;width:100%;transition:width .1s linear}
+#status{color:#1a3a4a;font-size:1.1rem;font-weight:800;margin:6px 0;min-height:1.6em}
+#grid{display:grid;gap:6px;justify-content:center;margin:14px auto;padding:12px;background:#dce8ec;border-radius:12px;max-width:560px}
+.bubble{width:44px;height:44px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#eaf7fb,#bfe3ee 60%,#9ccddb);box-shadow:inset -3px -3px 6px rgba(0,0,0,.15),inset 3px 3px 6px rgba(255,255,255,.6);cursor:pointer;transition:transform .06s;touch-action:manipulation}
+.bubble.popped{background:#c9c9c9;box-shadow:inset 2px 2px 4px rgba(0,0,0,.25);cursor:default}
+.bubble.bonus{background:radial-gradient(circle at 35% 30%,#fff6d8,#ffd54f 60%,#e8b923)}
+.bubble.trap{background:radial-gradient(circle at 35% 30%,#f5e0e0,#d68a8a 60%,#b85f5f)}
+.bubble:active:not(.popped){transform:scale(.85)}
+#newSheetBtn{margin-top:8px;padding:9px 22px;background:#3ea0c9;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+@media(max-width:480px){.bubble{width:34px;height:34px}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bubble Wrap Pop</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="hud"><span id="sheetLabel">Sheet: 1</span><span id="scoreLabel">Score: 0 | Hi: 0</span></div>
+      <div id="timerWrap"><div id="timerBar"></div></div>
+      <div id="status">Pop every bubble before time runs out!</div>
+      <div id="grid"></div>
+      <button id="newSheetBtn" style="display:none">Next Sheet →</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Click or tap bubbles to pop them. Clear the whole sheet before the timer runs out. Gold bubbles are <b>bonus points</b>, grey bubbles are <b>already popped</b> — clicking one costs you time. Clear the sheet fast to score big and move to the next one!
+  </div>
+</div>
+<script>
+const HI_KEY='bubblewrappop_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let score=0,sheet=1,timeLeft=0,timeLimit=0,lastTick=null,rafId=null,active=false,cols=8,rows=6;
+let cells=[];
+
+function updateHud(){
+  document.getElementById('sheetLabel').textContent=I18N.t('sheet_label','Sheet: {s}').replace('{s}',sheet);
+  document.getElementById('scoreLabel').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function buildSheet(){
+  cols=Math.min(10,7+Math.floor(sheet/2));
+  rows=Math.min(8,5+Math.floor(sheet/3));
+  const total=cols*rows;
+  cells=[];
+  for(let i=0;i<total;i++){
+    let type='normal';
+    const r=Math.random();
+    if(r<0.06)type='bonus';
+    else if(r<0.14)type='trap-init'; // pre-popped trap, appears already popped
+    cells.push({type, popped: type==='trap-init'});
+  }
+  timeLimit=Math.max(10,22-sheet*0.6);
+  timeLeft=timeLimit;
+  lastTick=null;
+  active=true;
+  document.getElementById('newSheetBtn').style.display='none';
+  renderGrid();
+  updateHud();
+  setStatus(I18N.t('pop_prompt','Pop every live bubble before time runs out!'));
+  if(rafId)cancelAnimationFrame(rafId);
+  tick();
+}
+
+function renderGrid(){
+  const grid=document.getElementById('grid');
+  grid.style.gridTemplateColumns=`repeat(${cols}, 1fr)`;
+  grid.innerHTML='';
+  cells.forEach((cell,idx)=>{
+    const b=document.createElement('div');
+    b.className='bubble'+(cell.popped?' popped':'')+(cell.type==='bonus'&&!cell.popped?' bonus':'')+(cell.type==='trap-init'?' trap':'');
+    b.addEventListener('pointerdown',()=>popCell(idx));
+    grid.appendChild(b);
+  });
+}
+
+function remainingLive(){
+  return cells.filter(c=>!c.popped && c.type!=='trap-init').length;
+}
+
+function popCell(idx){
+  if(!active)return;
+  const cell=cells[idx];
+  if(cell.popped){
+    // clicking an already-popped trap bubble costs time
+    timeLeft=Math.max(0,timeLeft-1.5);
+    SFX.error();
+    setStatus(I18N.t('trap_hit','Already popped! -1.5s'));
+    return;
+  }
+  cell.popped=true;
+  if(cell.type==='bonus'){
+    score+=25;
+    SFX.powerup();
+    setStatus(I18N.t('bonus_hit','Bonus bubble! +25'));
+  } else {
+    score+=5;
+    SFX.click();
+  }
+  updateHud();
+  renderGrid();
+  if(remainingLive()===0){
+    completeSheet();
+  }
+}
+
+function completeSheet(){
+  active=false;
+  cancelAnimationFrame(rafId);
+  const timeBonus=Math.round(timeLeft*10);
+  score+=timeBonus;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  updateHud();
+  SFX.success();
+  setStatus(I18N.t('sheet_cleared','Sheet cleared! Time bonus +{b}').replace('{b}',timeBonus));
+  document.getElementById('newSheetBtn').style.display='inline-block';
+  document.getElementById('newSheetBtn').textContent=I18N.t('next_sheet','Next Sheet →');
+}
+
+function failSheet(){
+  active=false;
+  cancelAnimationFrame(rafId);
+  SFX.fail();
+  setStatus(I18N.t('time_out','Time\'s up! Final score: {s}').replace('{s}',score));
+  document.getElementById('newSheetBtn').style.display='inline-block';
+  document.getElementById('newSheetBtn').textContent=I18N.t('try_again','Try Again ↺');
+  document.getElementById('newSheetBtn').dataset.reset='1';
+}
+
+function tick(){
+  const now=performance.now();
+  const dt=lastTick===null?0:(now-lastTick)/1000;
+  lastTick=now;
+  if(active){
+    timeLeft-=dt;
+    document.getElementById('timerBar').style.width=Math.max(0,100*timeLeft/timeLimit)+'%';
+    if(timeLeft<=0){
+      timeLeft=0;
+      document.getElementById('timerBar').style.width='0%';
+      failSheet();
+      return;
+    }
+  }
+  rafId=requestAnimationFrame(tick);
+}
+
+document.getElementById('newSheetBtn').addEventListener('click',function(){
+  if(this.dataset.reset){
+    delete this.dataset.reset;
+    sheet=1;score=0;
+  } else {
+    sheet++;
+  }
+  buildSheet();
+});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Enter'&&!active){
+    document.getElementById('newSheetBtn').click();
+  }
+});
+
+buildSheet();
+</script></body></html>

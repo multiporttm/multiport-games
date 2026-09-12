@@ -1,0 +1,338 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Trampoline Dodgeball - Multiport Games</title><meta name="description" content="Play Trampoline Dodgeball free online — Hold to charge your jump and release to bounce high, dodging incoming balls in mid-air while tapping opponents to throw back. Clear all 3 opponents before you run out of lives."><link rel="canonical" href="https://games.multiportllc.com/games/trampolinedodgeball"><meta property="og:title" content="Trampoline Dodgeball - Multiport Games"><meta property="og:description" content="Play Trampoline Dodgeball free online — Hold to charge your jump and release to bounce high, dodging incoming balls in mid-air while tapping opponents to throw back. Clear all 3 opponents before you run out of lives."><meta property="og:url" content="https://games.multiportllc.com/games/trampolinedodgeball"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Trampoline Dodgeball","description":"Play Trampoline Dodgeball free online instantly. Hold Space or tap-and-hold your trampoline to charge a bounce, releasing to jump — you must be airborne when an incoming dodgeball arrives or you lose a life. Tap an opponent's trampoline to throw at them while they bounce unpredictably; land 3 hits on each of 3 opponents before your lives run out to win. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/trampolinedodgeball","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a2436;display:block;border-radius:8px;touch-action:none;max-width:100%;height:auto}
+#hud{color:#e8f0ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#msg{color:#8fd0ff;text-align:center;font-size:.95rem;min-height:1.4em;padding-bottom:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Trampoline Dodgeball</div>
+  <div class="game-frame">
+    <div id="hud"><span>Lives: <b id="livesDisp">3</b></span><span>Score: <b id="scoreDisp">0</b></span><span>Hi: <b id="hiDisp">0</b></span></div>
+    <div id="msg">Hold Space (or your trampoline) to charge a jump, release to bounce!</div>
+    <canvas id="c" width="800" height="460"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Space</b> (or press-and-hold your trampoline at the bottom) to charge a bounce, then release to jump — the longer you hold, the higher you go. You must be airborne when an incoming dodgeball reaches you or you lose a life. Tap/click an opponent's trampoline to throw a dodgeball at them — it only lands while they're grounded. Land 3 hits on all 3 opponents before your lives run out to win!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=460;
+const KEY='trampolinedodgeball_hiscore';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+document.getElementById('hiDisp').textContent=hi;
+
+const groundY=400;
+const player={x:120,y:groundY,vy:0,onGround:true,charging:false,chargeT:0,r:22,throwCooldown:0};
+const opponents=[
+  {x:400,y:groundY,vy:0,onGround:true,hp:3,phase:Math.random()*10,jumpTimer:1+Math.random()*2,r:20,alive:true},
+  {x:560,y:groundY,vy:0,onGround:true,hp:3,phase:Math.random()*10,jumpTimer:1+Math.random()*2,r:20,alive:true},
+  {x:700,y:groundY,vy:0,onGround:true,hp:3,phase:Math.random()*10,jumpTimer:1+Math.random()*2,r:20,alive:true},
+];
+let incoming=[]; // balls flying toward player {x,y,targetT,elapsed,fromX}
+let outgoing=[]; // balls player threw {x,y,vx,targetX,target}
+let lives=3,score=0;
+let gameOver=false,won=false,started=false;
+let enemyThrowTimer=1.6;
+let lastTime=null;
+const GRAV=1500; // px/s^2
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+function updateHud(){
+  document.getElementById('livesDisp').textContent=lives;
+  document.getElementById('scoreDisp').textContent=score;
+}
+
+function reset(){
+  lives=3;score=0;gameOver=false;won=false;started=false;
+  player.y=groundY;player.vy=0;player.onGround=true;player.charging=false;player.chargeT=0;player.throwCooldown=0;
+  opponents.forEach(o=>{o.hp=3;o.alive=true;o.y=groundY;o.vy=0;o.onGround=true;o.jumpTimer=1+Math.random()*2;});
+  incoming=[];outgoing=[];
+  enemyThrowTimer=1.8;
+  lastTime=null;
+  updateHud();
+  setMsg(I18N.t('start_hint','Hold Space or tap your trampoline to start bouncing!'));
+}
+
+function jumpCharge(start){
+  if(gameOver){reset();return;}
+  if(!started)started=true;
+  if(start){
+    if(player.onGround)player.charging=true;
+  }else{
+    if(player.charging){
+      const power=Math.min(player.chargeT,0.55);
+      player.vy=-(500+power*1300);
+      player.onGround=false;
+      player.charging=false;
+      player.chargeT=0;
+      SFX.jump();
+    }
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();if(!e.repeat)jumpCharge(true);}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){e.preventDefault();jumpCharge(false);}
+});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+
+c.addEventListener('mousedown',e=>{
+  const p=pointerPos(e);
+  if(p.x<player.x+60&&!gameOver){jumpCharge(true);return;}
+  handleThrow(p);
+});
+c.addEventListener('mouseup',()=>jumpCharge(false));
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const p=pointerPos(e);
+  if(p.x<player.x+60&&!gameOver){jumpCharge(true);return;}
+  handleThrow(p);
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();jumpCharge(false);},{passive:false});
+
+function handleThrow(p){
+  if(gameOver){reset();return;}
+  if(player.throwCooldown>0)return;
+  let best=null,bestD=9999;
+  opponents.forEach(o=>{
+    if(!o.alive)return;
+    const d=Math.hypot(p.x-o.x,p.y-(o.y-30));
+    if(d<bestD){bestD=d;best=o;}
+  });
+  if(best&&bestD<90)throwAt(best);
+}
+
+function throwAt(target){
+  outgoing.push({x:player.x,y:player.y-40,vx:0,target,startX:player.x,startTime:0,dur:0.5,elapsed:0});
+  player.throwCooldown=0.6;
+  SFX.swoosh();
+}
+
+function spawnIncoming(){
+  const alive=opponents.filter(o=>o.alive);
+  if(!alive.length)return;
+  const from=alive[Math.floor(Math.random()*alive.length)];
+  incoming.push({fromX:from.x,dur:0.9+Math.random()*0.3,elapsed:0});
+  SFX.tick();
+}
+
+function update(dt){
+  if(!started||gameOver)return;
+  // player physics
+  if(player.charging){
+    player.chargeT+=dt;
+  }
+  if(!player.onGround){
+    player.vy+=GRAV*dt;
+    player.y+=player.vy*dt;
+    if(player.y>=groundY){player.y=groundY;player.vy=0;player.onGround=true;SFX.land();}
+  }
+  if(player.throwCooldown>0)player.throwCooldown-=dt;
+
+  // opponents auto-bounce with individual rhythm, occasionally big jump to dodge
+  opponents.forEach(o=>{
+    if(!o.alive)return;
+    if(o.onGround){
+      o.jumpTimer-=dt;
+      if(o.jumpTimer<=0){
+        const willDodge=incoming.some(()=>false); // opponents dodge based on outgoing balls targeting them
+        const targeted=outgoing.some(b=>b.target===o&&b.elapsed<b.dur*0.8);
+        const power=targeted&&Math.random()<0.7?1100:600+Math.random()*400;
+        o.vy=-power;
+        o.onGround=false;
+        o.jumpTimer=1+Math.random()*1.6;
+      }
+    }else{
+      o.vy+=GRAV*dt;
+      o.y+=o.vy*dt;
+      if(o.y>=groundY){o.y=groundY;o.vy=0;o.onGround=true;}
+    }
+  });
+
+  // enemy throw timer
+  enemyThrowTimer-=dt;
+  if(enemyThrowTimer<=0){
+    spawnIncoming();
+    enemyThrowTimer=1.6+Math.random()*1.2-score*0.01;
+    enemyThrowTimer=Math.max(0.9,enemyThrowTimer);
+  }
+
+  // incoming balls
+  incoming.forEach(b=>{
+    b.elapsed+=dt;
+  });
+  incoming.forEach(b=>{
+    if(!b.hit&&b.elapsed>=b.dur){
+      b.hit=true;
+      const airborneEnough=!player.onGround&&(groundY-player.y)>34;
+      if(airborneEnough){
+        score+=2;
+        SFX.success();
+        setMsg(I18N.t('dodged','Dodged! +2'));
+      }else{
+        lives--;
+        SFX.hurt();
+        setMsg(I18N.t('hit_msg','Hit! Lives left: {l}').replace('{l}',lives));
+        if(lives<=0){
+          endGame(false);
+        }
+      }
+      updateHud();
+    }
+  });
+  incoming=incoming.filter(b=>b.elapsed<b.dur+0.15);
+
+  // outgoing balls
+  outgoing.forEach(b=>{b.elapsed+=dt;});
+  outgoing.forEach(b=>{
+    if(!b.resolved&&b.elapsed>=b.dur){
+      b.resolved=true;
+      const t=b.target;
+      if(t&&t.alive){
+        const grounded=t.onGround||(groundY-t.y)<30;
+        if(grounded){
+          t.hp--;
+          SFX.hit();
+          score+=5;
+          if(t.hp<=0){
+            t.alive=false;
+            SFX.levelup();
+            setMsg(I18N.t('ko_msg','Opponent knocked out!'));
+            if(opponents.every(o=>!o.alive))endGame(true);
+          }else{
+            setMsg(I18N.t('hit_opp','Direct hit!'));
+          }
+        }else{
+          setMsg(I18N.t('missed','They dodged your throw!'));
+        }
+      }
+      updateHud();
+    }
+  });
+  outgoing=outgoing.filter(b=>b.elapsed<b.dur+0.15);
+}
+
+function endGame(win){
+  gameOver=true;won=win;
+  if(score>hi){hi=score;localStorage.setItem(KEY,hi);document.getElementById('hiDisp').textContent=hi;}
+  if(win){SFX.win();setMsg(I18N.t('you_win','You cleared all opponents! Score {s}. Tap to play again').replace('{s}',score));}
+  else{SFX.lose();setMsg(I18N.t('you_lose','Out of lives! Score {s}. Tap to play again').replace('{s}',score));}
+}
+
+function drawTrampoline(x,y,r,color){
+  ctx.fillStyle='#333';
+  ctx.fillRect(x-r-6,y+10,10,26);
+  ctx.fillRect(x+r-4,y+10,10,26);
+  ctx.beginPath();
+  ctx.ellipse(x,y+10,r+8,12,0,0,Math.PI*2);
+  ctx.fillStyle=color;
+  ctx.fill();
+  ctx.strokeStyle='#111';ctx.stroke();
+}
+
+function drawFigure(x,y,color,squish){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(1,1-squish*0.15);
+  ctx.beginPath();
+  ctx.fillStyle=color;
+  ctx.arc(0,-26,14,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillRect(-9,-14,18,26);
+  ctx.restore();
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0d1830');sky.addColorStop(1,'#1a2436');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#101a2a';ctx.fillRect(0,groundY+30,W,H-groundY-30);
+
+  drawTrampoline(player.x,groundY,player.r+10,'#4fd1ff');
+  opponents.forEach(o=>{ if(o.alive) drawTrampoline(o.x,groundY,o.r+8,'#ff6b6b'); });
+
+  const squishP=player.onGround&&player.charging?Math.min(player.chargeT/0.55,1):0;
+  drawFigure(player.x,player.y,'#e8f0ff',squishP);
+
+  opponents.forEach(o=>{
+    if(!o.alive)return;
+    drawFigure(o.x,o.y,'#ffd0d0',0);
+    // hp pips
+    for(let i=0;i<3;i++){
+      ctx.beginPath();
+      ctx.fillStyle=i<o.hp?'#ff6b6b':'#555';
+      ctx.arc(o.x-16+i*16,groundY-70,5,0,Math.PI*2);
+      ctx.fill();
+    }
+  });
+
+  // incoming ball visuals: arcs from thrower x toward player
+  incoming.forEach(b=>{
+    const t=Math.min(1,b.elapsed/b.dur);
+    const x=b.fromX+(player.x-b.fromX)*t;
+    const arcY=groundY-40-Math.sin(t*Math.PI)*80;
+    ctx.beginPath();ctx.fillStyle='#ff3b3b';ctx.arc(x,arcY,10,0,Math.PI*2);ctx.fill();
+    // warning ring on player before impact
+    if(t>0.6){
+      ctx.beginPath();ctx.strokeStyle='rgba(255,80,80,'+(t-0.6)*2+')';ctx.lineWidth=3;
+      ctx.arc(player.x,groundY-10,34,0,Math.PI*2);ctx.stroke();ctx.lineWidth=1;
+    }
+  });
+
+  // outgoing balls
+  outgoing.forEach(b=>{
+    const t=Math.min(1,b.elapsed/b.dur);
+    const tx=b.target?b.target.x:b.startX;
+    const x=b.startX+(tx-b.startX)*t;
+    const arcY=(player.y-40)-Math.sin(t*Math.PI)*90;
+    ctx.beginPath();ctx.fillStyle='#4fd1ff';ctx.arc(x,arcY,9,0,Math.PI*2);ctx.fill();
+  });
+
+  // charge meter
+  if(player.charging){
+    const pct=Math.min(player.chargeT/0.55,1);
+    ctx.fillStyle='#222';ctx.fillRect(player.x-30,groundY+40,60,10);
+    ctx.fillStyle='#ffd54f';ctx.fillRect(player.x-30,groundY+40,60*pct,10);
+  }
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='#ffffffcc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint2','Hold Space / your trampoline to bounce'),W/2,80);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('game_over_win','VICTORY'):I18N.t('game_over_lose','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+26);
+  }
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min((ts-lastTime)/1000,0.05);
+  lastTime=ts;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

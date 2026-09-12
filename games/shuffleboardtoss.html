@@ -1,0 +1,342 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Shuffleboard Toss - Multiport Games</title><meta name="description" content="Play Shuffleboard Toss free online — Drag back and release to slide your puck down the court. Land in the high-value zones and knock your opponent's pucks off the board across 4 rounds against the AI."><link rel="canonical" href="https://games.multiportllc.com/games/shuffleboardtoss"><meta property="og:title" content="Shuffleboard Toss - Multiport Games"><meta property="og:description" content="Play Shuffleboard Toss free online — Drag back and release to slide your puck down the court. Land in the high-value zones and knock your opponent's pucks off the board across 4 rounds against the AI."><meta property="og:url" content="https://games.multiportllc.com/games/shuffleboardtoss"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Shuffleboard Toss","description":"Play Shuffleboard Toss free online instantly. Drag back and release to slide your puck down the court, aiming for the high-value scoring zones while knocking your opponent's pucks out of them. Best total score after 4 rounds against the AI wins. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/shuffleboardtoss","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a2a44;display:block;border-radius:8px;touch-action:none;max-width:100%;height:auto}
+#hud{color:#e8e0d0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:22px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#msg{color:#7ec8ff;text-align:center;font-size:.95rem;min-height:1.4em;padding-bottom:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Shuffleboard Toss</div>
+  <div class="game-frame">
+    <div id="hud"><span>Round <b id="roundDisp">1</b>/4</span><span>You: <b id="youScore">0</b></span><span>AI: <b id="aiScore">0</b></span><span>Hi: <b id="hiDisp">0</b></span></div>
+    <div id="msg">Drag down from your puck and release to shoot</div>
+    <canvas id="c" width="900" height="360"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click/tap and drag your puck backward, then release to launch — pull farther for more power. Land in the highest-scoring zone (10/8/7) and knock the AI's pucks out of scoring zones. Highest total score after 4 rounds wins!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=900,H=360;
+const KEY='shuffleboardtoss_hiscore';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+document.getElementById('hiDisp').textContent=hi;
+
+// Court geometry: pucks travel along x from left (shooter) to right (zones)
+const laneTop=60, laneBottom=300, laneCx=(laneTop+laneBottom)/2;
+const shootX=90;
+const zones=[ // x1,x2,points  (closest to farthest)
+  {x1:560,x2:660,pts:7},
+  {x1:660,x2:760,pts:8},
+  {x1:760,x2:860,pts:10},
+];
+const offEndX=880; // beyond this = off the end, puck removed (10-off zone / falls off)
+const guttersW=18; // side gutters, off = removed
+
+let pucks=[]; // {x,y,vx,vy,team,alive}
+let round=1,totalRounds=4;
+let youScore=0,aiScore=0;
+let turn='you'; // whose puck slides next: alternate, you go first each round
+let shotsThisRound=0;
+const shotsPerSide=4;
+let dragging=false,dragStart=null,dragCur=null;
+let animating=false;
+let roundOver=false,matchOver=false;
+let aiPending=false;
+
+function newPuck(team){
+  return {x:shootX,y:laneCx+(Math.random()*10-5),vx:0,vy:0,team,alive:true,r:16};
+}
+
+function startRound(){
+  pucks=[];
+  shotsThisRound=0;
+  roundOver=false;
+  turn='you';
+  setMsg(I18N.t('your_turn','Your turn — drag to aim and shoot'));
+  render();
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+function updateHud(){
+  document.getElementById('roundDisp').textContent=round;
+  document.getElementById('youScore').textContent=youScore;
+  document.getElementById('aiScore').textContent=aiScore;
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+
+function canShoot(){
+  return !animating&&!roundOver&&!matchOver&&turn==='you'&&!aiPending;
+}
+
+c.addEventListener('mousedown',startDrag);
+c.addEventListener('touchstart',e=>{e.preventDefault();startDrag(e);},{passive:false});
+window.addEventListener('mousemove',moveDrag);
+window.addEventListener('touchmove',e=>{if(dragging){e.preventDefault();moveDrag(e);}},{passive:false});
+window.addEventListener('mouseup',endDrag);
+window.addEventListener('touchend',endDrag);
+
+function startDrag(e){
+  if(!canShoot())return;
+  const p=pointerPos(e);
+  if(p.x<shootX+70){ dragging=true; dragStart={x:shootX,y:laneCx}; dragCur=p; }
+}
+function moveDrag(e){
+  if(!dragging)return;
+  dragCur=pointerPos(e);
+  render();
+}
+function endDrag(){
+  if(!dragging)return;
+  dragging=false;
+  const dx=dragStart.x-dragCur.x;
+  const dy=dragStart.y-dragCur.y;
+  let power=Math.hypot(dx,dy);
+  power=Math.min(power,160);
+  if(power<15){dragCur=null;render();return;}
+  const speed=power*0.115+2;
+  const aimY=laneCx-dy*0.5; // slight vertical steering
+  const puck=newPuck('you');
+  puck.vx=speed;
+  puck.vy=(aimY-puck.y)*0.02;
+  pucks.push(puck);
+  SFX.swoosh();
+  animating=true;
+  shotsThisRound++;
+  turn='ai';
+  dragCur=null;
+  setMsg(I18N.t('sliding','Sliding...'));
+}
+
+function aiShoot(){
+  aiPending=true;
+  setTimeout(()=>{
+    // AI aims to hit into best open zone, or knock out a leading 'you' puck
+    const puck=newPuck('ai');
+    let targetX=760+Math.random()*60;
+    // try to target a your-puck sitting in a scoring zone to knock it out
+    const target=pucks.filter(p=>p.team==='you'&&p.alive&&inAnyZone(p.x)).sort((a,b)=>zoneScore(b.x)-zoneScore(a.x))[0];
+    if(target&&Math.random()<0.65){
+      targetX=target.x-6;
+    }
+    const dist=targetX-shootX;
+    const speed=Math.max(6,Math.min(22,dist/44))+ (Math.random()*1.6-0.8);
+    puck.vx=speed;
+    puck.vy=(Math.random()*2-1)*0.4;
+    pucks.push(puck);
+    SFX.swoosh();
+    animating=true;
+    shotsThisRound++;
+    aiPending=false;
+    setMsg(I18N.t('ai_turn','AI is sliding...'));
+  },600);
+}
+
+function inAnyZone(x){return zones.some(z=>x>=z.x1&&x<z.x2);}
+function zoneScore(x){const z=zones.find(z=>x>=z.x1&&x<z.x2);return z?z.pts:0;}
+
+function physicsStep(){
+  let moving=false;
+  const friction=0.982;
+  for(const p of pucks){
+    if(!p.alive)continue;
+    if(Math.abs(p.vx)>0.05||Math.abs(p.vy)>0.05){
+      p.x+=p.vx;
+      p.y+=p.vy;
+      p.vx*=friction;
+      p.vy*=friction*0.9;
+      moving=true;
+    } else { p.vx=0;p.vy=0; }
+    // wall bounce
+    if(p.y<laneTop+p.r){p.y=laneTop+p.r;p.vy=-p.vy*0.5;}
+    if(p.y>laneBottom-p.r){p.y=laneBottom-p.r;p.vy=-p.vy*0.5;}
+    // off the far end or gutters -> removed
+    if(p.x>offEndX){p.alive=false;}
+  }
+  // collisions
+  for(let i=0;i<pucks.length;i++){
+    for(let j=i+1;j<pucks.length;j++){
+      const a=pucks[i],b=pucks[j];
+      if(!a.alive||!b.alive)continue;
+      const dx=b.x-a.x,dy=b.y-a.y;
+      const dist=Math.hypot(dx,dy);
+      const minDist=a.r+b.r;
+      if(dist<minDist&&dist>0){
+        moving=true;
+        const nx=dx/dist,ny=dy/dist;
+        const overlap=(minDist-dist)/2;
+        a.x-=nx*overlap;a.y-=ny*overlap;
+        b.x+=nx*overlap;b.y+=ny*overlap;
+        // elastic-ish exchange
+        const avx=a.vx,avy=a.vy;
+        const speedA=Math.hypot(a.vx,a.vy),speedB=Math.hypot(b.vx,b.vy);
+        a.vx=b.vx*0.9;a.vy=b.vy*0.9;
+        b.vx=avx*0.9;b.vy=avy*0.9;
+        // add a bit of push along normal direction from impact
+        b.vx+=nx*1.5;b.vy+=ny*1.5;
+        a.vx-=nx*1.5;a.vy-=ny*1.5;
+        SFX.hit();
+      }
+    }
+  }
+  pucks=pucks.filter(p=>p.alive);
+  if(!moving&&animating){
+    animating=false;
+    onShotSettled();
+  }
+}
+
+function onShotSettled(){
+  if(shotsThisRound>=shotsPerSide*2){
+    finishRound();
+    return;
+  }
+  if(turn==='ai'){
+    turn='you';
+    setMsg(I18N.t('your_turn','Your turn — drag to aim and shoot'));
+  }else{
+    turn='ai';
+    aiShoot();
+  }
+}
+
+function finishRound(){
+  roundOver=true;
+  let roundYou=0,roundAi=0;
+  pucks.forEach(p=>{
+    const pts=zoneScore(p.x);
+    if(pts>0){ if(p.team==='you')roundYou+=pts; else roundAi+=pts; }
+  });
+  youScore+=roundYou;
+  aiScore+=roundAi;
+  updateHud();
+  if(roundYou>roundAi)SFX.success(); else if(roundAi>roundYou)SFX.fail(); else SFX.point();
+  setMsg(I18N.t('round_result','Round {r} — You +{y}, AI +{a}').replace('{r}',round).replace('{y}',roundYou).replace('{a}',roundAi));
+  if(round>=totalRounds){
+    setTimeout(endMatch,1400);
+  }else{
+    setTimeout(()=>{ round++; startRound(); },1600);
+  }
+}
+
+function endMatch(){
+  matchOver=true;
+  if(youScore>hi){hi=youScore;localStorage.setItem(KEY,hi);document.getElementById('hiDisp').textContent=hi;}
+  if(youScore>aiScore){SFX.win();setMsg(I18N.t('you_win','You win the match {y} - {a}! Tap to play again').replace('{y}',youScore).replace('{a}',aiScore));}
+  else if(aiScore>youScore){SFX.lose();setMsg(I18N.t('you_lose','AI wins the match {a} - {y}. Tap to play again').replace('{a}',aiScore).replace('{y}',youScore));}
+  else {SFX.point();setMsg(I18N.t('tie_match','Match tied {y} - {a}! Tap to play again').replace('{y}',youScore).replace('{a}',aiScore));}
+}
+
+c.addEventListener('click',()=>{
+  if(matchOver){
+    round=1;youScore=0;aiScore=0;matchOver=false;
+    updateHud();
+    startRound();
+  }
+});
+
+document.addEventListener('keydown',e=>{
+  if(matchOver&&(e.code==='Space'||e.code==='Enter')){
+    round=1;youScore=0;aiScore=0;matchOver=false;
+    updateHud();
+    startRound();
+  }
+});
+
+function drawCourt(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0d1830');bg.addColorStop(1,'#1a2a44');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  // lane
+  ctx.fillStyle='#8a6a45';
+  ctx.fillRect(40,laneTop,offEndX-40,laneBottom-laneTop);
+  // wood grain lines
+  ctx.strokeStyle='rgba(0,0,0,.08)';
+  for(let i=0;i<12;i++){ctx.beginPath();ctx.moveTo(40,laneTop+ (laneBottom-laneTop)*i/12);ctx.lineTo(offEndX,laneTop+(laneBottom-laneTop)*i/12);ctx.stroke();}
+  // zones
+  const zoneColors=['#3f6ab5','#c94f4f','#e0b93d'];
+  zones.forEach((z,i)=>{
+    ctx.fillStyle=zoneColors[i]+'cc';
+    ctx.fillRect(z.x1,laneTop,z.x2-z.x1,laneBottom-laneTop);
+    ctx.strokeStyle='#fff8';
+    ctx.strokeRect(z.x1,laneTop,z.x2-z.x1,laneBottom-laneTop);
+    ctx.fillStyle='#fff';
+    ctx.font='bold 26px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(z.pts,(z.x1+z.x2)/2,laneTop-14);
+  });
+  // shoot line
+  ctx.strokeStyle='#fff6';
+  ctx.beginPath();ctx.moveTo(shootX,laneTop);ctx.lineTo(shootX,laneBottom);ctx.stroke();
+  // borders
+  ctx.strokeStyle='#3a2a18';ctx.lineWidth=4;
+  ctx.strokeRect(40,laneTop,offEndX-40,laneBottom-laneTop);
+  ctx.lineWidth=1;
+}
+
+function drawPuck(p){
+  ctx.beginPath();
+  ctx.fillStyle=p.team==='you'?'#4fd1ff':'#ff6b6b';
+  ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle='#0006';ctx.stroke();
+  ctx.beginPath();
+  ctx.fillStyle=p.team==='you'?'#1e90c9':'#c93b3b';
+  ctx.arc(p.x,p.y,p.r*0.5,0,Math.PI*2);
+  ctx.fill();
+}
+
+function drawAim(){
+  if(dragging&&dragCur){
+    ctx.strokeStyle='#ffd54f';
+    ctx.lineWidth=3;
+    ctx.setLineDash([6,6]);
+    ctx.beginPath();
+    ctx.moveTo(shootX,laneCx);
+    const dx=dragStart.x-dragCur.x,dy=dragStart.y-dragCur.y;
+    const p=Math.min(Math.hypot(dx,dy),160);
+    const ang=Math.atan2(dy,dx);
+    ctx.lineTo(shootX+Math.cos(ang)*p*1.6,laneCx+Math.sin(ang)*p*0.4);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineWidth=1;
+  }
+}
+
+function render(){
+  drawCourt();
+  pucks.forEach(drawPuck);
+  if(!animating&&turn==='you'&&!roundOver&&!matchOver){
+    const readyPuck={x:shootX,y:laneCx,r:16,team:'you'};
+    drawPuck(readyPuck);
+  }
+  drawAim();
+  if(matchOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(youScore>aiScore?I18N.t('game_over_win','MATCH WON'):(aiScore>youScore?I18N.t('game_over_lose','MATCH LOST'):I18N.t('game_over_tie','TIE MATCH')),W/2,H/2);
+  }
+}
+
+function loop(){
+  if(animating)physicsStep();
+  render();
+  requestAnimationFrame(loop);
+}
+updateHud();
+startRound();
+loop();
+</script></body></html>

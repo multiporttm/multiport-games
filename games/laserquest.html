@@ -1,0 +1,355 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Laser Quest</title><meta name="description" content="Play Laser Quest free online — Move with WASD/Arrows or the on-screen stick, aim with your mouse or drag on mobile, and click/tap to fire. Tag AI opponents with your laser while dodging their shots before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/laserquest"><meta property="og:title" content="Laser Quest - Multiport Games"><meta property="og:description" content="Play Laser Quest free online — Move with WASD/Arrows or the on-screen stick, aim with your mouse or drag on mobile, and click/tap to fire. Tag AI opponents with your laser while dodging their shots before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/laserquest"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Laser Quest","description":"Play Laser Quest free online instantly. Run through a dark arena maze tagging AI opponents with your laser tag gun while dodging incoming laser fire. Manage your shield meter and rack up the highest tag score before the timer runs out. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/laserquest","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#05050a}
+#c{background:#0a0a14;display:block;border-radius:8px;touch-action:none;max-width:100%;height:auto}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#7ef9ff;font-size:1rem;font-weight:700;padding:6px 10px;flex-wrap:wrap;gap:6px}
+#hud span{white-space:nowrap}
+#shieldBar{width:120px;height:12px;background:#1a1a2e;border-radius:6px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+#shieldFill{height:100%;background:linear-gradient(90deg,#00e5ff,#00ffa3);width:100%}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Laser Quest</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Tags: 0 | Hi: 0</span>
+      <span>Shield <span id="shieldBar"><span id="shieldFill"></span></span></span>
+      <span id="timeDisp">Time: 90</span>
+    </div>
+    <canvas id="c" width="800" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>WASD/Arrows</b> or the on-screen stick to move. Move your <b>mouse</b> (or drag on mobile) to aim, <b>click/tap</b> to fire your laser. Tag opponents for points, dodge their beams to protect your shield, before the timer runs out.</div>
+</div>
+<script>
+const HS_KEY='laserquest_hi';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480;
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+
+let player,bots,walls,bullets,particles;
+let score=0,shield=100,timeLeft=90,started=false,gameOver=false,lastTime=null,fireTimer=0,spawnTimer=0;
+let keys={};
+let aim={x:W/2+100,y:H/2};
+let mouseDown=false;
+
+function buildWalls(){
+  return [
+    {x:0,y:0,w:W,h:16},{x:0,y:H-16,w:W,h:16},{x:0,y:0,w:16,h:H},{x:W-16,y:0,w:16,h:H},
+    {x:150,y:80,w:20,h:160},
+    {x:630,y:80,w:20,h:160},
+    {x:150,y:280,w:20,h:160},
+    {x:630,y:280,w:20,h:160},
+    {x:360,y:0,w:20,h:180},
+    {x:420,y:300,w:20,h:180},
+    {x:300,y:220,w:200,h:20},
+  ];
+}
+
+function reset(){
+  player={x:80,y:H/2,r:14,hurtCd:0};
+  bots=[];
+  for(let i=0;i<4;i++)spawnBot();
+  walls=buildWalls();
+  bullets=[];
+  particles=[];
+  score=0;shield=100;timeLeft=90;gameOver=false;started=false;lastTime=null;fireTimer=0;spawnTimer=0;
+}
+
+function spawnBot(){
+  let x,y,tries=0;
+  do{x=100+Math.random()*(W-200);y=100+Math.random()*(H-200);tries++;}while(tries<20&&dist(x,y,player.x,player.y)<150);
+  bots.push({x,y,r:14,hp:1,fireCd:60+Math.random()*60,moveAngle:Math.random()*Math.PI*2,moveTimer:0,color:['#ff5577','#ffaa33','#ffe14d'][Math.floor(Math.random()*3)]});
+}
+
+function dist(x1,y1,x2,y2){return Math.hypot(x1-x2,y1-y2);}
+
+function rectsOverlapCircle(cx,cy,cr,r){
+  const nx=Math.max(r.x,Math.min(cx,r.x+r.w));
+  const ny=Math.max(r.y,Math.min(cy,r.y+r.h));
+  return dist(cx,cy,nx,ny)<cr;
+}
+
+function segCircleHit(x1,y1,x2,y2,cx,cy,cr){
+  const dx=x2-x1,dy=y2-y1;
+  const len2=dx*dx+dy*dy;
+  let t=len2===0?0:((cx-x1)*dx+(cy-y1)*dy)/len2;
+  t=Math.max(0,Math.min(1,t));
+  const px=x1+t*dx,py=y1+t*dy;
+  return dist(px,py,cx,cy)<cr;
+}
+
+function segWallHit(x1,y1,x2,y2){
+  for(const w of walls){
+    // sample along segment
+    const steps=12;
+    for(let i=0;i<=steps;i++){
+      const t=i/steps;
+      const px=x1+(x2-x1)*t,py=y1+(y2-y1)*t;
+      if(px>=w.x&&px<=w.x+w.w&&py>=w.y&&py<=w.y+w.h)return {x:px,y:py};
+    }
+  }
+  return null;
+}
+
+function moveEntity(ent,dx,dy){
+  let nx=ent.x+dx,ny=ent.y+dy;
+  if(!walls.some(w=>rectsOverlapCircle(nx,ent.y,ent.r,w)))ent.x=nx;
+  if(!walls.some(w=>rectsOverlapCircle(ent.x,ny,ent.r,w)))ent.y=ny;
+}
+
+function fireLaser(from,angle,fromPlayer){
+  const range=900;
+  const x2=from.x+Math.cos(angle)*range,y2=from.y+Math.sin(angle)*range;
+  const wallHit=segWallHit(from.x,from.y,x2,y2);
+  let endX=wallHit?wallHit.x:x2, endY=wallHit?wallHit.y:y2;
+  let hitTarget=null;
+  if(fromPlayer){
+    for(const b of bots){
+      if(segCircleHit(from.x,from.y,endX,endY,b.x,b.y,b.r)){
+        const d=dist(from.x,from.y,b.x,b.y);
+        if(!hitTarget||d<hitTarget.d){hitTarget={bot:b,d};endX=b.x;endY=b.y;}
+      }
+    }
+  }else{
+    if(player.hurtCd<=0&&segCircleHit(from.x,from.y,endX,endY,player.x,player.y,player.r)){
+      hitTarget={player:true};
+      endX=player.x;endY=player.y;
+    }
+  }
+  bullets.push({x1:from.x,y1:from.y,x2:endX,y2:endY,life:8,fromPlayer});
+  if(fromPlayer){
+    SFX.click();
+    if(hitTarget&&hitTarget.bot){
+      bots=bots.filter(b=>b!==hitTarget.bot);
+      score+=10;
+      SFX.point();
+      spawnParticles(endX,endY,'#7ef9ff');
+      spawnBot();
+    }
+  }else{
+    if(hitTarget&&hitTarget.player){
+      shield=Math.max(0,shield-14);
+      player.hurtCd=45;
+      SFX.hurt();
+      spawnParticles(player.x,player.y,'#ff5577');
+      if(shield<=0)endGame();
+    }
+  }
+}
+
+function spawnParticles(x,y,color){
+  for(let i=0;i<12;i++){
+    const a=Math.random()*Math.PI*2,sp=1+Math.random()*3;
+    particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:24,color});
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+  SFX.lose();
+}
+
+// Controls
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  if(!started)started=true;
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){reset();started=true;}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function canvasPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.clientX-rect.left)*(W/rect.width);
+  const cy=(e.clientY-rect.top)*(H/rect.height);
+  return {x:cx,y:cy};
+}
+
+c.addEventListener('mousemove',e=>{
+  if(!started||gameOver)return;
+  const p=canvasPos(e);aim.x=p.x;aim.y=p.y;
+});
+c.addEventListener('mousedown',e=>{
+  if(gameOver){reset();started=true;return;}
+  if(!started){started=true;return;}
+  mouseDown=true;
+});
+document.addEventListener('mouseup',()=>{mouseDown=false;});
+
+let touchMoveId=null,touchAimId=null;
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){reset();started=true;return;}
+  started=true;
+  for(const t of e.changedTouches){
+    const p=canvasPos(t);
+    if(p.x<W/2&&touchMoveId===null){touchMoveId=t.identifier;joy.active=true;joy.baseX=p.x;joy.baseY=p.y;joy.x=p.x;joy.y=p.y;}
+    else if(touchAimId===null){touchAimId=t.identifier;aim.x=p.x;aim.y=p.y;mouseDown=true;}
+  }
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const p=canvasPos(t);
+    if(t.identifier===touchMoveId){joy.x=p.x;joy.y=p.y;}
+    else if(t.identifier===touchAimId){aim.x=p.x;aim.y=p.y;}
+  }
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  for(const t of e.changedTouches){
+    if(t.identifier===touchMoveId){touchMoveId=null;joy.active=false;}
+    if(t.identifier===touchAimId){touchAimId=null;mouseDown=false;}
+  }
+},{passive:false});
+
+let joy={active:false,baseX:0,baseY:0,x:0,y:0};
+
+function drawWalls(){
+  ctx.fillStyle='#1c2a4a';
+  walls.forEach(w=>ctx.fillRect(w.x,w.y,w.w,w.h));
+  ctx.strokeStyle='#3a5a9a';ctx.lineWidth=2;
+  walls.forEach(w=>ctx.strokeRect(w.x,w.y,w.w,w.h));
+}
+
+function drawPlayer(){
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  const angle=Math.atan2(aim.y-player.y,aim.x-player.x);
+  ctx.fillStyle=player.hurtCd>0?'#ff8899':'#7ef9ff';
+  ctx.beginPath();ctx.arc(0,0,player.r,0,Math.PI*2);ctx.fill();
+  ctx.rotate(angle);
+  ctx.fillStyle='#dfffff';
+  ctx.fillRect(0,-3,26,6);
+  ctx.restore();
+}
+
+function drawBot(b){
+  ctx.save();
+  ctx.translate(b.x,b.y);
+  ctx.fillStyle=b.color;
+  ctx.beginPath();ctx.arc(0,0,b.r,0,Math.PI*2);ctx.fill();
+  const angle=Math.atan2(player.y-b.y,player.x-b.x);
+  ctx.rotate(angle);
+  ctx.fillStyle='#fff';
+  ctx.fillRect(0,-2.5,20,5);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0a0a14';ctx.fillRect(0,0,W,H);
+  drawWalls();
+
+  if(!started){
+    ctx.fillStyle='#7ef9ff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Move or Click / Tap to start'),W/2,H/2);
+    drawPlayer();
+    bots.forEach(drawBot);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    bots.forEach(drawBot);
+    drawPlayer();
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 40px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('score_hi_label','Tags: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Click / Tap / Space to restart'),W/2,H/2+48);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  timeLeft-=dt/60;
+  if(timeLeft<=0){timeLeft=0;endGame();}
+
+  // player movement
+  let dx=0,dy=0;
+  if(keys['KeyW']||keys['ArrowUp'])dy-=1;
+  if(keys['KeyS']||keys['ArrowDown'])dy+=1;
+  if(keys['KeyA']||keys['ArrowLeft'])dx-=1;
+  if(keys['KeyD']||keys['ArrowRight'])dx+=1;
+  if(joy.active){
+    const jdx=joy.x-joy.baseX,jdy=joy.y-joy.baseY;
+    const jd=Math.hypot(jdx,jdy);
+    if(jd>10){dx=jdx/jd;dy=jdy/jd;}
+  }
+  const len=Math.hypot(dx,dy);
+  if(len>0){dx/=len;dy/=len;moveEntity(player,dx*3.6*dt,dy*3.6*dt);}
+  if(player.hurtCd>0)player.hurtCd-=dt;
+
+  // player fire
+  fireTimer-=dt;
+  if(mouseDown&&fireTimer<=0){
+    const angle=Math.atan2(aim.y-player.y,aim.x-player.x);
+    fireLaser(player,angle,true);
+    fireTimer=14;
+  }
+
+  // bots AI
+  bots.forEach(b=>{
+    b.moveTimer-=dt;
+    if(b.moveTimer<=0){
+      b.moveAngle=Math.atan2(player.y-b.y,player.x-b.x)+(Math.random()-0.5)*1.4;
+      b.moveTimer=30+Math.random()*30;
+    }
+    const bdx=Math.cos(b.moveAngle)*1.6*dt,bdy=Math.sin(b.moveAngle)*1.6*dt;
+    moveEntity(b,bdx,bdy);
+    b.fireCd-=dt;
+    if(b.fireCd<=0&&dist(b.x,b.y,player.x,player.y)<400){
+      const angle=Math.atan2(player.y-b.y,player.x-b.x);
+      fireLaser(b,angle,false);
+      b.fireCd=70+Math.random()*50;
+    }
+  });
+  while(bots.length<4)spawnBot();
+
+  bullets=bullets.filter(bl=>bl.life>0);
+  bullets.forEach(bl=>{
+    bl.life-=dt;
+    ctx.strokeStyle=bl.fromPlayer?'#7ef9ff':'#ff5577';
+    ctx.lineWidth=3;
+    ctx.globalAlpha=Math.max(0,bl.life/8);
+    ctx.beginPath();ctx.moveTo(bl.x1,bl.y1);ctx.lineTo(bl.x2,bl.y2);ctx.stroke();
+    ctx.globalAlpha=1;
+  });
+
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;
+    ctx.fillStyle=p.color;ctx.globalAlpha=Math.max(0,p.life/24);
+    ctx.fillRect(p.x-2,p.y-2,4,4);
+    ctx.globalAlpha=1;
+  });
+
+  bots.forEach(drawBot);
+  drawPlayer();
+
+  if(joy.active){
+    ctx.strokeStyle='rgba(126,249,255,0.5)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(joy.baseX,joy.baseY,36,0,Math.PI*2);ctx.stroke();
+    ctx.beginPath();ctx.arc(joy.x,joy.y,16,0,Math.PI*2);ctx.fillStyle='rgba(126,249,255,0.3)';ctx.fill();
+  }
+
+  document.getElementById('scoreDisp').textContent=I18N.t('score_hi_label','Tags: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('timeDisp').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+  document.getElementById('shieldFill').style.width=Math.max(0,shield)+'%';
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

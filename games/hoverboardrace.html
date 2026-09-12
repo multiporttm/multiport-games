@@ -1,0 +1,254 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Hoverboard Race</title><meta name="description" content="Play Hoverboard Race free online — Lean Left/Right (Arrow keys or tilt buttons) to stay balanced, and press Space or Tap to jump gaps and hazards. Race three AI riders to the finish line."><link rel="canonical" href="https://games.multiportllc.com/games/hoverboardrace"><meta property="og:title" content="Hoverboard Race - Multiport Games"><meta property="og:description" content="Play Hoverboard Race free online — Lean Left/Right (Arrow keys or tilt buttons) to stay balanced, and press Space or Tap to jump gaps and hazards. Race three AI riders to the finish line."><meta property="og:url" content="https://games.multiportllc.com/games/hoverboardrace"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Hoverboard Race","description":"Play Hoverboard Race free online instantly. Lean Left/Right (Arrow keys or tilt buttons) to stay balanced, and press Space or Tap to jump gaps and hazards. Race three AI riders to the finish line. No download or signup required.","genre":"Racing","url":"https://games.multiportllc.com/games/hoverboardrace","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d1b2a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#e0f7ff;font-size:1rem;font-weight:700;text-align:center;padding:6px}
+#bars{max-width:720px;margin:0 auto 6px;font-family:monospace;font-size:.8rem;color:#cfefff}
+.barRow{display:flex;align-items:center;gap:8px;margin:2px 0}
+.barRow .lbl{width:70px;text-align:right;flex:none}
+.barTrack{flex:1;height:10px;background:#1b2a3c;border-radius:5px;overflow:hidden}
+.barFill{height:100%;border-radius:5px}
+#tiltWrap{max-width:300px;margin:6px auto;height:14px;background:#1b2a3c;border-radius:7px;overflow:hidden;position:relative}
+#tiltFill{position:absolute;top:0;bottom:0;left:50%;width:2px;background:#7ec8ff}
+#touchCtl{display:flex;justify-content:center;gap:14px;margin-top:8px}
+#touchCtl button{width:64px;height:48px;font-size:1.4rem;border-radius:10px;border:none;background:#1b2a3c;color:#fff}
+#touchCtl button:active{background:#3a5570}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Hoverboard Race</div>
+  <div class="game-frame">
+    <div id="hud">Distance: 0m</div>
+    <div id="bars">
+      <div class="barRow"><span class="lbl">You</span><div class="barTrack"><div class="barFill" id="barYou" style="background:#7ec8ff;width:0%"></div></div></div>
+      <div class="barRow"><span class="lbl">Rex</span><div class="barTrack"><div class="barFill" id="barA" style="background:#ff6b6b;width:0%"></div></div></div>
+      <div class="barRow"><span class="lbl">Nova</span><div class="barTrack"><div class="barFill" id="barB" style="background:#ffd54f;width:0%"></div></div></div>
+    </div>
+    <canvas id="c" width="800" height="260"></canvas>
+    <div id="tiltWrap"><div id="tiltFill"></div></div>
+    <div id="touchCtl">
+      <button id="btnLeft">◀</button>
+      <button id="btnJump">⤒</button>
+      <button id="btnRight">▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Lean with <b>◀ / ▶ Arrow Keys</b> (or the on-screen buttons) to keep your hoverboard balanced. Press <b>Space</b> or the jump button to clear gaps and hazards. Beat Rex and Nova to the finish line without wiping out!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const hud=document.getElementById('hud');
+const tiltFill=document.getElementById('tiltFill');
+const barYou=document.getElementById('barYou'),barA=document.getElementById('barA'),barB=document.getElementById('barB');
+const HI_KEY='hoverboardrace_best';
+let bestTime=parseFloat(localStorage.getItem(HI_KEY)||'0');
+
+const FINISH=2400;
+const ground=190;
+let started=false,gameOver=false,won=false,lastTime=null;
+let dist=0,speed=0,baseSpeed=3.2;
+let tilt=0,tiltVel=0,leaning=0; // leaning: -1,0,1
+let player={x:120,y:ground,vy:0,onGround:true,wobbling:false,wobbleT:0,crashT:0};
+let obstacles=[],hazardTimer=0;
+let ai=[{name:'Rex',dist:0,speed:3.0,color:'#ff6b6b'},{name:'Nova',dist:0,speed:2.9,color:'#ffd54f'}];
+let raceResult=null;
+let elapsed=0;
+let dust=[];
+
+function reset(){
+  dist=0;speed=baseSpeed;tilt=0;tiltVel=0;leaning=0;
+  player.y=ground;player.vy=0;player.onGround=true;player.wobbling=false;player.wobbleT=0;player.crashT=0;
+  obstacles=[];hazardTimer=0;
+  ai=[{name:'Rex',dist:0,speed:3.0,color:'#ff6b6b'},{name:'Nova',dist:0,speed:2.9,color:'#ffd54f'}];
+  raceResult=null;elapsed=0;dust=[];
+  gameOver=false;won=false;started=false;lastTime=null;
+}
+reset();
+
+function spawnObstacle(){
+  const roll=Math.random();
+  if(roll<0.4){
+    obstacles.push({type:'gap',x:820,w:70+Math.random()*40});
+  }else if(roll<0.75){
+    obstacles.push({type:'rock',x:820,w:26,h:30});
+  }else{
+    obstacles.push({type:'ramp',x:820,w:60,h:36});
+  }
+}
+
+function jump(){
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  if(player.onGround&&!player.wobbling){player.vy=-13;player.onGround=false;SFX.jump();}
+}
+function setLean(dir){leaning=dir;}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();jump();}
+  if(e.code==='ArrowLeft'){e.preventDefault();setLean(-1);}
+  if(e.code==='ArrowRight'){e.preventDefault();setLean(1);}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'&&leaning===-1)setLean(0);
+  if(e.code==='ArrowRight'&&leaning===1)setLean(0);
+});
+c.addEventListener('click',jump);
+c.addEventListener('touchstart',e=>{e.preventDefault();jump();},{passive:false});
+const btnLeft=document.getElementById('btnLeft'),btnRight=document.getElementById('btnRight'),btnJump=document.getElementById('btnJump');
+function holdBtn(el,onDown,onUp){
+  el.addEventListener('pointerdown',e=>{e.preventDefault();onDown();});
+  el.addEventListener('pointerup',e=>{e.preventDefault();onUp();});
+  el.addEventListener('pointerleave',e=>{onUp();});
+}
+holdBtn(btnLeft,()=>setLean(-1),()=>{if(leaning===-1)setLean(0);});
+holdBtn(btnRight,()=>setLean(1),()=>{if(leaning===1)setLean(0);});
+btnJump.addEventListener('pointerdown',e=>{e.preventDefault();jump();});
+
+function rect(ax,aw,bx,bw){return ax<bx+bw&&ax+aw>bx;}
+
+function drawRider(x,y,leanAngle,color,wobble){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(leanAngle);
+  // board
+  ctx.fillStyle='#3a4a5c';
+  ctx.fillRect(-24,10,48,8);
+  ctx.fillStyle='#7ec8ff88';
+  ctx.fillRect(-24,18,48,4);
+  // body
+  ctx.fillStyle=color;
+  ctx.fillRect(-8,-34,16,44);
+  // head
+  ctx.beginPath();ctx.arc(0,-42,9,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawGround(){
+  ctx.fillStyle='#0d1b2a';ctx.fillRect(0,0,800,260);
+  const g=ctx.createLinearGradient(0,0,0,ground);
+  g.addColorStop(0,'#132a45');g.addColorStop(1,'#0d1b2a');
+  ctx.fillStyle=g;ctx.fillRect(0,0,800,ground);
+  ctx.fillStyle='#1c3a56';ctx.fillRect(0,ground+40,800,60);
+  ctx.fillStyle='#7ec8ff';ctx.fillRect(0,ground+40,800,3);
+}
+
+function loop(ts){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  drawGround();
+
+  if(!started){
+    ctx.fillStyle='#7ec8ffcc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start'),400,110);
+    drawRider(player.x,ground,0,'#7ec8ff',false);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('you_win','YOU WIN!'):I18N.t('you_lose','YOU LOSE'),400,110);
+    ctx.font='18px Arial';
+    ctx.fillText(raceResult||'',400,140);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,170);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  elapsed+=dt/60;
+
+  // tilt physics: wind pushes randomly, leaning counters
+  tiltVel+=(Math.sin(elapsed*1.7)*0.05+(Math.random()-0.5)*0.04)*dt;
+  tiltVel+=(-leaning*0.09)*dt;
+  tiltVel*=0.94;
+  tilt+=tiltVel*dt;
+  tilt=Math.max(-1.4,Math.min(1.4,tilt));
+
+  if(player.crashT>0){
+    player.crashT-=dt;
+    speed=Math.max(0,speed-0.3*dt);
+  }else if(Math.abs(tilt)>1.1&&!player.wobbling){
+    player.wobbling=true;player.wobbleT=45;SFX.hurt();
+  }
+
+  if(player.wobbling){
+    player.wobbleT-=dt;
+    speed=Math.max(0.6,speed-0.15*dt);
+    tiltVel*=0.9;
+    if(player.wobbleT<=0){player.wobbling=false;tilt*=0.3;}
+  }else{
+    speed+=(baseSpeed+dist/1400 - speed)*0.02*dt;
+  }
+
+  // physics jump
+  if(!player.onGround){
+    player.vy+=0.75*dt;
+    player.y+=player.vy*dt;
+    if(player.y>=ground){player.y=ground;player.vy=0;player.onGround=true;SFX.land();}
+  }
+
+  // obstacles
+  hazardTimer+=dt;
+  const interval=Math.max(38,80-dist/60);
+  if(hazardTimer>=interval){hazardTimer-=interval;spawnObstacle();}
+
+  obstacles=obstacles.filter(o=>o.x>-120);
+  obstacles.forEach(o=>{
+    o.x-=speed*10*dt;
+    if(o.type==='gap'){
+      ctx.fillStyle='#08080f';ctx.fillRect(o.x,ground+40,o.w,60);
+      if(rect(player.x-14,28,o.x,o.w)&&player.onGround&&player.crashT<=0){
+        player.crashT=50;speed=Math.max(0.5,speed*0.3);SFX.lose();
+      }
+    }else if(o.type==='rock'){
+      ctx.fillStyle='#5c4033';ctx.fillRect(o.x,ground+40-o.h,o.w,o.h);
+      if(rect(player.x-14,28,o.x,o.w)&&player.y>=ground-4&&player.crashT<=0){
+        player.crashT=45;speed=Math.max(0.5,speed*0.4);SFX.hit();
+      }
+    }else if(o.type==='ramp'){
+      ctx.fillStyle='#7ec8ff';ctx.beginPath();
+      ctx.moveTo(o.x,ground+40);ctx.lineTo(o.x+o.w,ground+40);ctx.lineTo(o.x+o.w,ground+40-o.h);ctx.closePath();ctx.fill();
+      if(rect(player.x-14,28,o.x+o.w-16,20)&&player.onGround&&player.crashT<=0){
+        player.vy=-15;player.onGround=false;speed+=0.6;SFX.powerup();
+      }
+    }
+  });
+
+  if(player.crashT<=0){dist+=speed*dt*0.5;}
+  ai.forEach(a=>{
+    a.dist+=a.speed*dt*0.5*(0.85+Math.random()*0.3);
+  });
+
+  drawRider(player.x,player.y,tilt*0.5,'#7ec8ff',player.wobbling);
+
+  barYou.style.width=Math.min(100,dist/FINISH*100)+'%';
+  barA.style.width=Math.min(100,ai[0].dist/FINISH*100)+'%';
+  barB.style.width=Math.min(100,ai[1].dist/FINISH*100)+'%';
+  tiltFill.style.transform='translateX('+(tilt*90)+'px)';
+  tiltFill.style.background=Math.abs(tilt)>1.1?'#ff6b6b':'#7ec8ff';
+
+  hud.textContent=I18N.t('distance_label','Distance: {d}m').replace('{d}',Math.floor(dist));
+
+  if(dist>=FINISH&&!gameOver){
+    gameOver=true;won=true;
+    const finishTime=elapsed.toFixed(1);
+    if(bestTime===0||elapsed<bestTime){bestTime=elapsed;localStorage.setItem(HI_KEY,String(bestTime));}
+    raceResult=I18N.t('finish_time','Finish time: {t}s (Best: {b}s)').replace('{t}',finishTime).replace('{b}',bestTime.toFixed(1));
+    SFX.win();
+  }else if((ai[0].dist>=FINISH||ai[1].dist>=FINISH)&&!gameOver){
+    gameOver=true;won=false;
+    raceResult=I18N.t('lost_race','A rider beat you to the finish!');
+    SFX.lose();
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

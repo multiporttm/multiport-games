@@ -1,0 +1,366 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Paintball Skirmish</title><meta name="description" content="Play Paintball Skirmish free online — Move with WASD/Arrows, hold Shift or the Cover button to duck behind cover and reload, click/tap to fire. Pop out to tag AI opponents before your ammo runs dry."><link rel="canonical" href="https://games.multiportllc.com/games/paintballskirmish"><meta property="og:title" content="Paintball Skirmish - Multiport Games"><meta property="og:description" content="Play Paintball Skirmish free online — Move with WASD/Arrows, hold Shift or the Cover button to duck behind cover and reload, click/tap to fire. Pop out to tag AI opponents before your ammo runs dry."><meta property="og:url" content="https://games.multiportllc.com/games/paintballskirmish"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Paintball Skirmish","description":"Play Paintball Skirmish free online instantly. Take cover behind obstacles in a paintball arena, popping out to shoot AI opponents while managing limited ammo — duck back behind cover to reload before you're tagged out. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/paintballskirmish","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#050a05}
+#c{background:#1a2e1a;display:block;border-radius:8px;touch-action:none;max-width:100%;height:auto}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#c9ff8f;font-size:1rem;font-weight:700;padding:6px 10px;flex-wrap:wrap;gap:6px}
+#ammoBar{width:110px;height:12px;background:#1a1a2e;border-radius:6px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+#ammoFill{height:100%;background:linear-gradient(90deg,#ffd54f,#ff9800);width:100%}
+#healthBar{width:110px;height:12px;background:#1a1a2e;border-radius:6px;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+#healthFill{height:100%;background:linear-gradient(90deg,#ff5577,#ff2244);width:100%}
+#coverBtn{position:relative;padding:8px 18px;background:#3d6b3d;border:none;border-radius:20px;color:#fff;font-weight:700;margin-top:8px;cursor:pointer}
+#coverBtn.active{background:#7ec850;color:#123}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Paintball Skirmish</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0 | Hi: 0</span>
+      <span>Ammo <span id="ammoBar"><span id="ammoFill"></span></span></span>
+      <span>HP <span id="healthBar"><span id="healthFill"></span></span></span>
+    </div>
+    <canvas id="c" width="800" height="480"></canvas>
+    <button id="coverBtn">Take Cover (Shift)</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move with <b>WASD/Arrows</b>. Hold <b>Shift</b> or the <b>Take Cover</b> button while standing near an obstacle to duck down and reload — you can't fire while covered. Aim with your <b>mouse</b>/drag and <b>click/tap</b> to fire when popped out. Reload often; opponents shoot back!</div>
+</div>
+<script>
+const HS_KEY='paintballskirmish_hi';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480;
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+
+const MAX_AMMO=6,MAX_HP=100;
+let player,bots,obstacles,bullets,particles;
+let score=0,ammo=MAX_AMMO,hp=MAX_HP,started=false,gameOver=false,lastTime=null,fireTimer=0;
+let keys={};
+let aim={x:W/2+100,y:H/2};
+let mouseDown=false,covering=false;
+
+function buildObstacles(){
+  return [
+    {x:120,y:120,w:70,h:24},
+    {x:120,y:340,w:70,h:24},
+    {x:360,y:220,w:80,h:24},
+    {x:600,y:120,w:70,h:24},
+    {x:600,y:340,w:70,h:24},
+    {x:380,y:60,w:24,h:60},
+    {x:380,y:360,w:24,h:60},
+  ];
+}
+
+function reset(){
+  player={x:80,y:H/2,r:14,hurtCd:0};
+  bots=[];
+  for(let i=0;i<3;i++)spawnBot();
+  obstacles=buildObstacles();
+  bullets=[];particles=[];
+  score=0;ammo=MAX_AMMO;hp=MAX_HP;gameOver=false;started=false;lastTime=null;fireTimer=0;covering=false;
+}
+
+function dist(x1,y1,x2,y2){return Math.hypot(x1-x2,y1-y2);}
+
+function spawnBot(){
+  let x,y,tries=0;
+  do{x=200+Math.random()*(W-260);y=60+Math.random()*(H-120);tries++;}while(tries<20&&dist(x,y,player.x,player.y)<200);
+  bots.push({x,y,r:14,fireCd:60+Math.random()*60,covering:false,coverTimer:0,ammo:4,targetX:x,targetY:y,color:['#ff5577','#4dc9ff','#ffe14d'][Math.floor(Math.random()*3)]});
+}
+
+function nearCover(ent){
+  return obstacles.some(o=>dist(ent.x,ent.y,o.x+o.w/2,o.y+o.h/2)<70);
+}
+
+function rectsOverlapCircle(cx,cy,cr,r){
+  const nx=Math.max(r.x,Math.min(cx,r.x+r.w));
+  const ny=Math.max(r.y,Math.min(cy,r.y+r.h));
+  return dist(cx,cy,nx,ny)<cr;
+}
+
+function moveEntity(ent,dx,dy){
+  let nx=Math.max(20,Math.min(W-20,ent.x+dx)),ny=Math.max(20,Math.min(H-20,ent.y+dy));
+  ent.x=nx;ent.y=ny;
+}
+
+function segCircleHit(x1,y1,x2,y2,cx,cy,cr){
+  const dx=x2-x1,dy=y2-y1;
+  const len2=dx*dx+dy*dy;
+  let t=len2===0?0:((cx-x1)*dx+(cy-y1)*dy)/len2;
+  t=Math.max(0,Math.min(1,t));
+  const px=x1+t*dx,py=y1+t*dy;
+  return dist(px,py,cx,cy)<cr;
+}
+
+function fireShot(from,angle,fromPlayer){
+  const range=900;
+  const x2=from.x+Math.cos(angle)*range,y2=from.y+Math.sin(angle)*range;
+  let endX=x2,endY=y2,hitTarget=null;
+  if(fromPlayer){
+    for(const b of bots){
+      if(!b.covering&&segCircleHit(from.x,from.y,x2,y2,b.x,b.y,b.r)){
+        const d=dist(from.x,from.y,b.x,b.y);
+        if(!hitTarget||d<hitTarget.d){hitTarget={bot:b,d};endX=b.x;endY=b.y;}
+      }
+    }
+  }else{
+    if(!covering&&segCircleHit(from.x,from.y,x2,y2,player.x,player.y,player.r)){
+      hitTarget={player:true};endX=player.x;endY=player.y;
+    }
+  }
+  bullets.push({x1:from.x,y1:from.y,x2:endX,y2:endY,life:10,fromPlayer,px:from.x,py:from.y,tx:endX,ty:endY,t:0});
+  SFX.click();
+  if(fromPlayer&&hitTarget&&hitTarget.bot){
+    bots=bots.filter(b=>b!==hitTarget.bot);
+    score+=10;SFX.point();
+    spawnParticles(endX,endY,'#ffd54f');
+    spawnBot();
+  }else if(!fromPlayer&&hitTarget&&hitTarget.player){
+    hp=Math.max(0,hp-16);
+    player.hurtCd=40;
+    SFX.hurt();
+    spawnParticles(player.x,player.y,'#ff5577');
+    if(hp<=0)endGame();
+  }
+}
+
+function spawnParticles(x,y,color){
+  for(let i=0;i<10;i++){
+    const a=Math.random()*Math.PI*2,sp=1+Math.random()*3;
+    particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:22,color});
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+  SFX.lose();
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  if(!started)started=true;
+  if(e.code==='ShiftLeft'||e.code==='ShiftRight')covering=true;
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){reset();started=true;}
+});
+document.addEventListener('keyup',e=>{
+  keys[e.code]=false;
+  if(e.code==='ShiftLeft'||e.code==='ShiftRight')covering=false;
+});
+
+const coverBtn=document.getElementById('coverBtn');
+coverBtn.addEventListener('pointerdown',()=>{covering=true;coverBtn.classList.add('active');if(!started)started=true;});
+coverBtn.addEventListener('pointerup',()=>{covering=false;coverBtn.classList.remove('active');});
+coverBtn.addEventListener('pointerleave',()=>{covering=false;coverBtn.classList.remove('active');});
+
+function canvasPos(e){
+  const rect=c.getBoundingClientRect();
+  return {x:(e.clientX-rect.left)*(W/rect.width),y:(e.clientY-rect.top)*(H/rect.height)};
+}
+c.addEventListener('mousemove',e=>{ if(!started||gameOver)return; const p=canvasPos(e);aim.x=p.x;aim.y=p.y; });
+c.addEventListener('mousedown',e=>{
+  if(gameOver){reset();started=true;return;}
+  if(!started){started=true;return;}
+  mouseDown=true;
+});
+document.addEventListener('mouseup',()=>{mouseDown=false;});
+
+let touchMoveId=null,touchAimId=null;
+let joy={active:false,baseX:0,baseY:0,x:0,y:0};
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){reset();started=true;return;}
+  started=true;
+  for(const t of e.changedTouches){
+    const p=canvasPos(t);
+    if(p.x<W/2&&touchMoveId===null){touchMoveId=t.identifier;joy.active=true;joy.baseX=p.x;joy.baseY=p.y;joy.x=p.x;joy.y=p.y;}
+    else if(touchAimId===null){touchAimId=t.identifier;aim.x=p.x;aim.y=p.y;mouseDown=true;}
+  }
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const p=canvasPos(t);
+    if(t.identifier===touchMoveId){joy.x=p.x;joy.y=p.y;}
+    else if(t.identifier===touchAimId){aim.x=p.x;aim.y=p.y;}
+  }
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  for(const t of e.changedTouches){
+    if(t.identifier===touchMoveId){touchMoveId=null;joy.active=false;}
+    if(t.identifier===touchAimId){touchAimId=null;mouseDown=false;}
+  }
+},{passive:false});
+
+function drawObstacles(){
+  obstacles.forEach(o=>{
+    ctx.fillStyle='#5a4a3a';
+    ctx.fillRect(o.x,o.y,o.w,o.h);
+    ctx.fillStyle='#7a6650';
+    ctx.fillRect(o.x,o.y,o.w,6);
+  });
+}
+
+function drawPlayer(){
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  if(covering)ctx.globalAlpha=0.5;
+  const angle=Math.atan2(aim.y-player.y,aim.x-player.x);
+  ctx.fillStyle=player.hurtCd>0?'#ff8899':'#c9ff8f';
+  ctx.beginPath();ctx.arc(0,0,player.r,0,Math.PI*2);ctx.fill();
+  if(!covering){
+    ctx.rotate(angle);
+    ctx.fillStyle='#333';
+    ctx.fillRect(0,-3,22,6);
+  }
+  ctx.restore();
+}
+
+function drawBot(b){
+  ctx.save();
+  ctx.translate(b.x,b.y);
+  if(b.covering)ctx.globalAlpha=0.5;
+  ctx.fillStyle=b.color;
+  ctx.beginPath();ctx.arc(0,0,b.r,0,Math.PI*2);ctx.fill();
+  if(!b.covering){
+    const angle=Math.atan2(player.y-b.y,player.x-b.x);
+    ctx.rotate(angle);
+    ctx.fillStyle='#333';
+    ctx.fillRect(0,-2.5,18,5);
+  }
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#1a2e1a';ctx.fillRect(0,0,W,H);
+  drawObstacles();
+
+  if(!started){
+    ctx.fillStyle='#c9ff8f';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Move or Click / Tap to start'),W/2,H/2);
+    drawPlayer();bots.forEach(drawBot);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    bots.forEach(drawBot);drawPlayer();
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 40px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Click / Tap / Space to restart'),W/2,H/2+48);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  let dx=0,dy=0;
+  if(keys['KeyW']||keys['ArrowUp'])dy-=1;
+  if(keys['KeyS']||keys['ArrowDown'])dy+=1;
+  if(keys['KeyA']||keys['ArrowLeft'])dx-=1;
+  if(keys['KeyD']||keys['ArrowRight'])dx+=1;
+  if(joy.active){
+    const jdx=joy.x-joy.baseX,jdy=joy.y-joy.baseY;
+    const jd=Math.hypot(jdx,jdy);
+    if(jd>10){dx=jdx/jd;dy=jdy/jd;}
+  }
+  const len=Math.hypot(dx,dy);
+  if(len>0){dx/=len;dy/=len;moveEntity(player,dx*3.4*dt,dy*3.4*dt);}
+  if(player.hurtCd>0)player.hurtCd-=dt;
+
+  const canReload=nearCover(player);
+  if(covering&&canReload&&ammo<MAX_AMMO){
+    ammo=Math.min(MAX_AMMO,ammo+0.06*dt);
+  }
+
+  fireTimer-=dt;
+  if(mouseDown&&!covering&&fireTimer<=0&&ammo>=1){
+    const angle=Math.atan2(aim.y-player.y,aim.x-player.x);
+    fireShot(player,angle,true);
+    ammo-=1;
+    fireTimer=16;
+  }
+
+  bots.forEach(b=>{
+    b.coverTimer-=dt;
+    if(b.coverTimer<=0){
+      if(b.covering){
+        b.covering=false;
+        b.ammo=4;
+        b.coverTimer=90+Math.random()*60;
+      }else if(b.ammo<=0||Math.random()<0.003*dt){
+        b.covering=true;
+        b.coverTimer=60+Math.random()*40;
+      }else{
+        b.coverTimer=20;
+      }
+    }
+    if(!b.covering){
+      const d=dist(b.x,b.y,player.x,player.y);
+      let mvx=0,mvy=0;
+      if(d<130){mvx=(b.x-player.x)/d;mvy=(b.y-player.y)/d;}
+      else if(d>320){mvx=(player.x-b.x)/d;mvy=(player.y-b.y)/d;}
+      moveEntity(b,mvx*1.6*dt,mvy*1.6*dt);
+      b.fireCd-=dt;
+      if(b.fireCd<=0&&b.ammo>0&&d<420){
+        const angle=Math.atan2(player.y-b.y,player.x-b.x);
+        fireShot(b,angle,false);
+        b.ammo--;
+        b.fireCd=55+Math.random()*45;
+      }
+    }
+  });
+  while(bots.length<3)spawnBot();
+
+  bullets=bullets.filter(bl=>bl.life>0);
+  bullets.forEach(bl=>{
+    bl.life-=dt;
+    ctx.strokeStyle=bl.fromPlayer?'#ffd54f':'#ff5577';
+    ctx.lineWidth=4;
+    ctx.globalAlpha=Math.max(0,bl.life/10);
+    ctx.beginPath();ctx.moveTo(bl.x1,bl.y1);ctx.lineTo(bl.x2,bl.y2);ctx.stroke();
+    ctx.globalAlpha=1;
+  });
+
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;
+    ctx.fillStyle=p.color;ctx.globalAlpha=Math.max(0,p.life/22);
+    ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+  });
+
+  bots.forEach(drawBot);
+  drawPlayer();
+
+  if(joy.active){
+    ctx.strokeStyle='rgba(201,255,143,0.5)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(joy.baseX,joy.baseY,36,0,Math.PI*2);ctx.stroke();
+    ctx.beginPath();ctx.arc(joy.x,joy.y,16,0,Math.PI*2);ctx.fillStyle='rgba(201,255,143,0.3)';ctx.fill();
+  }
+
+  if(covering&&canReload){
+    ctx.fillStyle='#ffd54f';ctx.font='bold 14px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('reloading_label','RELOADING'),player.x,player.y-30);
+  }
+
+  document.getElementById('scoreDisp').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('ammoFill').style.width=(ammo/MAX_AMMO*100)+'%';
+  document.getElementById('healthFill').style.width=Math.max(0,hp)+'%';
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

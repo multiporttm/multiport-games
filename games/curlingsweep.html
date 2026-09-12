@@ -1,0 +1,243 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Curling Sweep - Multiport Games</title><meta name="description" content="Play Curling Sweep free online — After the stone is thrown, sweep frantically to melt the ice and steer the stone into the house. Sweep timing and intensity are everything!"><link rel="canonical" href="https://games.multiportllc.com/games/curlingsweep"><meta property="og:title" content="Curling Sweep - Multiport Games"><meta property="og:description" content="Play Curling Sweep free online — After the stone is thrown, sweep frantically to melt the ice and steer the stone into the house. Sweep timing and intensity are everything!"><meta property="og:url" content="https://games.multiportllc.com/games/curlingsweep"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Curling Sweep","description":"Play Curling Sweep free online instantly. Control only the sweeping phase of curling: after a stone is thrown, sweep rapidly in front of the sliding stone to melt ice and extend or steer its path toward the target house. No download or signup required.","genre":"Sports","url":"https://games.multiportllc.com/games/curlingsweep","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#dff2ff;display:block;border-radius:8px;touch-action:none;margin:0 auto}
+#score-display{color:#8bd0ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#sweepZone{display:flex;justify-content:center;gap:16px;margin-top:10px}
+#sweepL,#sweepR{padding:20px 34px;font-size:1.3rem;font-weight:900;border:none;border-radius:14px;background:#2f6fbb;color:#fff;cursor:pointer;user-select:none}
+#sweepL:active,#sweepR:active{background:#ffd54f;color:#222;transform:scale(.96)}
+#heatMeter{max-width:600px;margin:8px auto 0;background:#222;border-radius:8px;height:14px;overflow:hidden}
+#heatFill{height:100%;background:linear-gradient(90deg,#4caf50,#ffd54f,#e94560);width:0%}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Curling Sweep</div>
+  <div class="game-frame">
+    <div id="score-display">End 1/5 | Hi Score: 0</div>
+    <canvas id="c" width="760" height="380"></canvas>
+    <div id="heatMeter"><div id="heatFill"></div></div>
+    <div id="sweepZone">
+      <button id="sweepL">🧹 LEFT</button>
+      <button id="sweepR">🧹 RIGHT</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">A stone slides down the sheet each end. Rapidly press <b>Left Arrow / A</b> or <b>Right Arrow / D</b> (or tap the sweep buttons) in front of the stone — sweeping melts the ice, making the stone travel farther and curl less. Sweep more on one side to steer it! Land it in the house center for the most points across 5 ends.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=380;
+const KEY='curlingsweep_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+
+const TOTAL_ENDS=5;
+let end=1,totalScore=0;
+let state='ready'; // ready, sliding, result
+let stone,heat=0,sweepL=false,sweepR=false,curlBias,lastTime=null;
+let resultT=0,lastPoints=0;
+
+const houseX=W-110,houseY=H/2;
+const houseRings=[70,50,30,10];
+
+function newStone(){
+  stone={x:80,y:H/2,vx:5.2+Math.random()*0.6,vy:(Math.random()-0.5)*0.4,curl:0};
+  curlBias=(Math.random()-0.5)*0.018; // natural curl direction/strength
+  heat=0;
+  state='sliding';
+  SFX.swoosh();
+}
+
+function startEnd(){
+  state='ready';
+}
+
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(k==='arrowleft'||k==='a')sweepL=true;
+  if(k==='arrowright'||k==='d')sweepR=true;
+  if(k===' '){
+    e.preventDefault();
+    if(state==='ready')newStone();
+    else if(state==='result'){ nextEnd(); }
+  }
+});
+document.addEventListener('keyup',e=>{
+  const k=e.key.toLowerCase();
+  if(k==='arrowleft'||k==='a')sweepL=false;
+  if(k==='arrowright'||k==='d')sweepR=false;
+});
+
+function bindSweep(id,setter){
+  const el=document.getElementById(id);
+  const on=e=>{e.preventDefault();setter(true);};
+  const off=e=>{e.preventDefault();setter(false);};
+  el.addEventListener('touchstart',on,{passive:false});
+  el.addEventListener('touchend',off,{passive:false});
+  el.addEventListener('mousedown',on);
+  el.addEventListener('mouseup',off);
+  el.addEventListener('mouseleave',off);
+}
+bindSweep('sweepL',v=>sweepL=v);
+bindSweep('sweepR',v=>sweepR=v);
+
+c.addEventListener('click',()=>{
+  if(state==='ready')newStone();
+  else if(state==='result')nextEnd();
+});
+c.addEventListener('touchstart',e=>{
+  if(state==='ready'||state==='result'){e.preventDefault();if(state==='ready')newStone();else nextEnd();}
+},{passive:false});
+
+function nextEnd(){
+  if(end>=TOTAL_ENDS){
+    if(totalScore>hi){hi=totalScore;localStorage.setItem(KEY,String(hi));}
+    SFX.win();
+    state='gameover';
+    updateScore();
+    return;
+  }
+  end++;
+  startEnd();
+  updateScore();
+}
+
+function scoreForDistance(d){
+  // d = distance from house center
+  for(let i=0;i<houseRings.length;i++)if(d<houseRings[i])return houseRings.length-i;
+  return 0;
+}
+
+function updateScore(){
+  if(state==='gameover'){
+    document.getElementById('score-display').textContent=I18N.t('curling_final_label','Final Score: {s} | Hi: {h}').replace('{s}',totalScore).replace('{h}',hi);
+  } else {
+    document.getElementById('score-display').textContent=I18N.t('curling_end_label','End {e}/{t} | Score: {s} | Hi: {h}').replace('{e}',end).replace('{t}',TOTAL_ENDS).replace('{s}',totalScore).replace('{h}',hi);
+  }
+}
+
+function drawSheet(){
+  ctx.fillStyle='#dff2ff';ctx.fillRect(0,0,W,H);
+  // ice lane lines
+  ctx.strokeStyle='rgba(150,190,220,0.6)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(0,H/2-90);ctx.lineTo(W,H/2-90);ctx.moveTo(0,H/2+90);ctx.lineTo(W,H/2+90);ctx.stroke();
+
+  // house rings
+  const colors=['#2f6fbb','#fff','#e94560','#fff'];
+  houseRings.forEach((r,i)=>{ctx.fillStyle=colors[i];ctx.beginPath();ctx.arc(houseX,houseY,r,0,Math.PI*2);ctx.fill();});
+  ctx.fillStyle='#ffd54f';ctx.beginPath();ctx.arc(houseX,houseY,4,0,Math.PI*2);ctx.fill();
+
+  // hog line / start
+  ctx.strokeStyle='#e94560';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(80,H/2-90);ctx.lineTo(80,H/2+90);ctx.stroke();
+}
+
+function drawStone(){
+  if(!stone)return;
+  ctx.save();
+  ctx.translate(stone.x,stone.y);
+  ctx.fillStyle='#555';ctx.beginPath();ctx.arc(0,0,16,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#e94560';ctx.beginPath();ctx.arc(0,0,6,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+  // sweep zone indicator in front of stone
+  if(state==='sliding'){
+    ctx.strokeStyle='rgba(255,255,255,0.6)';ctx.lineWidth=2;
+    ctx.strokeRect(stone.x+16,stone.y-20,40,40);
+  }
+}
+
+function drawSweepers(){
+  if(state!=='sliding')return;
+  const zx=stone.x+36, zy=stone.y;
+  if(sweepL){
+    ctx.fillStyle='#4caf50';
+    ctx.fillRect(zx-30,zy-6,26,12);
+  }
+  if(sweepR){
+    ctx.fillStyle='#4caf50';
+    ctx.fillRect(zx+6,zy-6,26,12);
+  }
+}
+
+function drawResult(){
+  ctx.fillStyle='rgba(13,27,42,0.85)';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#ffd54f';ctx.font='bold 28px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('end_scored_label','+{p} points!').replace('{p}',lastPoints),W/2,H/2-16);
+  ctx.fillStyle='#fff';ctx.font='18px Arial';
+  ctx.fillText(end>=TOTAL_ENDS?I18N.t('space_finish','Space / Tap to finish'):I18N.t('space_next_end','Space / Tap for next end'),W/2,H/2+20);
+}
+
+function drawGameOver(){
+  ctx.fillStyle='#0d1b2a';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#ffd54f';ctx.font='bold 30px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('match_complete','Match Complete!'),W/2,H/2-40);
+  ctx.fillStyle='#fff';ctx.font='22px Arial';
+  ctx.fillText(I18N.t('final_score_label2','Final Score: {s}').replace('{s}',totalScore),W/2,H/2);
+  ctx.font='16px Arial';
+  ctx.fillText(I18N.t('restart_hint3','Reload to play a new match'),W/2,H/2+40);
+}
+
+function drawReady(){
+  ctx.fillStyle='rgba(13,27,42,0.5)';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('throw_ready_hint','Space / Tap to throw the stone'),W/2,H/2);
+}
+
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  drawSheet();
+
+  if(state==='sliding'){
+    // sweeping generates heat which reduces friction (extends travel) and can bias curl direction
+    let sweepPower=0;
+    if(sweepL){sweepPower+=1;stone.vy-=0.006*dt;}
+    if(sweepR){sweepPower+=1;stone.vy+=0.006*dt;}
+    if(sweepPower>0){
+      heat=Math.min(100,heat+1.1*dt*sweepPower);
+      SFX.tick && (Math.random()<0.06?SFX.tick():null);
+    } else {
+      heat=Math.max(0,heat-0.6*dt);
+    }
+    const friction=0.006-heat*0.00004;
+    stone.vx=Math.max(0,stone.vx-friction*dt);
+    stone.vy+=curlBias*dt*(1-heat/140);
+    stone.x+=stone.vx*dt;
+    stone.y+=stone.vy*dt;
+    stone.y=Math.max(30,Math.min(H-30,stone.y));
+
+    document.getElementById('heatFill').style.width=heat+'%';
+
+    drawStone();
+    drawSweepers();
+
+    if(stone.vx<=0.05||stone.x>W-20){
+      const d=Math.hypot(stone.x-houseX,stone.y-houseY);
+      lastPoints=scoreForDistance(d);
+      totalScore+=lastPoints;
+      state='result';
+      resultT=0;
+      SFX[lastPoints>0?'success':'fail']();
+      updateScore();
+    }
+  } else if(state==='ready'){
+    drawReady();
+  } else if(state==='result'){
+    drawStone();
+    drawResult();
+  } else if(state==='gameover'){
+    drawGameOver();
+  }
+
+  requestAnimationFrame(loop);
+}
+startEnd();
+updateScore();
+requestAnimationFrame(loop);
+</script></body></html>

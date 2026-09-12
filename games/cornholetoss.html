@@ -1,0 +1,325 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Cornhole Toss - Multiport Games</title><meta name="description" content="Play Cornhole Toss free online — Drag back and release to toss beanbags at the board. Score 3 in the hole or 1 on the board, block the hole with earlier bags, and race the AI to 21."><link rel="canonical" href="https://games.multiportllc.com/games/cornholetoss"><meta property="og:title" content="Cornhole Toss - Multiport Games"><meta property="og:description" content="Play Cornhole Toss free online — Drag back and release to toss beanbags at the board. Score 3 in the hole or 1 on the board, block the hole with earlier bags, and race the AI to 21."><meta property="og:url" content="https://games.multiportllc.com/games/cornholetoss"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Cornhole Toss","description":"Play Cornhole Toss free online instantly. Alternate turns tossing beanbags at a raised board — sink the hole for 3 points, land on the board for 1 — using earlier bags to block the hole. First to 21 (win by 2) beats the AI. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/cornholetoss","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#264a2b;display:block;border-radius:8px;touch-action:none;max-width:100%;height:auto}
+#hud{color:#f5e8c8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:22px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#msg{color:#a0d8a0;text-align:center;font-size:.95rem;min-height:1.4em;padding-bottom:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Cornhole Toss</div>
+  <div class="game-frame">
+    <div id="hud"><span>You: <b id="youScore">0</b></span><span>AI: <b id="aiScore">0</b></span><span>Bags left: <b id="bagsLeft">4</b></span><span>Hi: <b id="hiDisp">0</b></span></div>
+    <div id="msg">Drag down from the bag and release to toss</div>
+    <canvas id="c" width="700" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag downward from your beanbag then release to toss it toward the board — pull farther for more power/distance. Land in the hole for 3 points, on the board for 1. Only the leader's point-difference counts each end. Use bags to block the hole from your opponent. First to 21 (win by 2) beats the AI!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=700,H=500;
+const KEY='cornholetoss_hiscore';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+document.getElementById('hiDisp').textContent=hi;
+
+// Board viewed from above-behind the thrower, perspective: thrower near bottom, board far up.
+const boardCx=W/2, boardCy=140, boardW=170, boardH=110;
+const holeR=17;
+const throwY=440;
+
+let bags=[]; // {x,y,team,state:'flying'|'landed'|'hole'|'off', vx,vy,vz,z}
+let youScore=0,aiScore=0;
+let turnOrder=[]; // sequence of 'you'/'ai' for the current end (8 bags total, alternating, closer-to-hole goes first each subsequent end but we just alternate you first)
+let turnIdx=0;
+let bagsThrown=0;
+let dragging=false,dragStart=null,dragCur=null;
+let animating=false;
+let matchOver=false;
+let aiPending=false;
+let endOver=false;
+
+function newEnd(){
+  bags=[];
+  turnIdx=0;
+  bagsThrown=0;
+  endOver=false;
+  turnOrder=['you','ai','you','ai','you','ai','you','ai'];
+  updateBagsLeft();
+  setMsg(I18N.t('your_turn','Your turn — drag to toss'));
+  render();
+}
+
+function updateBagsLeft(){
+  const left=8-bagsThrown;
+  const mine=turnOrder.slice(turnIdx).filter(t=>t==='you').length;
+  document.getElementById('bagsLeft').textContent=mine;
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+function updateHud(){
+  document.getElementById('youScore').textContent=youScore;
+  document.getElementById('aiScore').textContent=aiScore;
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+
+function canThrow(){
+  return !animating&&!endOver&&!matchOver&&turnOrder[turnIdx]==='you'&&!aiPending;
+}
+
+c.addEventListener('mousedown',startDrag);
+c.addEventListener('touchstart',e=>{e.preventDefault();startDrag(e);},{passive:false});
+window.addEventListener('mousemove',moveDrag);
+window.addEventListener('touchmove',e=>{if(dragging){e.preventDefault();moveDrag(e);}},{passive:false});
+window.addEventListener('mouseup',endDrag);
+window.addEventListener('touchend',endDrag);
+
+function startDrag(e){
+  if(!canThrow())return;
+  const p=pointerPos(e);
+  if(p.y>throwY-60){dragging=true;dragStart={x:boardCx,y:throwY};dragCur=p;}
+}
+function moveDrag(e){ if(!dragging)return; dragCur=pointerPos(e); render(); }
+function endDrag(){
+  if(!dragging)return;
+  dragging=false;
+  const dx=dragCur.x-dragStart.x;
+  const dy=dragStart.y-dragCur.y; // positive = pulled up-ish... actually pulling down increases power
+  let power=Math.hypot(dx,dy);
+  power=Math.min(power,180);
+  if(power<15){dragCur=null;render();return;}
+  throwBag('you',power,dx);
+  dragCur=null;
+}
+
+function throwBag(team,power,lateral){
+  const bag={
+    team,
+    x:boardCx+(team==='you'?0:0),
+    y:throwY,
+    z:0,
+    vz:power*0.09,
+    targetDist:power*3.1,
+    lateral:lateral*0.9,
+    travelled:0,
+    state:'flying',
+  };
+  bags.push(bag);
+  SFX.swoosh();
+  animating=true;
+  bagsThrown++;
+  turnIdx++;
+  updateBagsLeft();
+}
+
+function aiThrow(){
+  aiPending=true;
+  setTimeout(()=>{
+    // AI aims for hole, but blocks if you have bag in/near hole and AI is behind
+    let power=270+Math.random()*40;
+    let lateral=(Math.random()*30-15);
+    const holeBlocked=bags.some(b=>b.team==='you'&&b.state==='hole');
+    if(holeBlocked){
+      // aim to also land in/near hole to contest, slightly higher variance
+      power=260+Math.random()*60;
+    }
+    throwBag('ai',power,lateral);
+    setMsg(I18N.t('ai_turn','AI is tossing...'));
+  },700);
+}
+
+function settleBag(bag){
+  // distance error model: targetDist ~ distance from thrower to landing point along board depth
+  const dist=bag.targetDist;
+  const idealDist=boardCx?310:310; // approx distance to hole center
+  const err=dist-310;
+  const landY=boardCy+ (err*0.15); // depth error maps to y offset near board
+  const landX=boardCx+bag.lateral*0.6;
+  bag.x=landX;bag.y=landY;
+  const dHole=Math.hypot(landX-boardCx,landY-boardCy);
+  const onBoard=Math.abs(landX-boardCx)<boardW/2&&Math.abs(landY-boardCy)<boardH/2;
+  if(dHole<holeR){
+    bag.state='hole';
+    SFX.point();
+  }else if(onBoard){
+    bag.state='landed';
+    SFX.land();
+  }else{
+    bag.state='off';
+    SFX.hit();
+  }
+}
+
+function physicsStep(){
+  let moving=false;
+  for(const bag of bags){
+    if(bag.state!=='flying')continue;
+    moving=true;
+    bag.travelled+=8;
+    const progress=Math.min(1,bag.travelled/ (bag.targetDist*0.7+40));
+    bag.z=Math.sin(progress*Math.PI)*90;
+    if(progress>=1){
+      settleBag(bag);
+    }
+  }
+  if(!moving&&animating){
+    animating=false;
+    onThrowSettled();
+  }
+}
+
+function onThrowSettled(){
+  if(bagsThrown>=8){
+    finishEnd();
+    return;
+  }
+  const next=turnOrder[turnIdx];
+  if(next==='you'){
+    setMsg(I18N.t('your_turn','Your turn — drag to toss'));
+  }else{
+    setMsg(I18N.t('ai_turn2','AI up next...'));
+    aiThrow();
+  }
+}
+
+function finishEnd(){
+  endOver=true;
+  let youPts=0,aiPts=0;
+  bags.forEach(b=>{
+    const pts=b.state==='hole'?3:(b.state==='landed'?1:0);
+    if(b.team==='you')youPts+=pts; else aiPts+=pts;
+  });
+  // Cornhole cancellation scoring: only the difference goes to the leader
+  let roundYou=0,roundAi=0;
+  if(youPts>aiPts)roundYou=youPts-aiPts;
+  else if(aiPts>youPts)roundAi=aiPts-youPts;
+  youScore+=roundYou;
+  aiScore+=roundAi;
+  updateHud();
+  setMsg(I18N.t('end_result','End result — You +{y}, AI +{a}').replace('{y}',roundYou).replace('{a}',roundAi));
+  if(roundYou>roundAi)SFX.success(); else if(roundAi>roundYou)SFX.fail();
+  if((youScore>=21||aiScore>=21)&&Math.abs(youScore-aiScore)>=2){
+    setTimeout(endMatch,1400);
+  }else{
+    setTimeout(newEnd,1700);
+  }
+}
+
+function endMatch(){
+  matchOver=true;
+  if(youScore>hi){hi=youScore;localStorage.setItem(KEY,hi);document.getElementById('hiDisp').textContent=hi;}
+  if(youScore>aiScore){SFX.win();setMsg(I18N.t('you_win','You win {y} - {a}! Tap to play again').replace('{y}',youScore).replace('{a}',aiScore));}
+  else {SFX.lose();setMsg(I18N.t('you_lose','AI wins {a} - {y}. Tap to play again').replace('{a}',aiScore).replace('{y}',youScore));}
+}
+
+c.addEventListener('click',()=>{
+  if(matchOver){
+    youScore=0;aiScore=0;matchOver=false;
+    updateHud();
+    newEnd();
+  }
+});
+document.addEventListener('keydown',e=>{
+  if(matchOver&&(e.code==='Space'||e.code==='Enter')){
+    youScore=0;aiScore=0;matchOver=false;
+    updateHud();
+    newEnd();
+  }
+});
+
+function drawBoard(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#152b1a');sky.addColorStop(1,'#264a2b');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // grass
+  ctx.fillStyle='#2f6b34';ctx.fillRect(0,0,W,H);
+  // board (angled trapezoid, raised at back)
+  ctx.fillStyle='#c69a5a';
+  ctx.beginPath();
+  ctx.moveTo(boardCx-boardW/2,boardCy+boardH/2);
+  ctx.lineTo(boardCx+boardW/2,boardCy+boardH/2);
+  ctx.lineTo(boardCx+boardW/2-14,boardCy-boardH/2);
+  ctx.lineTo(boardCx-boardW/2+14,boardCy-boardH/2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle='#7a5a2e';ctx.lineWidth=4;ctx.stroke();ctx.lineWidth=1;
+  // hole
+  ctx.beginPath();
+  ctx.ellipse(boardCx,boardCy,holeR,holeR*0.75,0,0,Math.PI*2);
+  ctx.fillStyle='#111';
+  ctx.fill();
+  // legs shadow
+  ctx.fillStyle='rgba(0,0,0,.25)';
+  ctx.fillRect(boardCx-boardW/2,boardCy+boardH/2,boardW,10);
+  // throw line marker
+  ctx.strokeStyle='#fff8';
+  ctx.setLineDash([8,8]);
+  ctx.beginPath();ctx.moveTo(60,throwY-40);ctx.lineTo(W-60,throwY-40);ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawBag(b){
+  const scale=1+ (b.z||0)/220;
+  const drawY=b.state==='flying'?(throwY-(throwY-boardCy)*Math.min(1,b.travelled/(b.targetDist*0.7+40))-b.z*0.6):b.y;
+  const drawX=b.state==='flying'?(boardCx+ (b.lateral||0)*Math.min(1,b.travelled/(b.targetDist*0.7+40))):b.x;
+  ctx.save();
+  ctx.translate(drawX,drawY);
+  ctx.scale(scale,scale);
+  ctx.fillStyle=b.team==='you'?'#4fd1ff':'#ff6b6b';
+  ctx.beginPath();
+  ctx.roundRect?ctx.roundRect(-11,-8,22,16,4):ctx.rect(-11,-8,22,16);
+  ctx.fill();
+  ctx.strokeStyle='#0006';ctx.stroke();
+  ctx.restore();
+}
+
+function drawAim(){
+  if(dragging&&dragCur){
+    ctx.strokeStyle='#ffd54f';
+    ctx.lineWidth=3;
+    ctx.setLineDash([6,6]);
+    ctx.beginPath();
+    ctx.moveTo(boardCx,throwY);
+    const dx=dragCur.x-boardCx,dy=dragCur.y-throwY;
+    ctx.lineTo(boardCx+dx*0.3,throwY+dy*0.3-Math.min(120,Math.hypot(dx,dy)*0.6));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function render(){
+  drawBoard();
+  bags.filter(b=>b.state!=='flying').sort((a,b)=>a.y-b.y).forEach(drawBag);
+  bags.filter(b=>b.state==='flying').forEach(drawBag);
+  if(!animating&&turnOrder[turnIdx]==='you'&&!endOver&&!matchOver){
+    drawBag({x:boardCx,y:throwY,z:0,team:'you',state:'ready'});
+  }
+  drawAim();
+  if(matchOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(youScore>aiScore?I18N.t('game_over_win','MATCH WON'):I18N.t('game_over_lose','MATCH LOST'),W/2,H/2);
+  }
+}
+
+function loop(){
+  if(animating)physicsStep();
+  render();
+  requestAnimationFrame(loop);
+}
+updateHud();
+newEnd();
+loop();
+</script></body></html>
