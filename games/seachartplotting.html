@@ -1,0 +1,242 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Sea Chart Plotting</title><meta name="description" content="Play Sea Chart Plotting free online — Click or tap chart cells to plot waypoints from port to port, avoiding reefs, shallows and rival waters, then submit your route for the captain's approval before your distance budget runs out."><link rel="canonical" href="https://games.multiportllc.com/games/seachartplotting"><meta property="og:title" content="Sea Chart Plotting - Multiport Games"><meta property="og:description" content="Play Sea Chart Plotting free online — Click or tap chart cells to plot waypoints from port to port, avoiding reefs, shallows and rival waters, then submit your route for the captain's approval before your distance budget runs out."><meta property="og:url" content="https://games.multiportllc.com/games/seachartplotting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Sea Chart Plotting","description":"Play Sea Chart Plotting free online instantly. Click or tap chart cells to plot waypoints from port to port, avoiding reefs, shallows and rival waters, then submit your route for the captain's approval before your distance budget runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/seachartplotting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#0b2a3d;border-radius:14px;padding:16px;text-align:center}
+#status{color:#e8f4ff;font-size:1rem;font-weight:700;margin:4px 0 10px;min-height:1.6em}
+#hud{display:flex;justify-content:center;gap:18px;color:#9fd8ff;font-weight:800;font-size:.95rem;margin-bottom:8px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#c{background:#0e3a52;border-radius:8px;display:block;margin:0 auto;touch-action:none;cursor:crosshair}
+#controls{margin-top:12px;display:flex;justify-content:center;gap:8px;flex-wrap:wrap}
+#controls button{padding:9px 18px;background:#1a6ea8;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+#controls button.submit{background:#2e9e4f}
+#controls button.danger{background:#b3432b}
+#legend{color:#bcdcf0;font-size:.8rem;margin-top:8px}
+#legend span{margin:0 8px;white-space:nowrap}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Sea Chart Plotting</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span>Chart: <b id="lvl">1</b></span><span>Lives: <b id="lives">3</b></span><span>Score: <b id="score">0</b></span><span>Hi: <b id="hi">0</b></span></div>
+      <div id="status">Click a cell to lay your first waypoint from port.</div>
+      <canvas id="c" width="700" height="400"></canvas>
+      <div id="controls">
+        <button id="undoBtn" onclick="undoPoint()">Undo Waypoint</button>
+        <button class="submit" id="submitBtn" onclick="submitRoute()">Submit Route</button>
+        <button class="danger" onclick="newChart(true)">New Chart</button>
+      </div>
+      <div id="legend">
+        <span>🟩 Start Port</span><span>🏁 Destination</span><span>🟥 Reef</span><span>🟨 Shallows</span><span>🟪 Rival Waters</span>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Click or tap empty chart cells to lay waypoints connecting your ship from the start port to the destination, one segment at a time. Each segment must stay clear of reefs, shallow water and rival territory. Arrow keys move the cursor and <b>Space/Enter</b> places a waypoint there; <b>Backspace</b> undoes the last one. Reach the destination within your distance budget and click <b>Submit Route</b> for the captain's approval. Three bad submissions and the voyage is scrubbed!
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const COLS=14,ROWS=8,CELL=50;
+let grid,start,end,waypoints,lives,score,hi,level,cursor,budget,usedDist,gameOver;
+
+hi=parseInt(localStorage.getItem('seachartplotting_best')||'0',10);
+document.getElementById('hi').textContent=hi;
+
+function cellCenter(r,c){return {x:c*CELL+CELL/2,y:r*CELL+CELL/2};}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function buildGrid(hazardCount){
+  grid=[];
+  for(let r=0;r<ROWS;r++){grid.push(new Array(COLS).fill(0));}
+  start={r:Math.floor(ROWS/2),c:0};
+  end={r:1+Math.floor(Math.random()*(ROWS-2)),c:COLS-1};
+  const types=[1,2,3]; // reef, shallow, rival
+  let placed=0,attempts=0;
+  while(placed<hazardCount&&attempts<2000){
+    attempts++;
+    const r=Math.floor(Math.random()*ROWS),c=1+Math.floor(Math.random()*(COLS-2));
+    if((r===start.r&&c===start.c)||(r===end.r&&c===end.c)||grid[r][c]!==0)continue;
+    grid[r][c]=types[Math.floor(Math.random()*types.length)];
+    placed++;
+  }
+}
+
+function newChart(reset){
+  if(reset){level=1;lives=3;score=0;}
+  buildGrid(6+level*2);
+  waypoints=[cellCenter(start.r,start.c)];
+  cursor={r:start.r,c:start.c};
+  usedDist=0;
+  gameOver=false;
+  const minD=dist(cellCenter(start.r,start.c),cellCenter(end.r,end.c));
+  budget=Math.round(minD*(1.75-Math.min(level*0.03,0.5)));
+  document.getElementById('lvl').textContent=level;
+  document.getElementById('lives').textContent=lives;
+  document.getElementById('score').textContent=score;
+  setStatus(I18N.t('plot_hint','Chart laid. Plot a course clear of hazards to the destination flag.'));
+  draw();
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function hazardAt(r,c){
+  if(r<0||r>=ROWS||c<0||c>=COLS)return true;
+  return grid[r][c]!==0;
+}
+
+function segmentHitsHazard(p1,p2){
+  const steps=Math.ceil(dist(p1,p2)/6);
+  for(let i=1;i<steps;i++){
+    const t=i/steps;
+    const x=p1.x+(p2.x-p1.x)*t, y=p1.y+(p2.y-p1.y)*t;
+    const c=Math.floor(x/CELL), r=Math.floor(y/CELL);
+    if(hazardAt(r,c))return true;
+  }
+  return false;
+}
+
+function tryAddPoint(r,c){
+  if(gameOver)return;
+  if(r<0||r>=ROWS||c<0||c>=COLS)return;
+  if(hazardAt(r,c)){SFX.error();setStatus(I18N.t('hazard_blocked','That cell is hazardous water — pick another.'));return;}
+  const p=cellCenter(r,c);
+  const last=waypoints[waypoints.length-1];
+  if(p.x===last.x&&p.y===last.y)return;
+  if(segmentHitsHazard(last,p)){SFX.error();setStatus(I18N.t('hazard_cross','That leg would cross a hazard — route around it.'));return;}
+  const segLen=dist(last,p);
+  if(usedDist+segLen>budget+40){SFX.error();setStatus(I18N.t('over_budget','That would blow the distance budget — try a shorter leg.'));return;}
+  waypoints.push(p);
+  usedDist+=segLen;
+  SFX.click();
+  setStatus(I18N.t('leg_added','Leg plotted. Distance used: {d}/{b}.').replace('{d}',Math.round(usedDist)).replace('{b}',budget));
+  draw();
+}
+
+function undoPoint(){
+  if(gameOver||waypoints.length<=1)return;
+  const removed=waypoints.pop();
+  const last=waypoints[waypoints.length-1];
+  usedDist-=dist(last,removed);
+  SFX.swoosh();
+  setStatus(I18N.t('undone','Last waypoint undone.'));
+  draw();
+}
+
+function submitRoute(){
+  if(gameOver)return;
+  const last=waypoints[waypoints.length-1];
+  const endPt=cellCenter(end.r,end.c);
+  if(last.x!==endPt.x||last.y!==endPt.y){
+    strike(I18N.t('not_at_dest','The route never reaches the destination port!'));
+    return;
+  }
+  if(usedDist>budget){
+    strike(I18N.t('too_long','Too long a voyage — the budget was exceeded.'));
+    return;
+  }
+  SFX.win();
+  score+=10+level*5;
+  if(score>hi){hi=score;localStorage.setItem('seachartplotting_best',hi);}
+  document.getElementById('score').textContent=score;
+  document.getElementById('hi').textContent=hi;
+  level++;
+  setStatus(I18N.t('approved','Route approved by the captain! Setting sail for the next chart...'));
+  SFX.levelup();
+  setTimeout(()=>newChart(false),1200);
+}
+
+function strike(msg){
+  lives--;
+  SFX.fail();
+  document.getElementById('lives').textContent=Math.max(0,lives);
+  setStatus(msg);
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+    setStatus(I18N.t('voyage_scrubbed','Voyage scrubbed! Three bad routes — the captain grounds the ship. Click "New Chart" to try again.'));
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const sea=ctx.createLinearGradient(0,0,0,cv.height);
+  sea.addColorStop(0,'#135a7c');sea.addColorStop(1,'#0a2e42');
+  ctx.fillStyle=sea;ctx.fillRect(0,0,cv.width,cv.height);
+  for(let r=0;r<=ROWS;r++){ctx.strokeStyle='rgba(255,255,255,0.08)';ctx.beginPath();ctx.moveTo(0,r*CELL);ctx.lineTo(cv.width,r*CELL);ctx.stroke();}
+  for(let c=0;c<=COLS;c++){ctx.beginPath();ctx.moveTo(c*CELL,0);ctx.lineTo(c*CELL,cv.height);ctx.stroke();}
+  for(let r=0;r<ROWS;r++){
+    for(let c=0;c<COLS;c++){
+      const t=grid[r][c];
+      if(t===0)continue;
+      const x=c*CELL,y=r*CELL;
+      if(t===1){ctx.fillStyle='rgba(200,60,50,0.75)';ctx.fillRect(x+3,y+3,CELL-6,CELL-6);}
+      else if(t===2){ctx.fillStyle='rgba(220,190,60,0.6)';ctx.fillRect(x+3,y+3,CELL-6,CELL-6);}
+      else {ctx.fillStyle='rgba(150,70,210,0.65)';ctx.fillRect(x+3,y+3,CELL-6,CELL-6);}
+    }
+  }
+  // start & end
+  const sp=cellCenter(start.r,start.c), ep=cellCenter(end.r,end.c);
+  ctx.fillStyle='#3ddc6b';ctx.beginPath();ctx.arc(sp.x,sp.y,14,0,7);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='center';ctx.fillText('S',sp.x,sp.y+5);
+  ctx.fillStyle='#ffd54f';ctx.beginPath();ctx.moveTo(ep.x,ep.y-16);ctx.lineTo(ep.x+16,ep.y-8);ctx.lineTo(ep.x,ep.y);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#ffd54f';ctx.fillRect(ep.x-2,ep.y-16,4,24);
+  // route
+  ctx.strokeStyle='#67e8ff';ctx.lineWidth=3;ctx.beginPath();
+  waypoints.forEach((p,i)=>{if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);});
+  ctx.stroke();
+  waypoints.forEach((p,i)=>{
+    ctx.fillStyle=i===0?'#3ddc6b':'#67e8ff';
+    ctx.beginPath();ctx.arc(p.x,p.y,5,0,7);ctx.fill();
+  });
+  // cursor
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;
+  ctx.strokeRect(cursor.c*CELL+2,cursor.r*CELL+2,CELL-4,CELL-4);
+  // budget bar
+  const bw=cv.width-20;
+  ctx.fillStyle='rgba(0,0,0,0.3)';ctx.fillRect(10,cv.height-16,bw,10);
+  const frac=Math.min(1,usedDist/budget);
+  ctx.fillStyle=frac>1?'#e94560':frac>0.8?'#ffb347':'#4caf50';
+  ctx.fillRect(10,cv.height-16,bw*frac,10);
+}
+
+cv.addEventListener('click',e=>{
+  const rect=cv.getBoundingClientRect();
+  const x=(e.clientX-rect.left)*(cv.width/rect.width), y=(e.clientY-rect.top)*(cv.height/rect.height);
+  const c=Math.floor(x/CELL), r=Math.floor(y/CELL);
+  cursor={r,c};
+  tryAddPoint(r,c);
+});
+cv.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.touches[0];
+  const rect=cv.getBoundingClientRect();
+  const x=(t.clientX-rect.left)*(cv.width/rect.width), y=(t.clientY-rect.top)*(cv.height/rect.height);
+  const c=Math.floor(x/CELL), r=Math.floor(y/CELL);
+  cursor={r,c};
+  tryAddPoint(r,c);
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','Enter','Backspace'].includes(e.key))e.preventDefault();
+  if(e.key==='ArrowUp')cursor.r=Math.max(0,cursor.r-1);
+  else if(e.key==='ArrowDown')cursor.r=Math.min(ROWS-1,cursor.r+1);
+  else if(e.key==='ArrowLeft')cursor.c=Math.max(0,cursor.c-1);
+  else if(e.key==='ArrowRight')cursor.c=Math.min(COLS-1,cursor.c+1);
+  else if(e.key===' '||e.key==='Enter')tryAddPoint(cursor.r,cursor.c);
+  else if(e.key==='Backspace')undoPoint();
+  else if(e.key==='s'||e.key==='S')submitRoute();
+  else if(e.key==='n'||e.key==='N')newChart(true);
+  draw();
+});
+
+newChart(true);
+</script></body></html>

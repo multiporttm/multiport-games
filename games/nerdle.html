@@ -1,0 +1,325 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Nerdle</title><meta name="description" content="Play Nerdle free online — Guess the hidden 8-character math equation in 6 tries. Green means right spot, purple means wrong spot, gray means not in the equation."><link rel="canonical" href="https://games.multiportllc.com/games/nerdle"><meta property="og:title" content="Nerdle - Multiport Games"><meta property="og:description" content="Play Nerdle free online — Guess the hidden 8-character math equation in 6 tries. Green means right spot, purple means wrong spot, gray means not in the equation."><meta property="og:url" content="https://games.multiportllc.com/games/nerdle"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Nerdle","description":"Play Nerdle free online instantly. Guess the hidden 8-character math equation in 6 tries. Green means right spot, purple means wrong spot, gray means not in the equation. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/nerdle","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#nerdle-wrap{padding:18px;text-align:center}
+#status{color:#fff;font-size:1.05rem;font-weight:800;margin:4px 0 12px;min-height:1.5em}
+#board{display:grid;grid-template-rows:repeat(6,46px);gap:7px;margin:0 auto 16px;max-width:420px}
+.row{display:grid;grid-template-columns:repeat(8,1fr);gap:6px}
+.tile{display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.07);border:2px solid rgba(255,255,255,0.14);border-radius:7px;font-size:1.25rem;font-weight:800;color:#fff;transition:background .25s,border-color .25s,transform .15s}
+.tile.pop{transform:scale(1.08)}
+.tile.green{background:#3cae5a;border-color:#3cae5a}
+.tile.purple{background:#a259d9;border-color:#a259d9}
+.tile.gray{background:#3a3a44;border-color:#3a3a44;color:#9c9ca6}
+.row.shake{animation:shake .4s}
+@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-6px)}80%{transform:translateX(6px)}}
+#keypad{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;max-width:460px;margin:0 auto}
+#keypad button{padding:12px 0;font-size:1.05rem;font-weight:800;border:none;border-radius:8px;background:rgba(255,255,255,0.1);color:#fff;cursor:pointer;transition:background .15s,transform .1s}
+#keypad button:hover{background:rgba(255,255,255,0.18)}
+#keypad button:active{transform:scale(.93)}
+#keypad button.key-green{background:#3cae5a}
+#keypad button.key-purple{background:#a259d9}
+#keypad button.key-gray{background:#2a2a30;color:#75757d}
+#keypad button.wide{grid-column:span 2;background:rgba(var(--accent-rgb),0.55)}
+#stats{color:rgba(255,255,255,0.6);font-size:.85rem;margin-top:14px}
+#newBtn{margin-top:14px;padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;display:none}
+@media(max-width:480px){
+  .tile{font-size:1rem}
+  #keypad button{padding:10px 0;font-size:.9rem}
+}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Nerdle</div>
+  <div class="game-frame">
+    <div id="nerdle-wrap">
+      <div id="status">Guess the 8-character equation!</div>
+      <div id="board"></div>
+      <div id="keypad"></div>
+      <button id="newBtn" onclick="startGame()">Play Again</button>
+      <div id="stats">Played: 0 · Streak: 0 · Best Streak: 0</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A secret, valid 8-character math equation (digits 0-9 and <b>+ - * / =</b>) is hidden — something like <code>12+34=46</code>. You have 6 guesses. Every guess must be a valid, correct equation exactly 8 characters long. After each guess, each character turns <b>green</b> if it's in the right spot, <b>purple</b> if it's in the equation but the wrong spot, or <b>gray</b> if it doesn't appear at all. Use the on-screen keypad or your keyboard (digits, <b>+ - * /</b>, <b>=</b>, <b>Enter</b>, <b>Backspace</b>).
+  </div>
+</div>
+<script>
+const LEN=8, MAXG=6;
+const KEYS=['1','2','3','4','5','6','7','8','9','0','+','-','*','/','='];
+const STORE_KEY='nerdle_stats';
+
+let secret='', guesses=[], current='', gameOver=false, keyState={};
+
+function loadStats(){
+  try{return JSON.parse(localStorage.getItem(STORE_KEY))||{played:0,wins:0,streak:0,bestStreak:0};}
+  catch(e){return {played:0,wins:0,streak:0,bestStreak:0};}
+}
+function saveStats(s){ try{localStorage.setItem(STORE_KEY,JSON.stringify(s));}catch(e){} }
+let stats=loadStats();
+
+function renderStats(){
+  document.getElementById('stats').textContent =
+    I18N.t('stats_label','Played: {p} · Streak: {s} · Best Streak: {b}')
+      .replace('{p}',stats.played).replace('{s}',stats.streak).replace('{b}',stats.bestStreak);
+}
+
+// ---- Equation generation ----
+function evalEquation(lhs){
+  // lhs is like "12+34" or "8*3-2" — tokenize numbers and + - * /
+  const tokens = lhs.match(/\d+|[+\-*/]/g);
+  if(!tokens) return null;
+  // first pass: * and /
+  let vals=[Number(tokens[0])], ops=[];
+  for(let i=1;i<tokens.length;i+=2){
+    const op=tokens[i], num=Number(tokens[i+1]);
+    if(op==='*'||op==='/'){
+      let prev=vals.pop();
+      if(op==='/'){ if(num===0||prev%num!==0) return null; vals.push(prev/num); }
+      else vals.push(prev*num);
+    } else {
+      vals.push(num); ops.push(op);
+    }
+  }
+  let result=vals[0];
+  for(let i=0;i<ops.length;i++){
+    result = ops[i]==='+' ? result+vals[i+1] : result-vals[i+1];
+  }
+  return result;
+}
+
+function isValidEquation(str){
+  if(str.length!==LEN) return false;
+  if(!/^[0-9+\-*/=]+$/.test(str)) return false;
+  const parts=str.split('=');
+  if(parts.length!==2) return false;
+  const [lhs,rhs]=parts;
+  if(!lhs||!rhs) return false;
+  if(!/^\d/.test(lhs)) return false; // can't start with operator
+  if(!/^-?\d+$/.test(rhs)) return false; // rhs plain number (allow leading - not really used)
+  if(/[+\-*/]{2,}/.test(lhs)) return false; // no double operators
+  if(/[+\-*/]$/.test(lhs)) return false; // can't end lhs with operator
+  const lval=evalEquation(lhs);
+  if(lval===null) return false;
+  return lval===Number(rhs);
+}
+
+function randomSecret(){
+  // Build random equations of total length 8 until a valid one is found.
+  const attempts=4000;
+  for(let i=0;i<attempts;i++){
+    const numOps=Math.random()<0.5?1:2; // one or two operators on LHS
+    const opsPool=['+','-','*','/'];
+    let lhsStr, lval;
+    if(numOps===1){
+      const op=opsPool[Math.floor(Math.random()*4)];
+      const a=1+Math.floor(Math.random()*98);
+      let b=1+Math.floor(Math.random()*98);
+      if(op==='/'){
+        // ensure divisible
+        const divisor=1+Math.floor(Math.random()*9);
+        const quotient=1+Math.floor(Math.random()*20);
+        const dividend=divisor*quotient;
+        lhsStr=`${dividend}/${divisor}`; lval=quotient;
+      } else if(op==='-'){
+        if(b>a){const t=a;a=b;b=t;}
+        lhsStr=`${a}-${b}`; lval=a-b;
+      } else if(op==='*'){
+        const a2=1+Math.floor(Math.random()*20), b2=1+Math.floor(Math.random()*20);
+        lhsStr=`${a2}*${b2}`; lval=a2*b2;
+      } else {
+        lhsStr=`${a}+${b}`; lval=a+b;
+      }
+    } else {
+      const a=1+Math.floor(Math.random()*9);
+      const b=1+Math.floor(Math.random()*9);
+      const c=1+Math.floor(Math.random()*9);
+      const op1=opsPool[Math.floor(Math.random()*4)];
+      const op2=opsPool[Math.floor(Math.random()*4)];
+      lhsStr=`${a}${op1}${b}${op2}${c}`;
+      lval=evalEquation(lhsStr);
+    }
+    if(lval===null||lval<0) continue;
+    const eq=`${lhsStr}=${lval}`;
+    if(eq.length===LEN && isValidEquation(eq)) return eq;
+  }
+  return '12+34=46'; // guaranteed fallback
+}
+
+function startGame(){
+  secret=randomSecret();
+  guesses=[]; current=''; gameOver=false; keyState={};
+  document.getElementById('newBtn').style.display='none';
+  setStatus(I18N.t('intro_status','Guess the 8-character equation!'));
+  buildBoard();
+  buildKeypad();
+  renderStats();
+}
+
+function setStatus(t){ document.getElementById('status').textContent=t; }
+
+function buildBoard(){
+  const board=document.getElementById('board');
+  board.innerHTML='';
+  for(let r=0;r<MAXG;r++){
+    const row=document.createElement('div');
+    row.className='row'; row.id='row-'+r;
+    for(let c=0;c<LEN;c++){
+      const tile=document.createElement('div');
+      tile.className='tile'; tile.id='tile-'+r+'-'+c;
+      row.appendChild(tile);
+    }
+    board.appendChild(row);
+  }
+}
+
+function buildKeypad(){
+  const kp=document.getElementById('keypad');
+  kp.innerHTML='';
+  KEYS.forEach(k=>{
+    const b=document.createElement('button');
+    b.textContent=k; b.id='key-'+btoa(k);
+    b.onclick=()=>pressKey(k);
+    kp.appendChild(b);
+  });
+  const del=document.createElement('button');
+  del.textContent='⌫'; del.className='wide'; del.onclick=backspace;
+  kp.appendChild(del);
+  const ent=document.createElement('button');
+  ent.textContent='Enter'; ent.className='wide'; ent.onclick=submitGuess;
+  kp.appendChild(ent);
+}
+
+function activeRowIndex(){ return guesses.length; }
+
+function refreshCurrentRow(){
+  const r=activeRowIndex();
+  for(let c=0;c<LEN;c++){
+    const tile=document.getElementById('tile-'+r+'-'+c);
+    if(!tile) continue;
+    tile.textContent = current[c]!==undefined ? current[c] : '';
+  }
+}
+
+function pressKey(k){
+  if(gameOver) return;
+  if(current.length>=LEN) return;
+  current+=k;
+  SFX.click();
+  refreshCurrentRow();
+}
+
+function backspace(){
+  if(gameOver) return;
+  current=current.slice(0,-1);
+  refreshCurrentRow();
+}
+
+function shakeRow(r){
+  const row=document.getElementById('row-'+r);
+  row.classList.remove('shake');
+  void row.offsetWidth;
+  row.classList.add('shake');
+}
+
+function submitGuess(){
+  if(gameOver) return;
+  const r=activeRowIndex();
+  if(current.length!==LEN){
+    SFX.error(); shakeRow(r); setStatus(I18N.t('err_length','Equation must be exactly 8 characters.'));
+    return;
+  }
+  if(!isValidEquation(current)){
+    SFX.error(); shakeRow(r); setStatus(I18N.t('err_invalid','Not a valid equation — check your math!'));
+    return;
+  }
+  const guess=current;
+  const colors=scoreGuess(guess,secret);
+  guesses.push({guess,colors});
+  revealRow(r,guess,colors);
+  updateKeyStates(guess,colors);
+  current='';
+
+  if(guess===secret){
+    gameOver=true;
+    SFX.win();
+    setStatus(I18N.t('win_status','🎉 Solved it! The equation was ' + secret));
+    endRound(true);
+  } else if(guesses.length>=MAXG){
+    gameOver=true;
+    SFX.lose();
+    setStatus(I18N.t('lose_status','Out of guesses! The equation was ' + secret));
+    endRound(false);
+  } else {
+    SFX.point();
+    setStatus(I18N.t('continue_status','Keep guessing! ' + (MAXG-guesses.length) + ' tries left.'));
+  }
+}
+
+function scoreGuess(guess,secret){
+  const result=new Array(LEN).fill('gray');
+  const secretArr=secret.split('');
+  const guessArr=guess.split('');
+  const used=new Array(LEN).fill(false);
+  for(let i=0;i<LEN;i++){
+    if(guessArr[i]===secretArr[i]){ result[i]='green'; used[i]=true; }
+  }
+  for(let i=0;i<LEN;i++){
+    if(result[i]==='green') continue;
+    for(let j=0;j<LEN;j++){
+      if(!used[j] && secretArr[j]===guessArr[i]){
+        result[i]='purple'; used[j]=true; break;
+      }
+    }
+  }
+  return result;
+}
+
+function revealRow(r,guess,colors){
+  for(let c=0;c<LEN;c++){
+    const tile=document.getElementById('tile-'+r+'-'+c);
+    tile.textContent=guess[c];
+    setTimeout(()=>{
+      tile.classList.add(colors[c],'pop');
+      setTimeout(()=>tile.classList.remove('pop'),150);
+    }, c*80);
+  }
+}
+
+function updateKeyStates(guess,colors){
+  for(let i=0;i<guess.length;i++){
+    const ch=guess[i], col=colors[i];
+    const rank={gray:0,purple:1,green:2};
+    if(!keyState[ch] || rank[col]>rank[keyState[ch]]) keyState[ch]=col;
+  }
+  KEYS.forEach(k=>{
+    const btn=document.getElementById('key-'+btoa(k));
+    if(!btn) return;
+    btn.classList.remove('key-green','key-purple','key-gray');
+    if(keyState[k]) btn.classList.add('key-'+keyState[k]);
+  });
+}
+
+function endRound(won){
+  stats.played++;
+  if(won){ stats.wins++; stats.streak++; if(stats.streak>stats.bestStreak) stats.bestStreak=stats.streak; }
+  else { stats.streak=0; }
+  saveStats(stats);
+  renderStats();
+  document.getElementById('newBtn').style.display='inline-block';
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameOver) return;
+  if(/^[0-9+\-*/=]$/.test(e.key)){ pressKey(e.key); }
+  else if(e.key==='Backspace'){ backspace(); }
+  else if(e.key==='Enter'){ submitGuess(); }
+});
+
+startGame();
+</script></body></html>

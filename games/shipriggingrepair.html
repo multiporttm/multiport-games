@@ -1,0 +1,272 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ship Rigging Repair</title><meta name="description" content="Play Ship Rigging Repair free online — Climb the rigging and tie off torn sails and snapped ropes by tapping or pressing Space, but only when the ship isn't rocking hard. Restore the rigging before the storm sinks you."><link rel="canonical" href="https://games.multiportllc.com/games/shipriggingrepair"><meta property="og:title" content="Ship Rigging Repair - Multiport Games"><meta property="og:description" content="Play Ship Rigging Repair free online — Climb the rigging and tie off torn sails and snapped ropes by tapping or pressing Space, but only when the ship isn't rocking hard. Restore the rigging before the storm sinks you."><meta property="og:url" content="https://games.multiportllc.com/games/shipriggingrepair"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ship Rigging Repair","description":"Play Ship Rigging Repair free online instantly. Climb the rigging and tie off torn sails and snapped ropes by tapping or pressing Space, but only when the ship isn't rocking hard. Restore the rigging before the storm sinks you. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/shipriggingrepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1a2e;display:block;border-radius:8px;touch-action:none}
+#hud{color:#d4d4ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#tieBtn{display:block;margin:8px auto 0;padding:10px 28px;background:#e94560;border:none;border-radius:22px;color:#fff;font-size:1rem;font-weight:800;cursor:pointer}
+#tieBtn:active{transform:scale(.95)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ship Rigging Repair</div>
+  <div class="game-frame">
+    <div id="hud">Repaired: 0/0 | Hull: 100 | Hi: 0</div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <button id="tieBtn">TIE ROPE 🪢</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Move along the rigging with <b>Left/Right Arrow</b> keys or by tapping the left/right side of the canvas, or drag. When you're lined up under a torn sail or snapped rope (glowing), press <b>Space</b> or tap <b>TIE ROPE</b> to repair it. The ship rocks violently and lightning flashes — watch the rock meter: tying during a <b>big rock</b> (shown in red) makes you slip and lose a sail! Repair everything before the storm damage sinks the ship.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const KEY='shipriggingrepair_hi';
+let hi=0;
+try{hi=parseInt(localStorage.getItem(KEY)||'0',10)||0;}catch(e){}
+
+const climberSpeed=6;
+let climber={x:400};
+let spots=[]; // {x,y,repaired}
+let repaired=0,total=0,hull=100,gameOver=false,won=false,started=false;
+let rock=0,rockVel=0.04,rockPhase=0;
+let frame=0,lightning=0,leftHeld=false,rightHeld=false,touchTargetX=null;
+let damageTimer=0;
+
+function reset(){
+  total=6;repaired=0;hull=100;gameOver=false;won=false;started=false;frame=0;rock=0;rockPhase=Math.random()*10;
+  climber.x=400;
+  spots=[];
+  const xs=[120,250,380,480,580,690];
+  for(let i=0;i<total;i++){
+    spots.push({x:xs[i],y:70+ (i%2)*40,repaired:false});
+  }
+  damageTimer=0;
+}
+
+function rockIntensity(){
+  // combination of sines to create unpredictable "big rock" moments
+  return Math.sin(rockPhase)*0.6+Math.sin(rockPhase*2.7)*0.3+Math.sin(rockPhase*0.5)*0.4;
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){leftHeld=true;started=true;e.preventDefault();}
+  if(e.code==='ArrowRight'||e.code==='KeyD'){rightHeld=true;started=true;e.preventDefault();}
+  if(e.code==='Space'){e.preventDefault();started=true; if(gameOver){reset();} else tryTie();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA')leftHeld=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD')rightHeld=false;
+});
+
+function canvasX(clientX){
+  const rect=c.getBoundingClientRect();
+  return (clientX-rect.left)*(W/rect.width);
+}
+c.addEventListener('pointerdown',e=>{
+  started=true;
+  if(gameOver){reset();return;}
+  touchTargetX=canvasX(e.clientX);
+});
+c.addEventListener('pointermove',e=>{ if(touchTargetX!==null)touchTargetX=canvasX(e.clientX); });
+c.addEventListener('pointerup',()=>{touchTargetX=null;});
+c.addEventListener('pointercancel',()=>{touchTargetX=null;});
+
+document.getElementById('tieBtn').addEventListener('click',()=>{
+  started=true;
+  if(gameOver){reset();return;}
+  tryTie();
+});
+
+function nearestSpot(){
+  let best=null,bd=9999;
+  spots.forEach(s=>{
+    if(s.repaired)return;
+    const d=Math.abs(s.x-climber.x);
+    if(d<bd){bd=d;best=s;}
+  });
+  return {spot:best,dist:bd};
+}
+
+function tryTie(){
+  if(gameOver)return;
+  const {spot,dist}=nearestSpot();
+  if(!spot||dist>36){SFX.click();return;}
+  const intensity=Math.abs(rockIntensity());
+  if(intensity>0.75){
+    // big rock - slip!
+    hull-=15;
+    SFX.hurt();
+    if(hull<=0){
+      hull=0;gameOver=true;won=false;
+      const scored=repaired*10;
+      if(scored>hi){hi=scored;try{localStorage.setItem(KEY,String(hi));}catch(e){}}
+      SFX.lose();
+    }
+    return;
+  }
+  spot.repaired=true;
+  repaired++;
+  SFX.success();
+  if(repaired>=total&&!gameOver){
+    gameOver=true;won=true;
+    const scored=Math.max(hull,0)+repaired*15;
+    if(scored>hi){hi=scored;try{localStorage.setItem(KEY,String(hi));}catch(e){}}
+    SFX.win();
+  }
+}
+
+function update(dt){
+  if(touchTargetX!==null){
+    if(touchTargetX<climber.x-4)climber.x-=climberSpeed*dt;
+    else if(touchTargetX>climber.x+4)climber.x+=climberSpeed*dt;
+  } else {
+    if(leftHeld)climber.x-=climberSpeed*dt;
+    if(rightHeld)climber.x+=climberSpeed*dt;
+  }
+  climber.x=Math.max(40,Math.min(W-40,climber.x));
+
+  rockPhase+=0.045*dt;
+  rock=rockIntensity();
+
+  // storm damage accrues over time unless repairs keep pace; faster as fewer repaired
+  damageTimer+=dt;
+  const dmgInterval=Math.max(70,220-(total-repaired)*8);
+  if(damageTimer>=dmgInterval){
+    damageTimer-=dmgInterval;
+    hull-=3;
+    if(hull<=0&&!gameOver){
+      hull=0;gameOver=true;won=false;
+      const scored=repaired*10;
+      if(scored>hi){hi=scored;try{localStorage.setItem(KEY,String(hi));}catch(e){}}
+      SFX.lose();
+    }
+  }
+
+  if(Math.random()<0.01)lightning=1;
+  if(lightning>0)lightning-=0.08*dt;
+}
+
+function drawShip(tiltPx){
+  ctx.save();
+  ctx.translate(W/2,H-30);
+  ctx.rotate(tiltPx*0.05);
+  ctx.translate(-W/2,-(H-30));
+  ctx.fillStyle='#4a3420';
+  ctx.beginPath();
+  ctx.moveTo(140,H-60);
+  ctx.lineTo(660,H-60);
+  ctx.lineTo(600,H-10);
+  ctx.lineTo(200,H-10);
+  ctx.closePath();ctx.fill();
+  // mast
+  ctx.fillStyle='#6b4a2b';
+  ctx.fillRect(395,30,10,H-90);
+  // rigging lines
+  ctx.strokeStyle='rgba(220,220,255,0.35)';ctx.lineWidth=2;
+  [120,250,380,480,580,690].forEach(x=>{
+    ctx.beginPath();ctx.moveTo(400,40);ctx.lineTo(x,H-60);ctx.stroke();
+  });
+  ctx.restore();
+}
+
+function drawSpot(s,tiltPx){
+  const sway=tiltPx*0.05*(s.y-200)*-1*0.3;
+  ctx.save();
+  ctx.translate(s.x+sway,s.y);
+  if(s.repaired){
+    ctx.fillStyle='#4caf50';
+    ctx.beginPath();ctx.arc(0,0,14,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(-6,0);ctx.lineTo(-1,6);ctx.lineTo(7,-7);ctx.stroke();
+  } else {
+    const pulse=0.7+0.3*Math.sin(frame*0.1+s.x);
+    ctx.fillStyle=`rgba(255,213,79,${pulse})`;
+    ctx.beginPath();ctx.arc(0,0,16,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#c0392b';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(-8,-8);ctx.lineTo(8,8);ctx.moveTo(8,-8);ctx.lineTo(-8,8);ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawClimber(tiltPx){
+  const sway=tiltPx*0.05*-40;
+  ctx.save();
+  ctx.translate(climber.x+sway,H-90);
+  ctx.fillStyle='#e9c46a';
+  ctx.beginPath();ctx.arc(0,-14,8,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#2a6f97';
+  ctx.fillRect(-7,-6,14,20);
+  ctx.restore();
+}
+
+function drawRockMeter(){
+  const barW=240,barH=16,x=W/2-barW/2,y=14;
+  ctx.fillStyle='rgba(255,255,255,0.15)';
+  ctx.fillRect(x,y,barW,barH);
+  const intensity=Math.abs(rock);
+  const fillW=Math.min(barW,intensity*barW/1.3);
+  ctx.fillStyle = intensity>0.75 ? '#e94560' : (intensity>0.45?'#ffd54f':'#4caf50');
+  ctx.fillRect(x+barW/2-fillW/2,y,fillW,barH);
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;
+  ctx.strokeRect(x,y,barW,barH);
+  ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('rock_meter_label','ROCK METER — tie only when calm!'),W/2,y-4);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const storm=ctx.createLinearGradient(0,0,0,H);
+  storm.addColorStop(0,'#05050f');storm.addColorStop(1,'#1a1a2e');
+  ctx.fillStyle=storm;ctx.fillRect(0,0,W,H);
+  if(lightning>0){
+    ctx.fillStyle=`rgba(255,255,255,${Math.min(0.5,lightning*0.5)})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  if(!started){
+    ctx.fillStyle='#d4d4ff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint2','Arrows/Drag to move, Space/TIE to repair'),W/2,H/2);
+    drawShip(0);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawShip(rock);
+    spots.forEach(s=>drawSpot(s,rock));
+    drawClimber(rock);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('rigging_restored','RIGGING RESTORED!'):I18N.t('ship_sunk','THE SHIP HAS SUNK'),W/2,H/2-10);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+28);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const dt=1;
+  frame+=dt;
+  update(dt);
+  drawShip(rock);
+  spots.forEach(s=>drawSpot(s,rock));
+  drawClimber(rock);
+  drawRockMeter();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function updateHud(){
+  document.getElementById('hud').textContent=I18N.t('rigging_hud','Repaired: {r}/{t} | Hull: {h} | Hi: {hi}')
+    .replace('{r}',repaired).replace('{t}',total).replace('{h}',Math.max(0,Math.round(hull))).replace('{hi}',hi);
+}
+
+reset();
+loop();
+</script></body></html>

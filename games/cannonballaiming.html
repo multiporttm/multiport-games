@@ -1,0 +1,238 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Cannonball Aiming</title><meta name="description" content="Play Cannonball Aiming free online — Drag back from the cannon to set power and angle, then release to fire at the enemy ship. Account for wind and rocking to hit the hull, mast, or rudder."><link rel="canonical" href="https://games.multiportllc.com/games/cannonballaiming"><meta property="og:title" content="Cannonball Aiming - Multiport Games"><meta property="og:description" content="Play Cannonball Aiming free online — Drag back from the cannon to set power and angle, then release to fire at the enemy ship. Account for wind and rocking to hit the hull, mast, or rudder."><meta property="og:url" content="https://games.multiportllc.com/games/cannonballaiming"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Cannonball Aiming","description":"Play Cannonball Aiming free online instantly. Drag back from the cannon to set power and angle, then release to fire at the enemy ship across rocking seas and shifting wind, aiming for the hull, mast, or rudder for different tactical effects. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/cannonballaiming","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1f4e6b;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffe08a;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Cannonball Aiming</div>
+  <div class="game-frame">
+    <div id="hud">Score: 0 | Hi: 0 | Shots left: 10</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click/tap and drag <b>back</b> from the cannon to set <b>power</b> and <b>angle</b> (like a slingshot), then release to fire. Or use <b>Arrow Keys</b> to adjust angle/power and <b>Space</b> to fire. Watch the ship rock and the wind arrow drift — hit the <b>hull</b> for points, the <b>mast</b> for a bonus, or the <b>rudder</b> for the jackpot!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420,waterY=330;
+let score=0,hi=parseInt(localStorage.getItem('cannonballaiming_hi')||'0',10),shots=10,gameOver=false;
+const cannon={x:70,y:waterY-20};
+let angle=-40,power=0,maxPower=100,aiming=false,aimStart=null,aimCur=null;
+let ball=null,wind=0,windTimer=0,rockPhase=0;
+let enemy={x:620,baseY:waterY-10};
+let particles=[];
+
+function resetShotsIfOver(){ if(shots<=0&&!ball){ gameOver=true; } }
+
+function newWind(){ wind=(Math.random()*2-1)*0.045; }
+newWind();
+
+function shipY(){ return enemy.baseY + Math.sin(rockPhase)*8; }
+
+function zones(){
+  const sy=shipY();
+  return {
+    hull:{x:enemy.x-70,y:sy-10,w:140,h:40,label:I18N.t('zone_hull','Hull'),pts:10},
+    mast:{x:enemy.x-6,y:sy-120,w:12,h:110,label:I18N.t('zone_mast','Mast'),pts:30},
+    rudder:{x:enemy.x+68,y:sy-18,w:16,h:28,label:I18N.t('zone_rudder','Rudder'),pts:60}
+  };
+}
+
+function fire(){
+  if(ball||gameOver||shots<=0)return;
+  shots--;
+  const rad=angle*Math.PI/180;
+  const spd=power*0.16;
+  ball={x:cannon.x,y:cannon.y,vx:Math.cos(rad)*spd,vy:Math.sin(rad)*spd,trail:[]};
+  SFX.hit();
+  power=0;
+}
+
+function pointInRect(px,py,r){return px>=r.x&&px<=r.x+r.w&&py>=r.y&&py<=r.y+r.h;}
+
+function hitTest(){
+  const z=zones();
+  for(const key of ['rudder','mast','hull']){
+    const r=z[key];
+    if(pointInRect(ball.x,ball.y,r))return {key,r};
+  }
+  return null;
+}
+
+function resolveHit(info){
+  const pts=info.r.pts;
+  score+=pts;
+  if(score>hi){hi=score;localStorage.setItem('cannonballaiming_hi',hi);}
+  SFX.success();
+  spawnSplash(ball.x,ball.y,'#ffcc33');
+  statusMsg=I18N.t('hit_msg','{z} hit! +{p}').replace('{z}',info.r.label).replace('{p}',pts);
+  ball=null;
+}
+
+let statusMsg='';
+function spawnSplash(x,y,color){
+  for(let i=0;i<14;i++){
+    particles.push({x,y,vx:(Math.random()-0.5)*5,vy:(Math.random()-1.2)*5,life:30,color});
+  }
+}
+
+// Pointer / drag aiming
+function toLocal(evt){
+  const rect=c.getBoundingClientRect();
+  const sx=(evt.touches?evt.touches[0].clientX:evt.clientX)-rect.left;
+  const sy=(evt.touches?evt.touches[0].clientY:evt.clientY)-rect.top;
+  return {x:sx*(W/rect.width),y:sy*(H/rect.height)};
+}
+c.addEventListener('pointerdown',e=>{
+  if(ball||gameOver)return;
+  aiming=true;aimStart=toLocal(e);aimCur=aimStart;
+});
+c.addEventListener('pointermove',e=>{ if(aiming)aimCur=toLocal(e); });
+window.addEventListener('pointerup',e=>{
+  if(!aiming)return;
+  aiming=false;
+  const dx=cannon.x-aimCur.x, dy=cannon.y-aimCur.y;
+  const dist=Math.min(Math.hypot(dx,dy),160);
+  if(dist>10){
+    angle=Math.atan2(-dy,dx)*180/Math.PI; // note: drag back = opposite direction of fire
+    angle=Math.atan2(dy===0?0:-( -dy),dx); // placeholder unused
+    const firedAngle=Math.atan2(-dy,dx)*180/Math.PI;
+    angle=firedAngle;
+    power=(dist/160)*maxPower;
+    fire();
+  }
+});
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&e.code==='Space'){restart();return;}
+  if(e.code==='ArrowUp'){angle=Math.max(-80,angle-2);e.preventDefault();}
+  else if(e.code==='ArrowDown'){angle=Math.min(-5,angle+2);e.preventDefault();}
+  else if(e.code==='ArrowRight'){power=Math.min(maxPower,power+4);e.preventDefault();}
+  else if(e.code==='ArrowLeft'){power=Math.max(0,power-4);e.preventDefault();}
+  else if(e.code==='Space'){e.preventDefault();fire();}
+});
+
+function restart(){score=0;shots=10;gameOver=false;ball=null;angle=-40;power=0;newWind();particles=[];statusMsg='';}
+
+function drawShip(x,y,flip){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle='#5b3a21';
+  ctx.beginPath();
+  ctx.moveTo(-70,-10);ctx.lineTo(70,-10);ctx.lineTo(55,20);ctx.lineTo(-55,20);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#7a5230';
+  ctx.fillRect(-6,-120,12,110);
+  ctx.fillStyle='#e8e2d0';
+  ctx.beginPath();ctx.moveTo(0,-115);ctx.lineTo(60,-60);ctx.lineTo(0,-60);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#3a2816';
+  ctx.fillRect(68,-18,16,28);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,waterY);
+  sky.addColorStop(0,'#0b2733');sky.addColorStop(1,'#1f4e6b');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,waterY);
+  ctx.fillStyle='#154a63';ctx.fillRect(0,waterY,W,H-waterY);
+  for(let i=0;i<W;i+=30){
+    ctx.strokeStyle='rgba(255,255,255,0.08)';
+    ctx.beginPath();ctx.moveTo(i,waterY+10+Math.sin(rockPhase+i*0.05)*3);ctx.lineTo(i+20,waterY+10+Math.sin(rockPhase+i*0.05+1)*3);ctx.stroke();
+  }
+
+  rockPhase+=0.03;
+  windTimer++;
+  if(windTimer>180){windTimer=0;newWind();}
+
+  // wind indicator
+  ctx.fillStyle='#fff';ctx.font='14px Arial';ctx.textAlign='left';
+  const windLabel=I18N.t('wind_label','Wind');
+  ctx.fillText(windLabel+': '+(wind>0?'→':'←')+' '+Math.abs(Math.round(wind*1000)),10,20);
+
+  drawShip(enemy.x,shipY(),false);
+
+  // cannon
+  ctx.save();
+  ctx.translate(cannon.x,cannon.y);
+  const curAngle=aiming?Math.atan2(-(aimStart.y-aimCur.y),(cannon.x-aimCur.x))*-1:angle*Math.PI/180;
+  const drawAngle=aiming?Math.atan2(cannon.y-aimCur.y,aimCur.x-cannon.x)*-1+Math.PI:angle*Math.PI/180;
+  const rad2=angle*Math.PI/180;
+  ctx.rotate(-rad2);
+  ctx.fillStyle='#333';ctx.fillRect(0,-8,40,16);
+  ctx.restore();
+  ctx.fillStyle='#222';ctx.beginPath();ctx.arc(cannon.x,cannon.y,16,0,Math.PI*2);ctx.fill();
+
+  // aim trajectory preview
+  if(aiming){
+    ctx.strokeStyle='#ffd54f';ctx.setLineDash([6,4]);
+    ctx.beginPath();ctx.moveTo(cannon.x,cannon.y);ctx.lineTo(aimCur.x,aimCur.y);ctx.stroke();
+    ctx.setLineDash([]);
+  } else if(!ball&&!gameOver){
+    // show power bar driven by keyboard
+    ctx.fillStyle='rgba(255,255,255,0.25)';ctx.fillRect(20,H-30,100,10);
+    ctx.fillStyle='#ffd54f';ctx.fillRect(20,H-30,power,10);
+  }
+
+  if(ball){
+    ball.trail.push({x:ball.x,y:ball.y});
+    if(ball.trail.length>18)ball.trail.shift();
+    ball.vy+=0.22;
+    ball.vx+=wind;
+    ball.x+=ball.vx;ball.y+=ball.vy;
+    ball.trail.forEach((t,i)=>{
+      ctx.globalAlpha=i/ball.trail.length*0.5;
+      ctx.fillStyle='#ccc';ctx.beginPath();ctx.arc(t.x,t.y,4,0,Math.PI*2);ctx.fill();
+    });
+    ctx.globalAlpha=1;
+    ctx.fillStyle='#111';ctx.beginPath();ctx.arc(ball.x,ball.y,7,0,Math.PI*2);ctx.fill();
+
+    const hit=hitTest();
+    if(hit){resolveHit(hit);}
+    else if(ball.y>waterY||ball.x>W||ball.x<0){
+      spawnSplash(Math.min(Math.max(ball.x,0),W),Math.min(ball.y,waterY),'#dff');
+      statusMsg=I18N.t('miss_msg','Splash! Missed.');
+      SFX.fail();
+      ball=null;
+    }
+  }
+
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    p.x+=p.vx;p.y+=p.vy;p.vy+=0.15;p.life--;
+    ctx.globalAlpha=Math.max(0,p.life/30);
+    ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();
+  });
+  ctx.globalAlpha=1;
+
+  if(statusMsg){
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(statusMsg,W/2,50);
+  }
+
+  resetShotsIfOver();
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint2','Tap or Space to fire again'),W/2,H/2+46);
+  }
+
+  document.getElementById('hud').textContent=
+    I18N.t('cannon_hud','Score: {s} | Hi: {h} | Shots left: {n}').replace('{s}',score).replace('{h}',hi).replace('{n}',Math.max(0,shots));
+  requestAnimationFrame(loop);
+}
+
+c.addEventListener('click',()=>{ if(gameOver)restart(); });
+c.addEventListener('touchstart',e=>{ if(gameOver){e.preventDefault();restart();} },{passive:false});
+
+loop();
+</script></body></html>

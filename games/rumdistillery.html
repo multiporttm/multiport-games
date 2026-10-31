@@ -1,0 +1,249 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rum Distillery</title><meta name="description" content="Play Rum Distillery free online — Watch the still's temperature and click Collect at the right moment to pull pure distillate for each batch, then blend your batches with sliders to hit the target proof."><link rel="canonical" href="https://games.multiportllc.com/games/rumdistillery"><meta property="og:title" content="Rum Distillery - Multiport Games"><meta property="og:description" content="Play Rum Distillery free online — Watch the still's temperature and click Collect at the right moment to pull pure distillate for each batch, then blend your batches with sliders to hit the target proof."><meta property="og:url" content="https://games.multiportllc.com/games/rumdistillery"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rum Distillery","description":"Play Rum Distillery free online instantly. Watch the still's temperature and click Collect at the right moment to pull pure distillate for each batch, then blend your batches with sliders to hit the target proof. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/rumdistillery","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#2a1708;border-radius:14px;padding:16px;text-align:center;max-width:620px;margin:0 auto}
+#status{color:#ffe0b2;font-size:1rem;font-weight:700;margin:4px 0 10px;min-height:2.4em}
+#hud{display:flex;justify-content:center;gap:16px;color:#ffcc80;font-weight:800;font-size:.9rem;margin-bottom:8px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#c{background:#1c0f05;border-radius:8px;display:block;margin:0 auto}
+#collectBtn{margin-top:10px;padding:12px 30px;background:#c1440e;border:none;border-radius:24px;color:#fff;font-weight:800;font-size:1.05rem;cursor:pointer}
+#collectBtn:disabled{opacity:.4;cursor:not-allowed}
+#blendPanel{display:none;margin-top:10px;text-align:left;background:rgba(0,0,0,.25);border-radius:10px;padding:12px}
+.blendRow{display:flex;align-items:center;gap:8px;margin:8px 0;color:#ffe0b2;font-size:.85rem}
+.blendRow label{width:70px;flex-shrink:0}
+.blendRow input[type=range]{flex:1}
+.blendRow .val{width:34px;text-align:right}
+#blendResult{color:#ffd54f;font-weight:800;margin:8px 0;text-align:center}
+#submitBlendBtn,#newRoundBtn{padding:10px 22px;background:#2e9e4f;border:none;border-radius:20px;color:#fff;font-weight:700;cursor:pointer;margin:4px}
+#newRoundBtn{background:#b3432b;display:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rum Distillery</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span>Round: <b id="lvl">1</b></span><span>Lives: <b id="lives">3</b></span><span>Score: <b id="score">0</b></span><span>Hi: <b id="hi">0</b></span></div>
+      <div id="status">Batch 1 of 3 — watch the still and collect at the right moment!</div>
+      <canvas id="c" width="560" height="190"></canvas>
+      <button id="collectBtn" onclick="collect()">🛢️ Collect</button>
+      <div id="blendPanel">
+        <div id="targetLabel" style="color:#ffd54f;font-weight:800;text-align:center;margin-bottom:6px"></div>
+        <div id="sliders"></div>
+        <div id="blendResult"></div>
+        <div style="text-align:center">
+          <button id="submitBlendBtn" onclick="submitBlend()">Bottle This Blend</button>
+        </div>
+      </div>
+      <button id="newRoundBtn" onclick="newGame()">New Batch Run</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A marker sweeps back and forth across the still's temperature gauge. Press <b>Space</b> or click <b>Collect</b> while it's inside the green "hearts" band for a pure batch — too early (left of the band) runs weak, too late (right of the band) runs impure. Collect three batches, then drag the blend sliders (or use arrow keys on a focused slider) to mix them until the result lands inside the target proof range, and click <b>Bottle This Blend</b> to finish the round.
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+let level,lives,score,hi,phase,batchIdx,batches,markerPos,markerDir,markerSpeed,sweetLo,sweetHi,targetLo,targetHi,rafId,collecting;
+
+hi=parseInt(localStorage.getItem('rumdistillery_best')||'0',10);
+document.getElementById('hi').textContent=hi;
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function newGame(){
+  level=1;lives=3;score=0;
+  document.getElementById('newRoundBtn').style.display='none';
+  document.getElementById('lives').textContent=lives;
+  document.getElementById('score').textContent=score;
+  startRound();
+}
+
+function startRound(){
+  document.getElementById('lvl').textContent=level;
+  phase='collect';batchIdx=0;batches=[];
+  document.getElementById('blendPanel').style.display='none';
+  document.getElementById('collectBtn').style.display='inline-block';
+  document.getElementById('collectBtn').disabled=false;
+  markerSpeed=1.6+level*0.22;
+  startBatch();
+}
+
+function startBatch(){
+  markerPos=0;markerDir=1;collecting=false;
+  const bandWidth=Math.max(10,22-level*1.2);
+  const center=35+Math.random()*30;
+  sweetLo=center-bandWidth/2;sweetHi=center+bandWidth/2;
+  setStatus(I18N.t('batch_hint','Batch {n} of 3 — press Space or click Collect inside the green band.').replace('{n}',batchIdx+1));
+  if(!rafId)rafId=requestAnimationFrame(loop);
+}
+
+function collect(){
+  if(phase!=='collect'||collecting)return;
+  collecting=true;
+  let quality,label;
+  if(markerPos<sweetLo){
+    const d=sweetLo-markerPos;
+    quality=Math.max(0.05,1-d/35);
+    label=I18N.t('too_weak','Pulled too early — this batch runs weak.');
+  }else if(markerPos>sweetHi){
+    const d=markerPos-sweetHi;
+    quality=Math.max(0.05,1-d/35);
+    label=I18N.t('too_impure','Pulled too late — this batch runs impure.');
+  }else{
+    const bandCenter=(sweetLo+sweetHi)/2, half=(sweetHi-sweetLo)/2;
+    quality=1-Math.abs(markerPos-bandCenter)/Math.max(half,1)*0.3;
+    label=I18N.t('pure_cut','Clean cut! A fine pure batch.');
+  }
+  const proof=Math.round(40+quality*80);
+  batches.push({quality,proof});
+  if(quality>0.75)SFX.success();else if(quality>0.4)SFX.point();else SFX.hit();
+  setStatus(label+' ('+I18N.t('proof_label','Proof: {p}').replace('{p}',proof)+')');
+  batchIdx++;
+  document.getElementById('collectBtn').disabled=true;
+  setTimeout(()=>{
+    document.getElementById('collectBtn').disabled=false;
+    if(batchIdx<3){startBatch();}
+    else{startBlend();}
+  },1100);
+}
+
+function loop(){
+  markerPos+=markerDir*markerSpeed*0.35;
+  if(markerPos>=100){markerPos=100;markerDir=-1;}
+  if(markerPos<=0){markerPos=0;markerDir=1;}
+  drawStill();
+  rafId=requestAnimationFrame(loop);
+}
+
+function drawStill(){
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const grad=ctx.createLinearGradient(0,0,0,cv.height);
+  grad.addColorStop(0,'#3a2411');grad.addColorStop(1,'#1c0f05');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,cv.width,cv.height);
+  // still pot
+  ctx.fillStyle='#8a6a3a';
+  ctx.beginPath();ctx.arc(90,120,55,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#b5854a';ctx.fillRect(75,40,30,40);
+  ctx.strokeStyle='#5c4420';ctx.lineWidth=4;ctx.beginPath();ctx.arc(90,120,55,0,Math.PI*2);ctx.stroke();
+  // steam
+  const t=performance.now()/400;
+  ctx.strokeStyle='rgba(255,255,255,0.25)';ctx.lineWidth=3;
+  for(let i=0;i<3;i++){
+    ctx.beginPath();
+    const sx=85+i*8;
+    ctx.moveTo(sx,38);
+    ctx.quadraticCurveTo(sx+10*Math.sin(t+i),20,sx,4);
+    ctx.stroke();
+  }
+  // gauge bar
+  const gx=180,gy=70,gw=350,gh=30;
+  ctx.fillStyle='#000';ctx.fillRect(gx,gy,gw,gh);
+  const bandX=gx+gw*(sweetLo/100), bandW=gw*((sweetHi-sweetLo)/100);
+  ctx.fillStyle='rgba(76,175,80,0.6)';ctx.fillRect(bandX,gy,bandW,gh);
+  ctx.strokeStyle='#555';ctx.strokeRect(gx,gy,gw,gh);
+  const mx=gx+gw*(markerPos/100);
+  ctx.fillStyle=collecting?'#888':'#ffcc33';
+  ctx.beginPath();ctx.moveTo(mx,gy-6);ctx.lineTo(mx-7,gy-18);ctx.lineTo(mx+7,gy-18);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#ffcc33';ctx.fillRect(mx-2,gy,4,gh);
+  ctx.fillStyle='#ffe0b2';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('weak_label','WEAK'),gx+30,gy+gh+18);
+  ctx.fillText(I18N.t('pure_label','PURE'),bandX+bandW/2,gy+gh+18);
+  ctx.fillText(I18N.t('impure_label','IMPURE'),gx+gw-35,gy+gh+18);
+  // collected jars
+  for(let i=0;i<3;i++){
+    const jx=180+i*60, jy=140;
+    ctx.strokeStyle='#8a6a3a';ctx.lineWidth=2;ctx.strokeRect(jx,jy,40,40);
+    if(batches[i]){
+      const q=batches[i].quality;
+      ctx.fillStyle=q>0.75?'#c99b3b':q>0.4?'#d9c36a':'#8a9b6a';
+      ctx.fillRect(jx+3,jy+3+ (1-q)*34,34,34*q);
+      ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.fillText(batches[i].proof,jx+20,jy+54);
+    }
+  }
+}
+
+function startBlend(){
+  phase='blend';
+  cancelAnimationFrame(rafId);rafId=null;
+  document.getElementById('collectBtn').style.display='none';
+  const panel=document.getElementById('blendPanel');
+  panel.style.display='block';
+  targetLo=55+Math.floor(Math.random()*15);
+  targetHi=targetLo+10+Math.floor(level);
+  document.getElementById('targetLabel').textContent=I18N.t('target_label','Target proof: {lo}–{hi}').replace('{lo}',targetLo).replace('{hi}',targetHi);
+  const slidersEl=document.getElementById('sliders');
+  slidersEl.innerHTML='';
+  batches.forEach((b,i)=>{
+    const row=document.createElement('div');row.className='blendRow';
+    const label=I18N.t('batch_label','Batch {n} (Proof {p})').replace('{n}',i+1).replace('{p}',b.proof);
+    row.innerHTML=`<label>${label}</label><input type="range" min="0" max="100" value="33" id="sl${i}"><span class="val" id="slv${i}">33</span>`;
+    slidersEl.appendChild(row);
+  });
+  batches.forEach((b,i)=>{
+    document.getElementById('sl'+i).addEventListener('input',()=>{
+      document.getElementById('slv'+i).textContent=document.getElementById('sl'+i).value;
+      SFX.tick();
+      updateBlendResult();
+    });
+  });
+  updateBlendResult();
+  setStatus(I18N.t('blend_hint','Three batches collected. Blend them to hit the target proof!'));
+}
+
+function currentBlendProof(){
+  let num=0,den=0;
+  batches.forEach((b,i)=>{
+    const v=parseFloat(document.getElementById('sl'+i).value);
+    num+=v*b.proof;den+=v;
+  });
+  return den>0?num/den:0;
+}
+
+function updateBlendResult(){
+  const p=currentBlendProof();
+  document.getElementById('blendResult').textContent=I18N.t('result_label','Blended proof: {p}').replace('{p}',Math.round(p));
+}
+
+function submitBlend(){
+  if(phase!=='blend')return;
+  const p=currentBlendProof();
+  if(p>=targetLo&&p<=targetHi){
+    SFX.win();
+    score+=15+level*5;
+    if(score>hi){hi=score;localStorage.setItem('rumdistillery_best',hi);}
+    document.getElementById('score').textContent=score;
+    document.getElementById('hi').textContent=hi;
+    level++;
+    SFX.levelup();
+    setStatus(I18N.t('blend_approved','Perfect blend! The crew raises a toast. Next round brewing...'));
+    setTimeout(()=>startRound(),1400);
+  }else{
+    lives--;
+    SFX.fail();
+    document.getElementById('lives').textContent=Math.max(0,lives);
+    if(lives<=0){
+      phase='over';
+      SFX.lose();
+      setStatus(I18N.t('run_over','Run ruined! The crew refuses to drink this. Click "New Batch Run" to try again.'));
+      document.getElementById('blendPanel').style.display='none';
+      document.getElementById('newRoundBtn').style.display='inline-block';
+    }else{
+      setStatus(I18N.t('blend_off','Off-target blend ({lives} tries left) — adjust the sliders and try again.').replace('{lives}',lives));
+    }
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&phase==='collect'){e.preventDefault();collect();}
+  else if(e.key==='Enter'&&phase==='blend'){e.preventDefault();submitBlend();}
+  else if((e.key==='n'||e.key==='N')&&phase==='over'){newGame();}
+});
+
+newGame();
+</script></body></html>

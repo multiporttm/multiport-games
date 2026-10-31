@@ -1,0 +1,214 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Crow's Nest Lookout</title><meta name="description" content="Play Crow's Nest Lookout free online — Drag or use arrow keys to pan your spyglass across the horizon, spot approaching ships, storms and reefs, then press Space or tap the bell to ring the alarm before they close in."><link rel="canonical" href="https://games.multiportllc.com/games/crowsnestlookout"><meta property="og:title" content="Crow's Nest Lookout - Multiport Games"><meta property="og:description" content="Play Crow's Nest Lookout free online — Drag or use arrow keys to pan your spyglass across the horizon, spot approaching ships, storms and reefs, then press Space or tap the bell to ring the alarm before they close in."><meta property="og:url" content="https://games.multiportllc.com/games/crowsnestlookout"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Crow's Nest Lookout","description":"Play Crow's Nest Lookout free online instantly. Drag or use arrow keys to pan your spyglass across the horizon, spot approaching ships, storms and reefs, then press Space or tap the bell to ring the alarm before they close in. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/crowsnestlookout","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#0a1a2e;border-radius:14px;padding:16px;text-align:center}
+#status{color:#dceeff;font-size:1rem;font-weight:700;margin:4px 0 8px;min-height:1.6em}
+#hud{display:flex;justify-content:center;gap:16px;color:#9fd8ff;font-weight:800;font-size:.9rem;margin-bottom:8px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+#radar{background:#061018;border-radius:4px;display:block;margin:0 auto 6px}
+#c{background:#1e4a68;border-radius:8px;display:block;margin:0 auto;touch-action:none;cursor:grab}
+#c.dragging{cursor:grabbing}
+#bellBtn{margin-top:10px;padding:12px 32px;background:#b3432b;border:none;border-radius:24px;color:#fff;font-weight:800;font-size:1.1rem;cursor:pointer}
+#bellBtn:disabled{opacity:.5;cursor:not-allowed}
+#newBtn{margin-top:8px;padding:9px 20px;background:#1a6ea8;border:none;border-radius:20px;color:#fff;cursor:pointer;font-weight:700;display:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Crow's Nest Lookout</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span>Watch: <b id="lvl">1</b></span><span>Lives: <b id="lives">3</b></span><span>Score: <b id="score">0</b></span><span>Hi: <b id="hi">0</b></span></div>
+      <div id="status">Drag the view or use ← → to scan the horizon for threats.</div>
+      <canvas id="radar" width="640" height="26"></canvas>
+      <canvas id="c" width="640" height="280"></canvas>
+      <button id="bellBtn" onclick="ringBell()">🔔 Ring Alarm</button>
+      <br><button id="newBtn" onclick="newGame()">New Watch</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> The horizon is wider than your spyglass view. Drag the sky (or press <b>←/→</b>) to pan and search for approaching ships, storms and reefs, shown growing larger as they close in. Once a threat is inside your view, press <b>Space</b> or tap <b>🔔 Ring Alarm</b> to warn the crew about the most urgent one in sight. Spot threats early for more points — let one get too close unspotted and you lose a life!
+  </div>
+</div>
+<script>
+const radar=document.getElementById('radar'),rctx=radar.getContext('2d');
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const WORLD=2400,VIEW=640,MAXDIST=100;
+let panX,level,lives,score,hi,threats,spawnTimer,gameOver,dragStartX,dragStartPan,dragging,bellCooldown,lastTime;
+
+hi=parseInt(localStorage.getItem('crowsnestlookout_best')||'0',10);
+document.getElementById('hi').textContent=hi;
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function newGame(){
+  panX=0;level=1;lives=3;score=0;threats=[];spawnTimer=0;gameOver=false;bellCooldown=0;lastTime=null;
+  document.getElementById('lvl').textContent=level;
+  document.getElementById('lives').textContent=lives;
+  document.getElementById('score').textContent=score;
+  document.getElementById('newBtn').style.display='none';
+  document.getElementById('bellBtn').disabled=false;
+  setStatus(I18N.t('scan_hint','Scan the horizon — drag or use arrow keys to pan.'));
+  if(!rafId)rafId=requestAnimationFrame(loop);
+}
+let rafId=null;
+
+const KINDS=[
+  {name:'ship',emoji:'🚢',color:'#8a8a8a'},
+  {name:'storm',emoji:'🌩️',color:'#5a5a7a'},
+  {name:'reef',emoji:'🪸',color:'#a35a3a'}
+];
+
+function spawnThreat(){
+  const kind=KINDS[Math.floor(Math.random()*KINDS.length)];
+  threats.push({
+    x:Math.random()*WORLD,
+    dist:100,
+    speed:0.12+level*0.02+Math.random()*0.08,
+    kind,
+    spotted:false
+  });
+}
+
+function clampPan(){
+  panX=Math.max(0,Math.min(WORLD-VIEW,panX));
+}
+
+function pan(dx){
+  panX-=dx;
+  clampPan();
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameOver)return;
+  if(e.key==='ArrowLeft'){e.preventDefault();pan(-24);}
+  else if(e.key==='ArrowRight'){e.preventDefault();pan(24);}
+  else if(e.key===' '||e.key==='Enter'){e.preventDefault();ringBell();}
+});
+
+cv.addEventListener('pointerdown',e=>{
+  dragging=true;cv.classList.add('dragging');
+  dragStartX=e.clientX;dragStartPan=panX;
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const rect=cv.getBoundingClientRect();
+  const scale=VIEW/rect.width;
+  const dx=(e.clientX-dragStartX)*scale;
+  panX=dragStartPan-dx;
+  clampPan();
+});
+window.addEventListener('pointerup',()=>{dragging=false;cv.classList.remove('dragging');});
+
+function ringBell(){
+  if(gameOver||bellCooldown>0)return;
+  bellCooldown=18;
+  const visible=threats.filter(t=>!t.spotted&&t.x>=panX-20&&t.x<=panX+VIEW+20);
+  if(visible.length===0){
+    SFX.error();
+    setStatus(I18N.t('nothing_sighted','No threats in view — pan to find one before ringing!'));
+    return;
+  }
+  visible.sort((a,b)=>a.dist-b.dist);
+  const target=visible[0];
+  target.spotted=true;
+  const pts=Math.max(5,Math.round(target.dist));
+  score+=pts;
+  if(score>hi){hi=score;localStorage.setItem('crowsnestlookout_best',hi);}
+  document.getElementById('score').textContent=score;
+  document.getElementById('hi').textContent=hi;
+  SFX.success();
+  setStatus(I18N.t('spotted_msg','Spotted a {k} at range — +{p} points!').replace('{k}',target.kind.name).replace('{p}',pts));
+  if(score>=level*60){
+    level++;
+    document.getElementById('lvl').textContent=level;
+    SFX.levelup();
+  }
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+  if(!gameOver){
+    if(bellCooldown>0)bellCooldown-=dt;
+    spawnTimer+=dt;
+    const interval=Math.max(45,110-level*6);
+    if(spawnTimer>=interval){spawnTimer-=interval;spawnThreat();}
+    threats.forEach(t=>{ if(!t.spotted) t.dist-=t.speed*dt; });
+    const lost=threats.filter(t=>!t.spotted&&t.dist<=0);
+    if(lost.length){
+      lost.forEach(t=>{t.spotted=true;t.missed=true;});
+      lives-=lost.length;
+      SFX.lose();
+      document.getElementById('lives').textContent=Math.max(0,lives);
+      setStatus(I18N.t('threat_close','A threat closed in unspotted! Stay sharp.'));
+      if(lives<=0){
+        gameOver=true;
+        SFX.fail();
+        setStatus(I18N.t('watch_over','The watch failed — danger struck the ship! Click "New Watch" to try again.'));
+        document.getElementById('bellBtn').disabled=true;
+        document.getElementById('newBtn').style.display='inline-block';
+      }
+    }
+    threats=threats.filter(t=>!(t.spotted&&(t.missed||t.fadeOut>60))&&t.dist>-40);
+    threats.forEach(t=>{ if(t.spotted&&!t.missed) t.fadeOut=(t.fadeOut||0)+dt; });
+  }
+  draw();
+  rafId=requestAnimationFrame(loop);
+}
+
+function draw(){
+  // radar strip: full world view
+  rctx.clearRect(0,0,radar.width,radar.height);
+  rctx.fillStyle='#0d1f33';rctx.fillRect(0,0,radar.width,radar.height);
+  const rs=radar.width/WORLD;
+  rctx.fillStyle='rgba(255,255,255,0.15)';
+  rctx.fillRect(panX*rs,0,VIEW*rs,radar.height);
+  threats.forEach(t=>{
+    if(t.spotted)return;
+    const urgency=1-t.dist/100;
+    rctx.fillStyle=urgency>0.7?'#ff4444':urgency>0.4?'#ffaa33':'#66ccff';
+    rctx.beginPath();rctx.arc(t.x*rs,radar.height/2,3+urgency*3,0,7);rctx.fill();
+  });
+
+  // main view
+  ctx.clearRect(0,0,cv.width,cv.height);
+  const sky=ctx.createLinearGradient(0,0,0,cv.height);
+  sky.addColorStop(0,'#1b3a5c');sky.addColorStop(0.6,'#3a6a8a');sky.addColorStop(0.62,'#2b5a6a');sky.addColorStop(1,'#0d2a38');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,cv.width,cv.height);
+  const horizonY=cv.height*0.62;
+  ctx.strokeStyle='rgba(255,255,255,0.2)';ctx.beginPath();ctx.moveTo(0,horizonY);ctx.lineTo(cv.width,horizonY);ctx.stroke();
+
+  threats.forEach(t=>{
+    const sx=t.x-panX;
+    if(sx<-60||sx>cv.width+60)return;
+    const urgency=1-Math.max(0,t.dist)/100;
+    const size=10+urgency*55;
+    const y=horizonY-size*0.15;
+    ctx.save();
+    ctx.globalAlpha=t.spotted?Math.max(0,1-(t.fadeOut||0)/60):1;
+    ctx.font=size+'px serif';
+    ctx.textAlign='center';
+    ctx.fillText(t.kind.emoji,sx,y+size*0.35);
+    if(!t.spotted){
+      ctx.strokeStyle=urgency>0.7?'#ff4444':'rgba(255,255,255,0.4)';
+      ctx.lineWidth=urgency>0.7?2.5:1;
+      ctx.beginPath();ctx.arc(sx,y,size*0.6+6,0,7);ctx.stroke();
+    }
+    ctx.restore();
+  });
+
+  // crosshair / bell cooldown indicator
+  ctx.fillStyle='rgba(255,255,255,0.6)';
+  ctx.font='bold 12px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('pan_label','Pan: {p}%').replace('{p}',Math.round(panX/(WORLD-VIEW)*100)),10,18);
+}
+
+newGame();
+</script></body></html>

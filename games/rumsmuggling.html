@@ -1,0 +1,183 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rum Smuggling</title><meta name="description" content="Play Rum Smuggling free online — Hide rum barrels among decoy crates in your cargo hold grid, then survive the customs inspection before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/rumsmuggling"><meta property="og:title" content="Rum Smuggling - Multiport Games"><meta property="og:description" content="Play Rum Smuggling free online — Hide rum barrels among decoy crates in your cargo hold grid, then survive the customs inspection before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/rumsmuggling"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rum Smuggling","description":"Play Rum Smuggling free online instantly. Hide rum barrels among decoy crates in your cargo hold grid, then survive the customs inspection before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/rumsmuggling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#2b1d10;border-radius:14px;padding:18px;text-align:center}
+#status{color:#ffd54f;font-size:1.05rem;font-weight:800;margin:6px 0;min-height:1.6em}
+#stats{color:#ddd;font-size:.95rem;margin-bottom:10px}
+#stats b{color:#e9c46a}
+#hold{display:inline-grid;grid-template-columns:repeat(6,56px);grid-template-rows:repeat(5,56px);gap:6px;background:#1a120a;padding:12px;border-radius:12px;margin:10px auto}
+.slot{width:56px;height:56px;border-radius:8px;background:#5a4327;display:flex;align-items:center;justify-content:center;font-size:1.6rem;cursor:pointer;user-select:none;transition:transform .1s,background .15s;border:2px solid #3e2e18}
+.slot:active{transform:scale(.92)}
+.slot.crate{background:#8a6a3a}
+.slot.barrel{background:#7a2e2e;border-color:#c0392b}
+.slot.flagged{outline:3px solid #ffd54f}
+#controls{margin:12px 0}
+#controls button{padding:9px 20px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+#phaseMsg{color:#9ccc65;font-size:.9rem;margin-top:4px;min-height:1.4em}
+@media(max-width:480px){
+  #hold{grid-template-columns:repeat(6,44px);grid-template-rows:repeat(5,44px)}
+  .slot{width:44px;height:44px;font-size:1.25rem}
+}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rum Smuggling</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="status">Tap crates to hide rum barrels inside them. Click "Seal Hold" when ready.</div>
+      <div id="stats">Barrels hidden: <b id="barrelCount">0</b> / <b id="barrelTarget">10</b> &nbsp;|&nbsp; Round: <b id="roundNum">1</b> &nbsp;|&nbsp; High score: <b id="hiScore">0</b></div>
+      <div id="hold"></div>
+      <div id="controls">
+        <button id="sealBtn">Seal Hold</button>
+        <button id="newBtn">New Round</button>
+      </div>
+      <div id="phaseMsg"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Your cargo hold is a grid of crates. Click/tap crates to hide rum barrels inside them (🛢️) — hide the required number, but leave enough plain crates untouched to look innocent. Click <b>Seal Hold</b> when your barrels are placed. Customs inspectors then get a limited number of inspection points to search slots. If they find fewer than half your barrels, you smuggle successfully and score points — find too many and you're caught! Click <b>New Round</b> any time to reset.
+  </div>
+</div>
+<script>
+const COLS=6,ROWS=5,TOTAL=COLS*ROWS;
+let grid=[]; // 'empty'|'crate'|'barrel'
+let revealed=[]; // bool, inspector-revealed
+let barrelTarget=10, round=1, hi=0, phase='placing'; // placing|inspecting|result
+let inspectPoints=0, inspectUsed=0, foundBarrels=0;
+
+const KEY='rumsmuggling_hi';
+try{hi=parseInt(localStorage.getItem(KEY)||'0',10)||0;}catch(e){}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+function setPhaseMsg(t){document.getElementById('phaseMsg').textContent=t;}
+
+function newRound(){
+  grid=new Array(TOTAL).fill('empty');
+  revealed=new Array(TOTAL).fill(false);
+  // place decoy crates everywhere first (visual: all slots are crates, barrels hide inside some)
+  for(let i=0;i<TOTAL;i++)grid[i]='crate';
+  barrelTarget=8+Math.min(6,round);
+  phase='placing';
+  inspectPoints=0;inspectUsed=0;foundBarrels=0;
+  document.getElementById('sealBtn').disabled=false;
+  document.getElementById('roundNum').textContent=round;
+  document.getElementById('barrelTarget').textContent=barrelTarget;
+  document.getElementById('hiScore').textContent=hi;
+  setStatus(I18N.t('place_hint','Tap crates to hide rum barrels inside them. Click "Seal Hold" when ready.'));
+  setPhaseMsg('');
+  updateCount();
+  render();
+}
+
+function updateCount(){
+  const n=grid.filter(g=>g==='barrel').length;
+  document.getElementById('barrelCount').textContent=n;
+}
+
+function render(){
+  const hold=document.getElementById('hold');
+  hold.innerHTML='';
+  for(let i=0;i<TOTAL;i++){
+    const slot=document.createElement('div');
+    slot.className='slot';
+    if(phase==='placing'){
+      slot.classList.add('crate');
+      slot.textContent = grid[i]==='barrel' ? '🛢️' : '📦';
+    } else {
+      // inspecting / result phase
+      if(revealed[i]){
+        slot.classList.add(grid[i]==='barrel'?'barrel':'crate');
+        slot.textContent = grid[i]==='barrel' ? '🛢️' : '📦';
+      } else {
+        slot.classList.add('crate');
+        slot.textContent='📦';
+      }
+      if(phase==='inspecting')slot.classList.add('flagged');
+    }
+    slot.onclick=()=>handleClick(i);
+    hold.appendChild(slot);
+  }
+}
+
+function handleClick(i){
+  if(phase==='placing'){
+    if(grid[i]==='barrel'){grid[i]='crate';SFX.click();}
+    else {
+      const n=grid.filter(g=>g==='barrel').length;
+      if(n>=barrelTarget){setStatus(I18N.t('max_barrels',"You've hidden all your barrels already — seal the hold!"));return;}
+      grid[i]='barrel';SFX.coin();
+    }
+    updateCount();
+    render();
+  } else if(phase==='inspecting'){
+    if(inspectUsed>=inspectPoints)return;
+    if(revealed[i])return;
+    revealed[i]=true;
+    inspectUsed++;
+    if(grid[i]==='barrel'){foundBarrels++;SFX.hit();}
+    else SFX.click();
+    render();
+    setPhaseMsg(I18N.t('inspect_progress','Inspection points used: {u}/{t} — barrels found: {f}')
+      .replace('{u}',inspectUsed).replace('{t}',inspectPoints).replace('{f}',foundBarrels));
+    if(inspectUsed>=inspectPoints){
+      setTimeout(finishInspection,500);
+    }
+  }
+}
+
+document.getElementById('sealBtn').onclick=()=>{
+  const n=grid.filter(g=>g==='barrel').length;
+  if(n<Math.ceil(barrelTarget*0.6)){
+    setStatus(I18N.t('need_more','Hide a few more barrels before sealing the hold!'));
+    return;
+  }
+  phase='inspecting';
+  inspectPoints=Math.max(4,Math.round(TOTAL*0.3)+round);
+  inspectUsed=0;foundBarrels=0;
+  document.getElementById('sealBtn').disabled=true;
+  SFX.swoosh();
+  setStatus(I18N.t('inspecting_now','Customs is inspecting! They have {n} inspection points.').replace('{n}',inspectPoints));
+  setPhaseMsg(I18N.t('inspect_progress','Inspection points used: {u}/{t} — barrels found: {f}')
+    .replace('{u}',0).replace('{t}',inspectPoints).replace('{f}',0));
+  render();
+};
+
+function finishInspection(){
+  phase='result';
+  const totalBarrels=grid.filter(g=>g==='barrel').length;
+  const caughtRatio = totalBarrels>0 ? foundBarrels/totalBarrels : 1;
+  const hidden = totalBarrels-foundBarrels;
+  let scoreGain=0;
+  let success;
+  if(caughtRatio<0.5){
+    success=true;
+    scoreGain = hidden*10 + 20;
+    SFX.success();
+    setStatus(I18N.t('smuggle_success','Smuggling successful! {h} barrels got through. +{s} points').replace('{h}',hidden).replace('{s}',scoreGain));
+  } else {
+    success=false;
+    scoreGain = Math.max(0,hidden*3);
+    SFX.fail();
+    setStatus(I18N.t('smuggle_caught','Caught by customs! Only {h} barrels survived. +{s} points').replace('{h}',hidden).replace('{s}',scoreGain));
+  }
+  hi+=scoreGain;
+  try{localStorage.setItem(KEY,String(hi));}catch(e){}
+  document.getElementById('hiScore').textContent=hi;
+  // reveal everything
+  for(let i=0;i<TOTAL;i++)revealed[i]=true;
+  render();
+  setPhaseMsg(success?I18N.t('next_round_hint','Click "New Round" to smuggle again with tougher inspectors.'):I18N.t('next_round_hint2','Click "New Round" to try again.'));
+  round++;
+}
+
+document.getElementById('newBtn').onclick=()=>{newRound();};
+
+newRound();
+</script></body></html>
