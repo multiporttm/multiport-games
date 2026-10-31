@@ -1,0 +1,263 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Aurora Photography - Multiport Games</title><meta name="description" content="Play Aurora Photography free online — Match Exposure and ISO (Left/Right and Up/Down Arrow, or the on-screen buttons) to the live aurora, then press Space or tap the shutter to capture the shot before the lights shift."><link rel="canonical" href="https://games.multiportllc.com/games/auroraphotography"><meta property="og:title" content="Aurora Photography - Multiport Games"><meta property="og:description" content="Play Aurora Photography free online — Match Exposure and ISO (Left/Right and Up/Down Arrow, or the on-screen buttons) to the live aurora, then press Space or tap the shutter to capture the shot before the lights shift."><meta property="og:url" content="https://games.multiportllc.com/games/auroraphotography"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Aurora Photography","description":"Play Aurora Photography free online instantly. Photograph the aurora borealis at night, adjusting exposure time and ISO to match the lights' current brightness and movement speed, timing the shutter release to capture the best possible shot before the aurora fades or shifts. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/auroraphotography","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#02030a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#eaf6ff;font-size:1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#controls{display:flex;justify-content:center;gap:22px;margin:10px 0;flex-wrap:wrap;color:#eaf6ff;font-weight:700}
+.ctrlGroup{display:flex;align-items:center;gap:6px}
+.ctrlGroup button{width:34px;height:34px;border-radius:8px;border:none;background:#2e3b4e;color:#eaf6ff;font-size:1.1rem;cursor:pointer}
+.ctrlGroup button:active{transform:scale(.94)}
+#shutterBtn{padding:10px 26px;border-radius:24px;border:none;background:#e94560;color:#fff;font-weight:900;font-size:1rem;cursor:pointer}
+#shutterBtn:active{transform:scale(.96)}
+.meterVal{min-width:54px;text-align:center;display:inline-block}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Aurora Photography</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="shotLabel">Shot 0 / 0</span>
+      <span id="scoreLabel">Score: 0 | Best: 0</span>
+      <span id="timeLabel">Time: 60s</span>
+    </div>
+    <canvas id="c" width="800" height="340"></canvas>
+    <div id="controls">
+      <div class="ctrlGroup">Exposure
+        <button onclick="adjust('exp',-1)">◀</button><span class="meterVal" id="expVal">5</span><button onclick="adjust('exp',1)">▶</button>
+      </div>
+      <div class="ctrlGroup">ISO
+        <button onclick="adjust('iso',-1)">◀</button><span class="meterVal" id="isoVal">5</span><button onclick="adjust('iso',1)">▶</button>
+      </div>
+      <button id="shutterBtn" onclick="shoot()">📷 Shutter (Space)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch the live aurora's <b>brightness</b> and <b>movement speed</b>. Adjust <b>Exposure</b> with <b>Left/Right Arrow</b> and <b>ISO</b> with <b>Up/Down Arrow</b> (or the on-screen buttons) to match the suggested settings shown — fast-moving lights need a shorter exposure, bright lights need lower ISO. When both meters glow green, press <b>Space</b>, click, or tap the shutter button to capture the shot before the aurora shifts. You get a limited number of shots within the time limit — maximize your total score!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=340;
+const GAME_KEY='auroraphotography_hi';
+let hi=parseFloat(localStorage.getItem(GAME_KEY))||0;
+
+const MAX_SHOTS=5;
+const TIME_LIMIT=60;
+
+let exposure=5,iso=5; // 1..10 scale each
+let brightness=50,speed=50; // 0..100, evolve over time
+let targetExp=5,targetIso=5;
+let shotsTaken=0,score=0,timeLeft=TIME_LIMIT;
+let gameState='ready';
+let lastTime=null;
+let flash=0;
+let lastShotQuality=null;
+let resultTimer=0;
+let auroraPhase=Math.random()*10;
+let bands=[];
+for(let i=0;i<4;i++)bands.push({offset:Math.random()*Math.PI*2,speedMul:0.6+Math.random()*0.8,hue:120+i*40});
+
+function reset(){
+  exposure=5;iso=5;shotsTaken=0;score=0;timeLeft=TIME_LIMIT;gameState='ready';lastTime=null;
+  brightness=40+Math.random()*20;speed=30+Math.random()*20;
+  recomputeTargets();
+}
+
+function recomputeTargets(){
+  // faster movement -> need shorter exposure (lower value); brighter -> need lower ISO
+  targetExp=Math.max(1,Math.min(10,Math.round(10-(speed/100)*8)));
+  targetIso=Math.max(1,Math.min(10,Math.round(10-(brightness/100)*8)));
+}
+
+function startGame(){
+  shotsTaken=0;score=0;timeLeft=TIME_LIMIT;
+  brightness=40+Math.random()*20;speed=30+Math.random()*20;
+  recomputeTargets();
+  gameState='shooting';
+}
+
+function adjust(which,dir){
+  if(gameState!=='shooting')return;
+  if(which==='exp'){exposure=Math.max(1,Math.min(10,exposure+dir));}
+  else{iso=Math.max(1,Math.min(10,iso+dir));}
+  SFX.tick();
+  updateHud();
+}
+
+function shoot(){
+  if(gameState==='ready'||gameState==='won'||gameState==='lost'){startGame();return;}
+  if(gameState!=='shooting')return;
+  const expErr=Math.abs(exposure-targetExp);
+  const isoErr=Math.abs(iso-targetIso);
+  const accuracy=Math.max(0,1-(expErr+isoErr)/10);
+  const points=Math.round(accuracy*100);
+  score+=points;
+  shotsTaken++;
+  flash=1;
+  lastShotQuality=accuracy;
+  if(accuracy>0.75)SFX.success(); else if(accuracy>0.4)SFX.point(); else SFX.fail();
+  gameState='result';
+  resultTimer=0;
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code))e.preventDefault();
+  if(gameState==='ready'||gameState==='won'||gameState==='lost'){
+    if(e.code==='Space'){startGame();}
+    return;
+  }
+  if(e.code==='ArrowLeft')adjust('exp',-1);
+  if(e.code==='ArrowRight')adjust('exp',1);
+  if(e.code==='ArrowUp')adjust('iso',1);
+  if(e.code==='ArrowDown')adjust('iso',-1);
+  if(e.code==='Space')shoot();
+});
+c.addEventListener('pointerdown',()=>{
+  if(gameState==='ready'||gameState==='won'||gameState==='lost'){startGame();}
+});
+
+function drawAurora(t){
+  // night sky gradient
+  const sky=ctx.createLinearGradient(0,0,0,H-60);
+  sky.addColorStop(0,'#000006');sky.addColorStop(1,'#0a1430');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H-60);
+  // stars
+  for(let i=0;i<60;i++){
+    const sx=(i*137)%W, sy=(i*89)%(H-80);
+    ctx.fillStyle='rgba(255,255,255,'+(0.2+((i*53)%50)/100)+')';
+    ctx.fillRect(sx,sy,1.5,1.5);
+  }
+  // aurora bands
+  const speedScale=0.002+speed/100*0.01;
+  bands.forEach((b,bi)=>{
+    ctx.save();
+    ctx.globalAlpha=0.35+(brightness/100)*0.4;
+    ctx.beginPath();
+    ctx.moveTo(0,H-60);
+    for(let x=0;x<=W;x+=10){
+      const y=80+bi*18+Math.sin(x*0.01+t*speedScale*b.speedMul+b.offset)*30*(0.6+brightness/150)+Math.sin(x*0.004+t*0.001)*20;
+      ctx.lineTo(x,y);
+    }
+    ctx.lineTo(W,H-60);ctx.closePath();
+    const grad=ctx.createLinearGradient(0,0,0,H-60);
+    grad.addColorStop(0,`hsla(${b.hue},90%,65%,0)`);
+    grad.addColorStop(0.5,`hsla(${b.hue},90%,60%,0.8)`);
+    grad.addColorStop(1,`hsla(${b.hue},90%,55%,0)`);
+    ctx.fillStyle=grad;
+    ctx.fill();
+    ctx.restore();
+  });
+  // horizon/ground
+  ctx.fillStyle='#0b0f1a';
+  ctx.fillRect(0,H-60,W,60);
+  ctx.fillStyle='#1a2235';
+  for(let i=0;i<6;i++)ctx.fillRect(40+i*130,H-60,16,24);
+}
+
+function meterBar(x,y,w,h,val,target,label){
+  ctx.fillStyle='rgba(255,255,255,0.15)';
+  ctx.fillRect(x,y,w,h);
+  const close=Math.abs(val-target)<=1;
+  ctx.fillStyle=close?'rgba(126,200,80,0.6)':'rgba(255,183,79,0.4)';
+  ctx.fillRect(x+ (target-1)/9*w -6,y,12,h);
+  ctx.fillStyle='#fff';
+  ctx.fillRect(x+(val-1)/9*w-2,y-4,4,h+8);
+  ctx.font='12px Arial';ctx.textAlign='left';ctx.fillStyle='#cfd8e3';
+  ctx.fillText(label,x,y-8);
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  const t=now;
+
+  if(gameState==='shooting'||gameState==='result'){
+    // aurora evolves
+    brightness+=Math.sin(t*0.0007)*0.4*dt;
+    speed+=Math.cos(t*0.0005)*0.35*dt;
+    brightness=Math.max(10,Math.min(95,brightness));
+    speed=Math.max(5,Math.min(95,speed));
+    recomputeTargets();
+  }
+
+  drawAurora(t);
+
+  if(flash>0){
+    ctx.fillStyle='rgba(255,255,255,'+flash+')';
+    ctx.fillRect(0,0,W,H);
+    flash-=0.08*dt;
+  }
+
+  if(gameState==='ready'){
+    ctx.fillStyle='#eaf6ff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to start shooting'),400,160);
+    updateHud();requestAnimationFrame(loop);return;
+  }
+
+  if(gameState==='won'||gameState==='lost'){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('done_title','SESSION COMPLETE'),400,140);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('score_label','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',Math.round(hi)),400,176);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to shoot again'),400,206);
+    updateHud();requestAnimationFrame(loop);return;
+  }
+
+  // live readouts
+  ctx.textAlign='left';ctx.font='bold 14px Arial';ctx.fillStyle='#eaf6ff';
+  ctx.fillText(I18N.t('brightness_label','Brightness: {v}%').replace('{v}',Math.round(brightness)),20,20);
+  ctx.fillText(I18N.t('speed_label','Movement: {v}%').replace('{v}',Math.round(speed)),20,38);
+
+  meterBar(500,22,260,10,exposure,targetExp,I18N.t('exposure_meter','Exposure (match the marker)'));
+  meterBar(500,62,260,10,iso,targetIso,I18N.t('iso_meter','ISO (match the marker)'));
+
+  if(gameState==='result'){
+    resultTimer+=dt;
+    ctx.font='bold 22px Arial';ctx.textAlign='center';
+    const q=lastShotQuality;
+    ctx.fillStyle=q>0.75?'#7ec850':q>0.4?'#ffb74f':'#ff5252';
+    const label=q>0.75?I18N.t('shot_great','GREAT SHOT!'):q>0.4?I18N.t('shot_ok','DECENT SHOT'):I18N.t('shot_bad','MISSED THE MOMENT');
+    ctx.fillText(label,400,120);
+    ctx.font='16px Arial';ctx.fillStyle='#fff';
+    ctx.fillText('+'+Math.round(q*100),400,146);
+    if(resultTimer>45){
+      if(shotsTaken>=MAX_SHOTS||timeLeft<=0){
+        gameState='won';
+        if(score>hi){hi=score;localStorage.setItem(GAME_KEY,String(hi));}
+        SFX.win();
+      }else{
+        gameState='shooting';
+      }
+    }
+  }else{
+    timeLeft-=dt/60;
+    if(timeLeft<=0){
+      timeLeft=0;
+      gameState='won';
+      if(score>hi){hi=score;localStorage.setItem(GAME_KEY,String(hi));}
+      SFX.win();
+    }
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function updateHud(){
+  document.getElementById('shotLabel').textContent=I18N.t('shot_label','Shot {i} / {n}').replace('{i}',Math.min(shotsTaken,MAX_SHOTS)).replace('{n}',MAX_SHOTS);
+  document.getElementById('scoreLabel').textContent=I18N.t('score_hi_label','Score: {s} | Best: {b}').replace('{s}',score).replace('{b}',Math.round(hi));
+  document.getElementById('timeLabel').textContent=I18N.t('time_label','Time: {t}s').replace('{t}',Math.ceil(timeLeft));
+  document.getElementById('expVal').textContent=exposure;
+  document.getElementById('isoVal').textContent=iso;
+}
+
+reset();
+loop();
+</script></body></html>

@@ -1,0 +1,247 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ice Sculpting Contest - Multiport Games</title><meta name="description" content="Play Ice Sculpting Contest free online — Press Space or tap when the timing needle hits the sweet spot to carve the ice block into the reference shape, then beat the rival sculptors' scores."><link rel="canonical" href="https://games.multiportllc.com/games/icesculptingcontest"><meta property="og:title" content="Ice Sculpting Contest - Multiport Games"><meta property="og:description" content="Play Ice Sculpting Contest free online — Press Space or tap when the timing needle hits the sweet spot to carve the ice block into the reference shape, then beat the rival sculptors' scores."><meta property="og:url" content="https://games.multiportllc.com/games/icesculptingcontest"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ice Sculpting Contest","description":"Play Ice Sculpting Contest free online instantly. Press Space or tap when the timing needle hits the sweet spot to carve the ice block into the reference shape with chainsaw and chisel, then beat the rival sculptors' scores. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/icesculptingcontest","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#061826}
+#c{background:#0e3a56;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{display:flex;justify-content:center;gap:16px;color:#d6f2ff;font-weight:700;padding:8px;flex-wrap:wrap;font-size:.92rem}
+#hud span b{color:#ffd54f}
+#carveBtn{display:block;margin:6px auto 0;padding:10px 26px;background:#29b6f6;border:none;border-radius:22px;color:#06283a;font-weight:800;font-size:1rem;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ice Sculpting Contest</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span data-i18n="hud_stage">🪚 Stage: <b id="stageVal">Rough Shaping</b></span>
+      <span data-i18n="hud_score">⭐ Score: <b id="scoreVal">0</b></span>
+      <span data-i18n="hud_hi">🏆 Best: <b id="hiVal">0</b></span>
+    </div>
+    <canvas id="c" width="760" height="420"></canvas>
+    <button id="carveBtn">🪚 Carve! (Space)</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A reference silhouette glows on the ice block. Watch the timing needle sweep the bar below — press <b>Space</b>, <b>click</b>, or <b>tap</b> the moment it's inside the yellow sweet spot to carve away the ice cleanly. Miss the timing and you'll chip the sculpture or leave ice uncarved. Rough out the block with the chainsaw, then finish the fine details with the chisel's tighter timing window, and beat the rival sculptors' scores!
+  </div>
+</div>
+<script>
+const HS_KEY='hs_icesculptingcontest';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const COLS=28,ROWS=16;
+const cellW=W/COLS, cellH=(H-70)/ROWS;
+let silhouette, state, queue, qi, stage, score, hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+let needlePos=0,needleDir=1,needleSpeed=0.018,goodHalf=0.09,okHalf=0.18;
+let gameOver=false,rivals=[],flashCells=[],flashTimer=0,msg='',msgTimer=0;
+
+function makeSilhouette(){
+  const g=[];
+  for(let r=0;r<ROWS;r++){
+    g.push([]);
+    for(let col=0;col<COLS;col++){
+      const cx=(col-COLS/2+0.5), cy=(r-ROWS/2+0.5)*1.25;
+      let keep=false;
+      // heart-ish blob shape via two circles + body
+      const d1=Math.hypot(cx-3.2,cy+2.5), d2=Math.hypot(cx+3.2,cy+2.5);
+      const topHeart=(d1<4.6||d2<4.6) && cy< -0.5;
+      const body = Math.abs(cx)<8.6 - Math.abs(cy)*0.55 && cy>=-0.5 && cy<6.5;
+      keep = topHeart || body;
+      g[r].push(keep);
+    }
+  }
+  return g;
+}
+
+function cellDistToKeep(r,c,g){
+  let best=999;
+  for(let rr=0;rr<ROWS;rr++)for(let cc=0;cc<COLS;cc++){
+    if(g[rr][cc]){ const d=Math.hypot(rr-r,cc-c); if(d<best)best=d; }
+  }
+  return best;
+}
+
+function buildQueue(){
+  const excess=[];
+  for(let r=0;r<ROWS;r++)for(let col=0;col<COLS;col++){
+    if(!silhouette[r][col]) excess.push({r,c:col,dist:cellDistToKeep(r,col,silhouette)});
+  }
+  excess.sort((a,b)=>b.dist-a.dist);
+  return excess;
+}
+
+function newGame(){
+  silhouette=makeSilhouette();
+  state=[];
+  for(let r=0;r<ROWS;r++){ state.push(new Array(COLS).fill('ice')); }
+  for(let r=0;r<ROWS;r++)for(let col=0;col<COLS;col++) if(silhouette[r][col]) state[r][col]='sculpture';
+  queue=buildQueue();
+  qi=0;
+  stage='rough';
+  score=0;
+  gameOver=false;
+  needlePos=0; needleDir=1; needleSpeed=0.018; goodHalf=0.09; okHalf=0.18;
+  flashCells=[]; flashTimer=0; msg=''; msgTimer=0;
+  rivals=[Math.round(380+Math.random()*180), Math.round(380+Math.random()*180)];
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('stageVal').textContent= stage==='rough'
+    ? I18N.t('stage_rough','Rough Shaping (Chainsaw)')
+    : I18N.t('stage_detail','Fine Detail (Chisel)');
+  document.getElementById('scoreVal').textContent=Math.round(score);
+  document.getElementById('hiVal').textContent=hi;
+}
+
+function batchSize(){ return stage==='rough'?7:2; }
+
+function doCarve(){
+  if(gameOver)return;
+  if(qi>=queue.length){ return; }
+  const diff=Math.min(Math.abs(needlePos-0.5), Math.abs(needlePos-0.5+1), Math.abs(needlePos-0.5-1));
+  const n=batchSize();
+  const batch=queue.slice(qi,qi+n);
+  flashCells=batch.map(b=>({r:b.r,c:b.c}));
+  flashTimer=10;
+
+  if(diff<=goodHalf*0.5){
+    batch.forEach(b=>{ state[b.r][b.c]='removed'; });
+    score+=18;
+    SFX.success();
+    msg=I18N.t('perfect_carve','Perfect cut!'); msgTimer=50;
+  } else if(diff<=okHalf*0.5){
+    batch.forEach(b=>{ state[b.r][b.c]='removed'; });
+    // nick one sculpture cell near the batch
+    const dmg=batch[Math.floor(Math.random()*batch.length)];
+    const near=nearbySculptureCell(dmg.r,dmg.c);
+    if(near) state[near.r][near.c]='removed';
+    score+=6;
+    SFX.hit();
+    msg=I18N.t('ok_carve','A bit rough, but it holds.'); msgTimer=50;
+  } else {
+    batch.forEach(b=>{ if(Math.random()<0.5) state[b.r][b.c]='removed'; });
+    for(let k=0;k<2;k++){
+      const near=nearbySculptureCell(batch[0].r,batch[0].c);
+      if(near) state[near.r][near.c]='removed';
+    }
+    score=Math.max(0,score-10);
+    SFX.fail();
+    msg=I18N.t('bad_carve','Ouch — that chipped the sculpture!'); msgTimer=50;
+  }
+  qi+=n;
+  needleSpeed+=0.0006;
+
+  if(qi>=queue.length*0.55 && stage==='rough'){
+    stage='detail';
+    needleSpeed=0.026; goodHalf=0.05; okHalf=0.11;
+    SFX.levelup();
+  }
+  if(qi>=queue.length){
+    finishGame();
+  }
+  updateHud();
+}
+
+function nearbySculptureCell(r,c){
+  for(let rad=1;rad<4;rad++){
+    for(let dr=-rad;dr<=rad;dr++)for(let dc=-rad;dc<=rad;dc++){
+      const rr=r+dr,cc=c+dc;
+      if(rr>=0&&rr<ROWS&&cc>=0&&cc<COLS&&state[rr][cc]==='sculpture') return {r:rr,c:cc};
+    }
+  }
+  return null;
+}
+
+function finishGame(){
+  gameOver=true;
+  const finalScore=Math.round(score);
+  if(finalScore>hi){ hi=finalScore; localStorage.setItem(HS_KEY,String(hi)); }
+  const place = 1 + rivals.filter(r=>r>finalScore).length;
+  if(place===1){ SFX.win(); msg=I18N.t('place_1','🏆 1st place! You win the contest!'); }
+  else { SFX.lose(); msg=I18N.t('place_n','You placed #{p}. Rivals scored {r}.').replace('{p}',place).replace('{r}',rivals.join(', ')); }
+  msgTimer=99999;
+  updateHud();
+}
+
+function cellColor(v){
+  if(v==='sculpture')return '#eaf7ff';
+  if(v==='ice')return '#9fd9f0';
+  return 'rgba(0,0,0,0)';
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0e3a56'; ctx.fillRect(0,0,W,H);
+
+  for(let r=0;r<ROWS;r++){
+    for(let col=0;col<COLS;col++){
+      const v=state[r][col];
+      if(v==='removed')continue;
+      ctx.fillStyle=cellColor(v);
+      ctx.fillRect(col*cellW,r*cellH,cellW-1,cellH-1);
+      if(v==='ice'){
+        ctx.strokeStyle='rgba(255,255,255,.15)';
+        ctx.strokeRect(col*cellW,r*cellH,cellW-1,cellH-1);
+      }
+    }
+  }
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle='rgba(255,213,79,.55)';
+    flashCells.forEach(fc=>{ ctx.fillRect(fc.c*cellW,fc.r*cellH,cellW-1,cellH-1); });
+  }
+
+  // timing bar
+  const barY=H-46, barX=40, barW=W-80;
+  ctx.fillStyle='#06283a'; ctx.fillRect(barX,barY,barW,22);
+  const okX=barX+(0.5-okHalf)*barW, okW=okHalf*2*barW;
+  const goodX=barX+(0.5-goodHalf)*barW, goodW=goodHalf*2*barW;
+  ctx.fillStyle='rgba(129,199,132,.55)'; ctx.fillRect(okX,barY,okW,22);
+  ctx.fillStyle='#ffd54f'; ctx.fillRect(goodX,barY,goodW,22);
+  const needleX=barX+needlePos*barW;
+  ctx.fillStyle='#ff5252'; ctx.fillRect(needleX-2,barY-6,4,34);
+
+  ctx.fillStyle='#bfe9ff'; ctx.font='13px Arial'; ctx.textAlign='center';
+  ctx.fillText(I18N.t('carve_progress','Carved {done}/{total}').replace('{done}',qi).replace('{total}',queue.length), W/2, barY-12);
+
+  if(msgTimer>0){
+    msgTimer--;
+    ctx.fillStyle='rgba(0,0,0,.55)';
+    ctx.fillRect(W/2-280,16,560,36);
+    ctx.fillStyle='#fff'; ctx.font='bold 17px Arial'; ctx.textAlign='center';
+    ctx.fillText(msg, W/2, 40);
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff'; ctx.font='14px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap Carve or press Space to sculpt again'), W/2, H/2);
+  }
+}
+
+function loop(){
+  if(!gameOver || qi<queue.length){
+    needlePos+=needleDir*needleSpeed;
+    if(needlePos>=1){needlePos=1;needleDir=-1;}
+    if(needlePos<=0){needlePos=0;needleDir=1;}
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function handleAction(){
+  if(gameOver){ newGame(); return; }
+  doCarve();
+}
+
+document.getElementById('carveBtn').addEventListener('click',handleAction);
+c.addEventListener('pointerdown',e=>{ e.preventDefault(); handleAction(); });
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){ e.preventDefault(); handleAction(); }
+});
+
+newGame();
+loop();
+</script></body></html>

@@ -1,0 +1,258 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Icebreaker Piloting - Multiport Games</title><meta name="description" content="Play Icebreaker Piloting free online — Steer your icebreaker with Left/Right Arrow or A/D (or drag on mobile) to pick the thinnest ice, and use Up/Down Arrow or W/S to manage engine power so you don't get stuck."><link rel="canonical" href="https://games.multiportllc.com/games/icebreakerpiloting"><meta property="og:title" content="Icebreaker Piloting - Multiport Games"><meta property="og:description" content="Play Icebreaker Piloting free online — Steer your icebreaker with Left/Right Arrow or A/D (or drag on mobile) to pick the thinnest ice, and use Up/Down Arrow or W/S to manage engine power so you don't get stuck."><meta property="og:url" content="https://games.multiportllc.com/games/icebreakerpiloting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Icebreaker Piloting","description":"Play Icebreaker Piloting free online instantly. Pilot a massive icebreaker through a frozen arctic channel, reading subtle shading to find the thinnest ice, balancing engine power so you clear a path for the convoy without getting stuck. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/icebreakerpiloting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d2b45;display:block;border-radius:8px;touch-action:none}
+#hud{color:#dff3ff;font-size:1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span{white-space:nowrap}
+#hullWrap,#pwrWrap{display:inline-block;width:110px;height:10px;background:#07233a;border-radius:5px;overflow:hidden;vertical-align:middle;margin-left:4px}
+#hullBar{height:100%;background:#4fc3f7;width:100%}
+#pwrBar{height:100%;background:#ffb74f;width:60%}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Icebreaker Piloting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="distLabel">Distance: 0 m | Best: 0 m</span>
+      <span>Hull: <span id="hullWrap"><span id="hullBar"></span></span></span>
+      <span>Power: <span id="pwrWrap"><span id="pwrBar"></span></span></span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Steer with <b>Left/Right Arrow</b> or <b>A/D</b> (drag on mobile) to pick the thinnest ice (lighter shade = thinner, darker = thicker pack ice). Use <b>Up/Down Arrow</b> or <b>W/S</b> to adjust engine power — more power means more speed and distance, but thick ice hits your hull harder. Keep the hull meter above zero and lead the convoy as far as you can. Tap/click or press <b>Space</b> to start or restart.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+const CHANNEL_X0=60,CHANNEL_X1=740;
+const GAME_KEY='icebreakerpiloting_hi';
+let hi=parseFloat(localStorage.getItem(GAME_KEY))||0;
+
+let ship={x:400,w:54,h:90};
+let power=0.6; // 0..1
+let hull=100;
+let dist=0;
+let started=false,gameOver=false;
+let floes=[]; // ice floe segments scrolling toward the ship (upward motion in world = ship moving forward)
+let lastTime=null;
+let spawnTimer=0;
+let shake=0;
+let convoyOffset=0;
+
+function reset(){
+  ship.x=400;power=0.6;hull=100;dist=0;gameOver=false;started=false;
+  floes=[];lastTime=null;spawnTimer=0;shake=0;convoyOffset=0;
+  for(let i=0;i<10;i++)spawnFloeRow(-i*60);
+}
+
+function spawnFloeRow(yStart){
+  const y=yStart!==undefined?yStart:-40;
+  // divide channel into a few patches with varying thickness (0=thin,1=med,2=thick)
+  const patches=3+Math.floor(Math.random()*2);
+  const segW=(CHANNEL_X1-CHANNEL_X0)/patches;
+  for(let i=0;i<patches;i++){
+    const thickness=Math.random();
+    floes.push({
+      x:CHANNEL_X0+i*segW,
+      y:y,
+      w:segW,
+      h:56,
+      thick:thickness, // 0..1
+      cracked:false
+    });
+  }
+}
+
+function keyState(){}
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'){ if(!started){started=true;} else if(gameOver){reset();started=true;} }
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let dragX=null;
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  const px=(e.clientX-r.left)*(W/r.width);
+  if(!started){started=true;return;}
+  if(gameOver){reset();started=true;return;}
+  dragX=px;
+});
+c.addEventListener('pointermove',e=>{
+  if(dragX===null)return;
+  const r=c.getBoundingClientRect();
+  const px=(e.clientX-r.left)*(W/r.width);
+  ship.x+=(px-dragX)*1.0;
+  dragX=px;
+});
+window.addEventListener('pointerup',()=>{dragX=null;});
+
+function drawShip(){
+  ctx.save();
+  ctx.translate(ship.x,86);
+  // hull
+  const grad=ctx.createLinearGradient(-ship.w/2,0,ship.w/2,0);
+  grad.addColorStop(0,'#d64545');grad.addColorStop(1,'#8c2a2a');
+  ctx.fillStyle=grad;
+  ctx.beginPath();
+  ctx.moveTo(0,-ship.h/2);
+  ctx.lineTo(ship.w/2,-ship.h/2+22);
+  ctx.lineTo(ship.w/2,ship.h/2);
+  ctx.lineTo(-ship.w/2,ship.h/2);
+  ctx.lineTo(-ship.w/2,-ship.h/2+22);
+  ctx.closePath();ctx.fill();
+  // deck stripe
+  ctx.fillStyle='#fff';
+  ctx.fillRect(-ship.w/2+6,-6,ship.w-12,12);
+  // bridge
+  ctx.fillStyle='#2e3b4e';
+  ctx.fillRect(-14,-ship.h/2+28,28,26);
+  // wake bubbles
+  ctx.fillStyle='rgba(180,230,255,0.5)';
+  for(let i=0;i<3;i++)ctx.beginPath(),ctx.arc((i-1)*14,ship.h/2+8+((Date.now()/80+i*7)%20),4,0,7),ctx.fill();
+  ctx.restore();
+}
+
+function thickColor(t){
+  // t 0..1 thin->thick. Subtle shading as described.
+  const light=235-t*95;
+  return `rgb(${light-10},${light},${light+10})`;
+}
+
+function rectsOverlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  // water background
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#13395a');sky.addColorStop(1,'#0a1f33');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // banks
+  ctx.fillStyle='#e8f6ff';
+  ctx.fillRect(0,0,CHANNEL_X0,H);
+  ctx.fillRect(CHANNEL_X1,0,W-CHANNEL_X1,H);
+
+  if(!started){
+    drawFloesStatic();
+    drawShip();
+    ctx.fillStyle='#dff3ff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to get underway'),400,210);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawFloesStatic();
+    drawShip();
+    ctx.fillStyle='rgba(0,0,0,0.45)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('stuck_title','HULL BREACH — STUCK IN THE ICE'),400,200);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to try again'),400,236);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  // steering
+  const steerSpeed=6*dt;
+  if(keys['ArrowLeft']||keys['KeyA'])ship.x-=steerSpeed;
+  if(keys['ArrowRight']||keys['KeyD'])ship.x+=steerSpeed;
+  ship.x=Math.max(CHANNEL_X0+ship.w/2-6,Math.min(CHANNEL_X1-ship.w/2+6,ship.x));
+
+  // power
+  const powerRate=0.012*dt;
+  if(keys['ArrowUp']||keys['KeyW'])power=Math.min(1,power+powerRate);
+  if(keys['ArrowDown']||keys['KeyS'])power=Math.max(0.12,power-powerRate);
+
+  const speed=(2+power*7)*dt;
+  dist+=speed*0.12;
+  if(dist>hi){hi=dist;}
+
+  // scroll floes toward ship (down the screen, ship near top at y=86)
+  spawnTimer+=dt;
+  if(spawnTimer>=10){spawnTimer=0;spawnFloeRow(-56);}
+
+  const shipHit={x:ship.x-ship.w/2+6,y:86-ship.h/2+10,w:ship.w-12,h:ship.h-16};
+  floes.forEach(f=>{
+    f.y+=speed;
+  });
+  floes=floes.filter(f=>f.y<H+60);
+
+  floes.forEach(f=>{
+    ctx.fillStyle=thickColor(f.thick);
+    ctx.fillRect(f.x,f.y,f.w-2,f.h-4);
+    // crack texture hint for thicker ice
+    if(f.thick>0.55){
+      ctx.strokeStyle='rgba(60,90,110,0.5)';ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(f.x+f.w*0.2,f.y+4);ctx.lineTo(f.x+f.w*0.6,f.y+f.h-8);ctx.stroke();
+    }
+    if(!f.cracked&&rectsOverlap(shipHit,{x:f.x,y:f.y,w:f.w-2,h:f.h-4})){
+      f.cracked=true;
+      const dmg=f.thick*10*(0.5+(1-power)*0.8);
+      hull-=dmg;
+      shake=6;
+      if(f.thick>0.6)SFX.hit(); else SFX.tick();
+      if(hull<=0){
+        hull=0;gameOver=true;
+        if(dist>hi){hi=dist;localStorage.setItem(GAME_KEY,String(hi));}
+        SFX.lose();
+      }
+    }
+  });
+
+  ctx.save();
+  if(shake>0){ctx.translate((Math.random()-0.5)*shake,(Math.random()-0.5)*shake);shake*=0.85;if(shake<0.3)shake=0;}
+  drawShip();
+  ctx.restore();
+
+  // convoy ships trailing behind (visual flavor, bottom of screen)
+  convoyOffset+=dt*0.5;
+  for(let i=0;i<3;i++){
+    const cy=H-20-i*34;
+    const cx=ship.x+Math.sin(convoyOffset+i)* (10+i*4);
+    ctx.save();ctx.globalAlpha=0.75-i*0.15;
+    ctx.translate(cx,cy);
+    ctx.fillStyle='#6b7c93';
+    ctx.fillRect(-16,-10,32,20);
+    ctx.restore();
+  }
+
+  if(hull<40&&Math.floor(now/400)%2===0){
+    ctx.fillStyle='#ff6b6b';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('hull_warning','HULL CRITICAL'),400,30);
+  }
+
+  localStorage.setItem(GAME_KEY,String(Math.max(hi,dist)));
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function drawFloesStatic(){
+  floes.forEach(f=>{
+    ctx.fillStyle=thickColor(f.thick);
+    ctx.fillRect(f.x,f.y,f.w-2,f.h-4);
+  });
+}
+
+function updateHud(){
+  document.getElementById('distLabel').textContent=
+    I18N.t('dist_label','Distance: {d} m | Best: {b} m').replace('{d}',Math.floor(dist)).replace('{b}',Math.floor(hi));
+  document.getElementById('hullBar').style.width=Math.max(0,hull)+'%';
+  document.getElementById('hullBar').style.background=hull<30?'#ff5252':hull<60?'#ffb74f':'#4fc3f7';
+  document.getElementById('pwrBar').style.width=Math.round(power*100)+'%';
+}
+
+reset();
+loop();
+</script></body></html>

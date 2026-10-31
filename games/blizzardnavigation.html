@@ -1,0 +1,231 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Blizzard Navigation</title><meta name="description" content="Play Blizzard Navigation free online — Use Arrow Keys/WASD (or drag on screen) to steer through a whiteout blizzard, follow the compass bearing and rope-line flashes to reach the shelter, and avoid danger zones before hypothermia sets in."><link rel="canonical" href="https://games.multiportllc.com/games/blizzardnavigation"><meta property="og:title" content="Blizzard Navigation - Multiport Games"><meta property="og:description" content="Play Blizzard Navigation free online — Use Arrow Keys/WASD (or drag on screen) to steer through a whiteout blizzard, follow the compass bearing and rope-line flashes to reach the shelter, and avoid danger zones before hypothermia sets in."><meta property="og:url" content="https://games.multiportllc.com/games/blizzardnavigation"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Blizzard Navigation","description":"Play Blizzard Navigation free online instantly. Use Arrow Keys/WASD (or drag on screen) to steer through a whiteout blizzard, follow the compass bearing and rope-line flashes to reach the shelter, and avoid danger zones before hypothermia sets in. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/blizzardnavigation","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#dfe8f0;display:block;border-radius:8px;margin:0 auto;max-width:100%;touch-action:none}
+#hud{display:flex;justify-content:space-between;max-width:800px;margin:0 auto 8px;color:#fff;font-weight:700;font-size:.95rem}
+#hypoOuter{background:#1a1a2e;border-radius:10px;height:16px;max-width:800px;margin:0 auto 10px;overflow:hidden;border:1px solid #3a4a6a}
+#hypoBar{height:100%;background:linear-gradient(90deg,#4fc3f7,#ffd54f,#e94560);width:0%;transition:width .2s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Blizzard Navigation</div>
+  <div class="game-frame">
+    <div id="hud"><span id="bearingLabel">Bearing: N 0°</span><span id="statusLabel">Find the shelter</span><span id="hiLabel">Hi: 0</span></div>
+    <div id="hypoOuter"><div id="hypoBar"></div></div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Use <b>Arrow Keys</b> / <b>WASD</b> (or drag/tap on the canvas) to walk through the whiteout. Visibility is near-zero except during brief flashes — use those moments plus the compass bearing readout to stay on the rope-line toward the shelter. Stepping into a red danger zone (cliff edge or open water) ends the hike instantly. Reach the shelter before the hypothermia meter fills up!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+let hi=0;
+try{hi=parseFloat(localStorage.getItem('blizzardnavigation_hi')||'0');}catch(e){}
+
+let player,shelter,dangers,ropePoints,hypo,gameOver,won,started,flashTimer,flashOn,flashDur,keys,frame,lastTime,elapsed;
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function reset(){
+  player={x:60,y:200};
+  shelter={x:720+Math.random()*40-20,y:80+Math.random()*240};
+  dangers=[];
+  for(let i=0;i<6;i++){
+    let p;
+    do{p={x:150+Math.random()*560,y:30+Math.random()*340,r:22+Math.random()*18,type:Math.random()<0.5?'cliff':'water'};}
+    while(dist(p,shelter)<70||dist(p,player)<90);
+    dangers.push(p);
+  }
+  // rope-line: straight guide path from start to shelter with slight jitter waypoints
+  ropePoints=[];
+  const n=8;
+  for(let i=0;i<=n;i++){
+    const t=i/n;
+    ropePoints.push({x:player.x+(shelter.x-player.x)*t+Math.sin(t*6)*15,y:player.y+(shelter.y-player.y)*t+Math.cos(t*5)*15});
+  }
+  hypo=0;gameOver=false;won=false;started=false;
+  flashTimer=0;flashOn=false;flashDur=0;
+  keys={};frame=0;lastTime=null;elapsed=0;
+  updateHud();
+}
+
+function updateHud(){
+  const dx=shelter.x-player.x,dy=shelter.y-player.y;
+  let ang=Math.atan2(dx,-dy)*180/Math.PI;
+  if(ang<0)ang+=360;
+  const dirs=['N','NE','E','SE','S','SW','W','NW'];
+  const dirIdx=Math.round(ang/45)%8;
+  document.getElementById('bearingLabel').textContent=I18N.t('bearing_label','Bearing: {d} {a}°').replace('{d}',dirs[dirIdx]).replace('{a}',Math.round(ang));
+  document.getElementById('hiLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+  document.getElementById('hypoBar').style.width=Math.min(100,hypo)+'%';
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyW','KeyA','KeyS','KeyD'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(!started)started=true;
+  if(gameOver)reset();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let dragTarget=null;
+c.addEventListener('pointerdown',e=>{
+  if(!started)started=true;
+  if(gameOver){reset();return;}
+  const r=c.getBoundingClientRect();
+  dragTarget={x:(e.clientX-r.left)*(W/r.width),y:(e.clientY-r.top)*(H/r.height)};
+});
+c.addEventListener('pointermove',e=>{
+  if(dragTarget){
+    const r=c.getBoundingClientRect();
+    dragTarget={x:(e.clientX-r.left)*(W/r.width),y:(e.clientY-r.top)*(H/r.height)};
+  }
+});
+window.addEventListener('pointerup',()=>{dragTarget=null;});
+
+function nearestRopeDist(){
+  let m=1e9;
+  for(let i=0;i<ropePoints.length-1;i++){
+    const a=ropePoints[i],b=ropePoints[i+1];
+    const abx=b.x-a.x,aby=b.y-a.y;
+    const len2=abx*abx+aby*aby||1;
+    let t=((player.x-a.x)*abx+(player.y-a.y)*aby)/len2;
+    t=Math.max(0,Math.min(1,t));
+    const px=a.x+abx*t,py=a.y+aby*t;
+    m=Math.min(m,Math.hypot(player.x-px,player.y-py));
+  }
+  return m;
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+
+  if(started&&!gameOver){
+    frame+=dt;elapsed+=dt;
+    const spd=2.4;
+    let mx=0,my=0;
+    if(keys['ArrowLeft']||keys['KeyA'])mx-=1;
+    if(keys['ArrowRight']||keys['KeyD'])mx+=1;
+    if(keys['ArrowUp']||keys['KeyW'])my-=1;
+    if(keys['ArrowDown']||keys['KeyS'])my+=1;
+    if(dragTarget){
+      const dx=dragTarget.x-player.x,dy=dragTarget.y-player.y;
+      const l=Math.hypot(dx,dy);
+      if(l>4){mx=dx/l;my=dy/l;}
+    }
+    const len=Math.hypot(mx,my);
+    if(len>0){
+      player.x+=(mx/len)*spd*dt;
+      player.y+=(my/len)*spd*dt;
+      player.x=Math.max(10,Math.min(W-10,player.x));
+      player.y=Math.max(10,Math.min(H-10,player.y));
+    }
+
+    // hypothermia rises, slower when near rope line
+    const rd=nearestRopeDist();
+    const nearRope=rd<40;
+    hypo+=(nearRope?0.09:0.17)*dt;
+
+    // flash timing
+    flashTimer+=dt;
+    if(!flashOn&&flashTimer>90){flashOn=true;flashTimer=0;flashDur=0;SFX.swoosh();}
+    if(flashOn){flashDur+=dt;if(flashDur>45){flashOn=false;flashTimer=0;}}
+
+    // danger collision
+    for(const d of dangers){
+      if(dist(player,d)<d.r){
+        gameOver=true;won=false;SFX.lose();
+        document.getElementById('statusLabel').textContent=I18N.t('danger_status','You fell into danger!');
+      }
+    }
+    // shelter reached
+    if(dist(player,shelter)<28){
+      gameOver=true;won=true;
+      const score=Math.max(0,Math.floor((100-hypo)*10+Math.max(0,400-elapsed)));
+      if(score>hi){hi=score;try{localStorage.setItem('blizzardnavigation_hi',String(hi));}catch(e){}}
+      SFX.win();
+      document.getElementById('statusLabel').textContent=I18N.t('shelter_status','Shelter reached!');
+    }
+    if(hypo>=100){
+      hypo=100;gameOver=true;won=false;SFX.lose();
+      document.getElementById('statusLabel').textContent=I18N.t('hypo_status','Hypothermia took hold...');
+    }
+    updateHud();
+  }
+
+  // background whiteout
+  ctx.fillStyle='#e9eff5';ctx.fillRect(0,0,W,H);
+
+  const visRadius=flashOn?260:60;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(player.x,player.y,visRadius,0,Math.PI*2);
+  ctx.clip();
+
+  ctx.fillStyle='#cfe0ee';ctx.fillRect(0,0,W,H);
+
+  // rope line
+  ctx.strokeStyle='#8a5a2a';ctx.lineWidth=3;ctx.setLineDash([8,8]);
+  ctx.beginPath();
+  ropePoints.forEach((p,i)=>{if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);});
+  ctx.stroke();ctx.setLineDash([]);
+
+  // dangers
+  dangers.forEach(d=>{
+    ctx.fillStyle=d.type==='water'?'rgba(30,90,190,0.75)':'rgba(120,40,40,0.75)';
+    ctx.beginPath();ctx.arc(d.x,d.y,d.r,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#e94560';ctx.lineWidth=2;ctx.stroke();
+  });
+
+  // shelter
+  ctx.fillStyle='#7ec850';
+  ctx.fillRect(shelter.x-16,shelter.y-14,32,28);
+  ctx.fillStyle='#2d5a27';
+  ctx.beginPath();ctx.moveTo(shelter.x-20,shelter.y-14);ctx.lineTo(shelter.x,shelter.y-32);ctx.lineTo(shelter.x+20,shelter.y-14);ctx.fill();
+
+  ctx.restore();
+
+  // player marker (always visible)
+  ctx.fillStyle='#e94560';
+  ctx.beginPath();ctx.arc(player.x,player.y,8,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+
+  // snow overlay particles for atmosphere
+  ctx.fillStyle='rgba(255,255,255,0.8)';
+  for(let i=0;i<40;i++){
+    const sx=(i*53+frame*4)%W;
+    const sy=(i*97+frame*3)%H;
+    ctx.fillRect(sx,sy,2,2);
+  }
+
+  if(!started){
+    ctx.fillStyle='rgba(20,30,50,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Move to start — WASD / Arrows / Drag'),W/2,H/2);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(10,20,40,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('win_title','SHELTER REACHED!'):I18N.t('lose_title','YOU DID NOT MAKE IT'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press any movement key to try again'),W/2,H/2+24);
+  }
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

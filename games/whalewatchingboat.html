@@ -1,0 +1,266 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Whale Watching Boat - Multiport Games</title><meta name="description" content="Play Whale Watching Boat free online — Steer your tour boat with arrow keys, WASD, or touch-drag. Get close to surfacing whales without scaring them off, then press Space or tap Snap to photograph them for happy tourists."><link rel="canonical" href="https://games.multiportllc.com/games/whalewatchingboat"><meta property="og:title" content="Whale Watching Boat - Multiport Games"><meta property="og:description" content="Play Whale Watching Boat free online — Steer your tour boat with arrow keys, WASD, or touch-drag. Get close to surfacing whales without scaring them off, then press Space or tap Snap to photograph them for happy tourists."><meta property="og:url" content="https://games.multiportllc.com/games/whalewatchingboat"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Whale Watching Boat","description":"Play Whale Watching Boat free online instantly. Steer your tour boat with arrow keys, WASD, or touch-drag. Get close to surfacing whales without scaring them off, then press Space or tap Snap to photograph them for happy tourists. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/whalewatchingboat","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#021018}
+#c{background:#0b4f6c;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:center;gap:18px;color:#bfe9ff;font-weight:700;padding:8px;flex-wrap:wrap;font-size:.95rem}
+#hud span b{color:#ffd54f}
+#snapBtn{display:block;margin:6px auto 0;padding:10px 26px;background:#ff7043;border:none;border-radius:22px;color:#fff;font-weight:800;font-size:1rem;cursor:pointer}
+#snapBtn:disabled{opacity:.4}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Whale Watching Boat</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span data-i18n="hud_photos">📸 Film left: <b id="filmVal">12</b></span>
+      <span data-i18n="hud_sighting">🐋 Sighting: <b id="sightVal">0/8</b></span>
+      <span data-i18n="hud_score">⭐ Satisfaction: <b id="scoreVal">0</b></span>
+      <span data-i18n="hud_hi">🏆 Best: <b id="hiVal">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <button id="snapBtn">📸 Snap Photo (Space)</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Steer the tour boat with <b>Arrow Keys / WASD</b>, or <b>touch-drag</b> anywhere on the water. Whales surface briefly inside a dashed <b>safe ring</b> — steer into that ring (not too close, not too far) and press <b>Space</b> or tap <b>Snap Photo</b> to capture a great shot. Get too close and you'll scare the whale away! You have limited film and 8 sightings to maximize tourist satisfaction.
+  </div>
+</div>
+<script>
+const HS_KEY='hs_whalewatchingboat';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const boat={x:400,y:360,vx:0,vy:0,angle:0};
+const keys={};
+let pointerTarget=null,pointerActive=false;
+let film=12,sightingsTotal=8,sightingsDone=0,score=0,hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+let whale=null,gapTimer=0,gameOver=false,started=false,msgTimer=0,msgText='';
+const MIN_DIST=55,IDEAL_DIST=95,MAX_DIST=150,TOO_FAR=190;
+
+function hiText(){return I18N.t('hud_hi','🏆 Best: <b id="hiVal">{s}</b>').replace('{s}',hi);}
+function refreshHud(){
+  document.getElementById('filmVal').textContent=film;
+  document.getElementById('sightVal').textContent=sightingsDone+'/'+sightingsTotal;
+  document.getElementById('scoreVal').textContent=Math.round(score);
+  document.getElementById('hiVal').textContent=hi;
+}
+
+function spawnWhale(){
+  whale={
+    x:120+Math.random()*(W-240), y:80+Math.random()*(H-240),
+    life:230, state:'surfaced', fled:false, photographed:false
+  };
+}
+
+function setMsg(t,dur){ msgText=t; msgTimer=dur||90; }
+
+function dist(ax,ay,bx,by){return Math.hypot(ax-bx,ay-by);}
+
+function reset(){
+  film=12; sightingsDone=0; score=0; gameOver=false; started=false; whale=null; gapTimer=60; msgText=''; msgTimer=0;
+  boat.x=400;boat.y=360;boat.vx=0;boat.vy=0;
+  refreshHud();
+}
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=Math.round(score); localStorage.setItem(HS_KEY,String(hi));}
+  SFX.win();
+  setMsg(I18N.t('trip_over','Trip complete! Tourist satisfaction: {s}').replace('{s}',Math.round(score)),99999);
+  refreshHud();
+}
+
+function snap(){
+  if(gameOver || !started){ if(!started){started=true;} return; }
+  if(film<=0)return;
+  if(!whale || whale.state!=='surfaced'){ SFX.error(); setMsg(I18N.t('no_whale','No whale in sight right now!')); return; }
+  film--;
+  const d=dist(boat.x,boat.y,whale.x,whale.y);
+  if(d<MIN_DIST){
+    SFX.fail();
+    setMsg(I18N.t('too_close_snap','Too close! You spooked the whale.'));
+    fleeWhale();
+  } else if(d<=MAX_DIST){
+    const quality=Math.max(0,100-Math.abs(d-IDEAL_DIST)*1.4);
+    score+=quality;
+    whale.photographed=true;
+    SFX.catch();
+    setMsg(I18N.t('great_shot','Great shot! +{q}').replace('{q}',Math.round(quality)));
+  } else {
+    SFX.error();
+    setMsg(I18N.t('too_far','Too far away — the shot missed.'));
+  }
+  if(film<=0 && whale===null){}
+  refreshHud();
+  checkEnd();
+}
+
+function fleeWhale(){
+  if(!whale)return;
+  whale.state='fled'; whale.fled=true; whale.life=40;
+}
+
+function checkEnd(){
+  if(film<=0 && (!whale || whale.state!=='surfaced')) endGame();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'){ e.preventDefault(); snap(); }
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+document.getElementById('snapBtn').addEventListener('click',snap);
+
+function canvasPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width), y:cy*(H/r.height)};
+}
+c.addEventListener('pointerdown',e=>{ started=true; pointerActive=true; pointerTarget=canvasPos(e); });
+c.addEventListener('pointermove',e=>{ if(pointerActive) pointerTarget=canvasPos(e); });
+window.addEventListener('pointerup',()=>{ pointerActive=false; pointerTarget=null; });
+
+function updateBoat(dt){
+  let ax=0,ay=0;
+  if(keys['ArrowUp']||keys['KeyW'])ay-=1;
+  if(keys['ArrowDown']||keys['KeyS'])ay+=1;
+  if(keys['ArrowLeft']||keys['KeyA'])ax-=1;
+  if(keys['ArrowRight']||keys['KeyD'])ax+=1;
+  if(ax||ay){
+    const len=Math.hypot(ax,ay); ax/=len; ay/=len;
+    boat.vx+=ax*0.6*dt; boat.vy+=ay*0.6*dt;
+  } else if(pointerTarget){
+    const dx=pointerTarget.x-boat.x, dy=pointerTarget.y-boat.y;
+    const d=Math.hypot(dx,dy);
+    if(d>4){ boat.vx+=(dx/d)*0.6*dt; boat.vy+=(dy/d)*0.6*dt; }
+  }
+  boat.vx*=0.92; boat.vy*=0.92;
+  const spd=Math.hypot(boat.vx,boat.vy);
+  const maxSpd=4.2;
+  if(spd>maxSpd){ boat.vx*=maxSpd/spd; boat.vy*=maxSpd/spd; }
+  boat.x+=boat.vx*dt; boat.y+=boat.vy*dt;
+  boat.x=Math.max(20,Math.min(W-20,boat.x));
+  boat.y=Math.max(20,Math.min(H-20,boat.y));
+  if(spd>0.1) boat.angle=Math.atan2(boat.vy,boat.vx);
+}
+
+function drawBoat(){
+  ctx.save();
+  ctx.translate(boat.x,boat.y);
+  ctx.rotate(boat.angle);
+  ctx.fillStyle='#f5f5f5';
+  ctx.beginPath();
+  ctx.moveTo(18,0); ctx.lineTo(-14,-10); ctx.lineTo(-14,10); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#455a64';
+  ctx.fillRect(-8,-6,10,12);
+  ctx.restore();
+}
+
+function drawWhale(){
+  if(!whale)return;
+  const t=whale.state==='surfaced'?1:Math.max(0,whale.life/40);
+  ctx.save();
+  ctx.globalAlpha=t;
+  ctx.fillStyle='#37474f';
+  ctx.beginPath();
+  ctx.ellipse(whale.x,whale.y,34,14,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(whale.x+30,whale.y);
+  ctx.lineTo(whale.x+44,whale.y-14);
+  ctx.lineTo(whale.x+44,whale.y+2);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#78909c';
+  ctx.beginPath(); ctx.ellipse(whale.x-6,whale.y-2,18,6,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  if(whale.state==='surfaced'){
+    ctx.save();
+    ctx.strokeStyle='rgba(255,213,79,.8)';
+    ctx.setLineDash([6,6]);
+    ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(whale.x,whale.y,MIN_DIST,0,Math.PI*2); ctx.stroke();
+    ctx.strokeStyle='rgba(102,187,106,.8)';
+    ctx.beginPath(); ctx.arc(whale.x,whale.y,MAX_DIST,0,Math.PI*2); ctx.stroke();
+    ctx.restore();
+    const lifeFrac=whale.life/230;
+    ctx.fillStyle='rgba(255,255,255,.6)';
+    ctx.fillRect(whale.x-30,whale.y-40,60*lifeFrac,5);
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sea=ctx.createLinearGradient(0,0,0,H);
+  sea.addColorStop(0,'#0b4f6c'); sea.addColorStop(1,'#073b52');
+  ctx.fillStyle=sea; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,.08)';
+  for(let i=0;i<6;i++){ ctx.beginPath(); ctx.moveTo(0,40+i*60); ctx.lineTo(W,40+i*60); ctx.stroke(); }
+
+  if(!started){
+    ctx.fillStyle='#bfe9ff'; ctx.font='bold 22px Arial'; ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Drag, use Arrow Keys / WASD, or press Space to begin'),W/2,H/2);
+    drawBoat();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(!gameOver){
+    updateBoat(1);
+
+    if(whale){
+      if(whale.state==='surfaced'){
+        whale.life--;
+        const d=dist(boat.x,boat.y,whale.x,whale.y);
+        if(d<MIN_DIST && !whale.fled){ fleeWhale(); SFX.fail(); setMsg(I18N.t('too_close','Too close! The whale is fleeing.')); }
+        if(whale.life<=0){ whale.state='diving'; whale.life=30; if(!whale.photographed) setMsg(I18N.t('missed','The whale dove before you got a shot.')); }
+      } else {
+        whale.life--;
+        if(whale.life<=0){
+          whale=null; sightingsDone++;
+          refreshHud();
+          if(sightingsDone>=sightingsTotal || film<=0){ endGame(); }
+          else gapTimer=70+Math.random()*50;
+        }
+      }
+    } else if(!gameOver){
+      gapTimer--;
+      if(gapTimer<=0 && sightingsDone<sightingsTotal && film>0){ spawnWhale(); SFX.powerup(); }
+    }
+  }
+
+  drawWhale();
+  drawBoat();
+
+  if(msgTimer>0){
+    msgTimer--;
+    ctx.fillStyle='rgba(0,0,0,.55)';
+    ctx.fillRect(W/2-260,20,520,34);
+    ctx.fillStyle='#fff'; ctx.font='bold 17px Arial'; ctx.textAlign='center';
+    ctx.fillText(msgText,W/2,43);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff'; ctx.font='bold 30px Arial'; ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','TRIP COMPLETE'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap Snap or press Space to sail again'),W/2,H/2+22);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+function restartIfOver(){ if(gameOver){ reset(); } }
+const origSnap=snap;
+document.getElementById('snapBtn').addEventListener('click',()=>{ if(gameOver) reset(); });
+document.addEventListener('keydown',e=>{ if(e.code==='Space' && gameOver){ reset(); } });
+
+reset();
+loop();
+</script></body></html>

@@ -1,0 +1,193 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ice Fishing Tournament</title><meta name="description" content="Play Ice Fishing Tournament free online — Watch five holes at once, click or tap the hole whose flag pops up to strike, and weigh in your biggest total catch before the horn sounds."><link rel="canonical" href="https://games.multiportllc.com/games/icefishingtournament"><meta property="og:title" content="Ice Fishing Tournament - Multiport Games"><meta property="og:description" content="Play Ice Fishing Tournament free online — Watch five holes at once, click or tap the hole whose flag pops up to strike, and weigh in your biggest total catch before the horn sounds."><meta property="og:url" content="https://games.multiportllc.com/games/icefishingtournament"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ice Fishing Tournament","description":"Play Ice Fishing Tournament free online instantly. Drill multiple holes across a frozen lake, manage lines in several holes at once, prioritize bite indicator flags before they expire, and weigh in the biggest total catch before the tournament horn sounds. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/icefishingtournament","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#16213e;border-radius:14px;padding:16px;text-align:center}
+#topRow{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;color:#fff;font-weight:700;margin-bottom:10px}
+#topRow .horn{color:#ffd54f}
+#topRow .weight{color:#7ec850}
+#lake{display:flex;justify-content:center;gap:14px;flex-wrap:wrap;background:linear-gradient(180deg,#d9f0fb,#aed4e8);border-radius:12px;padding:20px 10px;margin-bottom:12px}
+.hole{position:relative;width:98px;height:150px;background:#0b2a44;border-radius:50% 50% 10px 10px/30% 30% 10px 10px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;overflow:hidden;border:3px solid #cfe7f4;transition:transform .08s}
+.hole:active{transform:scale(.95)}
+.hole .num{position:absolute;top:4px;left:0;right:0;color:#9fd3e8;font-size:.72rem;font-weight:800}
+.hole .flag{position:absolute;bottom:60px;left:50%;width:4px;height:0px;background:#8a5a2a;transform:translateX(-50%);transition:height .25s ease}
+.hole .flagTop{position:absolute;bottom:60px;left:50%;width:22px;height:16px;background:#ff3d3d;transform:translate(-50%,0);clip-path:polygon(0 0,100% 50%,0 100%);transition:bottom .25s ease;opacity:0}
+.hole.lurk .flag{height:18px}
+.hole.bite .flagTop{opacity:1}
+.hole .urgency{position:absolute;bottom:0;left:0;height:5px;background:#ff8f3d;width:100%;transition:width .1s linear}
+.hole .status{position:absolute;bottom:4px;color:#eaf6ff;font-size:.68rem;font-weight:700}
+#score-display{color:#7ec850;font-weight:700;margin-top:6px}
+#controls button{padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:0 5px}
+#catchLog{color:#ddd;font-size:.82rem;margin-top:8px;min-height:1.4em}
+@media(max-width:480px){.hole{width:70px;height:120px}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ice Fishing Tournament</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="topRow"><span class="horn">Horn: <span id="timeVal">180</span>s</span><span class="weight">Total: <span id="weightVal">0.0</span> lb</span></div>
+      <div id="lake"></div>
+      <div id="catchLog">Drop your lines and watch the flags!</div>
+      <div id="controls"><button id="newBtn">Restart Tournament</button></div>
+      <div id="score-display">Score: 0 lb | Hi: 0 lb</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Five holes are fishing at once. When a hole's <b>red flag</b> pops up, a fish is biting — <b>click/tap that hole</b> (or press keys <b>1-5</b>) before the shrinking orange bar runs out to land it. Prioritize whichever flag is about to expire. Weigh in the biggest total catch before the tournament horn sounds!</div>
+</div>
+<script>
+const HIKEY='icefishingtournament_hi';
+let hi=parseFloat(localStorage.getItem(HIKEY)||'0');
+const N_HOLES=5;
+let holes=[];
+let timeLeft=180,totalWeight=0,gameOver=false,lastTick=null;
+
+const FISH=[
+  {name:'Perch',min:0.3,max:1.2},
+  {name:'Walleye',min:1.5,max:4.5},
+  {name:'Pike',min:2.5,max:8},
+  {name:'Trout',min:1,max:3.5},
+];
+
+function initHoles(){
+  holes=[];
+  const lake=document.getElementById('lake');
+  lake.innerHTML='';
+  for(let i=0;i<N_HOLES;i++){
+    const el=document.createElement('div');
+    el.className='hole';
+    el.innerHTML=`<div class="num">#${i+1}</div><div class="flag"></div><div class="flagTop"></div><div class="urgency" style="width:100%"></div><div class="status"></div>`;
+    el.addEventListener('click',()=>strike(i));
+    lake.appendChild(el);
+    holes.push({
+      el,
+      state:'idle', // idle, lurk, bite, missed
+      timer:rand(3,7),
+      biteWindow:0,
+      biteMax:0,
+      fish:null,
+    });
+  }
+}
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function pickFish(){
+  const f=FISH[Math.floor(Math.random()*FISH.length)];
+  return {name:f.name,weight:+(rand(f.min,f.max)).toFixed(2)};
+}
+
+function strike(i){
+  if(gameOver)return;
+  const h=holes[i];
+  if(h.state==='bite'){
+    const w=h.fish.weight;
+    totalWeight+=w;
+    SFX.catch();
+    log(I18N.t('catch_msg','Caught a {n}-lb {f} at Hole #{h}!').replace('{n}',w.toFixed(2)).replace('{f}',h.fish.name).replace('{h}',i+1));
+    h.state='idle';
+    h.timer=rand(2.5,5);
+    h.fish=null;
+    updateHud();
+  }else if(h.state==='lurk'){
+    SFX.error();
+    log(I18N.t('too_early','Too early at Hole #{h} — you spooked the fish!').replace('{h}',i+1));
+    h.state='idle';
+    h.timer=rand(4,8);
+  }else{
+    SFX.click();
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  const n=parseInt(e.key);
+  if(n>=1&&n<=N_HOLES){e.preventDefault();strike(n-1);}
+});
+
+function log(t){document.getElementById('catchLog').textContent=t;}
+
+function render(h,i){
+  h.el.classList.remove('lurk','bite');
+  if(h.state==='lurk')h.el.classList.add('lurk');
+  if(h.state==='bite')h.el.classList.add('bite');
+  const urgency=h.el.querySelector('.urgency');
+  if(h.state==='bite'){
+    const pct=Math.max(0,(h.biteWindow/h.biteMax)*100);
+    urgency.style.width=pct+'%';
+    urgency.style.background=pct<30?'#ff3d3d':'#ff8f3d';
+  }else{
+    urgency.style.width='100%';
+    urgency.style.background='#3d7a3d';
+  }
+  h.el.querySelector('.status').textContent=h.state==='bite'?'BITE!':(h.state==='lurk'?'...':'');
+}
+
+function tick(dt){
+  holes.forEach((h,i)=>{
+    if(h.state==='idle'){
+      h.timer-=dt;
+      if(h.timer<=0){h.state='lurk';h.timer=rand(1,2.2);}
+    }else if(h.state==='lurk'){
+      h.timer-=dt;
+      if(h.timer<=0){
+        h.state='bite';
+        h.fish=pickFish();
+        h.biteMax=rand(2.2,3.6);
+        h.biteWindow=h.biteMax;
+        SFX.point();
+      }
+    }else if(h.state==='bite'){
+      h.biteWindow-=dt;
+      if(h.biteWindow<=0){
+        h.state='idle';
+        h.timer=rand(3,6);
+        log(I18N.t('fish_escaped','The fish at Hole #{h} got away!').replace('{h}',i+1));
+        SFX.hurt();
+      }
+    }
+    render(h,i);
+  });
+}
+
+function updateHud(){
+  document.getElementById('weightVal').textContent=totalWeight.toFixed(1);
+  document.getElementById('timeVal').textContent=Math.max(0,Math.ceil(timeLeft));
+  document.getElementById('score-display').textContent=I18N.t('score_hi_lb','Score: {s} lb | Hi: {h} lb').replace('{s}',totalWeight.toFixed(1)).replace('{h}',hi.toFixed(1));
+}
+
+function endTournament(){
+  gameOver=true;
+  holes.forEach(h=>{h.state='idle';render(h,0);});
+  if(totalWeight>hi){hi=totalWeight;localStorage.setItem(HIKEY,String(hi));}
+  log(I18N.t('horn_msg','HORN! Final weigh-in: {w} lb total.').replace('{w}',totalWeight.toFixed(1)));
+  SFX.win();
+  updateHud();
+}
+
+function loop(ts){
+  if(gameOver)return;
+  if(lastTick===null)lastTick=ts;
+  const dt=Math.min((ts-lastTick)/1000,0.2);
+  lastTick=ts;
+  timeLeft-=dt;
+  if(timeLeft<=0){timeLeft=0;updateHud();endTournament();return;}
+  tick(dt);
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function startGame(){
+  timeLeft=180;totalWeight=0;gameOver=false;lastTick=null;
+  initHoles();
+  log(I18N.t('start_msg','Drop your lines and watch the flags!'));
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('newBtn').addEventListener('click',startGame);
+startGame();
+</script></body></html>
