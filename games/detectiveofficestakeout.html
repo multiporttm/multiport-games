@@ -1,0 +1,284 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Detective Office Stakeout</title><meta name="description" content="Play Detective Office Stakeout free online — Zoom your camera with the slider or +/- keys, click Photograph when the checklist visitor is in the apartment window, and click Coffee to stay alert through the night shift."><link rel="canonical" href="https://games.multiportllc.com/games/detectiveofficestakeout"><meta property="og:title" content="Detective Office Stakeout - Multiport Games"><meta property="og:description" content="Play Detective Office Stakeout free online — Zoom your camera with the slider or +/- keys, click Photograph when the checklist visitor is in the apartment window, and click Coffee to stay alert through the night shift."><meta property="og:url" content="https://games.multiportllc.com/games/detectiveofficestakeout"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Detective Office Stakeout","description":"Play Detective Office Stakeout free online instantly. Watch a target's apartment through a zoom camera from your detective office window, log comings and goings, and photograph the key visitors on your checklist across a full night shift while staying alert. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/detectiveofficestakeout","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0a0e1a;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:#bcd;font-weight:700;font-size:.85rem;padding:6px 2px}
+#hud span{background:#141b2b;padding:5px 9px;border-radius:8px}
+#controls{display:flex;align-items:center;gap:10px;justify-content:center;margin:10px 0;flex-wrap:wrap}
+#controls button{padding:10px 18px;border:none;border-radius:20px;font-weight:800;cursor:pointer;font-size:.95rem}
+#photoBtn{background:#e94560;color:#fff}
+#coffeeBtn{background:#8a5a30;color:#fff}
+#zoomRange{width:160px}
+#checklist{background:#141b2b;border-radius:10px;padding:10px 14px;max-width:760px;margin:0 auto;color:#dce;font-size:.85rem}
+#checklist div{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #223}
+#checklist .got{color:#7ec850;text-decoration:line-through}
+#alertBar{height:10px;border-radius:6px;background:#2a2f3f;overflow:hidden;max-width:300px;margin:4px auto}
+#alertFill{height:100%;background:linear-gradient(90deg,#7ec850,#ffd54f);width:100%;transition:width .2s}
+#overlay{text-align:center;color:#fff;padding:10px}
+#overlay button{margin-top:10px;padding:10px 24px;background:#e94560;border:none;border-radius:20px;color:#fff;font-weight:700;cursor:pointer;font-size:1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Detective Office Stakeout</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="shiftVal">Shift: 00:00 / 01:30</span>
+      <span id="scoreVal">Photos: 0/0</span>
+      <span id="hiVal">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="400"></canvas>
+    <div id="alertBar"><div id="alertFill"></div></div>
+    <div id="controls">
+      <label style="color:#bcd;font-size:.8rem">🔍 Zoom <input type="range" id="zoomRange" min="1" max="3" step="0.05" value="1"></label>
+      <button id="photoBtn">📷 Photograph (Space)</button>
+      <button id="coffeeBtn">☕ Coffee (C)</button>
+    </div>
+    <div id="checklist"></div>
+    <div id="overlay" style="display:none"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Watch the target's lit window across the street. Zoom in with the <b>slider</b> or <b>+/-</b> keys until you can clearly identify a visitor, then press <b>Space</b> or <b>Photograph</b> while they're in frame and zoomed close enough to check them off your checklist. Press <b>C</b> or <b>Coffee</b> whenever your <b>Alertness</b> bar runs low — let it hit zero and you'll doze off and miss visitors. Log every checklist name before the night shift ends!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+const KEY='detectiveofficestakeout_best';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+
+const CHECK_NAMES=['Man in Grey Coat','Woman with Red Umbrella','Courier with Package','Tall Man in Hat','Woman with Suitcase'];
+const SHIFT_LEN=90; // seconds compressed night shift
+let shiftTime=0,alert=100,dozing=false,over=false,won=false;
+let zoom=1;
+let checklist=[],visitors=[],score=0,missed=0;
+let windowCenter={x:600,y:150};
+
+function setupShift(){
+  shiftTime=0;alert=100;dozing=false;over=false;won=false;score=0;missed=0;zoom=1;
+  document.getElementById('zoomRange').value=1;
+  checklist=CHECK_NAMES.map(n=>({name:n,got:false,spawned:false}));
+  visitors=[];
+  scheduleVisitors();
+  renderChecklist();
+  updateHud();
+}
+
+function scheduleVisitors(){
+  // each checklist visitor appears at a random point during the shift, visible for a window
+  const order=[...checklist];
+  order.sort(()=>Math.random()-0.5);
+  order.forEach((item,i)=>{
+    const t=8+i*(SHIFT_LEN-16)/order.length+Math.random()*4;
+    visitors.push({name:item.name,appearAt:t,duration:6+Math.random()*2,active:false,done:false,x:windowCenter.x,y:windowCenter.y});
+  });
+}
+
+function renderChecklist(){
+  const el=document.getElementById('checklist');
+  el.innerHTML='';
+  checklist.forEach(item=>{
+    const d=document.createElement('div');
+    if(item.got)d.className='got';
+    d.innerHTML=`<span>${item.name}</span><span>${item.got?'✔ Logged':'—'}</span>`;
+    el.appendChild(d);
+  });
+}
+
+function updateHud(){
+  const m=Math.floor(shiftTime/60),s=Math.floor(shiftTime%60);
+  const tm=Math.floor(SHIFT_LEN/60),ts=SHIFT_LEN%60;
+  document.getElementById('shiftVal').textContent=I18N.t('shift_label','Shift: {m}:{s} / {tm}:{ts}')
+    .replace('{m}',String(m).padStart(2,'0')).replace('{s}',String(s).padStart(2,'0'))
+    .replace('{tm}',String(tm).padStart(2,'0')).replace('{ts}',String(ts).padStart(2,'0'));
+  document.getElementById('scoreVal').textContent=I18N.t('photos_label','Photos: {s}/{t}').replace('{s}',score).replace('{t}',checklist.length);
+  document.getElementById('hiVal').textContent=I18N.t('hi_label3','Hi: {h}').replace('{h}',hi);
+  document.getElementById('alertFill').style.width=Math.max(0,alert)+'%';
+}
+
+document.getElementById('zoomRange').addEventListener('input',e=>{ zoom=parseFloat(e.target.value); });
+document.getElementById('photoBtn').addEventListener('click',snapPhoto);
+document.getElementById('coffeeBtn').addEventListener('click',drinkCoffee);
+
+function drinkCoffee(){
+  if(over)return;
+  alert=Math.min(100,alert+30);
+  SFX.click();
+  if(dozing){dozing=false;}
+}
+
+function snapPhoto(){
+  if(over)return;
+  if(dozing){ SFX.error(); return; }
+  const active=visitors.find(v=>v.active&&!v.done);
+  if(!active){ SFX.error(); return; }
+  if(zoom>=1.8){
+    active.done=true;
+    const item=checklist.find(ci=>ci.name===active.name);
+    if(item&&!item.got){ item.got=true; score++; SFX.success(); }
+    renderChecklist();
+    updateHud();
+    checkWin();
+  } else {
+    SFX.error();
+  }
+}
+
+function checkWin(){
+  if(checklist.every(c=>c.got)){ endShift(true); }
+}
+
+document.addEventListener('keydown',e=>{
+  if(over){ if(e.code==='Space')restart(); return; }
+  if(e.code==='Space'){e.preventDefault();snapPhoto();}
+  else if(e.key==='c'||e.key==='C')drinkCoffee();
+  else if(e.key==='+'||e.key==='='){zoom=Math.min(3,zoom+0.1);document.getElementById('zoomRange').value=zoom;}
+  else if(e.key==='-'||e.key==='_'){zoom=Math.max(1,zoom-0.1);document.getElementById('zoomRange').value=zoom;}
+});
+
+c.addEventListener('wheel',e=>{
+  e.preventDefault();
+  zoom=Math.max(1,Math.min(3,zoom-e.deltaY*0.001));
+  document.getElementById('zoomRange').value=zoom;
+},{passive:false});
+let pinchDist=null;
+c.addEventListener('touchstart',e=>{
+  if(e.touches.length===2){
+    pinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+  }
+},{passive:true});
+c.addEventListener('touchmove',e=>{
+  if(e.touches.length===2&&pinchDist){
+    const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    zoom=Math.max(1,Math.min(3,zoom+(d-pinchDist)*0.01));
+    document.getElementById('zoomRange').value=zoom;
+    pinchDist=d;
+  }
+},{passive:true});
+c.addEventListener('touchend',()=>{pinchDist=null;});
+c.addEventListener('click',()=>{ if(!over) snapPhoto(); });
+
+function endShift(didWin){
+  over=true;won=didWin;
+  if(score>hi){hi=score;localStorage.setItem(KEY,hi);}
+  updateHud();
+  if(won)SFX.win(); else SFX.lose();
+  const ov=document.getElementById('overlay');
+  ov.style.display='block';
+  ov.innerHTML=`<div style="font-size:1.3rem;font-weight:900;color:${won?'#7ec850':'#e94560'}">${won?I18N.t('shift_complete','SHIFT COMPLETE'):I18N.t('shift_over','SHIFT OVER')}</div>
+    <div style="margin:6px 0">${I18N.t('logged_count','Visitors logged: {s}/{t}').replace('{s}',score).replace('{t}',checklist.length)}</div>
+    <button onclick="restart()">${I18N.t('new_shift','New Shift')}</button>`;
+}
+
+function restart(){
+  document.getElementById('overlay').style.display='none';
+  document.getElementById('overlay').innerHTML='';
+  setupShift();
+}
+
+function drawBuilding(){
+  ctx.fillStyle='#07070f';ctx.fillRect(0,0,W,H);
+  for(let i=0;i<40;i++){
+    ctx.fillStyle=`rgba(255,255,255,${0.02+Math.random()*0.03})`;
+    ctx.fillRect(Math.random()*W,Math.random()*H*0.5,1,1);
+  }
+  // building facade
+  ctx.fillStyle='#1a2030';
+  ctx.fillRect(420,0,380,H);
+  for(let r=0;r<5;r++){
+    for(let col=0;col<4;col++){
+      const wx=450+col*85,wy=20+r*72;
+      const lit=(wx===windowCenter.x-30&&wy===windowCenter.y-40);
+      ctx.fillStyle=lit?'#3a3320':'#0d1420';
+      ctx.fillRect(wx,wy,60,48);
+      ctx.strokeStyle='#060a12';ctx.lineWidth=2;ctx.strokeRect(wx,wy,60,48);
+    }
+  }
+}
+
+function targetWindowRect(){ return {x:windowCenter.x-30,y:windowCenter.y-40,w:60,h:48}; }
+
+function drawVisitorInWindow(v,alpha){
+  const r=targetWindowRect();
+  const z=zoom;
+  const cx=r.x+r.w/2,cy=r.y+r.h/2;
+  ctx.save();
+  ctx.beginPath();ctx.rect(r.x,r.y,r.w,r.h);ctx.clip();
+  ctx.globalAlpha=alpha;
+  ctx.fillStyle='#ffe9b3';
+  const bw=10*z,bh=20*z;
+  ctx.fillRect(cx-bw/2,cy-bh/2,bw,bh);
+  ctx.fillStyle='#e0b060';
+  ctx.beginPath();ctx.arc(cx,cy-bh/2-4*z,4*z,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+  ctx.globalAlpha=1;
+}
+
+function drawScope(){
+  if(zoom<=1)return;
+  const r=targetWindowRect();
+  const pad=Math.max(0,(zoom-1)*40);
+  ctx.strokeStyle='rgba(126,200,80,0.8)';
+  ctx.lineWidth=2;
+  ctx.strokeRect(r.x-pad/2,r.y-pad/2,r.w+pad,r.h+pad);
+  ctx.fillStyle='rgba(126,200,80,0.85)';
+  ctx.font='12px monospace';
+  ctx.fillText('ZOOM x'+zoom.toFixed(1),r.x-pad/2,r.y-pad/2-6);
+}
+
+let lastTime=null;
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=(ts-lastTime)/1000;
+  lastTime=ts;
+
+  if(!over){
+    shiftTime+=dt;
+    if(shiftTime>=SHIFT_LEN){ endShift(checklist.every(ci=>ci.got)); }
+
+    if(!dozing){
+      alert-=dt*(2.2); // drains over real time
+      if(alert<=0){ alert=0; dozing=true; SFX.hurt(); }
+    }
+
+    visitors.forEach(v=>{
+      if(!v.active&&!v.done&&shiftTime>=v.appearAt){ v.active=true; }
+      if(v.active&&!v.done&&shiftTime>=v.appearAt+v.duration){
+        v.active=false;
+        if(!v.done){ missed++; }
+      }
+    });
+
+    updateHud();
+  }
+
+  ctx.clearRect(0,0,W,H);
+  drawBuilding();
+  const activeVisitor=visitors.find(v=>v.active&&!v.done);
+  if(activeVisitor){
+    drawVisitorInWindow(activeVisitor,dozing?0.15:1);
+  }
+  drawScope();
+
+  if(dozing&&!over){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffd54f';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('dozing_off','Dozing off! Press C for coffee!'),W/2,H/2);
+    ctx.textAlign='left';
+  }
+
+  if(over){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+setupShift();
+requestAnimationFrame(loop);
+</script></body></html>

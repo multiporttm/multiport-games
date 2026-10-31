@@ -1,0 +1,254 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Private Eye Shadowing - Multiport Games</title><meta name="description" content="Play Private Eye Shadowing free online — Use Arrow Keys / WASD or drag/tap to move. Stay close behind the target, duck into cover when they glance back, and tail them all the way to their destination without being spotted."><link rel="canonical" href="https://games.multiportllc.com/games/privateeyeshadowing"><meta property="og:title" content="Private Eye Shadowing - Multiport Games"><meta property="og:description" content="Play Private Eye Shadowing free online — Use Arrow Keys / WASD or drag/tap to move. Stay close behind the target, duck into cover when they glance back, and tail them all the way to their destination without being spotted."><meta property="og:url" content="https://games.multiportllc.com/games/privateeyeshadowing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Private Eye Shadowing","description":"Play Private Eye Shadowing free online instantly. Tail a target through a crowded city street on foot, staying close enough to keep them in sight, blending into the crowd and ducking behind cover whenever they glance back, all the way to their destination without being spotted. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/privateeyeshadowing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a2a35;display:block;border-radius:8px;touch-action:none}
+#hud{color:#d8d0b8;font-size:1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.bar{width:140px;height:12px;border-radius:6px;background:#1a1a22;overflow:hidden;display:inline-block;vertical-align:middle;margin-left:6px}
+.bar-fill{height:100%;transition:width .15s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Private Eye Shadowing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="hi-display">Hi: 0</span>
+      <span>Suspicion<span class="bar"><span class="bar-fill" id="susBar" style="width:0%;background:#e94560"></span></span></span>
+      <span>Sight<span class="bar"><span class="bar-fill" id="sightBar" style="width:0%;background:#4caf50"></span></span></span>
+    </div>
+    <canvas id="c" width="800" height="300"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> / <b>WASD</b>, or <b>drag / tap</b> on mobile, to move. Stay close behind the target to keep them in sight. When they glance back (watch for the eye icon), duck into a shaded <b>cover</b> spot or blend into a crowd cluster — stay exposed too long and the suspicion meter maxes out, blowing your cover. Follow them all the way to the destination to win the case!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=300;
+const DEST_X=740;
+const MIN_DIST=45,MAX_DIST=170,SAFE_DIST=230;
+let hi=parseInt(localStorage.getItem('privateeyeshadowing_hi')||'0',10);
+let state='ready'; // ready, playing, won, lost
+let loseReason='';
+let player,target,covers,crowds,pedestrians,glanceTimer,glanceWarn,glancing,suspicion,sightMeter,lastTime,elapsed;
+
+function initGame(){
+  player={x:120,y:170,vx:0,vy:0};
+  target={x:140,y:150,speed:1.55,wob:0};
+  covers=[
+    {x:260,y:60,w:70,h:60},
+    {x:420,y:190,w:80,h:70},
+    {x:560,y:40,w:60,h:70},
+    {x:640,y:200,w:70,h:60},
+  ];
+  crowds=[];
+  for(let i=0;i<5;i++){
+    crowds.push({x:200+i*140+Math.random()*40,y:90+Math.random()*120,r:38});
+  }
+  pedestrians=[];
+  crowds.forEach(zone=>{
+    for(let i=0;i<6;i++){
+      pedestrians.push({baseX:zone.x,baseY:zone.y,r:zone.r,phase:Math.random()*Math.PI*2,speed:0.02+Math.random()*0.02});
+    }
+  });
+  glanceTimer=140+Math.random()*100;
+  glanceWarn=false;glancing=false;
+  suspicion=0;sightMeter=0;
+  lastTime=null;elapsed=0;
+  loseReason='';
+  state='ready';
+}
+initGame();
+
+function startIfReady(){ if(state==='ready') state='playing'; else if(state==='won'||state==='lost') initGame(); }
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space')startIfReady();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let pointerActive=false,pointerTarget=null;
+function canvasPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+c.addEventListener('pointerdown',e=>{startIfReady();pointerActive=true;pointerTarget=canvasPos(e);});
+c.addEventListener('pointermove',e=>{if(pointerActive)pointerTarget=canvasPos(e);});
+window.addEventListener('pointerup',()=>{pointerActive=false;pointerTarget=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();startIfReady();pointerActive=true;pointerTarget=canvasPos(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(pointerActive)pointerTarget=canvasPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerActive=false;pointerTarget=null;},{passive:false});
+
+function inCover(px,py){
+  for(const zone of covers){
+    if(px>zone.x&&px<zone.x+zone.w&&py>zone.y&&py<zone.y+zone.h)return true;
+  }
+  for(const zone of crowds){
+    const dx=px-zone.x,dy=py-zone.y;
+    if(Math.sqrt(dx*dx+dy*dy)<zone.r)return true;
+  }
+  return false;
+}
+
+function dist(ax,ay,bx,by){const dx=ax-bx,dy=ay-by;return Math.sqrt(dx*dx+dy*dy);}
+
+function drawScene(){
+  ctx.fillStyle='#2a2a35';ctx.fillRect(0,0,W,H);
+  // street texture
+  ctx.strokeStyle='#33333e';ctx.lineWidth=2;
+  for(let x=0;x<W;x+=50){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  // cover zones
+  covers.forEach(z=>{
+    ctx.fillStyle='rgba(90,70,120,0.55)';
+    ctx.fillRect(z.x,z.y,z.w,z.h);
+    ctx.strokeStyle='#7a5fa0';ctx.strokeRect(z.x,z.y,z.w,z.h);
+  });
+  // crowd zones + pedestrians
+  pedestrians.forEach(p=>{
+    p.phase+=p.speed;
+    const px=p.baseX+Math.cos(p.phase)*p.r*0.6;
+    const py=p.baseY+Math.sin(p.phase*1.3)*p.r*0.6;
+    ctx.fillStyle='#5a6a7a';
+    ctx.beginPath();ctx.arc(px,py,6,0,Math.PI*2);ctx.fill();
+  });
+  // destination marker
+  ctx.fillStyle='#4caf50';
+  ctx.fillRect(DEST_X,20,14,H-40);
+  ctx.fillStyle='#d8f0d8';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.save();ctx.translate(DEST_X+7,H/2);ctx.rotate(-Math.PI/2);
+  ctx.fillText(I18N.t('pes_destination','DESTINATION'),0,0);
+  ctx.restore();
+}
+
+function drawTarget(){
+  ctx.fillStyle='#caa96a';
+  ctx.beginPath();ctx.arc(target.x,target.y,12,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#8a7040';
+  ctx.fillRect(target.x-8,target.y+10,16,22);
+  if(glanceWarn||glancing){
+    ctx.fillStyle=glancing?'#e94560':'#ffd54f';
+    ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText('👁',target.x,target.y-20);
+  }
+}
+function drawPlayer(){
+  const covered=inCover(player.x,player.y);
+  ctx.fillStyle=covered?'#4caf50':'#e8d9a0';
+  ctx.beginPath();ctx.arc(player.x,player.y,11,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#2a2a35';
+  ctx.fillRect(player.x-7,player.y+9,14,18);
+}
+
+function update(dt){
+  elapsed+=dt;
+  // target movement: advance with slight wobble, slow near destination
+  target.wob+=0.03*dt;
+  target.x+=target.speed*dt;
+  target.y=150+Math.sin(target.wob)*55;
+  target.y=Math.max(35,Math.min(H-35,target.y));
+
+  // player movement
+  let dx=0,dy=0;
+  if(keys['ArrowLeft']||keys['KeyA'])dx-=1;
+  if(keys['ArrowRight']||keys['KeyD'])dx+=1;
+  if(keys['ArrowUp']||keys['KeyW'])dy-=1;
+  if(keys['ArrowDown']||keys['KeyS'])dy+=1;
+  if(dx||dy){
+    const len=Math.sqrt(dx*dx+dy*dy);
+    player.x+=(dx/len)*3.2*dt;player.y+=(dy/len)*3.2*dt;
+  } else if(pointerTarget){
+    const pdx=pointerTarget.x-player.x,pdy=pointerTarget.y-player.y;
+    const pl=Math.sqrt(pdx*pdx+pdy*pdy);
+    if(pl>3){player.x+=(pdx/pl)*3.4*dt;player.y+=(pdy/pl)*3.4*dt;}
+  }
+  player.x=Math.max(12,Math.min(W-12,player.x));
+  player.y=Math.max(12,Math.min(H-12,player.y));
+
+  const d=dist(player.x,player.y,target.x,target.y);
+
+  // sight meter: rises when too far, falls when in range
+  if(d>MAX_DIST){
+    sightMeter+=((d-MAX_DIST)/SAFE_DIST)*1.6*dt;
+  } else {
+    sightMeter-=1.5*dt;
+  }
+  sightMeter=Math.max(0,Math.min(100,sightMeter));
+
+  // glance cycle
+  glanceTimer-=dt;
+  if(!glancing&&!glanceWarn&&glanceTimer<=40){glanceWarn=true;}
+  if(glanceWarn&&!glancing&&glanceTimer<=0){glancing=true;glanceTimer=70;SFX.tick();}
+  else if(glancing&&glanceTimer<=0){
+    glancing=false;glanceWarn=false;
+    glanceTimer=140+Math.random()*110;
+  }
+
+  if(glancing){
+    const covered=inCover(player.x,player.y);
+    const visible=d<SAFE_DIST;
+    if(visible&&!covered){
+      suspicion+=2.2*dt;
+    } else {
+      suspicion-=0.6*dt;
+    }
+  } else {
+    suspicion-=0.8*dt;
+  }
+  suspicion=Math.max(0,Math.min(100,suspicion));
+
+  if(suspicion>=100){state='lost';loseReason=I18N.t('pes_spotted','You were spotted!');SFX.lose();}
+  else if(sightMeter>=100){state='lost';loseReason=I18N.t('pes_lostsight','You lost sight of the target!');SFX.lose();}
+  else if(target.x>=DEST_X&&d<SAFE_DIST){
+    state='won';
+    const score=Math.max(0,Math.floor(1000-suspicion*4-elapsed*0.2));
+    if(score>hi){hi=score;localStorage.setItem('privateeyeshadowing_hi',hi);}
+    SFX.win();
+  }
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  drawScene();
+  drawTarget();
+  drawPlayer();
+
+  if(state==='playing')update(dt);
+
+  if(state==='ready'){
+    ctx.fillStyle='#e8d9a0dd';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('pes_start_hint','Move / Tap to start the tail'),W/2,30);
+  } else if(state==='lost'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#e94560';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,120);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(loseReason,W/2,152);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,180);
+  } else if(state==='won'){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#4caf50';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('pes_win_title','CASE CLOSED!'),W/2,120);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('pes_win_sub','Target tailed to destination.'),W/2,152);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,180);
+  }
+
+  document.getElementById('hi-display').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+  document.getElementById('susBar').style.width=suspicion+'%';
+  document.getElementById('sightBar').style.width=sightMeter+'%';
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

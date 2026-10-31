@@ -1,0 +1,254 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Fingerprint Dusting</title><meta name="description" content="Play Fingerprint Dusting free online — Gently brush the powder with slow drags to reveal the hidden print without smudging it, then match it to the right suspect."><link rel="canonical" href="https://games.multiportllc.com/games/fingerprintdusting"><meta property="og:title" content="Fingerprint Dusting - Multiport Games"><meta property="og:description" content="Play Fingerprint Dusting free online — Gently brush the powder with slow drags to reveal the hidden print without smudging it, then match it to the right suspect."><meta property="og:url" content="https://games.multiportllc.com/games/fingerprintdusting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Fingerprint Dusting","description":"Play Fingerprint Dusting free online instantly. Drag slowly across the dusty surface to brush away powder and reveal the hidden fingerprint — brush too fast and you'll smudge it. Then match the revealed ridge pattern against a lineup of suspect prints to identify the correct suspect. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/fingerprintdusting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{text-align:center}
+#c{background:#333;display:block;border-radius:8px;margin:0 auto;touch-action:none;max-width:100%}
+#hud{display:flex;justify-content:space-between;max-width:420px;margin:0 auto 8px;color:#ddd;font-weight:700;font-size:.9rem;flex-wrap:wrap;gap:6px}
+#suspects{display:flex;gap:10px;justify-content:center;margin-top:14px;flex-wrap:wrap}
+.suspect{background:#1c1c26;border:3px solid rgba(255,255,255,.15);border-radius:10px;padding:8px;cursor:pointer;transition:border-color .15s,transform .15s}
+.suspect canvas{display:block;border-radius:6px;background:#eee}
+.suspect .name{color:#ccc;font-size:.78rem;margin-top:4px;font-weight:700}
+.suspect.correct{border-color:#7ec850;transform:scale(1.04)}
+.suspect.wrong{border-color:#e94560}
+#stage2{display:none}
+#msg{min-height:1.4em;color:#ffd54f;font-weight:700;margin-top:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Fingerprint Dusting</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="stage1">
+        <div id="hud"><span id="score-label">Score: 0 | Hi: 0</span><span id="clarity">Clarity: 100%</span></div>
+        <canvas id="c" width="360" height="360"></canvas>
+      </div>
+      <div id="stage2">
+        <div id="msg2">Which suspect's print matches?</div>
+        <div id="suspects"></div>
+      </div>
+      <div id="msg"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag slowly across the powder with your mouse or finger to brush it away and reveal the fingerprint underneath. Brush too fast and you'll <b>smudge</b> the print, lowering its clarity. Once enough is revealed, pick the suspect card whose ridge pattern matches. Press <b>R</b> to dust a brand new print.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=360,H=360;
+const KEY='fpd_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,round=1;
+
+// Hidden print pattern: a set of arcs defining ridge type (loop/whorl/arch)
+function genPrint(seed){
+  const types=['loop','whorl','arch'];
+  const type=types[seed%3];
+  const rings=6+(seed*7)%5;
+  const wobble=0.4+((seed*13)%10)/20;
+  return {type,rings,wobble,seed};
+}
+
+function drawPrint(context,print,cx,cy,scale){
+  context.save();
+  context.translate(cx,cy);context.scale(scale,scale);
+  context.strokeStyle='#222';context.lineWidth=2.2/scale;
+  const n=print.rings;
+  for(let i=0;i<n;i++){
+    const r=10+i*9;
+    context.beginPath();
+    if(print.type==='whorl'){
+      for(let a=0;a<=Math.PI*2+0.2;a+=0.08){
+        const rr=r+Math.sin(a*3+print.seed)*print.wobble*4;
+        const x=Math.cos(a)*rr, y=Math.sin(a)*rr*0.9;
+        if(a===0)context.moveTo(x,y);else context.lineTo(x,y);
+      }
+    } else if(print.type==='loop'){
+      for(let a=-2.4;a<=2.4;a+=0.08){
+        const rr=r+Math.sin(a*2+print.seed)*print.wobble*3;
+        const x=Math.cos(a)*rr+6, y=Math.sin(a)*rr*1.15;
+        if(a===-2.4)context.moveTo(x,y);else context.lineTo(x,y);
+      }
+    } else {
+      for(let a=-2.0;a<=2.0;a+=0.08){
+        const rr=r*0.8+Math.cos(a+print.seed)*print.wobble*3;
+        const x=Math.sin(a)*rr, y=-Math.abs(Math.cos(a))*rr*0.6+r*0.3;
+        if(a===-2.0)context.moveTo(x,y);else context.lineTo(x,y);
+      }
+    }
+    context.stroke();
+  }
+  context.restore();
+}
+
+let secretPrint, powder, revealMask, clarity, smudge, lastPt, lastTime, totalRevealed;
+const GRID=48,CELL=W/GRID;
+
+function reset(){
+  secretPrint=genPrint(Math.floor(Math.random()*1000)+round*7);
+  powder=new Array(GRID*GRID).fill(1); // 1 = covered, 0 = revealed clean, -1 = smudged
+  clarity=100;smudge=0;lastPt=null;lastTime=null;totalRevealed=0;
+  document.getElementById('stage1').style.display='';
+  document.getElementById('stage2').style.display='none';
+  document.getElementById('msg').textContent='';
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('score-label').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  document.getElementById('clarity').textContent=I18N.t('clarity_label','Clarity: {c}%').replace('{c}',Math.max(0,Math.round(clarity)));
+}
+
+function brushAt(x,y,speed){
+  const gx=Math.floor(x/CELL),gy=Math.floor(y/CELL);
+  const radius=2;
+  const smudgeThreshold=9; // px per ms-ish unit
+  const isFast=speed>smudgeThreshold;
+  for(let dx=-radius;dx<=radius;dx++){
+    for(let dy=-radius;dy<=radius;dy++){
+      const gxx=gx+dx,gyy=gy+dy;
+      if(gxx<0||gyy<0||gxx>=GRID||gyy>=GRID)continue;
+      if(dx*dx+dy*dy>radius*radius)continue;
+      const idx=gyy*GRID+gxx;
+      if(powder[idx]===1){
+        powder[idx]=isFast?-1:0;
+        totalRevealed++;
+        if(isFast)smudge++;
+      } else if(powder[idx]===0 && isFast){
+        powder[idx]=-1;smudge++;
+      }
+    }
+  }
+  clarity=Math.max(0,100-(smudge/(GRID*GRID))*220);
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const sx=W/rect.width,sy=H/rect.height;
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*sx,y:cy*sy};
+}
+
+let dusting=false;
+c.addEventListener('pointerdown',e=>{dusting=true;lastPt=pointerPos(e);lastTime=performance.now();});
+window.addEventListener('pointerup',()=>{dusting=false;lastPt=null;});
+c.addEventListener('pointermove',e=>{
+  if(!dusting)return;
+  const p=pointerPos(e);
+  const now=performance.now();
+  if(lastPt){
+    const dist=Math.hypot(p.x-lastPt.x,p.y-lastPt.y);
+    const dt=Math.max(1,now-lastTime);
+    const speed=dist/dt*16.6667; // normalize-ish to px/frame
+    brushAt(p.x,p.y,speed);
+    if(speed>9)SFX.hit(); else if(Math.random()<0.15)SFX.tick();
+  }
+  lastPt=p;lastTime=now;
+  checkRevealDone();
+});
+c.addEventListener('touchmove',e=>e.preventDefault(),{passive:false});
+
+function checkRevealDone(){
+  const revealedFrac=totalRevealed/(GRID*GRID);
+  if(revealedFrac>0.55 && clarity>0){
+    goToMatch();
+  } else if(clarity<=15){
+    document.getElementById('msg').textContent=I18N.t('smudge_fail','Too smudged! Press R to try a fresh print.');
+    SFX.fail();
+    dusting=false;
+  }
+}
+
+function goToMatch(){
+  SFX.success();
+  document.getElementById('stage1').style.display='none';
+  document.getElementById('stage2').style.display='';
+  const el=document.getElementById('suspects');
+  el.innerHTML='';
+  const correctIdx=Math.floor(Math.random()*4);
+  const options=[];
+  for(let i=0;i<4;i++){
+    if(i===correctIdx)options.push(secretPrint);
+    else options.push(genPrint(Math.floor(Math.random()*5000)+i*31));
+  }
+  options.forEach((print,i)=>{
+    const div=document.createElement('div');
+    div.className='suspect';
+    const canv=document.createElement('canvas');canv.width=100;canv.height=100;
+    const cctx=canv.getContext('2d');
+    cctx.fillStyle='#eee';cctx.fillRect(0,0,100,100);
+    drawPrint(cctx,print,50,50,0.8);
+    div.appendChild(canv);
+    const name=document.createElement('div');name.className='name';
+    name.textContent=I18N.t('suspect_n','Suspect {n}').replace('{n}',i+1);
+    div.appendChild(name);
+    div.addEventListener('click',()=>pickSuspect(i,i===correctIdx,div));
+    el.appendChild(div);
+  });
+  document.getElementById('msg').textContent=I18N.t('match_prompt','Clarity locked in at {c}% — pick the matching suspect.').replace('{c}',Math.round(clarity));
+}
+
+let resolved=false;
+function pickSuspect(i,correct,div){
+  if(resolved)return;
+  resolved=true;
+  const clarityBonus=Math.round(clarity);
+  if(correct){
+    div.classList.add('correct');
+    score+=100+clarityBonus;
+    SFX.win();
+    document.getElementById('msg').textContent=I18N.t('match_correct','Correct match! +{p} points').replace('{p}',100+clarityBonus);
+  } else {
+    div.classList.add('wrong');
+    SFX.lose();
+    document.getElementById('msg').textContent=I18N.t('match_wrong','Wrong suspect. That print was innocent.');
+  }
+  if(score>hi){hi=score;localStorage.setItem(KEY,String(Math.floor(hi)));}
+  updateHud();
+  round++;
+  setTimeout(()=>{resolved=false;reset();},1600);
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='r'||e.key==='R'){reset();}
+});
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  // base revealed print beneath powder
+  const off=document.createElement('canvas');off.width=W;off.height=H;
+  const offCtx=off.getContext('2d');
+  offCtx.fillStyle='#f4ead6';offCtx.fillRect(0,0,W,H);
+  drawPrint(offCtx,secretPrint,W/2,H/2,2.6);
+  const printData=offCtx.getImageData(0,0,W,H);
+
+  const img=ctx.createImageData(W,H);
+  for(let gy=0;gy<GRID;gy++){
+    for(let gx=0;gx<GRID;gx++){
+      const state=powder[gy*GRID+gx];
+      for(let py=0;py<CELL;py++){
+        for(let px=0;px<CELL;px++){
+          const x=Math.floor(gx*CELL+px),y=Math.floor(gy*CELL+py);
+          const di=(y*W+x)*4;
+          if(state===1){
+            img.data[di]=90;img.data[di+1]=90;img.data[di+2]=98;img.data[di+3]=255;
+          } else if(state===0){
+            img.data[di]=printData.data[di];img.data[di+1]=printData.data[di+1];img.data[di+2]=printData.data[di+2];img.data[di+3]=255;
+          } else {
+            img.data[di]=40;img.data[di+1]=35;img.data[di+2]=30;img.data[di+3]=255;
+          }
+        }
+      }
+    }
+  }
+  ctx.putImageData(img,0,0);
+  requestAnimationFrame(render);
+}
+reset();
+render();
+</script></body></html>
