@@ -1,0 +1,250 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Hydrothermal Vent Exploration - Multiport Games</title><meta name="description" content="Play Hydrothermal Vent Exploration free online — Guide your submersible one tile at a time with Arrow Keys/WASD or tap, timing your moves past pulsing scalding vent plumes to survey every vent site without taking hull damage."><link rel="canonical" href="https://games.multiportllc.com/games/hydrothermalventexploration"><meta property="og:title" content="Hydrothermal Vent Exploration - Multiport Games"><meta property="og:description" content="Play Hydrothermal Vent Exploration free online — Guide your submersible one tile at a time with Arrow Keys/WASD or tap, timing your moves past pulsing scalding vent plumes to survey every vent site without taking hull damage."><meta property="og:url" content="https://games.multiportllc.com/games/hydrothermalventexploration"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Hydrothermal Vent Exploration","description":"Play Hydrothermal Vent Exploration free online instantly. Map safe paths between pulsing scalding vent plumes to survey every vent site without taking hull damage. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/hydrothermalventexploration","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#061018;display:block;border-radius:8px;margin:0 auto;touch-action:none}
+#hud{color:#ff8a65;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#fff}
+.low{color:#ff5252!important}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Hydrothermal Vent Exploration</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="hud">
+      <span>Hull: <b id="hullLabel">3</b></span>
+      <span>Vents Surveyed: <b id="ventLabel">0/0</b></span>
+      <span>Moves: <b id="moveLabel">0</b></span>
+      <span>Best: <b id="hiLabel">0</b></span>
+    </div>
+    <canvas id="c" width="440" height="560"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move one tile at a time with <b>Arrow Keys / WASD</b> or by <b>tapping</b> an adjacent tile. Orange heat-shimmer tiles are scalding vent plumes that pulse dangerous on a cycle — watch the warning glow and time your move through them. Visit every <b>vent marker</b> (yellow) then reach the <b>exit</b> (green) without your hull reaching zero.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=440,H=560;
+const KEY='hydrothermalventexploration_hi';
+function loadHi(){return +(localStorage.getItem(KEY)||0);}
+function saveHi(v){if(v>loadHi())localStorage.setItem(KEY,String(v));}
+
+const COLS=8,ROWS=10;
+const CELL=Math.floor(W/COLS);
+const GRID_TOP=(H-CELL*ROWS)/2;
+
+let grid,player,hull,moves,gameOver,win,started,frame,ventsTotal,ventsDone,hi,exit,vents,hotCells,shakeT=0,toastMsg='',toastT=0;
+
+function cellToPx(col,row){return {x:col*CELL+CELL/2,y:GRID_TOP+row*CELL+CELL/2};}
+
+function reset(){
+  hull=3;moves=0;gameOver=false;win=false;started=false;frame=0;ventsDone=0;
+  hi=loadHi();
+  shakeT=0;toastT=0;
+  buildLevel();
+  updateHud();
+}
+
+function buildLevel(){
+  // hot cells: {col,row,period,phase,duty} duty = fraction of period that is "hot"
+  hotCells=[];
+  const used=new Set();
+  const key=(c,r)=>c+','+r;
+  function mark(c,r){used.add(key(c,r));}
+
+  player={col:0,row:ROWS-1};
+  mark(player.col,player.row);
+  exit={col:COLS-1,row:0};
+  mark(exit.col,exit.row);
+
+  vents=[];
+  const ventSpots=[[2,2],[5,3],[1,6],[6,7]];
+  ventSpots.forEach(([c,r])=>{vents.push({col:c,row:r,done:false});mark(c,r);});
+  ventsTotal=vents.length;
+
+  // scatter hot cells avoiding used spots, density increases toward middle
+  for(let r=0;r<ROWS;r++){
+    for(let col=0;col<COLS;col++){
+      if(used.has(key(col,r)))continue;
+      if(Math.random()<0.34){
+        hotCells.push({
+          col,row:r,
+          period:60+Math.floor(Math.random()*50),
+          phase:Math.floor(Math.random()*100),
+          duty:0.35+Math.random()*0.25
+        });
+      }
+    }
+  }
+}
+
+function isHotNow(h,f){
+  const t=(f+h.phase)%h.period;
+  return t < h.period*h.duty;
+}
+function willBeHotSoon(h,f,lookahead){
+  for(let i=0;i<=lookahead;i++) if(isHotNow(h,f+i)) return i;
+  return -1;
+}
+
+function hotAt(col,row){return hotCells.find(h=>h.col===col&&h.row===row);}
+function ventAt(col,row){return vents.find(v=>v.col===col&&v.row===row&&!v.done);}
+
+function tryMove(dc,dr){
+  if(gameOver){reset();return;}
+  if(!started){started=true;}
+  const nc=player.col+dc,nr=player.row+dr;
+  if(nc<0||nc>=COLS||nr<0||nr>=ROWS)return;
+  if(Math.abs(dc)+Math.abs(dr)!==1)return;
+  player.col=nc;player.row=nr;
+  moves++;
+  SFX.click();
+  const h=hotAt(nc,nr);
+  if(h&&isHotNow(h,frame)){
+    hull--;
+    shakeT=14;
+    SFX.hit();
+    toastMsg=I18N.t('hv_scalded','Scalded! Hull damaged.');toastT=70;
+    if(hull<=0){
+      gameOver=true;win=false;SFX.lose();
+      updateHud();return;
+    }
+  }
+  const v=ventAt(nc,nr);
+  if(v){
+    v.done=true;ventsDone++;
+    SFX.success();
+    toastMsg=I18N.t('hv_surveyed','Vent surveyed!');toastT=60;
+  }
+  if(nc===exit.col&&nr===exit.row&&ventsDone>=ventsTotal){
+    win=true;gameOver=true;SFX.win();
+    saveHi(ventsTotal*1000-moves>0?ventsTotal*1000-moves:ventsTotal);
+    updateHud();return;
+  } else if(nc===exit.col&&nr===exit.row){
+    toastMsg=I18N.t('hv_need_vents','Survey all vents before exiting!');toastT=60;
+  }
+  updateHud();
+}
+
+document.addEventListener('keydown',e=>{
+  const map={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1],KeyA:[-1,0],KeyD:[1,0],KeyW:[0,-1],KeyS:[0,1]};
+  if(map[e.code]){e.preventDefault();tryMove(map[e.code][0],map[e.code][1]);}
+  if(e.code==='Space'&&gameOver){reset();}
+});
+
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  const px=(e.clientX-r.left)*(W/r.width);
+  const py=(e.clientY-r.top)*(H/r.height);
+  const col=Math.floor(px/CELL);
+  const row=Math.floor((py-GRID_TOP)/CELL);
+  if(gameOver){reset();return;}
+  if(!started)started=true;
+  const dc=col-player.col,dr=row-player.row;
+  if(Math.abs(dc)+Math.abs(dr)===1)tryMove(dc,dr);
+});
+
+function updateHud(){
+  const hEl=document.getElementById('hullLabel');
+  hEl.textContent=Math.max(0,hull);
+  hEl.classList.toggle('low',hull<=1);
+  document.getElementById('ventLabel').textContent=ventsDone+'/'+ventsTotal;
+  document.getElementById('moveLabel').textContent=moves;
+  document.getElementById('hiLabel').textContent=hi;
+}
+
+function drawCell(col,row,color){
+  ctx.fillStyle=color;
+  ctx.fillRect(col*CELL+1,GRID_TOP+row*CELL+1,CELL-2,CELL-2);
+}
+
+function loop(){
+  frame++;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#04141f';ctx.fillRect(0,0,W,H);
+
+  let ox=0,oy=0;
+  if(shakeT>0){ox=(Math.random()-0.5)*6;oy=(Math.random()-0.5)*6;shakeT--;}
+  ctx.save();
+  ctx.translate(ox,oy);
+
+  // grid base
+  for(let r=0;r<ROWS;r++)for(let col=0;col<COLS;col++){
+    drawCell(col,r,(col+r)%2===0?'#0a2534':'#0c2b3c');
+  }
+
+  // hot cells with warning glow before activation
+  hotCells.forEach(h=>{
+    const hot=isHotNow(h,frame);
+    const soon=willBeHotSoon(h,frame,10);
+    if(hot){
+      drawCell(h.col,h.row,'#ff7043');
+      ctx.fillStyle='rgba(255,255,255,0.25)';
+      ctx.fillRect(h.col*CELL+1,GRID_TOP+h.row*CELL+1,CELL-2,CELL-2);
+    } else if(soon>=0&&soon<=10){
+      const glow=1-soon/10;
+      drawCell(h.col,h.row,`rgba(255,112,67,${0.15+0.35*glow})`);
+    } else {
+      drawCell(h.col,h.row,'rgba(255,112,67,0.12)');
+    }
+  });
+
+  // vents
+  vents.forEach(v=>{
+    const p=cellToPx(v.col,v.row);
+    ctx.fillStyle=v.done?'#558b2f':'#ffd54f';
+    ctx.beginPath();ctx.arc(p.x,p.y,CELL*0.28,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#222';ctx.font='bold 11px Arial';ctx.textAlign='center';
+    ctx.fillText(v.done?'✓':'V',p.x,p.y+4);
+  });
+
+  // exit
+  const ep=cellToPx(exit.col,exit.row);
+  ctx.strokeStyle=ventsDone>=ventsTotal?'#4caf50':'#555';
+  ctx.lineWidth=3;
+  ctx.strokeRect(exit.col*CELL+4,GRID_TOP+exit.row*CELL+4,CELL-8,CELL-8);
+  ctx.fillStyle=ventsDone>=ventsTotal?'#4caf50':'#777';
+  ctx.font='bold 10px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('hv_exit_label','EXIT'),ep.x,ep.y+3);
+
+  // player submersible
+  const pp=cellToPx(player.col,player.row);
+  ctx.fillStyle='#4fc3f7';
+  ctx.beginPath();ctx.ellipse(pp.x,pp.y,CELL*0.3,CELL*0.2,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#e1f5fe';
+  ctx.beginPath();ctx.arc(pp.x+CELL*0.1,pp.y-2,3,0,Math.PI*2);ctx.fill();
+
+  ctx.restore();
+
+  if(toastT>0){
+    toastT--;
+    ctx.fillStyle=`rgba(0,0,0,${Math.min(0.75,toastT/30)})`;
+    ctx.fillRect(0,H/2-24,W,34);
+    ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(toastMsg,W/2,H/2);
+  }
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff8a65';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('hv_start_hint','Arrows/WASD or tap a tile to start'),W/2,H/2);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(win?I18N.t('hv_win_title','ALL VENTS SURVEYED!'):I18N.t('hv_lose_title','HULL BREACHED'),W/2,H/2-16);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('hv_restart_hint','Space / Tap to try again'),W/2,H/2+16);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

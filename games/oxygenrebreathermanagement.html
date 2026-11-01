@@ -1,0 +1,187 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Oxygen Rebreather Management</title><meta name="description" content="Play Oxygen Rebreather Management free online — Use Up/Down Arrows or the +/- buttons to adjust your rebreather's oxygen mix and keep blood PO2 in the safe range as depth changes across the whole dive."><link rel="canonical" href="https://games.multiportllc.com/games/oxygenrebreathermanagement"><meta property="og:title" content="Oxygen Rebreather Management - Multiport Games"><meta property="og:description" content="Play Oxygen Rebreather Management free online — Use Up/Down Arrows or the +/- buttons to adjust your rebreather's oxygen mix and keep blood PO2 in the safe range as depth changes across the whole dive."><meta property="og:url" content="https://games.multiportllc.com/games/oxygenrebreathermanagement"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Oxygen Rebreather Management","description":"Play Oxygen Rebreather Management free online instantly. Monitor a technical diver's closed-circuit rebreather, adjusting the oxygen/diluent gas mix to keep blood oxygen levels safe as depth changes throughout a long dive, avoiding both oxygen toxicity and hypoxia. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/oxygenrebreathermanagement","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#020b14}
+#wrap{background:#06202e;border-radius:14px;padding:16px;max-width:520px;margin:0 auto;text-align:center}
+#hud{display:flex;justify-content:space-between;color:#9ad7ff;font-weight:800;margin-bottom:8px;font-size:.95rem}
+#hud span{color:#ffd54f}
+canvas#profile{background:#031522;border-radius:8px;display:block;margin:0 auto 12px;width:100%;max-width:480px;height:160px}
+#po2wrap{margin:10px auto;max-width:420px}
+#po2label{color:#cfefff;font-weight:700;font-size:.9rem;margin-bottom:4px}
+#po2bar{position:relative;height:28px;background:#031522;border-radius:14px;overflow:hidden}
+#po2safe{position:absolute;top:0;bottom:0;background:rgba(46,204,113,.3);border-left:2px solid #2ecc71;border-right:2px solid #2ecc71}
+#po2fill{position:absolute;top:4px;bottom:4px;width:6px;background:#ffd54f;border-radius:3px;transition:left .1s linear}
+#controls{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:14px}
+#controls button{width:52px;height:52px;border-radius:50%;background:#1577a3;border:none;color:#fff;font-size:1.6rem;font-weight:900;cursor:pointer}
+#fo2display{font-size:1.3rem;font-weight:900;color:#5fe0c4;min-width:90px}
+#healthbar{height:12px;background:#031522;border-radius:7px;overflow:hidden;max-width:420px;margin:12px auto 4px}
+#healthfill{height:100%;background:linear-gradient(90deg,#2ecc71,#f1c40f,#e74c3c);width:100%;transition:width .2s}
+#msg{min-height:1.4em;color:#ffd54f;font-weight:700;margin-top:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Oxygen Rebreather Management</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><div>Depth: <span id="depthVal">0</span>m</div><div>Time: <span id="timeVal">0</span>s / <span id="timeMax">0</span>s</div><div>Hi: <span id="hi">0</span>s</div></div>
+      <canvas id="profile" width="480" height="160"></canvas>
+      <div id="po2wrap">
+        <div id="po2label">Blood PO2: <span id="po2Val">0.00</span> ATA (safe range 0.16–1.40)</div>
+        <div id="po2bar"><div id="po2safe"></div><div id="po2fill"></div></div>
+      </div>
+      <div id="controls">
+        <button id="minusBtn">−</button>
+        <div id="fo2display">FO2 21%</div>
+        <button id="plusBtn">+</button>
+      </div>
+      <div id="healthbar"><div id="healthfill"></div></div>
+      <div id="msg">Adjust FO2 to keep PO2 in the green zone as depth changes.</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Your closed-circuit rebreather mixes oxygen (O2) with diluent gas. As ambient pressure rises with depth, PO2 = FO2 × pressure. Use the <b>+/−</b> buttons (or <b>Up/Down Arrow</b> keys) to raise or lower your FO2 percentage and keep the yellow PO2 marker inside the green safe zone on the gauge as the dive profile's depth changes. Drifting too high risks oxygen toxicity; too low risks hypoxia — either drains your health. Survive the full dive profile to complete the dive!
+  </div>
+</div>
+<script>
+const KEY='oxygenrebreathermanagement_hi';
+function loadHi(){try{return parseInt(localStorage.getItem(KEY)||'0',10)||0;}catch(e){return 0;}}
+function saveHi(v){try{localStorage.setItem(KEY,String(v));}catch(e){}}
+
+const SAFE_LO=0.16, SAFE_HI=1.40;
+const DIVE_DURATION=180; // seconds of simulated dive
+let fo2, t, health, gameOver, hi, won, lastTs, profile, maxDepthSeen;
+
+function buildProfile(){
+  // piecewise depth-vs-time profile (meters), a plausible long technical dive
+  return [
+    {t:0,d:0},{t:15,d:35},{t:40,d:55},{t:70,d:55},{t:90,d:80},
+    {t:115,d:80},{t:135,d:45},{t:150,d:45},{t:165,d:15},{t:180,d:0}
+  ];
+}
+
+function depthAt(time){
+  for(let i=0;i<profile.length-1;i++){
+    const a=profile[i],b=profile[i+1];
+    if(time>=a.t&&time<=b.t){
+      const frac=(time-a.t)/(b.t-a.t||1);
+      return a.d+(b.d-a.d)*frac;
+    }
+  }
+  return profile[profile.length-1].d;
+}
+
+function reset(){
+  fo2=0.21;t=0;health=100;gameOver=false;won=false;lastTs=null;
+  profile=buildProfile();
+  hi=loadHi();
+  document.getElementById('hi').textContent=hi;
+  document.getElementById('timeMax').textContent=DIVE_DURATION;
+  document.getElementById('msg').textContent=I18N.t('intro_msg','Adjust FO2 to keep PO2 in the green zone as depth changes.');
+  updateUI();
+}
+
+function pressureAt(depth){ return 1 + depth/10; }
+
+function setFo2(v){
+  fo2=Math.max(0.10,Math.min(1.00,v));
+  document.getElementById('fo2display').textContent=`FO2 ${Math.round(fo2*100)}%`;
+}
+
+document.getElementById('plusBtn').addEventListener('click',()=>{ if(gameOver){reset();return;} setFo2(fo2+0.02); SFX.click(); });
+document.getElementById('minusBtn').addEventListener('click',()=>{ if(gameOver){reset();return;} setFo2(fo2-0.02); SFX.click(); });
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown'].includes(e.key))e.preventDefault();
+  if(gameOver){ if(e.key==='ArrowUp'||e.key==='ArrowDown'||e.key==='Enter'||e.key===' ')reset(); return; }
+  if(e.key==='ArrowUp')setFo2(fo2+0.02);
+  else if(e.key==='ArrowDown')setFo2(fo2-0.02);
+});
+
+function updateUI(){
+  const depth=depthAt(t);
+  const pressure=pressureAt(depth);
+  const po2=fo2*pressure;
+  document.getElementById('depthVal').textContent=Math.round(depth);
+  document.getElementById('timeVal').textContent=Math.floor(t);
+  document.getElementById('po2Val').textContent=po2.toFixed(2);
+  document.getElementById('healthfill').style.width=Math.max(0,health)+'%';
+
+  const barW=document.getElementById('po2bar').clientWidth;
+  const scaleMax=2.0;
+  const safeLeft=(SAFE_LO/scaleMax)*barW;
+  const safeW=((SAFE_HI-SAFE_LO)/scaleMax)*barW;
+  document.getElementById('po2safe').style.left=safeLeft+'px';
+  document.getElementById('po2safe').style.width=safeW+'px';
+  const markerX=Math.max(0,Math.min(barW-6,(po2/scaleMax)*barW-3));
+  document.getElementById('po2fill').style.left=markerX+'px';
+
+  drawProfile(depth);
+  return {depth,pressure,po2};
+}
+
+function drawProfile(depth){
+  const canvas=document.getElementById('profile');
+  const ctx=canvas.getContext('2d');
+  const W=canvas.width,H=canvas.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#031522';ctx.fillRect(0,0,W,H);
+  const maxD=90;
+  ctx.strokeStyle='#1577a3';ctx.lineWidth=2;ctx.beginPath();
+  profile.forEach((p,i)=>{
+    const x=(p.t/DIVE_DURATION)*W;
+    const y=10+(p.d/maxD)*(H-20);
+    if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  // progress marker
+  const px=(Math.min(t,DIVE_DURATION)/DIVE_DURATION)*W;
+  const py=10+(depth/maxD)*(H-20);
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(px,py,6,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#8fe8ff';ctx.font='11px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('depth_axis_label','Dive profile (depth over time)'),6,14);
+}
+
+function endGame(win){
+  gameOver=true;
+  if(win){
+    SFX.win();
+    document.getElementById('msg').textContent=I18N.t('win_msg','Dive complete! You surfaced safely. Click +/- or press a key to dive again.');
+  } else {
+    SFX.lose();
+    document.getElementById('msg').textContent=I18N.t('lose_msg','Diver lost consciousness from unsafe PO2. Click +/- or press a key to try again.');
+  }
+  const elapsed=Math.floor(t);
+  if(elapsed>hi){hi=elapsed;saveHi(hi);document.getElementById('hi').textContent=hi;}
+}
+
+function tick(ts){
+  if(!gameOver){
+    if(lastTs!==null){
+      const dt=Math.min(0.1,(ts-lastTs)/1000);
+      t+=dt;
+      const {po2}=updateUI();
+      if(po2<SAFE_LO||po2>SAFE_HI){
+        const severity=po2<SAFE_LO?(SAFE_LO-po2):(po2-SAFE_HI);
+        health-=dt*(14+severity*40);
+        if(health<=0){endGame(false);}
+      } else {
+        health=Math.min(100,health+dt*6);
+      }
+      if(t>=DIVE_DURATION&&!gameOver){endGame(true);}
+    }
+    lastTs=ts;
+  } else {
+    lastTs=null;
+  }
+  requestAnimationFrame(tick);
+}
+
+reset();
+requestAnimationFrame(tick);
+</script></body></html>

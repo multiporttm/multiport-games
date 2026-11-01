@@ -1,0 +1,275 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Underwater Volcano Eruption</title><meta name="description" content="Play Underwater Volcano Eruption free online — Pilot your submersible with Arrow Keys/WASD or drag/tap to dodge lava plumes, flying rock debris, and spreading lava flows as you race to open water."><link rel="canonical" href="https://games.multiportllc.com/games/underwatervolcanoeruption"><meta property="og:title" content="Underwater Volcano Eruption - Multiport Games"><meta property="og:description" content="Play Underwater Volcano Eruption free online — Pilot your submersible with Arrow Keys/WASD or drag/tap to dodge lava plumes, flying rock debris, and spreading lava flows as you race to open water."><meta property="og:url" content="https://games.multiportllc.com/games/underwatervolcanoeruption"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Underwater Volcano Eruption","description":"Play Underwater Volcano Eruption free online instantly. Pilot a submersible away from a suddenly erupting underwater volcano, dodging rising plumes of superheated water, ejected rock debris, and expanding lava flows across the seafloor, racing to reach safe open water before the eruption intensifies further. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/underwatervolcanoeruption","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0a0203}
+#c{background:#1a0506;display:block;border-radius:8px;cursor:crosshair}
+#hud{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;color:#ffb37a;font-size:1.05rem;font-weight:800;padding:8px 10px;max-width:800px;margin:0 auto}
+#msg{text-align:center;color:#ffd54f;font-weight:800;min-height:1.4em;padding:2px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Underwater Volcano Eruption</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="distDisp">Distance: 0m</span>
+      <span id="hiDisp">Best: 0m</span>
+      <span id="livesDisp">Hull: 3</span>
+    </div>
+    <div id="msg"></div>
+    <canvas id="c" width="800" height="460"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Use <b>Arrow Keys / WASD</b>, or <b>drag/tap</b>, to steer your submersible away from the erupting volcano at the left. Dodge rising superheated <b>plumes</b>, flying <b>rock debris</b>, and the <b>lava flow</b> spreading across the bottom. Each hit damages your hull — three hits and it's over. Survive and keep moving right toward safe open water for the highest distance!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=460;
+const KEY='underwatervolcanoeruption_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let sub,plumes,rocks,lavaFront,distance,lives,gameOver,started,intensity,keys,dragTarget,bubbles,flashTimer,spawnPlume,spawnRock;
+
+function reset(){
+  sub={x:120,y:230,vx:0,vy:0,inv:0};
+  plumes=[];rocks=[];bubbles=[];
+  lavaFront=40;
+  distance=0;
+  lives=3;
+  gameOver=false;started=false;
+  intensity=1;
+  spawnPlume=0;spawnRock=0;
+  flashTimer=0;
+  setMsg(I18N.t('erupt_start','The volcano is erupting! Flee to the right!'));
+}
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+keys={};
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(!started)started=true;
+  if(gameOver&&(e.key===' '||e.key==='Enter'))reset();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+dragTarget=null;
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+c.addEventListener('pointerdown',e=>{if(!started)started=true;if(gameOver){reset();return;}dragTarget=pointerPos(e);});
+c.addEventListener('pointermove',e=>{if(dragTarget)dragTarget=pointerPos(e);});
+window.addEventListener('pointerup',()=>{dragTarget=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(!started)started=true;if(gameOver){reset();return;}dragTarget=pointerPos(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(dragTarget)dragTarget=pointerPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragTarget=null;},{passive:false});
+
+function circleHit(a,ar,b,br){return Math.hypot(a.x-b.x,a.y-b.y)<ar+br;}
+
+function spawnPlumeFn(){
+  const x=lavaFront+20+Math.random()*(W*0.6);
+  plumes.push({x,y:H-20,w:18+Math.random()*10,h:0,maxH:140+Math.random()*120,phase:'rise',speed:2+Math.random()*1.5});
+}
+function spawnRockFn(){
+  const x=Math.max(20,lavaFront-40+Math.random()*60);
+  rocks.push({x,y:H-30,vx:(Math.random()*2-0.3)*2.2,vy:-(6+Math.random()*4),r:6+Math.random()*7});
+}
+
+function update(dt){
+  if(!started||gameOver)return;
+  let ax=0,ay=0;
+  if(keys['arrowleft']||keys['a'])ax-=1;
+  if(keys['arrowright']||keys['d'])ax+=1;
+  if(keys['arrowup']||keys['w'])ay-=1;
+  if(keys['arrowdown']||keys['s'])ay+=1;
+  if(dragTarget){
+    const dx=dragTarget.x-sub.x,dy=dragTarget.y-sub.y;
+    const d=Math.hypot(dx,dy);
+    if(d>4){ax+=dx/d*1.4;ay+=dy/d*1.4;}
+  }
+  const speed=3.6;
+  sub.vx+=ax*0.5*dt;sub.vy+=ay*0.5*dt;
+  sub.vx*=0.88;sub.vy*=0.88;
+  const vmag=Math.hypot(sub.vx,sub.vy);
+  if(vmag>speed){sub.vx=sub.vx/vmag*speed;sub.vy=sub.vy/vmag*speed;}
+  sub.x+=sub.vx*dt;sub.y+=sub.vy*dt;
+  sub.x=Math.max(16,Math.min(W-16,sub.x));
+  sub.y=Math.max(16,Math.min(H-16,sub.y));
+  if(sub.inv>0)sub.inv-=dt;
+
+  intensity+=0.0007*dt;
+  distance+=0.35*dt*intensity;
+  if(distance>hi){} // hi set on game over
+  lavaFront+=0.10*dt*intensity;
+
+  spawnPlume+=dt;
+  const plumeInterval=Math.max(22,70-intensity*14);
+  if(spawnPlume>=plumeInterval){spawnPlume=0;spawnPlumeFn();}
+
+  spawnRock+=dt;
+  const rockInterval=Math.max(16,55-intensity*12);
+  if(spawnRock>=rockInterval){spawnRock=0;spawnRockFn();}
+
+  plumes.forEach(p=>{
+    if(p.phase==='rise'){
+      p.h+=p.speed*dt*3;
+      if(p.h>=p.maxH)p.phase='fall';
+    } else {
+      p.h-=p.speed*dt*2;
+    }
+  });
+  plumes=plumes.filter(p=>p.h>0);
+
+  rocks.forEach(r=>{
+    r.vy+=0.25*dt;
+    r.x+=r.vx*dt;r.y+=r.vy*dt;
+  });
+  rocks=rocks.filter(r=>r.y<H+40&&r.x<W+40);
+
+  if(Math.random()<0.3*dt)bubbles.push({x:Math.random()*W,y:H+5,vy:-(0.5+Math.random()*1.2),r:1+Math.random()*2});
+  bubbles.forEach(b=>b.y+=b.vy*dt);
+  bubbles=bubbles.filter(b=>b.y>-10);
+
+  if(flashTimer>0)flashTimer-=dt;
+
+  // collisions
+  if(sub.inv<=0){
+    for(const p of plumes){
+      if(p.h<=0)continue;
+      const px=p.x,py=H-20-p.h/2,phh=p.h/2;
+      if(sub.x>px-p.w/2-10&&sub.x<px+p.w/2+10&&sub.y>py-phh-10&&sub.y<py+phh+10){
+        hit();break;
+      }
+    }
+  }
+  if(sub.inv<=0){
+    for(const r of rocks){
+      if(circleHit(sub,14,r,r.r)){hit();break;}
+    }
+  }
+  if(sub.inv<=0&&sub.x<lavaFront+18&&sub.y>H-70){
+    hit();
+  }
+
+  if(sub.x<lavaFront-30){
+    // engulfed by lava front entirely -> instant loss
+    lives=0;endGame();
+  }
+}
+
+function hit(){
+  lives--;sub.inv=90;flashTimer=14;
+  SFX.hit();
+  if(lives<=0){endGame();}
+  else setMsg(I18N.t('hull_hit','Hull damaged! {l} left.').replace('{l}',lives));
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  const d=Math.round(distance);
+  if(d>hi){hi=d;localStorage.setItem(KEY,String(hi));}
+  setMsg(I18N.t('eruption_caught','The eruption caught you! Distance: {d}m. Tap/Space to retry.').replace('{d}',d));
+}
+
+function draw(){
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#1a0a0f');
+  grad.addColorStop(0.6,'#2a0d0a');
+  grad.addColorStop(1,'#120504');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+
+  // ambient glow from volcano
+  const glow=ctx.createRadialGradient(lavaFront,H-10,0,lavaFront,H-10,320);
+  glow.addColorStop(0,`rgba(255,110,40,${Math.min(0.35,0.12+intensity*0.05)})`);
+  glow.addColorStop(1,'rgba(255,110,40,0)');
+  ctx.fillStyle=glow;ctx.fillRect(0,0,W,H);
+
+  // bubbles
+  ctx.fillStyle='rgba(180,220,255,0.3)';
+  bubbles.forEach(b=>{ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fill();});
+
+  // lava front
+  ctx.fillStyle='#ff4500';
+  ctx.fillRect(0,H-20,lavaFront,20);
+  ctx.fillStyle='#ffae42';
+  for(let i=0;i<lavaFront;i+=14){
+    ctx.beginPath();ctx.arc(i+7,H-20,7,Math.PI,0);ctx.fill();
+  }
+  ctx.fillStyle='#3a1a08';
+  ctx.fillRect(0,H-6,W,6);
+
+  // rocks
+  ctx.fillStyle='#4a2a1a';
+  rocks.forEach(r=>{
+    ctx.beginPath();ctx.arc(r.x,r.y,r.r,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#ff8a50';ctx.beginPath();ctx.arc(r.x,r.y,r.r*0.4,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#4a2a1a';
+  });
+
+  // plumes
+  plumes.forEach(p=>{
+    if(p.h<=0)return;
+    const py=H-20-p.h;
+    const g=ctx.createLinearGradient(p.x,H-20,p.x,py);
+    g.addColorStop(0,'rgba(255,140,60,0.85)');
+    g.addColorStop(1,'rgba(255,220,180,0.05)');
+    ctx.fillStyle=g;
+    ctx.beginPath();
+    ctx.ellipse(p.x,H-20-p.h/2,p.w/2+6,p.h/2,0,0,Math.PI*2);
+    ctx.fill();
+  });
+
+  // sub
+  ctx.save();
+  if(sub.inv>0&&Math.floor(sub.inv/5)%2===0)ctx.globalAlpha=0.4;
+  ctx.translate(sub.x,sub.y);
+  const ang=Math.atan2(sub.vy,sub.vx);
+  if(Math.hypot(sub.vx,sub.vy)>0.1)ctx.rotate(ang);
+  ctx.fillStyle='#4fc3ff';
+  ctx.beginPath();ctx.ellipse(0,0,18,10,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#0d2133';
+  ctx.beginPath();ctx.arc(4,-2,5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#4fc3ff';
+  ctx.fillRect(-20,-3,6,6);
+  ctx.restore();
+
+  if(flashTimer>0){
+    ctx.fillStyle=`rgba(255,60,30,${flashTimer/14*0.35})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  document.getElementById('distDisp').textContent=I18N.t('distance_label','Distance: {d}m').replace('{d}',Math.round(distance));
+  document.getElementById('hiDisp').textContent=I18N.t('best_dist_label','Best: {h}m').replace('{h}',hi);
+  document.getElementById('livesDisp').textContent=I18N.t('hull_label','Hull: {l}').replace('{l}',Math.max(0,lives));
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='#ffb37a';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint2','Move to start — flee the eruption!'),W/2,H/2);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title2','ERUPTION!'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap or press Space to try again'),W/2,H/2+26);
+  }
+}
+
+let last=null;
+function loop(ts){
+  const dt=last===null?1:Math.min((ts-last)/16.6667,3);
+  last=ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

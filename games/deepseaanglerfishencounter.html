@@ -1,0 +1,259 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Deep Sea Anglerfish Encounter - Multiport Games</title><meta name="description" content="Play Deep Sea Anglerfish Encounter free online — Steer your submersible with Arrow Keys/WASD or drag, dodge the anglerfish's sudden lunges, and sneak past its glowing lure to reach safety."><link rel="canonical" href="https://games.multiportllc.com/games/deepseaanglerfishencounter"><meta property="og:title" content="Deep Sea Anglerfish Encounter - Multiport Games"><meta property="og:description" content="Play Deep Sea Anglerfish Encounter free online — Steer your submersible with Arrow Keys/WASD or drag, dodge the anglerfish's sudden lunges, and sneak past its glowing lure to reach safety."><meta property="og:url" content="https://games.multiportllc.com/games/deepseaanglerfishencounter"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Deep Sea Anglerfish Encounter","description":"Play Deep Sea Anglerfish Encounter free online instantly. Dodge a massive anglerfish's sudden lunging bites while sneaking past its glowing lure toward safety. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/deepseaanglerfishencounter","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#000308;display:block;border-radius:8px;margin:0 auto;touch-action:none}
+#hud{color:#ffb74d;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#fff}
+.alarm{color:#ff5252!important}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Deep Sea Anglerfish Encounter</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="hud">
+      <span>Agitation: <b id="agitLabel">0</b>%</span>
+      <span>Progress: <b id="progLabel">0</b>%</span>
+      <span>Best: <b id="hiLabel">0</b></span>
+    </div>
+    <canvas id="c" width="480" height="560"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>drag</b> to steer your submersible leftward past the anglerfish toward safety. Staying near its glowing lure or bumping it raises its <b>Agitation</b> — if it maxes out, it charges and lunges at you. Dodge sudden lunges and keep moving to reach the far side!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=480,H=560;
+const KEY='deepseaanglerfishencounter_hi';
+function loadHi(){return +(localStorage.getItem(KEY)||0);}
+function saveHi(v){if(v>loadHi())localStorage.setItem(KEY,String(v));}
+
+let sub,fish,agitation,progress,hi,gameOver,started,win,frame,keys={},dragging=false,dragX=null,dragY=null,particles,lungeState;
+
+function reset(){
+  sub={x:60,y:H/2,w:30,h:16};
+  fish={x:W*0.62,y:H/2,baseY:H/2,w:170,h:90,lureAngle:0,mouthOpen:0,facing:-1,lungeTimer:0,lungeCooldown:90,state:'idle',targetX:0,targetY:0,vx:0,vy:0};
+  agitation=0;progress=0;
+  gameOver=false;started=false;win=false;frame=0;
+  particles=[];
+  lungeState=0;
+  hi=loadHi();
+  updateHud();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space')startOrRestart();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+c.addEventListener('pointerdown',e=>{
+  dragging=true;
+  const r=c.getBoundingClientRect();
+  dragX=(e.clientX-r.left)*(W/r.width);
+  dragY=(e.clientY-r.top)*(H/r.height);
+  startOrRestart();
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const r=c.getBoundingClientRect();
+  dragX=(e.clientX-r.left)*(W/r.width);
+  dragY=(e.clientY-r.top)*(H/r.height);
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+function startOrRestart(){
+  if(gameOver){reset();return;}
+  started=true;
+}
+
+function updateHud(){
+  const a=document.getElementById('agitLabel');
+  a.textContent=Math.floor(agitation);
+  a.classList.toggle('alarm',agitation>70);
+  document.getElementById('progLabel').textContent=Math.floor(progress);
+  document.getElementById('hiLabel').textContent=Math.floor(hi);
+}
+
+function rect(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function drawSub(){
+  ctx.save();
+  ctx.translate(sub.x,sub.y);
+  ctx.fillStyle='#4fc3f7';
+  ctx.beginPath();ctx.ellipse(0,0,sub.w/2,sub.h/2,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#e1f5fe';
+  ctx.beginPath();ctx.arc(sub.w/3,-2,3.5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#0288d1';
+  ctx.fillRect(-4,-sub.h/2-5,8,5);
+  ctx.restore();
+}
+
+function drawFish(){
+  ctx.save();
+  ctx.translate(fish.x,fish.y);
+  ctx.scale(fish.facing,1);
+  // lure
+  const lureBob=Math.sin(frame*0.08)*6;
+  const glow=0.5+0.5*Math.sin(frame*0.15);
+  ctx.strokeStyle='#2a1a1a';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(fish.w*0.32,-fish.h*0.3);ctx.lineTo(fish.w*0.5,-fish.h*0.7+lureBob);ctx.stroke();
+  const lureGrad=ctx.createRadialGradient(fish.w*0.5,-fish.h*0.7+lureBob,1,fish.w*0.5,-fish.h*0.7+lureBob,14);
+  lureGrad.addColorStop(0,`rgba(255,255,180,${0.9*glow+0.1})`);
+  lureGrad.addColorStop(1,'rgba(255,255,180,0)');
+  ctx.fillStyle=lureGrad;
+  ctx.beginPath();ctx.arc(fish.w*0.5,-fish.h*0.7+lureBob,14,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff9c4';
+  ctx.beginPath();ctx.arc(fish.w*0.5,-fish.h*0.7+lureBob,4,0,Math.PI*2);ctx.fill();
+
+  // body
+  ctx.fillStyle='#3a2535';
+  ctx.beginPath();
+  ctx.ellipse(0,0,fish.w*0.4,fish.h*0.42,0,0,Math.PI*2);
+  ctx.fill();
+  // mouth
+  const mouth=fish.mouthOpen;
+  ctx.fillStyle='#120a10';
+  ctx.beginPath();
+  ctx.moveTo(-fish.w*0.38,0);
+  ctx.lineTo(-fish.w*0.1,-10-mouth*28);
+  ctx.lineTo(-fish.w*0.38,0);
+  ctx.lineTo(-fish.w*0.1,10+mouth*28);
+  ctx.closePath();
+  ctx.fill();
+  // teeth
+  ctx.fillStyle='#eee';
+  for(let i=0;i<5;i++){
+    const tx=-fish.w*0.34+i*6;
+    ctx.beginPath();ctx.moveTo(tx,-2-mouth*18);ctx.lineTo(tx+2,4-mouth*8);ctx.lineTo(tx-2,4-mouth*8);ctx.fill();
+    ctx.beginPath();ctx.moveTo(tx,2+mouth*18);ctx.lineTo(tx+2,-4+mouth*8);ctx.lineTo(tx-2,-4+mouth*8);ctx.fill();
+  }
+  // eye
+  ctx.fillStyle='#ffeb3b';
+  ctx.beginPath();ctx.arc(fish.w*0.12,-fish.h*0.12,6,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#000';
+  ctx.beginPath();ctx.arc(fish.w*0.12,-fish.h*0.12,2.5,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#000308');bg.addColorStop(1,'#030a14');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  // distant particles (always drawn for atmosphere)
+  ctx.fillStyle='rgba(255,255,255,0.06)';
+  for(let i=0;i<30;i++){
+    const px=(i*53+frame*0.1)%W, py=(i*97)%H;
+    ctx.fillRect(px,py,1,1);
+  }
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='#ffb74d';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('af_start_hint','Space / Tap & drag to start'),W/2,H/2);
+    drawFish();drawSub();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawFish();drawSub();
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(win?I18N.t('af_win_title','REACHED SAFETY!'):I18N.t('af_lose_title','CAUGHT!'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('af_restart_hint','Space / Tap to try again'),W/2,H/2+16);
+    requestAnimationFrame(loop);return;
+  }
+
+  frame++;
+  let dx=0,dy=0;
+  if(keys['ArrowLeft']||keys['KeyA'])dx-=1;
+  if(keys['ArrowRight']||keys['KeyD'])dx+=1;
+  if(keys['ArrowUp']||keys['KeyW'])dy-=1;
+  if(keys['ArrowDown']||keys['KeyS'])dy+=1;
+  if(dragging&&dragX!=null){
+    dx=Math.max(-1,Math.min(1,(dragX-sub.x)/30));
+    dy=Math.max(-1,Math.min(1,(dragY-sub.y)/30));
+  }
+  sub.x+=dx*3.4;
+  sub.y+=dy*3.4;
+  sub.x=Math.max(16,Math.min(W-16,sub.x));
+  sub.y=Math.max(16,Math.min(H-16,sub.y));
+
+  progress=Math.max(progress,(sub.x/(W-16))*100);
+  if(sub.x>=W-20){
+    win=true;gameOver=true;SFX.win();saveHi(progress);
+    updateHud();return;
+  }
+
+  // fish idle bobbing
+  fish.baseY+=Math.sin(frame*0.02)*0.0; // keep static bobbing via y below
+  fish.y=H/2+Math.sin(frame*0.03)*24;
+
+  // Agitation rises when near the lure zone or near the fish body, decays otherwise
+  const lureX=fish.x+fish.facing*fish.w*0.5, lureY=fish.y-fish.h*0.7;
+  const distLure=Math.hypot(sub.x-lureX,sub.y-lureY);
+  const distBody=Math.hypot(sub.x-fish.x,sub.y-fish.y);
+  if(distLure<90)agitation+=1.2*(1-distLure/90);
+  if(distBody<110)agitation+=0.6*(1-distBody/110);
+  agitation-=0.35;
+  agitation=Math.max(0,Math.min(100,agitation));
+
+  if(fish.state==='idle'){
+    fish.mouthOpen=Math.max(0,fish.mouthOpen-0.05);
+    if(agitation>=95&&fish.lungeCooldown<=0){
+      fish.state='lunge';fish.lungeTimer=0;
+      fish.targetX=sub.x;fish.targetY=sub.y;
+      SFX.swoosh();
+    }
+    fish.lungeCooldown=Math.max(0,fish.lungeCooldown-1);
+  } else if(fish.state==='lunge'){
+    fish.lungeTimer++;
+    fish.mouthOpen=Math.min(1,fish.mouthOpen+0.15);
+    const dxF=fish.targetX-fish.x, dyF=fish.targetY-fish.y;
+    fish.x+=dxF*0.09;
+    fish.y+=dyF*0.09;
+    fish.facing = (sub.x<fish.x)?-1:1;
+    if(fish.lungeTimer>22){
+      fish.state='retreat';fish.lungeTimer=0;
+    }
+  } else if(fish.state==='retreat'){
+    fish.lungeTimer++;
+    fish.mouthOpen=Math.max(0,fish.mouthOpen-0.08);
+    const homeX=W*0.62,homeY=H/2;
+    fish.x+=(homeX-fish.x)*0.06;
+    fish.y+=(homeY-fish.y)*0.03;
+    if(fish.lungeTimer>40){
+      fish.state='idle';fish.lungeCooldown=110;agitation=20;
+    }
+  }
+  fish.facing = fish.state==='idle' ? (sub.x<fish.x?-1:1) : fish.facing;
+
+  drawFish();
+
+  // collision with fish mouth/body during lunge = caught
+  const fishHit={x:fish.x-fish.w*0.42,y:fish.y-fish.h*0.42,w:fish.w*0.84,h:fish.h*0.84};
+  const subHit={x:sub.x-sub.w/2,y:sub.y-sub.h/2,w:sub.w,h:sub.h};
+  if(fish.state==='lunge'&&rect(subHit,fishHit)){
+    gameOver=true;SFX.lose();saveHi(progress);
+    updateHud();return;
+  }
+
+  // bubbles from sub
+  if(frame%8===0)particles.push({x:sub.x-14,y:sub.y,r:2+Math.random()*2});
+  particles=particles.filter(p=>p.x>-10);
+  ctx.fillStyle='rgba(180,220,255,0.4)';
+  particles.forEach(p=>{p.x-=1.2;p.y-=0.3;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();});
+
+  drawSub();
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

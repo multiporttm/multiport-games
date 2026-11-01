@@ -1,0 +1,327 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bioluminescent Plankton Trail - Multiport Games</title><meta name="description" content="Play Bioluminescent Plankton Trail free online — Glide through the dark current with Arrow Keys / WASD or by dragging / touching the water, stirring glowing plankton into a trail. Light up every target in the pattern before the glow fades."><link rel="canonical" href="https://games.multiportllc.com/games/bioluminescentplanktontrail"><meta property="og:title" content="Bioluminescent Plankton Trail - Multiport Games"><meta property="og:description" content="Play Bioluminescent Plankton Trail free online — Glide through the dark current with Arrow Keys / WASD or by dragging / touching the water, stirring glowing plankton into a trail. Light up every target in the pattern before the glow fades."><meta property="og:url" content="https://games.multiportllc.com/games/bioluminescentplanktontrail"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bioluminescent Plankton Trail","description":"Play Bioluminescent Plankton Trail free online instantly. Glide through the dark current with Arrow Keys / WASD or by dragging / touching the water, stirring glowing plankton into a trail. Light up every target in the pattern before the glow fades to complete each underwater signal shape. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/bioluminescentplanktontrail","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#020810}
+#c{background:#01040a;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#8fe3ff;font-size:1.05rem;font-weight:700;padding:6px 10px;gap:10px;flex-wrap:wrap}
+#hud span{text-shadow:0 0 8px rgba(80,220,255,.6)}
+#timerWrap{width:100%;max-width:800px;height:8px;background:rgba(20,60,80,.5);border-radius:5px;margin:0 auto 6px;overflow:hidden}
+#timerBar{height:100%;width:100%;background:linear-gradient(90deg,#1de9b6,#40e0ff,#8e7bff);transition:width .08s linear;border-radius:5px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bioluminescent Plankton Trail</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0</span>
+      <span id="levelLbl">Pattern: 1</span>
+      <span id="hiLbl">Hi: 0</span>
+    </div>
+    <div id="timerWrap"><div id="timerBar"></div></div>
+    <canvas id="c" width="800" height="500"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Glide your glowing creature with <b>Arrow Keys / WASD</b>, or by <b>clicking/dragging/touching</b> the water. Your movement disturbs bioluminescent plankton, leaving a glowing trail. Visit the pulsing <b>target</b> markers in order to trace the requested light pattern before the glow timer runs out. Complete a pattern to advance to a harder one — run out of time and the trail fades for good.
+  </div>
+</div>
+<script>
+(function(){
+const HS_KEY='bioluminescentplanktontrail_hiscore';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const scoreLbl=document.getElementById('scoreLbl'),levelLbl=document.getElementById('levelLbl'),hiLbl=document.getElementById('hiLbl');
+const timerBar=document.getElementById('timerBar');
+
+let score=0,hi=0,level=1,gameOver=false,started=false;
+try{hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0;}catch(e){hi=0;}
+
+const player={x:W/2,y:H/2,vx:0,vy:0,r:9};
+let keys={};
+let pointer={active:false,x:0,y:0};
+
+let trail=[]; // disturbed plankton sparks left behind player
+let ambient=[]; // decorative drifting plankton
+for(let i=0;i<110;i++){
+  ambient.push({x:Math.random()*W,y:Math.random()*H,r:0.6+Math.random()*1.6,a:0.15+Math.random()*0.35,dx:(Math.random()-0.5)*0.15,dy:(Math.random()-0.5)*0.15,ph:Math.random()*Math.PI*2});
+}
+
+let targets=[]; // current pattern waypoints
+let targetIdx=0;
+let patternTimeLimit=20;
+let patternTimeLeft=20;
+let warnedLow=false;
+let lastTime=null;
+
+function shapePoints(shape,n,cx,cy,rx,ry){
+  const pts=[];
+  if(shape==='circle'){
+    for(let i=0;i<n;i++){
+      const a=(i/n)*Math.PI*2-Math.PI/2;
+      pts.push({x:cx+Math.cos(a)*rx,y:cy+Math.sin(a)*ry});
+    }
+  } else if(shape==='star'){
+    for(let i=0;i<n;i++){
+      const a=(i/n)*Math.PI*2-Math.PI/2;
+      const rad=(i%2===0)?1:0.5;
+      pts.push({x:cx+Math.cos(a)*rx*rad,y:cy+Math.sin(a)*ry*rad});
+    }
+  } else if(shape==='zigzag'){
+    for(let i=0;i<n;i++){
+      const t=i/(n-1);
+      pts.push({x:cx-rx+t*rx*2,y:cy+((i%2===0)?-ry*0.6:ry*0.6)});
+    }
+  } else if(shape==='line'){
+    for(let i=0;i<n;i++){
+      const t=i/(n-1);
+      pts.push({x:cx-rx+t*rx*2,y:cy});
+    }
+  } else { // spiral
+    for(let i=0;i<n;i++){
+      const t=i/(n-1);
+      const a=t*Math.PI*2.6;
+      const rad=t*Math.max(rx,ry);
+      pts.push({x:cx+Math.cos(a)*rad,y:cy+Math.sin(a)*rad});
+    }
+  }
+  return pts;
+}
+
+const SHAPES=['circle','star','zigzag','line','spiral'];
+
+function genPattern(){
+  const n=Math.min(3+Math.floor((level-1)/1.3),9);
+  const shape=SHAPES[Math.floor(Math.random()*SHAPES.length)];
+  const cx=W/2+(Math.random()-0.5)*60;
+  const cy=H/2+(Math.random()-0.5)*40;
+  const rx=140+Math.random()*60;
+  const ry=100+Math.random()*50;
+  const pts=shapePoints(shape,n,cx,cy,rx,ry);
+  targets=pts.map((p,i)=>({x:Math.max(40,Math.min(W-40,p.x)),y:Math.max(40,Math.min(H-40,p.y)),visited:false,order:i}));
+  targetIdx=0;
+  patternTimeLimit=Math.max(9,22-level*0.9);
+  patternTimeLeft=patternTimeLimit;
+  warnedLow=false;
+}
+
+function resetGame(){
+  score=0;level=1;gameOver=false;started=false;
+  player.x=W/2;player.y=H/2;player.vx=0;player.vy=0;
+  trail=[];
+  genPattern();
+  lastTime=null;
+}
+resetGame();
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+  keys[e.key.toLowerCase()]=true;
+  if(!started)started=true;
+  if(gameOver&&(e.key===' '||e.key==='Enter')){resetGame();started=true;}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function setPointerFromEvent(e,rect){
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  pointer.x=cx*(W/rect.width);
+  pointer.y=cy*(H/rect.height);
+}
+c.addEventListener('pointerdown',e=>{
+  const rect=c.getBoundingClientRect();
+  if(!started)started=true;
+  if(gameOver){resetGame();started=true;return;}
+  pointer.active=true;setPointerFromEvent(e,rect);
+});
+c.addEventListener('pointermove',e=>{
+  if(!pointer.active)return;
+  const rect=c.getBoundingClientRect();
+  setPointerFromEvent(e,rect);
+});
+window.addEventListener('pointerup',()=>{pointer.active=false;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const rect=c.getBoundingClientRect();
+  if(!started)started=true;
+  if(gameOver){resetGame();started=true;return;}
+  pointer.active=true;setPointerFromEvent(e,rect);
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(!pointer.active)return;
+  const rect=c.getBoundingClientRect();
+  setPointerFromEvent(e,rect);
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointer.active=false;},{passive:false});
+
+function dist(ax,ay,bx,by){const dx=ax-bx,dy=ay-by;return Math.sqrt(dx*dx+dy*dy);}
+
+function update(dt){
+  if(!started||gameOver)return;
+
+  // acceleration from keyboard
+  let ax=0,ay=0;
+  const ACC=0.55;
+  if(keys['arrowleft']||keys['a'])ax-=ACC;
+  if(keys['arrowright']||keys['d'])ax+=ACC;
+  if(keys['arrowup']||keys['w'])ay-=ACC;
+  if(keys['arrowdown']||keys['s'])ay+=ACC;
+
+  // acceleration toward pointer
+  if(pointer.active){
+    const d=dist(pointer.x,pointer.y,player.x,player.y);
+    if(d>4){
+      ax+=(pointer.x-player.x)/d*0.9;
+      ay+=(pointer.y-player.y)/d*0.9;
+    }
+  }
+
+  player.vx+=ax*dt;
+  player.vy+=ay*dt;
+  // drag/friction like water resistance
+  const friction=Math.pow(0.90,dt);
+  player.vx*=friction;player.vy*=friction;
+  const maxSpd=5.2;
+  const spd=Math.sqrt(player.vx*player.vx+player.vy*player.vy);
+  if(spd>maxSpd){player.vx=player.vx/spd*maxSpd;player.vy=player.vy/spd*maxSpd;}
+
+  player.x+=player.vx*dt;
+  player.y+=player.vy*dt;
+  player.x=Math.max(player.r,Math.min(W-player.r,player.x));
+  player.y=Math.max(player.r,Math.min(H-player.r,player.y));
+
+  // leave glowing trail when moving
+  if(spd>0.4){
+    trail.push({x:player.x+(Math.random()-0.5)*6,y:player.y+(Math.random()-0.5)*6,a:0.85,r:2+Math.random()*2.5});
+  }
+  trail.forEach(t=>t.a-=0.018*dt);
+  trail=trail.filter(t=>t.a>0);
+  if(trail.length>500)trail.splice(0,trail.length-500);
+
+  // ambient drift
+  ambient.forEach(p=>{
+    p.x+=p.dx*dt;p.y+=p.dy*dt;
+    if(p.x<0)p.x=W;if(p.x>W)p.x=0;
+    if(p.y<0)p.y=H;if(p.y>H)p.y=0;
+  });
+
+  // check current target
+  if(targetIdx<targets.length){
+    const t=targets[targetIdx];
+    if(dist(player.x,player.y,t.x,t.y)<player.r+16){
+      t.visited=true;
+      targetIdx++;
+      score+=10*level;
+      patternTimeLeft=Math.min(patternTimeLimit,patternTimeLeft+1.4);
+      SFX.coin();
+      if(targetIdx>=targets.length){
+        score+=25*level;
+        SFX.success();
+        level++;
+        genPattern();
+      }
+    }
+  }
+
+  patternTimeLeft-=dt/60;
+  if(patternTimeLeft<=5&&!warnedLow){warnedLow=true;}
+  if(patternTimeLeft<=0){
+    gameOver=true;
+    SFX.lose();
+    if(score>hi){hi=score;try{localStorage.setItem(HS_KEY,String(Math.floor(hi)));}catch(e){}}
+  }
+}
+
+function drawGlow(x,y,r,color,alpha){
+  const g=ctx.createRadialGradient(x,y,0,x,y,r);
+  g.addColorStop(0,color.replace('ALPHA',alpha));
+  g.addColorStop(1,color.replace('ALPHA','0'));
+  ctx.fillStyle=g;
+  ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+}
+
+function render(now){
+  // deep ocean background gradient
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#021226');bg.addColorStop(1,'#000309');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // ambient plankton
+  ambient.forEach(p=>{
+    const flick=0.5+0.5*Math.sin(now/600+p.ph);
+    ctx.globalAlpha=p.a*flick;
+    ctx.fillStyle='rgba(120,220,255,1)';
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();
+  });
+  ctx.globalAlpha=1;
+
+  // trail sparks
+  trail.forEach(t=>{
+    drawGlow(t.x,t.y,t.r*3,'rgba(100,255,220,ALPHA)',Math.min(0.9,t.a));
+  });
+
+  // targets
+  targets.forEach((t,i)=>{
+    if(t.visited){
+      drawGlow(t.x,t.y,20,'rgba(80,255,160,ALPHA)',0.35);
+      ctx.fillStyle='rgba(80,255,160,0.9)';
+      ctx.beginPath();ctx.arc(t.x,t.y,6,0,Math.PI*2);ctx.fill();
+    } else if(i===targetIdx){
+      const pulse=0.6+0.4*Math.sin(now/180);
+      drawGlow(t.x,t.y,28+pulse*10,'rgba(255,220,80,ALPHA)',0.55*pulse+0.25);
+      ctx.strokeStyle='rgba(255,230,120,0.9)';
+      ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(t.x,t.y,14,0,Math.PI*2);ctx.stroke();
+      ctx.fillStyle='#1a1406';ctx.font='bold 12px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(String(i+1),t.x,t.y+1);
+    } else {
+      drawGlow(t.x,t.y,16,'rgba(120,160,255,ALPHA)',0.22);
+      ctx.strokeStyle='rgba(160,190,255,0.4)';
+      ctx.lineWidth=1.5;
+      ctx.beginPath();ctx.arc(t.x,t.y,10,0,Math.PI*2);ctx.stroke();
+    }
+  });
+
+  // player glow + body
+  drawGlow(player.x,player.y,34,'rgba(140,230,255,ALPHA)',0.5);
+  ctx.fillStyle='#e8ffff';
+  ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='rgba(120,220,255,0.9)';
+  ctx.beginPath();ctx.arc(player.x,player.y,player.r*0.5,0,Math.PI*2);ctx.fill();
+
+  if(!started){
+    ctx.fillStyle='rgba(180,230,255,0.9)';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Move, drag, or tap to begin stirring the plankton'),W/2,H/2-60);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,5,10,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#bfefff';ctx.font='bold 38px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','THE GLOW FADES'),W/2,H/2-30);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Score: {s}').replace('{s}',Math.floor(score)),W/2,H/2+10);
+    ctx.fillText(I18N.t('restart_hint','Tap, click, or press Space to swim again'),W/2,H/2+42);
+  }
+
+  scoreLbl.textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  levelLbl.textContent=I18N.t('pattern_label','Pattern: {p}').replace('{p}',level);
+  hiLbl.textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+  const pct=started&&!gameOver?Math.max(0,Math.min(100,(patternTimeLeft/patternTimeLimit)*100)):100;
+  timerBar.style.width=pct+'%';
+  timerBar.style.background=pct<25?'linear-gradient(90deg,#ff5252,#ff8a65)':'linear-gradient(90deg,#1de9b6,#40e0ff,#8e7bff)';
+}
+
+function loop(now){
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  update(dt);
+  render(now);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+})();
+</script></body></html>

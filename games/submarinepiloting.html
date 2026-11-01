@@ -1,0 +1,244 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Submarine Piloting - Multiport Games</title><meta name="description" content="Play Submarine Piloting free online — Steer your research sub through a tight rock canyon with Arrow Keys/WASD or drag/tilt, manage dive depth, and reach the marker before your battery runs out."><link rel="canonical" href="https://games.multiportllc.com/games/submarinepiloting"><meta property="og:title" content="Submarine Piloting - Multiport Games"><meta property="og:description" content="Play Submarine Piloting free online — Steer your research sub through a tight rock canyon with Arrow Keys/WASD or drag/tilt, manage dive depth, and reach the marker before your battery runs out."><meta property="og:url" content="https://games.multiportllc.com/games/submarinepiloting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Submarine Piloting","description":"Play Submarine Piloting free online instantly. Steer your research sub through a tight rock canyon, manage dive depth, and reach the marker before your battery runs out. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/submarinepiloting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#063048;display:block;border-radius:8px;margin:0 auto;touch-action:none}
+#hud{color:#8fe3ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#fff}
+.battery-low{color:#ff6b6b!important}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Submarine Piloting</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="hud">
+      <span>Depth Zone: <b id="zoneLabel">1</b></span>
+      <span>Battery: <b id="battLabel">100</b>%</span>
+      <span>Best: <b id="hiLabel">0</b></span>
+    </div>
+    <canvas id="c" width="480" height="560"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>drag</b> to steer the submarine. Use <b>Up/Down</b> or <b>drag vertically</b> to adjust dive depth. Thread the canyon between the rock walls without touching them, and reach the <b>marker</b> at the bottom before your battery drains. Each collision drains extra battery!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=480,H=560;
+const KEY='submarinepiloting_hi';
+function loadHi(){return +(localStorage.getItem(KEY)||0);}
+function saveHi(v){if(v>loadHi())localStorage.setItem(KEY,String(v));}
+
+let sub,walls,battery,distance,hi,gameOver,started,win,frame,scrollY,keys={},dragging=false,dragX=null,dragY=null,bubbles;
+
+function reset(){
+  sub={x:W/2,y:H-90,w:34,h:18,vx:0};
+  walls=[]; // segments of {y, leftEdge(x), rightEdge(x), gapWidth}
+  battery=100;
+  distance=0;
+  gameOver=false;started=false;win=false;frame=0;scrollY=0;
+  bubbles=[];
+  hi=loadHi();
+  genCanyon();
+  updateHud();
+}
+
+// Procedurally generated canyon: a sequence of segments, each with a center x and half-width (gap)
+let segments=[];
+const SEG_H=40;
+const TOTAL_SEGS=90; // total canyon length -> finish line
+function genCanyon(){
+  segments=[];
+  let cx=W/2;
+  for(let i=0;i<TOTAL_SEGS;i++){
+    const difficulty=Math.min(1,i/TOTAL_SEGS);
+    const gap=Math.max(90,170-difficulty*90);
+    cx+=(Math.random()-0.5)*50*(0.4+difficulty);
+    cx=Math.max(gap/2+20,Math.min(W-gap/2-20,cx));
+    segments.push({cx,gap});
+  }
+}
+
+function segAt(worldY){
+  // worldY measured from canyon start (0) downward to finish
+  const idx=Math.floor(worldY/SEG_H);
+  if(idx<0)return segments[0];
+  if(idx>=segments.length)return segments[segments.length-1];
+  return segments[idx];
+}
+
+function canyonEdges(worldY){
+  const s=segAt(worldY);
+  return {left:s.cx-s.gap/2, right:s.cx+s.gap/2};
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space')startOrRestart();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+c.addEventListener('pointerdown',e=>{
+  dragging=true;
+  const r=c.getBoundingClientRect();
+  dragX=(e.clientX-r.left)*(W/r.width);
+  dragY=(e.clientY-r.top)*(H/r.height);
+  startOrRestart();
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const r=c.getBoundingClientRect();
+  dragX=(e.clientX-r.left)*(W/r.width);
+  dragY=(e.clientY-r.top)*(H/r.height);
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+function startOrRestart(){
+  if(gameOver){reset();return;}
+  started=true;
+}
+
+function updateHud(){
+  document.getElementById('zoneLabel').textContent=Math.min(TOTAL_SEGS,Math.floor(distance/SEG_H)+1);
+  const battEl=document.getElementById('battLabel');
+  battEl.textContent=Math.max(0,Math.floor(battery));
+  battEl.classList.toggle('battery-low',battery<25);
+  document.getElementById('hiLabel').textContent=Math.floor(hi);
+}
+
+function rect(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function drawSub(){
+  ctx.save();
+  ctx.translate(sub.x,sub.y);
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();
+  ctx.ellipse(0,0,sub.w/2,sub.h/2,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#fff3c4';
+  ctx.beginPath();
+  ctx.arc(2,-sub.h/2,4,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#8fe3ff';
+  ctx.fillRect(-4,-sub.h/2-6,8,6);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#021c2e');bg.addColorStop(1,'#063048');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='#8fe3ff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('sp_start_hint','Space / Tap & drag to start'),W/2,H/2);
+    drawSub();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(win?I18N.t('sp_win_title','DESTINATION REACHED!'):I18N.t('sp_lose_title','BATTERY DEPLETED'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('sp_restart_hint','Space / Tap to try again'),W/2,H/2+18);
+    requestAnimationFrame(loop);return;
+  }
+
+  frame++;
+  // Horizontal control
+  let steer=0;
+  if(keys['ArrowLeft']||keys['KeyA'])steer-=1;
+  if(keys['ArrowRight']||keys['KeyD'])steer+=1;
+  let vertical=0;
+  if(keys['ArrowUp']||keys['KeyW'])vertical-=1;
+  if(keys['ArrowDown']||keys['KeyS'])vertical+=1;
+
+  if(dragging&&dragX!=null){
+    const dx=dragX-sub.x;
+    steer=Math.max(-1,Math.min(1,dx/40));
+    const dy=dragY-sub.y;
+    vertical=Math.max(-1,Math.min(1,dy/40));
+  }
+
+  sub.vx=steer*4.2;
+  sub.x+=sub.vx;
+  sub.x=Math.max(14,Math.min(W-14,sub.x));
+
+  // vertical controls dive speed -> affects forward progress rate
+  const diveSpeed=1.4+vertical*1.1; // moving down increases canyon progress speed
+  distance+=Math.max(0.3,diveSpeed);
+  if(distance>=TOTAL_SEGS*SEG_H){
+    win=true;gameOver=true;SFX.win();saveHi(distance);
+    return;
+  }
+
+  // battery drains over time, faster if steering hard or moving fast
+  battery-=0.09+Math.abs(steer)*0.02+Math.max(0,vertical)*0.03;
+  if(battery<=0){
+    battery=0;gameOver=true;SFX.lose();saveHi(distance);
+    updateHud();
+    return;
+  }
+
+  scrollY=distance%SEG_H;
+
+  // draw canyon walls as filled rock shapes scrolling upward
+  ctx.fillStyle='#2d1b12';
+  const visibleSegs=Math.ceil(H/SEG_H)+2;
+  for(let i=-1;i<visibleSegs;i++){
+    const worldY=distance-H*0.35+i*SEG_H- (distance % SEG_H===0?0:0);
+  }
+  // simpler: compute edges relative to sub's fixed screen position
+  const subScreenY=H*0.72;
+  for(let py=0;py<H;py+=4){
+    const worldY=distance-(subScreenY-py);
+    if(worldY<0||worldY>TOTAL_SEGS*SEG_H)continue;
+    const e=canyonEdges(worldY);
+    ctx.fillStyle='#3a2518';
+    ctx.fillRect(0,py,e.left,4);
+    ctx.fillRect(e.right,py,W-e.right,4);
+    ctx.fillStyle='#4a3020';
+    ctx.fillRect(e.left-6,py,6,4);
+    ctx.fillRect(e.right,py,6,4);
+  }
+
+  // finish marker
+  const finishWorldY=TOTAL_SEGS*SEG_H;
+  const finishScreenY=subScreenY+(finishWorldY-distance);
+  if(finishScreenY>-20&&finishScreenY<H+20){
+    ctx.strokeStyle='#4caf50';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(0,finishScreenY);ctx.lineTo(W,finishScreenY);ctx.stroke();
+    ctx.fillStyle='#4caf50';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('sp_marker_label','DESTINATION'),W/2,finishScreenY-8);
+  }
+
+  // collision check vs canyon walls at sub's screen position
+  const subWorldY=distance;
+  const edges=canyonEdges(subWorldY);
+  const subLeft=sub.x-sub.w/2, subRight=sub.x+sub.w/2;
+  if(subLeft<edges.left||subRight>edges.right){
+    battery-=0.6;
+    sub.x=Math.max(edges.left+sub.w/2+2,Math.min(edges.right-sub.w/2-2,sub.x));
+    if(frame%12===0)SFX.hit();
+  }
+
+  // bubbles
+  if(frame%6===0)bubbles.push({x:sub.x+(Math.random()-0.5)*20,y:subScreenY+10,r:2+Math.random()*3});
+  bubbles=bubbles.filter(b=>b.y>-10);
+  ctx.fillStyle='rgba(143,227,255,0.5)';
+  bubbles.forEach(b=>{b.y-=1.5;ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fill();});
+
+  sub.y=subScreenY;
+  drawSub();
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

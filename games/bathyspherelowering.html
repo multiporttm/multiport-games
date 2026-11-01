@@ -1,0 +1,209 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bathysphere Lowering - Multiport Games</title><meta name="description" content="Play Bathysphere Lowering free online — Control the winch with Arrow Keys/WASD, +/- buttons, or drag to match descent speed to the rising pressure reading and reach target depth before time or hull run out."><link rel="canonical" href="https://games.multiportllc.com/games/bathyspherelowering"><meta property="og:title" content="Bathysphere Lowering - Multiport Games"><meta property="og:description" content="Play Bathysphere Lowering free online — Control the winch with Arrow Keys/WASD, +/- buttons, or drag to match descent speed to the rising pressure reading and reach target depth before time or hull run out."><meta property="og:url" content="https://games.multiportllc.com/games/bathyspherelowering"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bathysphere Lowering","description":"Play Bathysphere Lowering free online instantly. Control the winch to match descent speed to the rising pressure reading and reach target depth before time or hull run out. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/bathyspherelowering","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#051522;display:block;border-radius:8px;margin:0 auto;touch-action:none}
+#hud{color:#80deea;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span b{color:#fff}
+.danger{color:#ff5252!important}
+#winchBtns{display:flex;justify-content:center;gap:14px;margin-top:8px}
+#winchBtns button{padding:14px 28px;font-size:1.1rem;font-weight:800;border:none;border-radius:10px;background:#0288d1;color:#fff;cursor:pointer;touch-action:none;user-select:none}
+#winchBtns button:active{background:#01579b}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bathysphere Lowering</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="hud">
+      <span>Depth: <b id="depthLabel">0</b>m / <b id="targetLabel">0</b>m</span>
+      <span>Hull: <b id="hullLabel">100</b>%</span>
+      <span>Time: <b id="timeLabel">0</b>s</span>
+      <span>Best: <b id="hiLabel">0</b></span>
+    </div>
+    <canvas id="c" width="440" height="500"></canvas>
+    <div id="winchBtns">
+      <button id="slowerBtn">▼ Slower</button>
+      <button id="fasterBtn">▲ Faster</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Control the winch with <b>Up/Down Arrows / WASD</b> or the <b>▲/▼ buttons</b>. Match your descent speed (white needle) to the required pressure-safe speed (green target zone) — going too fast risks a hull implosion, going too slow burns your limited dive time. Reach target depth safely to win!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=440,H=500;
+const KEY='bathyspherelowering_hi';
+function loadHi(){return +(localStorage.getItem(KEY)||0);}
+function saveHi(v){if(v>loadHi())localStorage.setItem(KEY,String(v));}
+
+const TARGET_DEPTH=1000;
+const TIME_LIMIT=90;
+
+let depth,speed,targetSpeed,hull,timeLeft,gameOver,win,started,frame,keys={},hi,dangerFlash=0,wobbleT=0;
+
+function reset(){
+  depth=0;speed=0;targetSpeed=8;hull=100;timeLeft=TIME_LIMIT;
+  gameOver=false;win=false;started=false;frame=0;dangerFlash=0;wobbleT=0;
+  hi=loadHi();
+  updateHud();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','KeyW','KeyS','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space')startOrRestart();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let holdFaster=false,holdSlower=false;
+const fasterBtn=document.getElementById('fasterBtn'), slowerBtn=document.getElementById('slowerBtn');
+function bindHold(el,setter){
+  el.addEventListener('pointerdown',e=>{e.preventDefault();setter(true);startOrRestart();});
+  el.addEventListener('pointerup',e=>{setter(false);});
+  el.addEventListener('pointerleave',e=>{setter(false);});
+  el.addEventListener('pointercancel',e=>{setter(false);});
+}
+bindHold(fasterBtn,v=>holdFaster=v);
+bindHold(slowerBtn,v=>holdSlower=v);
+
+c.addEventListener('pointerdown',()=>startOrRestart());
+
+function startOrRestart(){
+  if(gameOver){reset();return;}
+  started=true;
+}
+
+function updateHud(){
+  document.getElementById('depthLabel').textContent=Math.floor(depth);
+  document.getElementById('targetLabel').textContent=TARGET_DEPTH;
+  const hEl=document.getElementById('hullLabel');
+  hEl.textContent=Math.max(0,Math.floor(hull));
+  hEl.classList.toggle('danger',hull<30);
+  const tEl=document.getElementById('timeLabel');
+  tEl.textContent=Math.max(0,Math.ceil(timeLeft));
+  tEl.classList.toggle('danger',timeLeft<15);
+  document.getElementById('hiLabel').textContent=hi;
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#072a3f');bg.addColorStop(1,'#020a12');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='#80deea';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('bl_start_hint','Space / Tap / ▲▼ to begin lowering'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(win?I18N.t('bl_win_title','TARGET DEPTH REACHED!'):I18N.t('bl_lose_title',hull<=0?'HULL IMPLOSION':'OUT OF TIME'),W/2,H/2-16);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('bl_restart_hint','Space / Tap to dive again'),W/2,H/2+16);
+    requestAnimationFrame(loop);return;
+  }
+
+  frame++;
+  const dt=1/60;
+  timeLeft-=dt;
+  if(timeLeft<=0){
+    timeLeft=0;gameOver=true;win=false;SFX.lose();
+    updateHud();return;
+  }
+
+  // target speed increases with depth (pressure demands careful control) and wobbles
+  targetSpeed=6+Math.min(10,depth/120)+Math.sin(frame*0.02)*1.3;
+  targetSpeed=Math.max(2,targetSpeed);
+
+  let accel=0;
+  if(keys['ArrowUp']||keys['KeyW']||holdFaster)accel+=0.28;
+  if(keys['ArrowDown']||keys['KeyS']||holdSlower)accel-=0.34;
+  speed+=accel;
+  speed=Math.max(0,Math.min(22,speed));
+  // natural drag toward 0 slightly
+  speed*=0.995;
+
+  depth+=speed*dt*6;
+  if(depth>=TARGET_DEPTH){
+    depth=TARGET_DEPTH;win=true;gameOver=true;SFX.win();
+    saveHi(Math.floor(TARGET_DEPTH+hull+timeLeft));
+    updateHud();return;
+  }
+
+  const diff=speed-targetSpeed;
+  if(diff>2.5){
+    const overage=diff-2.5;
+    hull-=overage*0.09;
+    dangerFlash=8;
+    if(frame%20===0)SFX.hit();
+  } else {
+    dangerFlash=Math.max(0,dangerFlash-1);
+  }
+  if(hull<=0){
+    hull=0;gameOver=true;win=false;SFX.lose();
+    updateHud();return;
+  }
+
+  // ---- drawing ----
+  // depth progress bar (left)
+  const barX=40,barY=20,barW=24,barH=H-100;
+  ctx.fillStyle='#01222f';ctx.fillRect(barX,barY,barW,barH);
+  const pct=depth/TARGET_DEPTH;
+  ctx.fillStyle='#4fc3f7';
+  ctx.fillRect(barX,barY+barH*(1-pct),barW,barH*pct);
+  ctx.strokeStyle='#80deea';ctx.strokeRect(barX,barY,barW,barH);
+  ctx.fillStyle='#80deea';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('bl_depth_axis','DEPTH'),barX+barW/2,barY-8);
+
+  // bathysphere icon sliding down the bar
+  const sphereY=barY+barH*(1-pct);
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(barX+barW/2,sphereY,10,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#5d4037';ctx.lineWidth=2;ctx.stroke();
+
+  // speed gauge (center-right): vertical gauge with target zone + needle
+  const gaugeX=180,gaugeY=30,gaugeW=220,gaugeH=H-120;
+  const maxSpeed=22;
+  ctx.fillStyle='#01222f';ctx.fillRect(gaugeX,gaugeY,gaugeW,gaugeH);
+  ctx.strokeStyle='#444';ctx.strokeRect(gaugeX,gaugeY,gaugeW,gaugeH);
+
+  // safe zone (green) around target speed +-2.5
+  const speedToY=s=>gaugeY+gaugeH*(1-s/maxSpeed);
+  const safeTopY=speedToY(Math.min(maxSpeed,targetSpeed+2.5));
+  const safeBotY=speedToY(Math.max(0,targetSpeed-2.5));
+  ctx.fillStyle='rgba(76,175,80,0.35)';
+  ctx.fillRect(gaugeX,safeTopY,gaugeW,safeBotY-safeTopY);
+  ctx.strokeStyle='#4caf50';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(gaugeX,speedToY(targetSpeed));ctx.lineTo(gaugeX+gaugeW,speedToY(targetSpeed));ctx.stroke();
+
+  // danger zone above safe zone (too fast)
+  ctx.fillStyle=dangerFlash>0?`rgba(255,82,82,${0.25+0.25*Math.sin(frame*0.6)})`:'rgba(255,82,82,0.12)';
+  ctx.fillRect(gaugeX,gaugeY,gaugeW,safeTopY-gaugeY);
+
+  // needle for current speed
+  const needleY=speedToY(speed);
+  ctx.strokeStyle='#fff';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(gaugeX,needleY);ctx.lineTo(gaugeX+gaugeW,needleY);ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('bl_current_speed','Speed: {s} m/s').replace('{s}',speed.toFixed(1)),gaugeX+6,needleY-8>gaugeY+14?needleY-8:needleY+18);
+
+  ctx.fillStyle='#80deea';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('bl_gauge_label','WINCH SPEED vs PRESSURE-SAFE RATE'),gaugeX+gaugeW/2,gaugeY-8);
+
+  if(hull<30){
+    ctx.fillStyle=`rgba(255,82,82,${0.15+0.1*Math.sin(frame*0.3)})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

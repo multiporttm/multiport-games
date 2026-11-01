@@ -1,0 +1,280 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Abyssal Zone Exploration</title><meta name="description" content="Play Abyssal Zone Exploration free online — Pilot a submersible with Arrow Keys/WASD or drag/tap to explore the dark seafloor with your floodlight, collect points of interest, and return to base before your battery runs out."><link rel="canonical" href="https://games.multiportllc.com/games/abyssalzoneexploration"><meta property="og:title" content="Abyssal Zone Exploration - Multiport Games"><meta property="og:description" content="Play Abyssal Zone Exploration free online — Pilot a submersible with Arrow Keys/WASD or drag/tap to explore the dark seafloor with your floodlight, collect points of interest, and return to base before your battery runs out."><meta property="og:url" content="https://games.multiportllc.com/games/abyssalzoneexploration"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Abyssal Zone Exploration","description":"Play Abyssal Zone Exploration free online instantly. Pilot a deep-sea submersible with Arrow Keys/WASD or drag/tap to explore the dark seafloor with your floodlight, discover points of interest, and manage your battery budget so you always make it back to base before power runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/abyssalzoneexploration","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#020308}
+#c{background:#010208;display:block;border-radius:8px;cursor:crosshair}
+#hud{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;color:#8fd9ff;font-size:.95rem;font-weight:700;padding:8px 10px;max-width:800px;margin:0 auto}
+#battWrap{width:100%;max-width:800px;margin:0 auto 6px;padding:0 10px}
+#battBar{height:10px;border-radius:6px;background:#0b1a2e;overflow:hidden;border:1px solid #1f3a5c}
+#battFill{height:100%;background:linear-gradient(90deg,#2fe0a0,#8fd9ff);width:100%;transition:width .2s}
+#msg{text-align:center;color:#ffd54f;font-weight:800;min-height:1.4em;padding:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Abyssal Zone Exploration</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Found: 0 / 0</span>
+      <span id="hiDisp">Best: 0</span>
+      <span id="depthDisp">Depth: 0m</span>
+    </div>
+    <div id="battWrap"><div id="battBar"><div id="battFill"></div></div></div>
+    <div id="msg"></div>
+    <canvas id="c" width="800" height="460"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Use <b>Arrow Keys / WASD</b>, or <b>drag/tap</b> on the water to pilot your submersible. Your floodlight only reaches a short distance, so explore carefully to reveal points of interest scattered across the abyssal zone. Every move drains your <b>battery</b> — watch the gauge and always leave enough charge to glide back to the glowing <b>home base</b> before you're stranded in the dark. Collect as many points of interest as you can each dive!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=460;
+const KEY='abyssalzoneexploration_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+const home={x:70,y:230,r:26};
+let sub,battery,maxBattery,poi,found,total,lightRadius,gameOver,won,msgTimer,particles;
+let keys={};
+let dragTarget=null;
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function reset(){
+  sub={x:home.x,y:home.y,vx:0,vy:0};
+  maxBattery=1000;
+  battery=maxBattery;
+  lightRadius=90;
+  gameOver=false;won=false;msgTimer=0;
+  particles=[];
+  poi=[];
+  total=6+Math.floor(Math.random()*3);
+  found=0;
+  let tries=0;
+  while(poi.length<total&&tries<400){
+    tries++;
+    const x=140+Math.random()*(W-200);
+    const y=40+Math.random()*(H-80);
+    if(dist({x,y},home)<120)continue;
+    let ok=true;
+    for(const p of poi)if(dist(p,{x,y})<70){ok=false;break;}
+    if(!ok)continue;
+    const types=['wreck','vent','coral','creature'];
+    poi.push({x,y,type:types[Math.floor(Math.random()*types.length)],seen:false,revealed:false,r:16});
+  }
+  setMsg(I18N.t('dive_start','Dive down! Explore and return before the battery dies.'));
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;msgTimer=180;}
+
+function dockedAtHome(){return dist(sub,home)<home.r;}
+
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(gameOver&&(e.key===' '||e.key==='Enter')){reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+c.addEventListener('pointerdown',e=>{
+  if(gameOver){reset();return;}
+  dragTarget=pointerPos(e);
+});
+c.addEventListener('pointermove',e=>{
+  if(dragTarget)dragTarget=pointerPos(e);
+});
+window.addEventListener('pointerup',()=>{dragTarget=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(gameOver){reset();return;}dragTarget=pointerPos(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(dragTarget)dragTarget=pointerPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragTarget=null;},{passive:false});
+
+function update(dt){
+  if(gameOver)return;
+  let ax=0,ay=0;
+  if(keys['arrowleft']||keys['a'])ax-=1;
+  if(keys['arrowright']||keys['d'])ax+=1;
+  if(keys['arrowup']||keys['w'])ay-=1;
+  if(keys['arrowdown']||keys['s'])ay+=1;
+  if(dragTarget){
+    const dx=dragTarget.x-sub.x,dy=dragTarget.y-sub.y;
+    const d=Math.hypot(dx,dy);
+    if(d>4){ax+=dx/d;ay+=dy/d;}
+  }
+  const moving=(ax!==0||ay!==0);
+  const speed=2.6;
+  sub.vx+=ax*0.4*dt;
+  sub.vy+=ay*0.4*dt;
+  sub.vx*=0.9;sub.vy*=0.9;
+  const vmag=Math.hypot(sub.vx,sub.vy);
+  if(vmag>speed){sub.vx=sub.vx/vmag*speed;sub.vy=sub.vy/vmag*speed;}
+  sub.x+=sub.vx*dt;sub.y+=sub.vy*dt;
+  sub.x=Math.max(16,Math.min(W-16,sub.x));
+  sub.y=Math.max(16,Math.min(H-16,sub.y));
+
+  if(moving||vmag>0.2){
+    battery-=0.55*dt;
+    if(Math.random()<0.15*dt)particles.push({x:sub.x-14,y:sub.y,life:30,vx:-0.5-Math.random(),vy:(Math.random()-0.5)*0.4});
+  } else {
+    battery-=0.08*dt; // idle drain (life support)
+  }
+  particles.forEach(p=>{p.x+=p.vx*dt;p.y+=p.vy*dt;p.life-=dt;});
+  particles=particles.filter(p=>p.life>0);
+
+  poi.forEach(p=>{
+    const d=dist(p,sub);
+    if(d<lightRadius){
+      if(!p.revealed){p.revealed=true;}
+    }
+    if(!p.seen&&d<30){
+      p.seen=true;found++;
+      SFX.coin();
+      setMsg(I18N.t('found_poi','Discovered a point of interest!'));
+      if(found>=total){
+        setMsg(I18N.t('all_found','All points found! Head back to base!'));
+      }
+    }
+  });
+
+  if(battery<=0&&!dockedAtHome()){
+    battery=0;
+    gameOver=true;won=false;
+    SFX.lose();
+    setMsg(I18N.t('stranded','Out of power — stranded in the abyss! Tap/Space to retry.'));
+  }
+
+  if(dockedAtHome()&&found>0){
+    // auto-recharge a bit while docked, and allow ending the dive
+    if(battery<maxBattery)battery=Math.min(maxBattery,battery+2*dt);
+  }
+}
+
+function endDiveIfHome(){
+  if(dockedAtHome()&&!gameOver&&(keys['e']||keys['enter'])){
+    finishDive();
+  }
+}
+
+function finishDive(){
+  gameOver=true;won=true;
+  if(found>hi){hi=found;localStorage.setItem(KEY,String(hi));}
+  SFX.success();
+  setMsg(I18N.t('dive_complete','Dive complete! Found {f}/{t}. Tap/Space to dive again.').replace('{f}',found).replace('{t}',total));
+}
+
+c.addEventListener('dblclick',()=>{if(dockedAtHome()&&!gameOver&&found>0)finishDive();});
+
+function draw(){
+  // water gradient by depth
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#071a2e');
+  grad.addColorStop(1,'#000204');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+
+  // ambient tiny bio-dots
+  ctx.fillStyle='rgba(120,200,255,0.06)';
+  for(let i=0;i<30;i++){
+    const x=(i*97+((Date.now()/50)|0))%W;
+    const y=(i*53)%H;
+    ctx.fillRect(x,y,2,2);
+  }
+
+  ctx.save();
+  // darkness mask via light radius using radial gradient "reveal"
+  const lightGrad=ctx.createRadialGradient(sub.x,sub.y,0,sub.x,sub.y,lightRadius);
+  lightGrad.addColorStop(0,'rgba(180,230,255,0.22)');
+  lightGrad.addColorStop(1,'rgba(180,230,255,0)');
+  ctx.fillStyle=lightGrad;
+  ctx.beginPath();ctx.arc(sub.x,sub.y,lightRadius,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+
+  // home base glow
+  const homeGrad=ctx.createRadialGradient(home.x,home.y,0,home.x,home.y,110);
+  homeGrad.addColorStop(0,'rgba(255,213,79,0.28)');
+  homeGrad.addColorStop(1,'rgba(255,213,79,0)');
+  ctx.fillStyle=homeGrad;
+  ctx.beginPath();ctx.arc(home.x,home.y,110,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(home.x,home.y,home.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#8a6400';
+  ctx.font='bold 10px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('base_label','BASE'),home.x,home.y+3);
+
+  // points of interest
+  poi.forEach(p=>{
+    const d=dist(p,sub);
+    const near=d<lightRadius;
+    if(!p.revealed&&!near)return;
+    ctx.save();
+    ctx.globalAlpha=p.seen?1:(near?1:0.35);
+    ctx.fillStyle=p.seen?'#2fe0a0':(p.type==='vent'?'#ff6b35':p.type==='wreck'?'#9aa5b1':p.type==='coral'?'#ff79c6':'#8fd9ff');
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#021018';
+    ctx.font='14px Arial';ctx.textAlign='center';
+    const icon=p.type==='vent'?'♨':p.type==='wreck'?'⚓':p.type==='coral'?'❀':'◉';
+    ctx.fillText(icon,p.x,p.y+4);
+    ctx.restore();
+  });
+
+  // particles (bubbles from thruster)
+  particles.forEach(p=>{
+    ctx.globalAlpha=Math.max(0,p.life/30);
+    ctx.fillStyle='#bfe8ff';
+    ctx.beginPath();ctx.arc(p.x,p.y,2,0,Math.PI*2);ctx.fill();
+  });
+  ctx.globalAlpha=1;
+
+  // sub
+  ctx.save();
+  ctx.translate(sub.x,sub.y);
+  const ang=Math.atan2(sub.vy,sub.vx);
+  if(Math.hypot(sub.vx,sub.vy)>0.1)ctx.rotate(ang);
+  ctx.fillStyle='#ffcc00';
+  ctx.beginPath();
+  ctx.ellipse(0,0,18,10,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#1a2a3a';
+  ctx.beginPath();ctx.arc(4,-2,5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffcc00';
+  ctx.fillRect(-20,-3,6,6);
+  ctx.restore();
+
+  if(dockedAtHome()&&found>0&&!gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('dock_hint','Double-tap/click to end dive and bank your score'),W/2,30);
+  }
+
+  document.getElementById('scoreDisp').textContent=I18N.t('found_label','Found: {f} / {t}').replace('{f}',found).replace('{t}',total);
+  document.getElementById('hiDisp').textContent=I18N.t('best_label','Best: {h}').replace('{h}',hi);
+  document.getElementById('depthDisp').textContent=I18N.t('depth_label','Depth: {d}m').replace('{d}',Math.round(dist(sub,home)*3));
+  document.getElementById('battFill').style.width=Math.max(0,(battery/maxBattery*100))+'%';
+  const bf=document.getElementById('battFill');
+  bf.style.background=(battery/maxBattery<0.25)?'linear-gradient(90deg,#ff4d4d,#ffb000)':'linear-gradient(90deg,#2fe0a0,#8fd9ff)';
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('dive_complete_title','DIVE COMPLETE'):I18N.t('stranded_title','STRANDED'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap or press Space to dive again'),W/2,H/2+26);
+  }
+}
+
+let last=null;
+function loop(ts){
+  const dt=last===null?1:Math.min((ts-last)/16.6667,3);
+  last=ts;
+  endDiveIfHome();
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script></body></html>
