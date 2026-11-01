@@ -1,0 +1,286 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Amber Excavation</title><meta name="description" content="Play Amber Excavation free online — Drag the pick along the glowing fracture line with gentle, controlled pressure to pry the amber loose. Press too hard and it shatters."><link rel="canonical" href="https://games.multiportllc.com/games/amberexcavation"><meta property="og:title" content="Amber Excavation - Multiport Games"><meta property="og:description" content="Play Amber Excavation free online — Drag the pick along the glowing fracture line with gentle, controlled pressure to pry the amber loose. Press too hard and it shatters."><meta property="og:url" content="https://games.multiportllc.com/games/amberexcavation"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Amber Excavation","description":"Play Amber Excavation free online instantly. Drag the pick along the glowing fracture line with gentle, controlled pressure to pry the amber loose. Press too hard and it shatters. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/amberexcavation","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b1d10;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#e0a94c;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#pressureWrap{max-width:400px;margin:4px auto 10px;background:#1a1208;border-radius:8px;height:14px;overflow:hidden;border:1px solid #4a3620}
+#pressureBar{height:100%;width:0%;background:linear-gradient(90deg,#4caf50,#ffd54f,#e94560);transition:width .05s linear}
+#msg{color:#ffd54f;text-align:center;font-weight:800;min-height:1.4em}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Amber Excavation</div>
+  <div class="game-frame">
+    <div id="hud"><span id="scoreDisp">Pieces: 0</span><span id="hiDisp">Best: 0</span><span id="levelDisp">Deposit: 1</span></div>
+    <div id="pressureWrap"><div id="pressureBar"></div></div>
+    <div id="msg">&nbsp;</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>Drag</b> the pick (mouse/finger) slowly along the glowing fracture line. Keep steady, gentle pressure — moving too fast spikes the pressure meter and shatters the amber. Follow the whole line to extract the piece safely.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisp=document.getElementById('scoreDisp'),hiDisp=document.getElementById('hiDisp'),levelDisp=document.getElementById('levelDisp');
+const pressureBar=document.getElementById('pressureBar'),msgEl=document.getElementById('msg');
+const HI_KEY='amberexcavation_hi';
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),level=1;
+let path=[],progress=0,pressure=0,dragging=false,lastPt=null,state='idle',shatterParticles=[];
+hiDisp.textContent=I18N.t('hi_label','Best: {h}').replace('{h}',hi);
+
+function setMsg(t){msgEl.textContent=t;}
+
+function genPath(lvl){
+  // generate a wavy fracture line across the amber blob
+  const pts=[];
+  const n=7+Math.min(lvl,5);
+  const startX=120,endX=680;
+  for(let i=0;i<=n;i++){
+    const t=i/n;
+    const x=startX+(endX-startX)*t;
+    const y=210+Math.sin(t*Math.PI*2+lvl)*40+(Math.random()-0.5)*30;
+    pts.push({x,y:Math.max(100,Math.min(320,y))});
+  }
+  return pts;
+}
+
+function resetPiece(){
+  path=genPath(level);
+  progress=0;pressure=0;dragging=false;lastPt=null;state='idle';
+  pressureBar.style.width='0%';
+  setMsg(I18N.t('ready_msg','Press and drag along the glowing line'));
+}
+
+function pathLenTotal(){
+  let d=0;for(let i=1;i<path.length;i++){d+=Math.hypot(path[i].x-path[i-1].x,path[i].y-path[i-1].y);}
+  return d;
+}
+
+function closestPointInfo(px,py){
+  // find closest segment & cumulative distance along path, plus perpendicular distance
+  let best={dist:Infinity,cum:0,segT:0};
+  let cum=0;
+  for(let i=0;i<path.length-1;i++){
+    const a=path[i],b=path[i+1];
+    const abx=b.x-a.x,aby=b.y-a.y;
+    const len=Math.hypot(abx,aby)||1;
+    const t=Math.max(0,Math.min(1,((px-a.x)*abx+(py-a.y)*aby)/(len*len)));
+    const cx=a.x+abx*t,cy=a.y+aby*t;
+    const d=Math.hypot(px-cx,py-cy);
+    if(d<best.dist){best={dist:d,cum:cum+len*t,segT:t,segIdx:i};}
+    cum+=len;
+  }
+  return best;
+}
+
+function pointerDown(px,py){
+  const info=closestPointInfo(px,py);
+  if(info.dist<30 && info.cum/pathLenTotal()<0.15){
+    dragging=true;lastPt={x:px,y:py,t:performance.now()};
+    state='digging';
+    setMsg(I18N.t('digging_msg','Keep it slow and steady...'));
+  }
+}
+function pointerMove(px,py){
+  if(!dragging||state!=='digging')return;
+  const now=performance.now();
+  const info=closestPointInfo(px,py);
+  const dt=Math.max(1,now-lastPt.t);
+  const dist=Math.hypot(px-lastPt.x,py-lastPt.y);
+  const speed=dist/dt*16.67; // px per frame-equivalent
+  lastPt={x:px,y:py,t:now};
+
+  if(info.dist>26){
+    // drifted off the fracture line — small pressure penalty but don't punish too harshly
+    pressure+=4;
+  } else {
+    progress=Math.max(progress,info.cum/pathLenTotal());
+    // speed contributes to pressure; slow careful motion keeps pressure low
+    pressure+=Math.max(0,(speed-4))*1.8;
+    pressure=Math.max(0,pressure-1.1); // natural easing when moving gently
+  }
+  pressure=Math.min(100,Math.max(0,pressure));
+  pressureBar.style.width=pressure+'%';
+
+  if(pressure>=100){
+    shatter();
+    return;
+  }
+  if(progress>=0.985){
+    extractSuccess();
+  }
+}
+function pointerUp(){
+  if(dragging&&state==='digging'){
+    pressure=Math.max(0,pressure-8);
+    pressureBar.style.width=pressure+'%';
+  }
+  dragging=false;
+}
+
+function shatter(){
+  state='shattered';
+  dragging=false;
+  SFX.hit();SFX.fail();
+  setMsg(I18N.t('shatter_msg','It shattered! Too much pressure — try the next deposit.'));
+  shatterParticles=[];
+  for(let i=0;i<24;i++){
+    shatterParticles.push({x:400+Math.random()*60-30,y:210+Math.random()*60-30,vx:(Math.random()-0.5)*8,vy:(Math.random()-0.5)*8-2,life:40});
+  }
+  score=0;
+  level=1;
+  setTimeout(()=>{resetPiece();updateHud();},1400);
+}
+
+function extractSuccess(){
+  state='success';
+  dragging=false;
+  SFX.success();
+  score++;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  level++;
+  setMsg(I18N.t('success_msg','Amber piece extracted safely!'));
+  updateHud();
+  setTimeout(()=>{resetPiece();},1100);
+}
+
+function updateHud(){
+  scoreDisp.textContent=I18N.t('score_label','Pieces: {s}').replace('{s}',score);
+  hiDisp.textContent=I18N.t('hi_label','Best: {h}').replace('{h}',hi);
+  levelDisp.textContent=I18N.t('level_label','Deposit: {l}').replace('{l}',level);
+}
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const sx=c.width/r.width,sy=c.height/r.height;
+  let cx,cy;
+  if(e.touches&&e.touches.length){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else{cx=e.clientX;cy=e.clientY;}
+  return {x:(cx-r.left)*sx,y:(cy-r.top)*sy};
+}
+
+c.addEventListener('mousedown',e=>{const p=getPos(e);pointerDown(p.x,p.y);});
+c.addEventListener('mousemove',e=>{const p=getPos(e);pointerMove(p.x,p.y);});
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=getPos(e);pointerDown(p.x,p.y);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();const p=getPos(e);pointerMove(p.x,p.y);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerUp();},{passive:false});
+
+// Keyboard controls: arrow keys nudge a virtual cursor along for accessibility
+let kx=120,ky=210,kActive=false;
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key))e.preventDefault();
+  if(e.key===' '){
+    if(state==='idle'||state==='success'){kActive=true;kx=path[0].x;ky=path[0].y;pointerDown(kx,ky);}
+    return;
+  }
+  if(!kActive)return;
+  const step=6;
+  if(e.key==='ArrowLeft')kx-=step;
+  if(e.key==='ArrowRight')kx+=step;
+  if(e.key==='ArrowUp')ky-=step;
+  if(e.key==='ArrowDown')ky+=step;
+  pointerMove(kx,ky);
+});
+document.addEventListener('keyup',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){
+    // releasing direction keys eases pressure like letting go
+  }
+});
+
+function drawAmberBlob(){
+  ctx.save();
+  const grad=ctx.createRadialGradient(400,210,20,400,210,260);
+  grad.addColorStop(0,'#e8a438');
+  grad.addColorStop(0.6,'#b9701f');
+  grad.addColorStop(1,'#5c3813');
+  ctx.fillStyle=grad;
+  ctx.beginPath();
+  ctx.ellipse(400,210,280,170,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPath(){
+  if(path.length<2)return;
+  ctx.save();
+  // unlit remainder
+  ctx.strokeStyle='rgba(255,220,120,0.25)';
+  ctx.lineWidth=6;
+  ctx.beginPath();
+  ctx.moveTo(path[0].x,path[0].y);
+  for(const p of path)ctx.lineTo(p.x,p.y);
+  ctx.stroke();
+
+  // lit progress portion
+  const total=pathLenTotal();
+  let cum=0,drawn=0;
+  ctx.strokeStyle='#ffe066';
+  ctx.lineWidth=7;
+  ctx.shadowColor='#ffe066';ctx.shadowBlur=12;
+  ctx.beginPath();
+  ctx.moveTo(path[0].x,path[0].y);
+  for(let i=1;i<path.length;i++){
+    const a=path[i-1],b=path[i];
+    const segLen=Math.hypot(b.x-a.x,b.y-a.y);
+    if((cum+segLen)/total<=progress){
+      ctx.lineTo(b.x,b.y);
+      cum+=segLen;
+    } else {
+      const remain=(progress*total-cum);
+      const t=Math.max(0,Math.min(1,remain/segLen));
+      ctx.lineTo(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t);
+      cum+=segLen;
+    }
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPick(){
+  if(!dragging||!lastPt)return;
+  ctx.save();
+  ctx.fillStyle='#ccc';
+  ctx.translate(lastPt.x,lastPt.y);
+  ctx.rotate(-0.6);
+  ctx.fillRect(-4,-30,8,30);
+  ctx.fillStyle='#888';
+  ctx.beginPath();ctx.moveTo(-4,-30);ctx.lineTo(4,-30);ctx.lineTo(0,-42);ctx.fill();
+  ctx.restore();
+}
+
+function drawShatter(){
+  shatterParticles.forEach(p=>{
+    p.x+=p.vx;p.y+=p.vy;p.vy+=0.3;p.life--;
+    ctx.fillStyle='rgba(230,150,40,'+Math.max(0,p.life/40)+')';
+    ctx.fillRect(p.x,p.y,5,5);
+  });
+  shatterParticles=shatterParticles.filter(p=>p.life>0);
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,420);
+  const bg=ctx.createLinearGradient(0,0,0,420);
+  bg.addColorStop(0,'#1a1208');bg.addColorStop(1,'#2b1d10');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,420);
+
+  drawAmberBlob();
+  drawPath();
+  drawPick();
+  if(state==='shattered')drawShatter();
+
+  ctx.fillStyle='rgba(255,255,255,0.6)';
+  ctx.font='14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('progress_hint','Progress: {p}%').replace('{p}',Math.floor(progress*100)),20,30);
+
+  requestAnimationFrame(loop);
+}
+resetPiece();
+updateHud();
+loop();
+</script></body></html>

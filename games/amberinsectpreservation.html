@@ -1,0 +1,276 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Amber Insect Preservation - Multiport Games</title><meta name="description" content="Play Amber Insect Preservation free online — Hold to polish each amber specimen just enough to reveal the trapped insect without over-polishing and cracking it, then match it to its correct species."><link rel="canonical" href="https://games.multiportllc.com/games/amberinsectpreservation"><meta property="og:title" content="Amber Insect Preservation - Multiport Games"><meta property="og:description" content="Play Amber Insect Preservation free online — Hold to polish each amber specimen just enough to reveal the trapped insect without over-polishing and cracking it, then match it to its correct species."><meta property="og:url" content="https://games.multiportllc.com/games/amberinsectpreservation"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Amber Insect Preservation","description":"Play Amber Insect Preservation free online instantly. Hold to polish each amber specimen just enough to reveal the trapped insect without over-polishing and cracking it, then match it to its correct species. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/amberinsectpreservation","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#lab{background:#20150a;border-radius:14px;padding:16px;text-align:center}
+#hud{color:#ffe9b3;font-weight:800;margin-bottom:10px;display:flex;flex-wrap:wrap;justify-content:center;gap:14px}
+#hud span.hv{color:#ffd54f}
+#clarityBar{width:280px;height:16px;background:#3a2612;border-radius:8px;margin:6px auto;overflow:hidden;position:relative}
+#clarityFill{height:100%;background:linear-gradient(90deg,#8a5a1e,#ffd54f);width:0%}
+#crackZone{position:absolute;top:0;right:0;height:100%;width:8%;background:repeating-linear-gradient(45deg,#e94560,#e94560 4px,#7a1c2c 4px,#7a1c2c 8px)}
+canvas#amber{background:radial-gradient(circle at 50% 40%,#e8a33d,#a9631c 70%,#5c3814);border-radius:50%;cursor:pointer;touch-action:none}
+#species{margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+#species button{padding:9px 16px;border-radius:8px;border:2px solid #6a4a22;background:#3a2612;color:#ffe9b3;font-weight:700;cursor:pointer;font-size:.9rem}
+#species button:disabled{opacity:.35;cursor:not-allowed}
+#msg{color:#ffd54f;min-height:1.4em;font-weight:700;margin-top:10px}
+#endOverlay{display:none;color:#fff;margin-top:10px}
+#endOverlay button{margin-top:8px;padding:9px 22px;border:none;border-radius:20px;background:#e94560;color:#fff;font-weight:700;cursor:pointer}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Amber Insect Preservation</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="lab">
+      <div id="hud">
+        <span>Specimen: <span class="hv" id="specVal">1/6</span></span>
+        <span>Score: <span class="hv" id="scoreVal">0</span></span>
+        <span>Hi: <span class="hv" id="hiVal">0</span></span>
+      </div>
+      <canvas id="amber" width="260" height="260"></canvas>
+      <div id="clarityBar"><div id="clarityFill"></div><div id="crackZone"></div></div>
+      <div id="species"></div>
+      <div id="msg">Hold the amber (mouse, touch, or Space) to polish it. Release before it cracks!</div>
+      <div id="endOverlay">
+        <div id="endText"></div>
+        <button id="restartBtn">New Batch</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Press and hold on the amber (mouse, touch/tap-and-hold, or <b>Space</b>) to polish it — clarity rises. Release once the insect inside is visible but <b>before</b> clarity reaches the red crack zone, or the specimen is ruined. Once clarity is at least 40%, pick the matching species button (or press <b>1-5</b>) to identify it. Six specimens per batch — preserve and identify as many as you can!
+  </div>
+</div>
+<script>
+const HKEY='highscore_amberinsectpreservation';
+let hi=parseInt(localStorage.getItem(HKEY)||'0',10);
+const SPECIES=[
+  {id:'beetle',name:'Beetle'},
+  {id:'ant',name:'Ant'},
+  {id:'dragonfly',name:'Dragonfly'},
+  {id:'spider',name:'Spider'},
+  {id:'mosquito',name:'Mosquito'},
+];
+const TOTAL_SPECIMENS=6;
+const CRACK_AT=100;
+const POLISH_RATE=38; // clarity points per second while held
+
+const canvas=document.getElementById('amber'),ctx=canvas.getContext('2d');
+let specimenIndex,clarity,holding,lastTime,score,resolved,cracked,gameOver,current;
+let rafId=null;
+
+function rndSpecies(){return SPECIES[Math.floor(Math.random()*SPECIES.length)];}
+
+function newSpecimen(){
+  current=rndSpecies();
+  clarity=0;
+  resolved=false;
+  cracked=false;
+}
+
+function reset(){
+  specimenIndex=0;
+  score=0;
+  gameOver=false;
+  holding=false;
+  lastTime=null;
+  document.getElementById('endOverlay').style.display='none';
+  newSpecimen();
+  renderSpecies();
+  setMsg(I18N.t('intro_msg','Hold the amber (mouse, touch, or Space) to polish it. Release before it cracks!'));
+  updateHud();
+  if(rafId)cancelAnimationFrame(rafId);
+  rafId=requestAnimationFrame(loop);
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function updateHud(){
+  document.getElementById('specVal').textContent=Math.min(specimenIndex+1,TOTAL_SPECIMENS)+'/'+TOTAL_SPECIMENS;
+  document.getElementById('scoreVal').textContent=score;
+  document.getElementById('hiVal').textContent=hi;
+  document.getElementById('clarityFill').style.width=Math.min(100,clarity)+'%';
+}
+
+function renderSpecies(){
+  const el=document.getElementById('species');
+  el.innerHTML='';
+  SPECIES.forEach((s,i)=>{
+    const b=document.createElement('button');
+    b.textContent=(i+1)+'. '+s.name;
+    b.disabled=gameOver||resolved||cracked||clarity<40;
+    b.addEventListener('click',()=>guess(s.id));
+    el.appendChild(b);
+  });
+}
+
+function guess(id){
+  if(gameOver||resolved||cracked||clarity<40)return;
+  resolved=true;
+  if(id===current.id){
+    const pts=Math.round(clarity);
+    score+=pts;
+    SFX.success();
+    setMsg(I18N.t('msg_correct','Correct — it\'s a {n}! +{p}').replace('{n}',current.name).replace('{p}',pts));
+  } else {
+    score=Math.max(0,score-30);
+    SFX.error();
+    setMsg(I18N.t('msg_wrong','Wrong match — that was a {n}. -30').replace('{n}',current.name));
+  }
+  updateHud();
+  renderSpecies();
+  setTimeout(nextSpecimen,900);
+}
+
+function nextSpecimen(){
+  specimenIndex++;
+  if(specimenIndex>=TOTAL_SPECIMENS){endGame();return;}
+  newSpecimen();
+  renderSpecies();
+  setMsg(I18N.t('intro_msg','Hold the amber (mouse, touch, or Space) to polish it. Release before it cracks!'));
+  updateHud();
+}
+
+function doCrack(){
+  cracked=true;
+  holding=false;
+  score=Math.max(0,score-60);
+  SFX.fail();
+  setMsg(I18N.t('msg_crack','The amber cracked! Specimen lost. -60'));
+  updateHud();
+  renderSpecies();
+  setTimeout(nextSpecimen,1100);
+}
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem(HKEY,String(hi));}
+  updateHud();
+  document.getElementById('endText').textContent=I18N.t('end_summary','Batch complete! Final score: {sc}').replace('{sc}',score);
+  document.getElementById('endOverlay').style.display='block';
+  if(score>0)SFX.win();else SFX.lose();
+}
+
+function drawInsect(species,alpha){
+  ctx.save();
+  ctx.translate(130,130);
+  ctx.globalAlpha=alpha;
+  ctx.fillStyle='#1a120a';
+  ctx.strokeStyle='#1a120a';
+  ctx.lineWidth=3;
+  if(species==='beetle'){
+    ctx.beginPath();ctx.ellipse(0,5,32,22,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(0,-28,14,12,0,0,Math.PI*2);ctx.fill();
+    for(let i=-1;i<=1;i++){ctx.beginPath();ctx.moveTo(-28,i*14);ctx.lineTo(-46,i*18);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(28,i*14);ctx.lineTo(46,i*18);ctx.stroke();}
+  } else if(species==='ant'){
+    ctx.beginPath();ctx.ellipse(-30,0,14,11,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(0,0,10,9,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(30,2,22,16,0,0,Math.PI*2);ctx.fill();
+    for(let i=-1;i<=1;i++){ctx.beginPath();ctx.moveTo(0,-6);ctx.lineTo(-18+i*2,-30-i*4);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(0,6);ctx.lineTo(-18+i*2,30+i*4);ctx.stroke();}
+  } else if(species==='dragonfly'){
+    ctx.beginPath();ctx.ellipse(0,0,8,44,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(0,-40,9,9,0,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=alpha*0.5;
+    ctx.beginPath();ctx.ellipse(-30,-18,30,10,0.3,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(30,-18,30,10,-0.3,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(-30,10,30,10,-0.3,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(30,10,30,10,0.3,0,Math.PI*2);ctx.fill();
+  } else if(species==='spider'){
+    ctx.beginPath();ctx.ellipse(0,5,20,18,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(0,-18,11,10,0,0,Math.PI*2);ctx.fill();
+    for(let i=0;i<4;i++){
+      const ang=(i-1.5)*0.5;
+      ctx.beginPath();ctx.moveTo(-14,0+i*4-6);ctx.lineTo(-48,ang*60-6);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(14,0+i*4-6);ctx.lineTo(48,ang*60-6);ctx.stroke();
+    }
+  } else if(species==='mosquito'){
+    ctx.beginPath();ctx.ellipse(0,5,10,20,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(0,-16,7,7,0,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.moveTo(0,-22);ctx.lineTo(0,-40);ctx.lineWidth=2;ctx.stroke();
+    ctx.globalAlpha=alpha*0.45;
+    ctx.beginPath();ctx.ellipse(-16,-4,20,7,0.4,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.ellipse(16,-4,20,7,-0.4,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,260,260);
+  ctx.save();
+  ctx.beginPath();ctx.arc(130,130,124,0,Math.PI*2);ctx.clip();
+  // amber texture streaks
+  ctx.globalAlpha=0.15;
+  ctx.strokeStyle='#5c3814';
+  for(let i=0;i<6;i++){
+    ctx.beginPath();
+    ctx.moveTo(20+i*40,10);
+    ctx.quadraticCurveTo(130,130,40+i*30,250);
+    ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+  if(cracked){
+    const alpha=Math.min(0.95,clarity/CRACK_AT);
+    drawInsect(current.id,alpha*0.8);
+    ctx.strokeStyle='#1a0d04';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(40,30);ctx.lineTo(150,140);ctx.lineTo(90,230);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(220,60);ctx.lineTo(150,140);ctx.stroke();
+  } else {
+    const alpha=Math.min(0.95,0.08+(clarity/100)*0.9);
+    drawInsect(current.id,alpha);
+  }
+  ctx.restore();
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=(ts-lastTime)/1000;
+  lastTime=ts;
+  if(!gameOver&&!resolved&&!cracked&&holding){
+    clarity+=POLISH_RATE*dt;
+    if(clarity>=CRACK_AT){clarity=CRACK_AT;doCrack();}
+    updateHud();
+    renderSpecies();
+  }
+  draw();
+  rafId=requestAnimationFrame(loop);
+}
+
+function startHold(){
+  if(gameOver||resolved||cracked)return;
+  holding=true;
+  SFX.tick();
+}
+function stopHold(){holding=false;}
+
+canvas.addEventListener('pointerdown',e=>{e.preventDefault();startHold();});
+canvas.addEventListener('pointerup',stopHold);
+canvas.addEventListener('pointerleave',stopHold);
+canvas.addEventListener('pointercancel',stopHold);
+canvas.addEventListener('contextmenu',e=>e.preventDefault());
+
+let spaceHeld=false;
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){
+    e.preventDefault();
+    if(!spaceHeld){spaceHeld=true;startHold();}
+  } else if(e.key>='1'&&e.key<='5'){
+    const i=parseInt(e.key,10)-1;
+    if(SPECIES[i])guess(SPECIES[i].id);
+  } else if(gameOver&&e.code==='Enter'){
+    reset();
+  }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){spaceHeld=false;stopHold();}
+});
+
+document.getElementById('restartBtn').addEventListener('click',reset);
+
+reset();
+</script></body></html>

@@ -1,0 +1,247 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Trilobite Cleaning</title><meta name="description" content="Play Trilobite Cleaning free online — Drag the needle tool along each glowing segment groove to clear sediment. Stray off the groove and you'll scratch the fossil."><link rel="canonical" href="https://games.multiportllc.com/games/trilobitecleaning"><meta property="og:title" content="Trilobite Cleaning - Multiport Games"><meta property="og:description" content="Play Trilobite Cleaning free online — Drag the needle tool along each glowing segment groove to clear sediment. Stray off the groove and you'll scratch the fossil."><meta property="og:url" content="https://games.multiportllc.com/games/trilobitecleaning"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Trilobite Cleaning","description":"Play Trilobite Cleaning free online instantly. Drag the needle tool along each glowing segment groove to clear sediment. Stray off the groove and you'll scratch the fossil. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/trilobitecleaning","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a3a30;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#9fd8a0;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#cleanWrap{max-width:400px;margin:4px auto 10px;background:#1a1a14;border-radius:8px;height:14px;overflow:hidden;border:1px solid #4a4a36}
+#cleanBar{height:100%;width:0%;background:linear-gradient(90deg,#4caf50,#9fd8a0);transition:width .1s linear}
+#scratchWrap{max-width:400px;margin:0 auto 10px;background:#1a1a14;border-radius:8px;height:10px;overflow:hidden;border:1px solid #4a4a36}
+#scratchBar{height:100%;width:0%;background:linear-gradient(90deg,#ffd54f,#e94560);transition:width .1s linear}
+#msg{color:#ffd54f;text-align:center;font-weight:800;min-height:1.4em}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Trilobite Cleaning</div>
+  <div class="game-frame">
+    <div id="hud"><span id="scoreDisp">Specimens: 0</span><span id="hiDisp">Best: 0</span></div>
+    <div id="cleanWrap"><div id="cleanBar"></div></div>
+    <div id="scratchWrap"><div id="scratchBar"></div></div>
+    <div id="msg">&nbsp;</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>Drag</b> the needle (mouse/finger) back and forth along each glowing segment groove to clear the sediment covering it. Stay on the groove — straying off it scratches the fossil. Clean every segment before your scratch limit runs out.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisp=document.getElementById('scoreDisp'),hiDisp=document.getElementById('hiDisp');
+const cleanBar=document.getElementById('cleanBar'),scratchBar=document.getElementById('scratchBar'),msgEl=document.getElementById('msg');
+const HI_KEY='trilobitecleaning_hi';
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+hiDisp.textContent=I18N.t('hi_label','Best: {h}').replace('{h}',hi);
+let segments=[],dragging=false,lastPt=null,scratch=0,done=false;
+
+function setMsg(t){msgEl.textContent=t;}
+
+function genSegments(){
+  // trilobite body: head (cephalon) + several thorax segments + tail (pygidium), each a curved groove
+  const segs=[];
+  const cx=400,topY=90,bottomY=350,n=8;
+  for(let i=0;i<n;i++){
+    const t=i/(n-1);
+    const y=topY+(bottomY-topY)*t;
+    const width=70+Math.sin(t*Math.PI)*110;
+    segs.push({y,width,cx,cleaned:0,sediment:1});
+  }
+  return segs;
+}
+
+function resetSpecimen(){
+  segments=genSegments();
+  scratch=0;done=false;
+  scratchBar.style.width='0%';
+  cleanBar.style.width='0%';
+  setMsg(I18N.t('ready_msg','Drag the needle along each groove to clean it'));
+}
+
+function overallClean(){
+  return segments.reduce((a,s)=>a+s.cleaned,0)/segments.length;
+}
+
+function segAtY(px,py){
+  // find segment whose groove band contains py, and check px within curve +- tolerance
+  for(const s of segments){
+    if(Math.abs(py-s.y)<14){
+      const halfW=s.width/2;
+      if(px>=s.cx-halfW&&px<=s.cx+halfW)return s;
+    }
+  }
+  return null;
+}
+
+function pointerDown(px,py){
+  dragging=true;lastPt={x:px,y:py,t:performance.now()};
+}
+function pointerMove(px,py){
+  if(!dragging||done)return;
+  const now=performance.now();
+  const dt=Math.max(1,now-(lastPt?lastPt.t:now));
+  const dist=lastPt?Math.hypot(px-lastPt.x,py-lastPt.y):0;
+  lastPt={x:px,y:py,t:now};
+  const seg=segAtY(px,py);
+  if(seg){
+    seg.cleaned=Math.min(1,seg.cleaned+dist*0.006);
+    if(Math.random()<0.15)SFX.tick();
+  } else {
+    // off the groove entirely — scratched the shell surface if actually over the fossil silhouette
+    if(isOverFossil(px,py)){
+      scratch+=dist*0.5;
+      scratchBar.style.width=Math.min(100,scratch)+'%';
+      if(Math.random()<0.3)SFX.error();
+      if(scratch>=100){failSpecimen();return;}
+    }
+  }
+  cleanBar.style.width=Math.floor(overallClean()*100)+'%';
+  if(overallClean()>=0.98){
+    completeSpecimen();
+  }
+}
+function pointerUp(){dragging=false;}
+
+function isOverFossil(px,py){
+  // rough silhouette check against body width interpolated by y
+  if(py<70||py>370)return false;
+  let nearest=null,nd=Infinity;
+  for(const s of segments){
+    const d=Math.abs(py-s.y);
+    if(d<nd){nd=d;nearest=s;}
+  }
+  if(!nearest)return false;
+  return px>=nearest.cx-nearest.width/2-10 && px<=nearest.cx+nearest.width/2+10;
+}
+
+function failSpecimen(){
+  done=true;dragging=false;
+  SFX.hit();SFX.fail();
+  setMsg(I18N.t('fail_msg','Too many scratches! Starting a fresh specimen.'));
+  score=0;
+  setTimeout(()=>{resetSpecimen();updateHud();},1300);
+}
+
+function completeSpecimen(){
+  done=true;dragging=false;
+  SFX.success();
+  score++;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  setMsg(I18N.t('success_msg','Specimen fully cleaned and revealed!'));
+  updateHud();
+  setTimeout(()=>{resetSpecimen();},1100);
+}
+
+function updateHud(){
+  scoreDisp.textContent=I18N.t('score_label','Specimens: {s}').replace('{s}',score);
+  hiDisp.textContent=I18N.t('hi_label','Best: {h}').replace('{h}',hi);
+}
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const sx=c.width/r.width,sy=c.height/r.height;
+  let cx,cy;
+  if(e.touches&&e.touches.length){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else{cx=e.clientX;cy=e.clientY;}
+  return {x:(cx-r.left)*sx,y:(cy-r.top)*sy};
+}
+
+c.addEventListener('mousedown',e=>{const p=getPos(e);pointerDown(p.x,p.y);});
+c.addEventListener('mousemove',e=>{const p=getPos(e);pointerMove(p.x,p.y);});
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=getPos(e);pointerDown(p.x,p.y);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();const p=getPos(e);pointerMove(p.x,p.y);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerUp();},{passive:false});
+
+// Keyboard controls: select segment with number keys, scrub with left/right arrows
+let activeSegIdx=0;
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))e.preventDefault();
+  if(e.key==='ArrowUp'){activeSegIdx=Math.max(0,activeSegIdx-1);return;}
+  if(e.key==='ArrowDown'){activeSegIdx=Math.min(segments.length-1,activeSegIdx+1);return;}
+  if((e.key==='ArrowLeft'||e.key==='ArrowRight')&&segments[activeSegIdx]&&!done){
+    const s=segments[activeSegIdx];
+    s.cleaned=Math.min(1,s.cleaned+0.05);
+    if(Math.random()<0.2)SFX.tick();
+    cleanBar.style.width=Math.floor(overallClean()*100)+'%';
+    if(overallClean()>=0.98)completeSpecimen();
+  }
+});
+
+function drawFossil(){
+  ctx.save();
+  ctx.beginPath();
+  for(let i=0;i<segments.length;i++){
+    const s=segments[i];
+    const halfW=s.width/2;
+    if(i===0)ctx.moveTo(s.cx-halfW,s.y);
+    else ctx.lineTo(s.cx-halfW,s.y);
+  }
+  for(let i=segments.length-1;i>=0;i--){
+    const s=segments[i];
+    const halfW=s.width/2;
+    ctx.lineTo(s.cx+halfW,s.y);
+  }
+  ctx.closePath();
+  ctx.fillStyle='#5a5244';
+  ctx.fill();
+  ctx.restore();
+
+  // segment grooves
+  segments.forEach((s,i)=>{
+    const halfW=s.width/2;
+    ctx.save();
+    // sediment overlay fades as cleaned increases
+    ctx.strokeStyle=`rgba(120,110,90,${1-s.cleaned})`;
+    ctx.lineWidth=10;
+    ctx.beginPath();ctx.moveTo(s.cx-halfW,s.y);ctx.lineTo(s.cx+halfW,s.y);ctx.stroke();
+
+    ctx.strokeStyle=`rgba(90,220,120,${0.25+0.75*s.cleaned})`;
+    ctx.lineWidth=4;
+    ctx.shadowColor='#6fe08a';ctx.shadowBlur=s.cleaned>0.05?8:0;
+    ctx.beginPath();ctx.moveTo(s.cx-halfW,s.y);ctx.lineTo(s.cx+halfW,s.y);ctx.stroke();
+    ctx.restore();
+  });
+
+  // axial ridge
+  ctx.save();
+  ctx.strokeStyle='rgba(40,40,32,0.6)';
+  ctx.lineWidth=14;
+  ctx.beginPath();
+  ctx.moveTo(400,segments[0].y);
+  ctx.lineTo(400,segments[segments.length-1].y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawNeedle(){
+  if(!dragging||!lastPt)return;
+  ctx.save();
+  ctx.translate(lastPt.x,lastPt.y);
+  ctx.fillStyle='#ddd';
+  ctx.fillRect(-2,-26,4,26);
+  ctx.fillStyle='#999';
+  ctx.beginPath();ctx.moveTo(-2,-26);ctx.lineTo(2,-26);ctx.lineTo(0,-34);ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,420);
+  const bg=ctx.createLinearGradient(0,0,0,420);
+  bg.addColorStop(0,'#2e2e24');bg.addColorStop(1,'#3a3a30');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,420);
+
+  drawFossil();
+  drawNeedle();
+
+  ctx.fillStyle='rgba(255,255,255,0.6)';
+  ctx.font='14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('clean_hint','Cleaned: {p}%').replace('{p}',Math.floor(overallClean()*100)),20,30);
+
+  requestAnimationFrame(loop);
+}
+resetSpecimen();
+updateHud();
+loop();
+</script></body></html>

@@ -1,0 +1,240 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Fossil Carbon Dating - Multiport Games</title><meta name="description" content="Play Fossil Carbon Dating free online — Run the lab equipment in the correct sequence, then read the isotope decay graph and click the reference curve that matches your fossil sample's age."><link rel="canonical" href="https://games.multiportllc.com/games/fossilcarbondating"><meta property="og:title" content="Fossil Carbon Dating - Multiport Games"><meta property="og:description" content="Play Fossil Carbon Dating free online — Run the lab equipment in the correct sequence, then read the isotope decay graph and click the reference curve that matches your fossil sample's age."><meta property="og:url" content="https://games.multiportllc.com/games/fossilcarbondating"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Fossil Carbon Dating","description":"Play Fossil Carbon Dating free online instantly. Operate lab equipment in the right order, then read the isotope decay graph to estimate a fossil's age by matching it against reference curves. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/fossilcarbondating","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#101826;border-radius:14px;padding:16px;max-width:760px;margin:0 auto}
+#status{color:#dce8f5;font-size:1.05rem;font-weight:700;text-align:center;min-height:1.6em;margin-bottom:8px}
+#hud{display:flex;justify-content:space-between;color:#8fd3ff;font-weight:700;font-size:.95rem;padding:0 4px 8px}
+#seqRow{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:12px}
+.seqBtn{padding:10px 14px;border-radius:10px;border:1px solid rgba(255,255,255,.15);background:#1b2a3f;color:#dce8f5;font-weight:700;cursor:pointer;font-size:.9rem}
+.seqBtn.done{background:#1f4d33;color:#8fe3b0;opacity:.7}
+.seqBtn:disabled{cursor:default}
+canvas#graph{background:#07101c;border-radius:10px;display:block;margin:0 auto}
+#choices{display:flex;gap:8px;justify-content:center;margin-top:12px;flex-wrap:wrap}
+.choiceBtn{padding:10px 16px;border-radius:10px;border:2px solid transparent;color:#07101c;font-weight:800;cursor:pointer;font-size:.9rem}
+.choiceBtn.correct{outline:3px solid #7ec850}
+.choiceBtn.wrong{outline:3px solid #e94560}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Fossil Carbon Dating</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud"><div>Sample: <span id="sampleNo">1</span></div><div>Strikes: <span id="strikesDisp">0 / 3</span></div><div>Hi: <span id="hiDisp">0</span></div></div>
+      <div id="status">Run the lab sequence to test the sample</div>
+      <div id="seqRow"></div>
+      <canvas id="graph" width="640" height="260"></canvas>
+      <div id="choices"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Each fossil sample needs to be run through the lab in the correct order: <b>Clean Sample → Load Spectrometer → Run Isotope Analysis → Record Decay Curve</b>. Click the steps in order (or press <b>1-4</b>). Once the decay graph appears, compare the sample's noisy curve to the four smooth reference curves and click (or press <b>1-4</b> again) the one that matches its age. Three wrong answers in a row ends the run.
+  </div>
+</div>
+<script>
+const graph=document.getElementById('graph'),gctx=graph.getContext('2d');
+const STEPS=[
+  ()=>I18N.t('step_clean','Clean Sample'),
+  ()=>I18N.t('step_load','Load Spectrometer'),
+  ()=>I18N.t('step_run','Run Isotope Analysis'),
+  ()=>I18N.t('step_record','Record Decay Curve')
+];
+const BRACKETS=[5000,15000,30000,50000];
+const BRACKET_COLORS=['#4caf50','#2196f3','#ff9800','#e94560'];
+const HALF_LIFE=5730;
+const KEY='hs_fossilcarbondating';
+
+let sampleNo=1,strikes=0,hi=0,gameOver=false,started=false;
+let seqOrder=[],seqDone=0,phase='sequence'; // sequence -> graph
+let actualAge=0,noisySeries=[];
+
+try{hi=parseFloat(localStorage.getItem(KEY))||0;}catch(e){hi=0;}
+document.getElementById('hiDisp').textContent=Math.floor(hi);
+
+function shuffled(arr){const a=arr.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+function setupSample(){
+  phase='sequence';seqDone=0;
+  seqOrder=shuffled([0,1,2,3]);
+  const bi=Math.floor(Math.random()*BRACKETS.length);
+  actualAge=BRACKETS[bi]*(0.75+Math.random()*0.5);
+  renderSeq();
+  document.getElementById('choices').innerHTML='';
+  setStatus(I18N.t('status_sequence','Run the lab sequence to test the sample'));
+  drawGraphBlank();
+}
+
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function renderSeq(){
+  const row=document.getElementById('seqRow');
+  row.innerHTML='';
+  seqOrder.forEach((stepIdx,pos)=>{
+    const btn=document.createElement('button');
+    btn.className='seqBtn';
+    btn.textContent=(pos+1)+'. '+STEPS[stepIdx]();
+    if(pos<seqDone){btn.classList.add('done');btn.disabled=true;}
+    btn.onclick=()=>clickSeq(pos,stepIdx);
+    row.appendChild(btn);
+  });
+}
+
+function clickSeq(pos,stepIdx){
+  if(gameOver||phase!=='sequence')return;
+  if(!started)started=true;
+  if(stepIdx===seqDone){
+    seqDone++;
+    SFX.click();
+    renderSeq();
+    if(seqDone>=4){
+      SFX.success();
+      setTimeout(startGraphPhase,400);
+    }
+  }else{
+    strike(I18N.t('wrong_step','Wrong step order! The sample may be contaminated.'));
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space')){e.preventDefault();reset();return;}
+  const n=parseInt(e.key,10);
+  if(n>=1&&n<=4){
+    if(phase==='sequence'){
+      const btns=document.querySelectorAll('.seqBtn');
+      if(btns[n-1]&&!btns[n-1].disabled)btns[n-1].click();
+    }else if(phase==='graph'){
+      const btns=document.querySelectorAll('.choiceBtn');
+      if(btns[n-1])btns[n-1].click();
+    }
+  }
+});
+
+function startGraphPhase(){
+  phase='graph';
+  setStatus(I18N.t('status_graph','Which reference curve matches this sample?'));
+  buildNoisySeries();
+  drawGraph();
+  const choices=document.getElementById('choices');
+  choices.innerHTML='';
+  const order=shuffled([0,1,2,3]);
+  order.forEach(i=>{
+    const btn=document.createElement('button');
+    btn.className='choiceBtn';
+    btn.style.background=BRACKET_COLORS[i];
+    btn.textContent='~'+BRACKETS[i].toLocaleString()+' yrs';
+    btn.onclick=()=>pickBracket(i,btn);
+    choices.appendChild(btn);
+  });
+}
+
+function buildNoisySeries(){
+  noisySeries=[];
+  for(let x=0;x<=100;x+=2){
+    const t=x/100*60000;
+    const frac=Math.pow(0.5,t/HALF_LIFE);
+    const sampleFrac=Math.pow(0.5,actualAge/HALF_LIFE)*(frac/Math.pow(0.5,0)); // not quite physical, stylized
+    noisySeries.push(sampleFrac*(1+(Math.random()-0.5)*0.06));
+  }
+}
+
+function drawGraphBlank(){
+  gctx.clearRect(0,0,640,260);
+  gctx.fillStyle='#07101c';gctx.fillRect(0,0,640,260);
+  gctx.fillStyle='#55708c';gctx.font='16px Arial';gctx.textAlign='center';
+  gctx.fillText(I18N.t('graph_waiting','Run the lab sequence first…'),320,135);
+}
+
+function curveRemaining(age,t){return Math.pow(0.5,(age+t)/HALF_LIFE);}
+
+function drawGraph(){
+  gctx.clearRect(0,0,640,260);
+  gctx.fillStyle='#07101c';gctx.fillRect(0,0,640,260);
+  const ox=50,oy=220,w=560,h=180;
+  gctx.strokeStyle='#30455e';gctx.lineWidth=2;
+  gctx.beginPath();gctx.moveTo(ox,oy-h);gctx.lineTo(ox,oy);gctx.lineTo(ox+w,oy);gctx.stroke();
+  gctx.fillStyle='#8fa8c0';gctx.font='12px Arial';gctx.textAlign='left';
+  gctx.fillText(I18N.t('graph_ylabel','% C-14 remaining'),ox+4,oy-h-6);
+  gctx.textAlign='right';
+  gctx.fillText(I18N.t('graph_xlabel','time tested →'),ox+w,oy+16);
+
+  // reference curves
+  BRACKETS.forEach((age,i)=>{
+    gctx.strokeStyle=BRACKET_COLORS[i];gctx.lineWidth=2;gctx.beginPath();
+    for(let x=0;x<=w;x+=4){
+      const t=x/w*60000;
+      const frac=curveRemaining(age,t)/curveRemaining(age,0);
+      const y=oy-frac*h;
+      if(x===0)gctx.moveTo(ox+x,y);else gctx.lineTo(ox+x,y);
+    }
+    gctx.stroke();
+  });
+
+  // sample noisy curve (white, matches actualAge)
+  gctx.strokeStyle='#fff';gctx.lineWidth=3;gctx.beginPath();
+  noisySeries.forEach((v,idx)=>{
+    const t=idx/50*60000;
+    const base=curveRemaining(actualAge,t)/curveRemaining(actualAge,0);
+    const frac=base*(1+(v-base)); // fold noise lightly around base shape
+    const x=ox+idx/50*w;
+    const y=oy-Math.max(0,Math.min(1,base + (Math.random()-0.5)*0.015))*h;
+    if(idx===0)gctx.moveTo(x,y);else gctx.lineTo(x,y);
+  });
+  gctx.stroke();
+}
+
+function pickBracket(i,btn){
+  if(gameOver||phase!=='graph')return;
+  const correctIdx=BRACKETS.reduce((best,b,idx)=>Math.abs(b-actualAge)<Math.abs(BRACKETS[best]-actualAge)?idx:best,0);
+  document.querySelectorAll('.choiceBtn').forEach(b=>b.disabled=true);
+  if(i===correctIdx){
+    btn.classList.add('correct');
+    SFX.win();
+    setStatus(I18N.t('right_age','Correct! Estimated age confirmed: {n} years old.').replace('{n}',Math.round(actualAge).toLocaleString()));
+    sampleNo++;
+    document.getElementById('sampleNo').textContent=sampleNo;
+    if(sampleNo-1>hi){hi=sampleNo-1;try{localStorage.setItem(KEY,String(hi));}catch(e){}document.getElementById('hiDisp').textContent=Math.floor(hi);}
+    setTimeout(()=>{setupSample();},1400);
+  }else{
+    btn.classList.add('wrong');
+    document.querySelectorAll('.choiceBtn')[correctIdx].classList.add('correct');
+    strike(I18N.t('wrong_age','Not quite — the decay curve doesn\'t match that bracket.'));
+  }
+}
+
+function strike(reason){
+  strikes++;
+  SFX.error();
+  document.getElementById('strikesDisp').textContent=strikes+' / 3';
+  setStatus(reason);
+  if(strikes>=3){
+    endGame();
+  }else{
+    setTimeout(()=>{ if(!gameOver) setupSample(); },1400);
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  setStatus(I18N.t('status_gameover','Lab shut down after too many errors. Samples correctly dated: {n}. Space / Tap to retry.').replace('{n}',sampleNo-1));
+  document.getElementById('seqRow').innerHTML='';
+  document.getElementById('choices').innerHTML='';
+  drawGraphBlank();
+}
+
+function reset(){
+  sampleNo=1;strikes=0;gameOver=false;started=true;
+  document.getElementById('sampleNo').textContent=sampleNo;
+  document.getElementById('strikesDisp').textContent='0 / 3';
+  setupSample();
+}
+
+graph.addEventListener('pointerdown',()=>{ if(gameOver){reset();} });
+
+setupSample();
+</script></body></html>

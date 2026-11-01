@@ -1,0 +1,224 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Fossil Digging - Multiport Games</title><meta name="description" content="Play Fossil Digging free online — Read the subtle color hints on the dig site, then dig each grid square with a Light or Heavy pick to uncover buried fossils layer by layer without crushing them before you run out of dig actions."><link rel="canonical" href="https://games.multiportllc.com/games/fossildigging"><meta property="og:title" content="Fossil Digging - Multiport Games"><meta property="og:description" content="Play Fossil Digging free online — Read the subtle color hints on the dig site, then dig each grid square with a Light or Heavy pick to uncover buried fossils layer by layer without crushing them before you run out of dig actions."><meta property="og:url" content="https://games.multiportllc.com/games/fossildigging"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Fossil Digging","description":"Play Fossil Digging free online instantly. Read the subtle color hints on the dig site, then dig each grid square with a Light or Heavy pick to uncover buried fossils layer by layer without crushing them before you run out of dig actions. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/fossildigging","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#site-wrap{background:#1b140d;border-radius:14px;padding:16px;text-align:center}
+#hud{color:#f0e0c0;font-weight:800;font-size:1.05rem;margin-bottom:10px;display:flex;flex-wrap:wrap;justify-content:center;gap:14px}
+#hud span.hv{color:#ffd54f}
+#tools{margin-bottom:10px}
+#tools button{padding:8px 18px;border:none;border-radius:20px;background:#5a4324;color:#f0e0c0;font-weight:700;cursor:pointer;margin:0 5px;font-size:.95rem;border:2px solid transparent}
+#tools button.active{background:#c99a3c;color:#241a0c;border-color:#ffd54f}
+#grid{display:inline-grid;grid-template-columns:repeat(6,52px);grid-template-rows:repeat(6,52px);gap:4px;background:#0f0b06;padding:10px;border-radius:10px;margin:0 auto}
+.cell{width:52px;height:52px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:1.3rem;cursor:pointer;position:relative;transition:transform .08s;user-select:none}
+.cell:focus{outline:2px solid #ffd54f}
+.cell.cursor{box-shadow:0 0 0 3px #ffd54f inset}
+.cell.fossil-ok{background:#3d7a3d!important}
+.cell.fossil-bad{background:#7a2d2d!important}
+#msg{color:#ffd54f;min-height:1.4em;font-weight:700;margin-top:8px}
+#endOverlay{display:none;color:#fff;margin-top:10px}
+#endOverlay button{margin-top:8px;padding:9px 22px;border:none;border-radius:20px;background:#e94560;color:#fff;font-weight:700;cursor:pointer}
+@media(max-width:480px){
+  #grid{grid-template-columns:repeat(6,42px);grid-template-rows:repeat(6,42px)}
+  .cell{width:42px;height:42px;font-size:1.05rem}
+}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Fossil Digging</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="site-wrap">
+      <div id="hud">
+        <span>Actions: <span class="hv" id="actionsLeft">40</span></span>
+        <span>Fossils: <span class="hv" id="fossilCount">0/0</span></span>
+        <span>Score: <span class="hv" id="scoreVal">0</span></span>
+        <span>Hi: <span class="hv" id="hiVal">0</span></span>
+      </div>
+      <div id="tools">
+        <button id="lightBtn" class="active">⛏ Light Pick</button>
+        <button id="heavyBtn">🔨 Heavy Pick</button>
+      </div>
+      <div id="grid"></div>
+      <div id="msg">Click a square to dig. Golden tints hint at fossils below — go Light near strong tints!</div>
+      <div id="endOverlay">
+        <div id="endText"></div>
+        <button id="restartBtn">New Dig Site</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Each grid square hides rock layers, and some hide a fossil underneath. A subtle golden tint on a square hints a fossil is near — the tint grows stronger as fewer layers remain above it. Choose your tool — <b>Light Pick</b> safely clears one layer, <b>Heavy Pick</b> clears two layers per action but will crush a fossil if used when only one layer remains above it. Click/tap a square to dig with your selected tool, or use <b>Arrow keys</b> to move the cursor, <b>L</b>/<b>H</b> to switch tools, and <b>Space/Enter</b> to dig. Uncover every fossil safely before you run out of dig actions!
+  </div>
+</div>
+<script>
+const SIZE=6;
+const TOTAL_ACTIONS=40;
+const FOSSIL_COUNT=6;
+const HKEY='highscore_fossildigging';
+let hi=parseInt(localStorage.getItem(HKEY)||'0',10);
+let grid,actionsLeft,score,tool,cursor,gameOver,fossilsFound,fossilsDamaged,fossilsTotal;
+
+function rndInt(a,b){return a+Math.floor(Math.random()*(b-a+1));}
+
+function newGrid(){
+  grid=[];
+  for(let i=0;i<SIZE*SIZE;i++){
+    grid.push({depth:rndInt(2,4),remaining:0,fossil:false,revealed:false,damaged:false});
+  }
+  grid.forEach(c=>c.remaining=c.depth);
+  // place fossils on distinct cells
+  const idxs=[...Array(SIZE*SIZE).keys()];
+  for(let i=idxs.length-1;i>0;i--){const j=rndInt(0,i);[idxs[i],idxs[j]]=[idxs[j],idxs[i]];}
+  for(let i=0;i<FOSSIL_COUNT;i++)grid[idxs[i]].fossil=true;
+}
+
+function reset(){
+  newGrid();
+  actionsLeft=TOTAL_ACTIONS;
+  score=0;
+  tool='light';
+  cursor=0;
+  gameOver=false;
+  fossilsFound=0;
+  fossilsDamaged=0;
+  fossilsTotal=FOSSIL_COUNT;
+  document.getElementById('endOverlay').style.display='none';
+  setMsg(I18N.t('intro_msg','Click a square to dig. Golden tints hint at fossils below — go Light near strong tints!'));
+  updateToolButtons();
+  render();
+  updateHud();
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function updateToolButtons(){
+  document.getElementById('lightBtn').classList.toggle('active',tool==='light');
+  document.getElementById('heavyBtn').classList.toggle('active',tool==='heavy');
+}
+
+function updateHud(){
+  document.getElementById('actionsLeft').textContent=actionsLeft;
+  document.getElementById('fossilCount').textContent=(fossilsFound+fossilsDamaged)+'/'+fossilsTotal;
+  document.getElementById('scoreVal').textContent=score;
+  document.getElementById('hiVal').textContent=hi;
+}
+
+function dirtColor(remaining,depth){
+  const t=remaining/depth;
+  const dark=20+t*40;
+  return `rgb(${Math.round(60+dark)},${Math.round(40+dark*0.7)},${Math.round(24+dark*0.4)})`;
+}
+
+function render(){
+  const g=document.getElementById('grid');
+  g.innerHTML='';
+  grid.forEach((c,i)=>{
+    const el=document.createElement('div');
+    el.className='cell';
+    el.tabIndex=-1;
+    if(i===cursor&&!gameOver)el.classList.add('cursor');
+    if(c.revealed){
+      if(c.fossil){
+        el.classList.add(c.damaged?'fossil-bad':'fossil-ok');
+        el.textContent=c.damaged?'💥':'🦴';
+      } else {
+        el.style.background='#2a1c10';
+        el.textContent='';
+      }
+    } else {
+      el.style.background=dirtColor(c.remaining,c.depth);
+      if(c.fossil){
+        const closeness=1-(c.remaining-1)/Math.max(1,c.depth-1);
+        const alpha=Math.min(0.55,0.12+closeness*0.5);
+        el.style.boxShadow=`inset 0 0 0 999px rgba(255,213,79,${alpha.toFixed(2)})`;
+      }
+      el.textContent=c.remaining;
+    }
+    el.addEventListener('click',()=>{cursor=i;dig(i);});
+    g.appendChild(el);
+  });
+}
+
+function dig(i){
+  if(gameOver)return;
+  const c=grid[i];
+  if(c.revealed)return;
+  if(actionsLeft<=0)return;
+  actionsLeft--;
+  const removal=tool==='heavy'?2:1;
+  const newRemaining=c.remaining-removal;
+  if(newRemaining<0){
+    c.remaining=0;
+    c.revealed=true;
+    if(c.fossil){
+      c.damaged=true;
+      fossilsDamaged++;
+      score=Math.max(0,score-50);
+      setMsg(I18N.t('msg_crushed','A fossil was crushed by too aggressive a strike!'));
+      SFX.fail();
+    } else {
+      setMsg(I18N.t('msg_empty','Just rock — nothing here.'));
+      SFX.hit();
+    }
+  } else {
+    c.remaining=newRemaining;
+    if(c.remaining===0){
+      c.revealed=true;
+      if(c.fossil){
+        fossilsFound++;
+        score+=100;
+        setMsg(I18N.t('msg_found','Fossil carefully uncovered! +100'));
+        SFX.success();
+      } else {
+        setMsg(I18N.t('msg_empty2','Cleared to bedrock — just rock.'));
+        SFX.click();
+      }
+    } else {
+      SFX.hit();
+    }
+  }
+  render();
+  updateHud();
+  checkEnd();
+}
+
+function checkEnd(){
+  const allDone=grid.every(c=>c.revealed);
+  if(allDone||actionsLeft<=0){
+    gameOver=true;
+    if(actionsLeft>0)score+=actionsLeft*2;
+    if(score>hi){hi=score;localStorage.setItem(HKEY,String(hi));}
+    updateHud();
+    const safe=fossilsFound,bad=fossilsDamaged,missed=fossilsTotal-safe-bad;
+    const summary=I18N.t('end_summary','Dig complete! Fossils safely recovered: {s} · Crushed: {b} · Left buried: {m} · Final score: {sc}')
+      .replace('{s}',safe).replace('{b}',bad).replace('{m}',missed).replace('{sc}',score);
+    document.getElementById('endText').textContent=summary;
+    document.getElementById('endOverlay').style.display='block';
+    if(safe===fossilsTotal)SFX.win();else if(bad>0)SFX.lose();
+    render();
+  }
+}
+
+document.getElementById('lightBtn').addEventListener('click',()=>{tool='light';updateToolButtons();});
+document.getElementById('heavyBtn').addEventListener('click',()=>{tool='heavy';updateToolButtons();});
+document.getElementById('restartBtn').addEventListener('click',reset);
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Enter'||e.code==='Space')){e.preventDefault();reset();return;}
+  if(gameOver)return;
+  const row=Math.floor(cursor/SIZE),col=cursor%SIZE;
+  if(e.code==='ArrowLeft'){e.preventDefault();if(col>0)cursor--;render();}
+  else if(e.code==='ArrowRight'){e.preventDefault();if(col<SIZE-1)cursor++;render();}
+  else if(e.code==='ArrowUp'){e.preventDefault();if(row>0)cursor-=SIZE;render();}
+  else if(e.code==='ArrowDown'){e.preventDefault();if(row<SIZE-1)cursor+=SIZE;render();}
+  else if(e.key==='l'||e.key==='L'){tool='light';updateToolButtons();}
+  else if(e.key==='h'||e.key==='H'){tool='heavy';updateToolButtons();}
+  else if(e.code==='Space'||e.code==='Enter'){e.preventDefault();dig(cursor);}
+});
+
+reset();
+</script></body></html>

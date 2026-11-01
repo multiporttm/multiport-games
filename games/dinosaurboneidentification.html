@@ -1,0 +1,241 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Dinosaur Bone Identification</title><meta name="description" content="Play Dinosaur Bone Identification free online — Compare each loose bone's shape and size to the reference guide, then drag it (or press 1-6) into its correctly labeled tray."><link rel="canonical" href="https://games.multiportllc.com/games/dinosaurboneidentification"><meta property="og:title" content="Dinosaur Bone Identification - Multiport Games"><meta property="og:description" content="Play Dinosaur Bone Identification free online — Compare each loose bone's shape and size to the reference guide, then drag it (or press 1-6) into its correctly labeled tray."><meta property="og:url" content="https://games.multiportllc.com/games/dinosaurboneidentification"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Dinosaur Bone Identification","description":"Play Dinosaur Bone Identification free online instantly. Compare each loose bone's shape and size to the reference guide, then drag it (or press 1-6) into its correctly labeled tray. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/dinosaurboneidentification","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a2420;display:block;border-radius:8px;touch-action:none;margin:0 auto}
+#hud{color:#e0c468;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#status{color:#ffd54f;text-align:center;font-weight:800;min-height:1.4em;margin-bottom:4px}
+#newGameBtn{display:none;margin:10px auto;padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Dinosaur Bone Identification</div>
+  <div class="game-frame">
+    <div id="hud"><span id="scoreDisp">Sorted: 0</span><span id="hiDisp">Best: 0</span><span id="strikesDisp">Strikes: 0/3</span><span id="timerDisp">Dig time: 90s</span></div>
+    <div id="status">Compare the bone to the reference guide, then drag it to the matching tray.</div>
+    <canvas id="c" width="800" height="440"></canvas>
+    <button id="newGameBtn" onclick="newGame()">New Pile</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>Drag</b> the highlighted bone (mouse/finger) onto the tray matching its species and bone type shown in the reference guide — or press a number key <b>1-6</b> to send it to that tray instantly. Three wrong trays or the dig timer hitting zero ends the round.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisp=document.getElementById('scoreDisp'),hiDisp=document.getElementById('hiDisp'),strikesDisp=document.getElementById('strikesDisp'),timerDisp=document.getElementById('timerDisp');
+const statusEl=document.getElementById('status'),newGameBtn=document.getElementById('newGameBtn');
+const HI_KEY='dinosaurboneidentification_hi';
+
+const SPECIES=[{key:'stego',name:'Stegosaurus',color:'#7fb3e0'},{key:'raptor',name:'Raptor',color:'#e08a6b'}];
+const BONES=[{key:'femur',name:'Femur'},{key:'vertebra',name:'Vertebra'},{key:'rib',name:'Rib'}];
+
+let trays=[]; // {species,bone,x,y,w,h}
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),strikes=0,timeLeft=90,timerHandle=null,gameOver=false;
+let current=null,bonePos={x:400,y:120},dragging=false,dragOffset={x:0,y:0};
+
+function setStatus(t){statusEl.textContent=t;}
+
+function layoutTrays(){
+  trays=[];
+  const cols=3,rows=2,w=220,h=90,gapX=20,gapY=16;
+  const totalW=cols*w+(cols-1)*gapX;
+  const startX=(800-totalW)/2;
+  const startY=300;
+  let i=0;
+  SPECIES.forEach(sp=>{
+    BONES.forEach(bn=>{
+      const col=i%cols,row=Math.floor(i/cols);
+      trays.push({species:sp,bone:bn,x:startX+col*(w+gapX),y:startY+row*(h+gapY),w,h});
+      i++;
+    });
+  });
+}
+
+function pickBone(){
+  const sp=SPECIES[Math.floor(Math.random()*SPECIES.length)];
+  const bn=BONES[Math.floor(Math.random()*BONES.length)];
+  current={species:sp,bone:bn};
+  bonePos={x:400,y:150};
+  setStatus(I18N.t('pick_hint','Match this bone to the correct species & type tray below.'));
+}
+
+function updateHud(){
+  scoreDisp.textContent=I18N.t('score_label','Sorted: {s}').replace('{s}',score);
+  hiDisp.textContent=I18N.t('hi_label','Best: {h}').replace('{h}',hi);
+  strikesDisp.textContent=I18N.t('strikes_label','Strikes: {n}/3').replace('{n}',strikes);
+  timerDisp.textContent=I18N.t('timer_label','Dig time: {t}s').replace('{t}',Math.max(0,Math.ceil(timeLeft)));
+}
+
+function trayAt(px,py){
+  return trays.find(t=>px>=t.x&&px<=t.x+t.w&&py>=t.y&&py<=t.y+t.h);
+}
+
+function attemptSort(tray){
+  if(gameOver||!current)return;
+  if(tray.species.key===current.species.key&&tray.bone.key===current.bone.key){
+    SFX.success();
+    score++;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    setStatus(I18N.t('correct_msg','Correct! Filed as {s} {b}.').replace('{s}',I18N.t('species_'+current.species.key,current.species.name)).replace('{b}',I18N.t('bone_'+current.bone.key,current.bone.name)));
+    updateHud();
+    pickBone();
+  } else {
+    SFX.error();
+    strikes++;
+    setStatus(I18N.t('wrong_msg','Wrong tray! Check the reference guide shapes again.'));
+    updateHud();
+    if(strikes>=3)endGame();
+  }
+}
+
+function sortByIndex(idx){
+  if(idx<1||idx>trays.length)return;
+  attemptSort(trays[idx-1]);
+}
+
+function endGame(){
+  gameOver=true;
+  clearInterval(timerHandle);
+  SFX.lose();
+  setStatus(I18N.t('dig_over_msg','Dig time over! You correctly sorted {s} bones.').replace('{s}',score));
+  newGameBtn.style.display='inline-block';
+}
+
+function tick(){
+  if(gameOver)return;
+  timeLeft-=1;
+  updateHud();
+  if(timeLeft<=0){timeLeft=0;updateHud();endGame();}
+}
+
+function newGame(){
+  score=0;strikes=0;timeLeft=90;gameOver=false;
+  newGameBtn.style.display='none';
+  layoutTrays();
+  clearInterval(timerHandle);
+  timerHandle=setInterval(tick,1000);
+  updateHud();
+  pickBone();
+}
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const sx=c.width/r.width,sy=c.height/r.height;
+  let cx,cy;
+  if(e.touches&&e.touches.length){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else{cx=e.clientX;cy=e.clientY;}
+  return {x:(cx-r.left)*sx,y:(cy-r.top)*sy};
+}
+
+function hitBone(px,py){
+  return px>=bonePos.x-50&&px<=bonePos.x+50&&py>=bonePos.y-30&&py<=bonePos.y+30;
+}
+
+c.addEventListener('mousedown',e=>{const p=getPos(e);if(hitBone(p.x,p.y)){dragging=true;dragOffset={x:p.x-bonePos.x,y:p.y-bonePos.y};}});
+c.addEventListener('mousemove',e=>{if(!dragging)return;const p=getPos(e);bonePos.x=p.x-dragOffset.x;bonePos.y=p.y-dragOffset.y;});
+window.addEventListener('mouseup',e=>{if(!dragging)return;dragging=false;const p=getPos(e);const t=trayAt(p.x,p.y);if(t)attemptSort(t);else{bonePos={x:400,y:150};}});
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=getPos(e);if(hitBone(p.x,p.y)){dragging=true;dragOffset={x:p.x-bonePos.x,y:p.y-bonePos.y};}},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(!dragging)return;const p=getPos(e);bonePos.x=p.x-dragOffset.x;bonePos.y=p.y-dragOffset.y;},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();if(!dragging)return;dragging=false;const p=getPos(e);const t=trayAt(p.x,p.y);if(t)attemptSort(t);else{bonePos={x:400,y:150};}},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&e.key==='Enter'){newGame();return;}
+  const idx=parseInt(e.key,10);
+  if(!isNaN(idx)&&idx>=1&&idx<=6){e.preventDefault();sortByIndex(idx);}
+});
+
+function drawBoneShape(x,y,boneKey,color,scale){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(scale,scale);
+  ctx.fillStyle=color;
+  ctx.strokeStyle='rgba(0,0,0,0.3)';
+  ctx.lineWidth=2;
+  if(boneKey==='femur'){
+    ctx.beginPath();
+    ctx.roundRect?ctx.roundRect(-40,-10,80,20,10):ctx.rect(-40,-10,80,20);
+    ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.arc(-42,0,14,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.arc(42,-8,11,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.arc(42,8,11,0,Math.PI*2);ctx.fill();ctx.stroke();
+  } else if(boneKey==='vertebra'){
+    ctx.beginPath();ctx.arc(0,0,26,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.fillStyle='rgba(0,0,0,0.35)';
+    ctx.beginPath();ctx.arc(0,0,9,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=color;
+    ctx.beginPath();ctx.ellipse(-30,-4,10,6,0.4,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.beginPath();ctx.ellipse(30,-4,10,6,-0.4,0,Math.PI*2);ctx.fill();ctx.stroke();
+  } else { // rib
+    ctx.beginPath();
+    ctx.moveTo(-45,10);
+    ctx.quadraticCurveTo(0,-45,45,-5);
+    ctx.quadraticCurveTo(0,-30,-38,20);
+    ctx.closePath();
+    ctx.fill();ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawReferenceGuide(){
+  ctx.save();
+  ctx.fillStyle='rgba(255,255,255,0.85)';
+  ctx.font='bold 14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('ref_guide_label','Reference Guide:'),20,30);
+  let gx=150;
+  SPECIES.forEach(sp=>{
+    BONES.forEach(bn=>{
+      drawBoneShape(gx,26,bn.key,sp.color,0.32);
+      gx+=55;
+    });
+  });
+  ctx.restore();
+}
+
+function drawCurrentBone(){
+  const t=performance.now()/300;
+  const pulse=1+Math.sin(t)*0.05;
+  ctx.save();
+  ctx.shadowColor='#ffd54f';ctx.shadowBlur=18*Math.abs(Math.sin(t))+8;
+  drawBoneShape(bonePos.x,bonePos.y,current.bone.key,current.species.color,0.75*pulse);
+  ctx.restore();
+}
+
+function drawTrays(){
+  trays.forEach((t,i)=>{
+    ctx.save();
+    ctx.fillStyle='rgba(255,255,255,0.06)';
+    ctx.strokeStyle=t.species.color;
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    if(ctx.roundRect)ctx.roundRect(t.x,t.y,t.w,t.h,8);else ctx.rect(t.x,t.y,t.w,t.h);
+    ctx.fill();ctx.stroke();
+    ctx.fillStyle='#fff';
+    ctx.font='bold 13px Arial';ctx.textAlign='center';
+    const spName=I18N.t('species_'+t.species.key,t.species.name);
+    const bnName=I18N.t('bone_'+t.bone.key,t.bone.name);
+    ctx.fillText('['+(i+1)+'] '+spName,t.x+t.w/2,t.y+t.h/2+2);
+    ctx.font='12px Arial';
+    ctx.fillStyle='#ccc';
+    ctx.fillText(bnName,t.x+t.w/2,t.y+t.h/2+20);
+    ctx.restore();
+  });
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,440);
+  const bg=ctx.createLinearGradient(0,0,0,440);
+  bg.addColorStop(0,'#201a16');bg.addColorStop(1,'#2a2420');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,440);
+
+  drawReferenceGuide();
+  if(current)drawCurrentBone();
+  drawTrays();
+
+  requestAnimationFrame(loop);
+}
+newGame();
+loop();
+</script></body></html>
