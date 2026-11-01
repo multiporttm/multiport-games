@@ -29,7 +29,7 @@ export async function onRequest(context) {
     "img-src 'self' data: blob: https://files.scamadviser.com https://cdn.counter.dev",
     "font-src 'self' data:",
     "media-src 'self'",
-    "connect-src 'self' https://cdn.counter.dev",
+    "connect-src 'self' https://cdn.counter.dev https://t.counter.dev",
     "frame-src 'none'",
     "worker-src 'self'",
     "manifest-src 'self'",
