@@ -24,12 +24,12 @@ export async function onRequest(context) {
 
   const csp = [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'unsafe-hashes' ${HANDLER_HASHES}`,
+    `script-src 'self' 'nonce-${nonce}' 'unsafe-hashes' ${HANDLER_HASHES} https://cdn.counter.dev`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https://files.scamadviser.com",
     "font-src 'self' data:",
     "media-src 'self'",
-    "connect-src 'self'",
+    "connect-src 'self' https://cdn.counter.dev",
     "frame-src 'none'",
     "worker-src 'self'",
     "manifest-src 'self'",
