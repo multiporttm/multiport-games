@@ -1,0 +1,248 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Black Box Analysis</title><meta name="description" content="Play Black Box Analysis free online — Use Arrow Keys to move the scan cursor and switch flight-data tracks, or tap/click directly on the chart. Press Space or Enter to flag the exact moment the anomaly occurred and complete your investigation report."><link rel="canonical" href="https://games.multiportllc.com/games/blackboxanalysis"><meta property="og:title" content="Black Box Analysis - Multiport Games"><meta property="og:description" content="Play Black Box Analysis free online — Use Arrow Keys to move the scan cursor and switch flight-data tracks, or tap/click directly on the chart. Press Space or Enter to flag the exact moment the anomaly occurred and complete your investigation report."><meta property="og:url" content="https://games.multiportllc.com/games/blackboxanalysis"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Black Box Analysis","description":"Play Black Box Analysis free online instantly. As an air-safety investigator, study the recovered flight data recorder's altitude, airspeed and pitch-input traces to spot the exact moment and parameter that explains the incident, then file your report. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/blackboxanalysis","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:#9fd8ff;font-size:1rem;font-weight:700;padding:6px 4px;max-width:800px;margin:0 auto}
+#hud span{white-space:nowrap}
+#c{background:#0b1220;display:block;border-radius:8px;margin:0 auto;touch-action:none;cursor:crosshair}
+#feedback{text-align:center;min-height:1.6em;color:#ffd54f;font-weight:800;font-size:1.05rem;padding:6px}
+#timerWrap{max-width:760px;margin:4px auto;height:8px;background:#1b2740;border-radius:6px;overflow:hidden}
+#timerBar{height:100%;background:linear-gradient(90deg,#4caf50,#ffd54f,#e94560);width:100%;transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Black Box Analysis</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="roundDisp">Case: 1</span>
+      <span id="livesDisp">Lives: ●●●</span>
+      <span id="scoreDisp">Score: 0 | Hi: 0</span>
+    </div>
+    <div id="timerWrap"><div id="timerBar"></div></div>
+    <canvas id="c" width="800" height="300"></canvas>
+    <div id="feedback">Find the exact moment the anomaly begins.</div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Three flight-data recorder traces are shown — <b>Altitude</b>, <b>Airspeed</b> and <b>Pitch Input</b>. One of them has a sudden anomaly hidden in the timeline. Click/tap the exact spot on the right track, or use <b>↑/↓</b> to pick a track, <b>←/→</b> to move the scan cursor, then <b>Space/Enter</b> to flag it. Nail the moment before the timer runs out to file an accurate report. Three wrong calls and the investigation is closed.
+  </div>
+</div>
+<script>
+const HI_KEY='blackboxanalysis_hi';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=300,PAD_L=70,PAD_R=20,plotW=W-PAD_L-PAD_R;
+const N=120; // time samples
+const TRACK_NAMES=()=>[I18N.t('track_alt','Altitude'),I18N.t('track_spd','Airspeed'),I18N.t('track_pitch','Pitch Input')];
+const trackH=90;
+let round=1,score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let lives=3;
+let series=[],anomalyTrack=0,anomalyIndex=0,anomalyWindow=3;
+let cursorX=0,selTrack=0;
+let locked=false,gameOver=false;
+let timeLimit=20,timeLeft=20,lastTime=null;
+let flashIdx=-1,flashTrack=-1,flashGood=false,flashT=0;
+
+function rnd(a,b){return a+Math.random()*(b-a);}
+
+function genSeries(){
+  series=[];
+  for(let t=0;t<3;t++){
+    const arr=new Array(N);
+    let base=0,drift=0;
+    for(let i=0;i<N;i++){
+      drift+=rnd(-0.6,0.6);
+      drift=Math.max(-8,Math.min(8,drift));
+      arr[i]=50+drift+rnd(-2,2);
+    }
+    series.push(arr);
+  }
+  anomalyTrack=Math.floor(Math.random()*3);
+  anomalyIndex=Math.floor(rnd(20,N-20));
+  anomalyWindow=Math.max(2,5-Math.floor(round/3));
+  const spike=rnd(28,42)*(Math.random()<0.5?-1:1);
+  const arr=series[anomalyTrack];
+  for(let i=-anomalyWindow;i<=anomalyWindow;i++){
+    const idx=anomalyIndex+i;
+    if(idx<0||idx>=N)continue;
+    const falloff=1-Math.abs(i)/(anomalyWindow+1);
+    arr[idx]+=spike*falloff;
+  }
+  cursorX=Math.floor(N/2);
+  selTrack=0;
+  timeLimit=Math.max(9,20-round);
+  timeLeft=timeLimit;
+  lastTime=null;
+}
+
+function idxToX(i){return PAD_L+(i/(N-1))*plotW;}
+function xToIdx(px){return Math.round(((px-PAD_L)/plotW)*(N-1));}
+
+function drawTrack(trackIdx,y0){
+  const arr=series[trackIdx];
+  ctx.save();
+  ctx.fillStyle=trackIdx===selTrack?'#13203a':'#0e1626';
+  ctx.fillRect(0,y0,W,trackH);
+  ctx.strokeStyle='#223355';ctx.lineWidth=1;
+  ctx.strokeRect(0,y0,W,trackH);
+  ctx.fillStyle='#8fb3e0';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(TRACK_NAMES()[trackIdx],8,y0+16);
+
+  let mn=Infinity,mx=-Infinity;
+  arr.forEach(v=>{if(v<mn)mn=v;if(v>mx)mx=v;});
+  if(mx-mn<10){mn-=5;mx+=5;}
+  const pad=6;
+  function yOf(v){return y0+trackH-pad-((v-mn)/(mx-mn))*(trackH-2*pad);}
+
+  ctx.beginPath();
+  ctx.strokeStyle=trackIdx===0?'#4fc3f7':trackIdx===1?'#81c784':'#ffb74d';
+  ctx.lineWidth=2;
+  for(let i=0;i<N;i++){
+    const x=idxToX(i),y=yOf(arr[i]);
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+
+  // flash marker
+  if(flashTrack===trackIdx&&flashIdx>=0){
+    const x=idxToX(flashIdx);
+    ctx.strokeStyle=flashGood?'#4caf50':'#e94560';
+    ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(x,y0);ctx.lineTo(x,y0+trackH);ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  for(let t=0;t<3;t++)drawTrack(t,t*trackH);
+
+  // cursor
+  const cx=idxToX(cursorX);
+  ctx.save();
+  ctx.strokeStyle='rgba(255,213,79,0.85)';
+  ctx.lineWidth=2;
+  ctx.setLineDash([4,3]);
+  ctx.beginPath();ctx.moveTo(cx,0);ctx.lineTo(cx,H);ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('investigation_closed','INVESTIGATION CLOSED'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap or press Space to start a new case'),W/2,H/2+24);
+  }
+}
+
+function setFeedback(t){document.getElementById('feedback').textContent=t;}
+function updateHud(){
+  document.getElementById('roundDisp').textContent=I18N.t('case_label','Case: {n}').replace('{n}',round);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(Math.max(0,3-lives)));
+  document.getElementById('scoreDisp').textContent=I18N.t('score_hi_label2','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+
+function startCase(){
+  genSeries();
+  locked=false;
+  setFeedback(I18N.t('find_hint','Find the exact moment the anomaly begins.'));
+  updateHud();
+}
+
+function newGame(){
+  round=1;score=0;lives=3;gameOver=false;
+  startCase();
+}
+
+function wrongGuess(){
+  lives--;
+  SFX.error();
+  flashGood=false;
+  updateHud();
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+    setFeedback(I18N.t('closed_msg','Report inconclusive — investigation closed.'));
+  }else{
+    setFeedback(I18N.t('miss_msg','Not quite — check the timeline again.'));
+    setTimeout(()=>{if(!gameOver){locked=false;}},650);
+  }
+}
+
+function correctGuess(){
+  const bonus=Math.round(timeLeft*5);
+  score+=50+bonus;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  SFX.success();
+  flashGood=true;
+  updateHud();
+  setFeedback(I18N.t('solved_msg','Anomaly confirmed! Filing report...').replace('{b}',bonus));
+  round++;
+  setTimeout(()=>{if(!gameOver)startCase();},900);
+}
+
+function attempt(trackIdx,idx){
+  if(locked||gameOver)return;
+  locked=true;
+  flashTrack=trackIdx;flashIdx=idx;
+  const ok=trackIdx===anomalyTrack&&Math.abs(idx-anomalyIndex)<=anomalyWindow+1;
+  if(ok)correctGuess();else wrongGuess();
+}
+
+function pointerToAttempt(px,py){
+  const idx=Math.max(0,Math.min(N-1,xToIdx(px)));
+  const trackIdx=Math.max(0,Math.min(2,Math.floor(py/trackH)));
+  attempt(trackIdx,idx);
+}
+
+c.addEventListener('click',e=>{
+  if(gameOver){newGame();return;}
+  const r=c.getBoundingClientRect();
+  const px=(e.clientX-r.left)*(W/r.width),py=(e.clientY-r.top)*(H/r.height);
+  pointerToAttempt(px,py);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){newGame();return;}
+  const r=c.getBoundingClientRect();
+  const t=e.changedTouches[0];
+  const px=(t.clientX-r.left)*(W/r.width),py=(t.clientY-r.top)*(H/r.height);
+  pointerToAttempt(px,py);
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space','Enter'].includes(e.code))e.preventDefault();
+  if(gameOver){ if(e.code==='Space'||e.code==='Enter')newGame(); return; }
+  if(locked)return;
+  if(e.code==='ArrowLeft')cursorX=Math.max(0,cursorX-1);
+  else if(e.code==='ArrowRight')cursorX=Math.min(N-1,cursorX+1);
+  else if(e.code==='ArrowUp')selTrack=Math.max(0,selTrack-1);
+  else if(e.code==='ArrowDown')selTrack=Math.min(2,selTrack+1);
+  else if(e.code==='Space'||e.code==='Enter')attempt(selTrack,cursorX);
+});
+
+function loop(ts){
+  if(!gameOver&&!locked){
+    if(lastTime===null)lastTime=ts;
+    const dt=(ts-lastTime)/1000;
+    lastTime=ts;
+    timeLeft=Math.max(0,timeLeft-dt);
+    document.getElementById('timerBar').style.width=(100*timeLeft/timeLimit)+'%';
+    if(timeLeft<=0){
+      locked=true;
+      flashTrack=anomalyTrack;flashIdx=anomalyIndex;
+      wrongGuess();
+    }
+  }else{
+    lastTime=ts;
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+newGame();
+requestAnimationFrame(loop);
+</script></body></html>

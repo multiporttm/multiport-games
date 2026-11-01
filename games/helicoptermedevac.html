@@ -1,0 +1,363 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Helicopter Medevac</title><meta name="description" content="Play Helicopter Medevac free online — Use Arrow Keys/WASD to thrust, or drag on screen to steer. Hover steady over the landing zone to pick up the patient, then fly them to the hospital pad before the critical timer runs out."><link rel="canonical" href="https://games.multiportllc.com/games/helicoptermedevac"><meta property="og:title" content="Helicopter Medevac - Multiport Games"><meta property="og:description" content="Play Helicopter Medevac free online — Use Arrow Keys/WASD to thrust, or drag on screen to steer. Hover steady over the landing zone to pick up the patient, then fly them to the hospital pad before the critical timer runs out."><meta property="og:url" content="https://games.multiportllc.com/games/helicoptermedevac"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Helicopter Medevac","description":"Play Helicopter Medevac free online instantly. Pilot a medevac helicopter through wind and obstacles to a rough landing zone, hover steady to winch up an injured patient, then race them to the hospital before the critical timer expires. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/helicoptermedevac","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a3a5c;display:block;border-radius:8px;margin:0 auto;touch-action:none}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;color:#fff;font-size:1rem;font-weight:700;padding:6px 4px;max-width:800px;margin:0 auto}
+#timerWrap{max-width:760px;margin:4px auto;height:8px;background:#102236;border-radius:6px;overflow:hidden}
+#timerBar{height:100%;background:linear-gradient(90deg,#4caf50,#ffd54f,#e94560);width:100%;transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Helicopter Medevac</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="missionDisp">Mission: 1</span>
+      <span id="livesDisp">Lives: ●●●</span>
+      <span id="scoreDisp">Score: 0 | Hi: 0</span>
+    </div>
+    <div id="timerWrap"><div id="timerBar"></div></div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Use <b>Arrow Keys/WASD</b> to thrust the helicopter, or <b>click-drag/touch-drag</b> to steer toward your finger. Fly to the flashing <b>landing zone</b> and hover slowly over it to winch up the patient — watch out for the wind and the obstacles. Once aboard, race to the <b>hospital pad</b> and hover there before the critical timer runs out. Crashing or missing the timer costs a life.
+  </div>
+</div>
+<script>
+const HI_KEY='helicoptermedevac_hi';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+
+let mission=1,score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),lives=3,gameOver=false;
+let state='toLZ'; // toLZ, toHospital
+let heli,lz,hospital,obstacles,wind;
+let keys={};
+let pointerTarget=null;
+let timeLeft=0,timeLimit=0;
+let hoverHold=0;
+let shakeT=0;
+let started=false;
+
+function rnd(a,b){return a+Math.random()*(b-a);}
+
+function setupMission(){
+  heli={x:90,y:H/2,vx:0,vy:0,angle:0};
+  lz={x:150+rnd(-20,20),y:rnd(260,340),w:70,h:16};
+  hospital={x:W-130,y:rnd(60,120),w:80,h:30};
+  obstacles=[];
+  const obsCount=3+Math.min(5,mission);
+  for(let i=0;i<obsCount;i++){
+    const x=rnd(260,W-200);
+    const y=rnd(40,H-60);
+    obstacles.push({x,y,r:16+rnd(0,14)});
+  }
+  wind={phase:rnd(0,10),strength:0.5+mission*0.12};
+  state='toLZ';
+  hoverHold=0;
+  timeLimit=Math.max(12,22-mission*0.8);
+  timeLeft=0; // timer only runs during toHospital
+  started=true;
+}
+
+function newGame(){
+  mission=1;score=0;lives=3;gameOver=false;
+  setupMission();
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('missionDisp').textContent=I18N.t('mission_label','Mission: {n}').replace('{n}',mission);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label3','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(Math.max(0,3-lives)));
+  document.getElementById('scoreDisp').textContent=I18N.t('score_hi_label4','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('timerBar').style.width=(state==='toHospital'?Math.max(0,100*timeLeft/timeLimit):100)+'%';
+}
+
+function loseLife(reason){
+  lives--;
+  SFX.hurt();
+  shakeT=18;
+  updateHud();
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+  }else{
+    setupMission(); // retry same mission number, fresh layout
+  }
+}
+
+function completeMission(){
+  score+=120+Math.round(timeLeft*8);
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  SFX.win();
+  mission++;
+  setupMission();
+  updateHud();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyW','KeyA','KeyS','KeyD','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'&&gameOver)newGame();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function setPointerFromEvent(e,clientX,clientY){
+  const r=c.getBoundingClientRect();
+  const px=(clientX-r.left)*(W/r.width);
+  const py=(clientY-r.top)*(H/r.height);
+  pointerTarget={x:px,y:py};
+}
+c.addEventListener('mousedown',e=>{
+  if(gameOver){newGame();return;}
+  setPointerFromEvent(e,e.clientX,e.clientY);
+});
+c.addEventListener('mousemove',e=>{ if(pointerTarget)setPointerFromEvent(e,e.clientX,e.clientY); });
+window.addEventListener('mouseup',()=>{pointerTarget=null;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){newGame();return;}
+  const t=e.changedTouches[0];
+  setPointerFromEvent(e,t.clientX,t.clientY);
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  const t=e.changedTouches[0];
+  setPointerFromEvent(e,t.clientX,t.clientY);
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerTarget=null;},{passive:false});
+
+function rectContains(r,x,y){return x>=r.x-r.w/2&&x<=r.x+r.w/2&&y>=r.y-r.h/2&&y<=r.y+r.h/2;}
+
+function drawHeli(){
+  ctx.save();
+  ctx.translate(heli.x,heli.y);
+  ctx.rotate(Math.max(-0.3,Math.min(0.3,heli.vx*0.03)));
+  // tail
+  ctx.fillStyle='#d64045';
+  ctx.fillRect(-34,-4,20,8);
+  ctx.fillRect(-36,-10,6,14);
+  // body
+  ctx.fillStyle='#e94560';
+  ctx.beginPath();
+  ctx.ellipse(0,0,22,12,0,0,Math.PI*2);
+  ctx.fill();
+  // cockpit
+  ctx.fillStyle='#bdeaff';
+  ctx.beginPath();
+  ctx.ellipse(10,-2,8,7,0,0,Math.PI*2);
+  ctx.fill();
+  // skids
+  ctx.strokeStyle='#333';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(-14,12);ctx.lineTo(16,12);ctx.stroke();
+  // main rotor
+  const spin=(performance.now()/1000*20*(state==='crashedAnim'?0:1))%Math.PI;
+  ctx.strokeStyle='rgba(230,230,230,0.85)';ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(-30*Math.cos(spin),-18-30*Math.sin(spin)*0.2);
+  ctx.lineTo(30*Math.cos(spin),-18+30*Math.sin(spin)*0.2);
+  ctx.stroke();
+  // rotor mast
+  ctx.fillStyle='#333';ctx.fillRect(-2,-18,4,6);
+  // basket/winch line when at LZ picking up
+  ctx.restore();
+}
+
+function speedOf(){return Math.hypot(heli.vx,heli.vy);}
+
+function update(dt){
+  if(gameOver||!started)return;
+
+  const thrust=0.38;
+  if(keys['ArrowUp']||keys['KeyW'])heli.vy-=thrust*dt;
+  if(keys['ArrowDown']||keys['KeyS'])heli.vy+=thrust*dt;
+  if(keys['ArrowLeft']||keys['KeyA'])heli.vx-=thrust*dt;
+  if(keys['ArrowRight']||keys['KeyD'])heli.vx+=thrust*dt;
+
+  if(pointerTarget){
+    const dx=pointerTarget.x-heli.x,dy=pointerTarget.y-heli.y;
+    const d=Math.hypot(dx,dy)||1;
+    const steer=0.34;
+    heli.vx+=(dx/d)*steer*dt;
+    heli.vy+=(dy/d)*steer*dt;
+  }
+
+  wind.phase+=dt*0.02;
+  const windX=Math.sin(wind.phase)*wind.strength;
+  const windY=Math.cos(wind.phase*0.7)*wind.strength*0.4;
+  heli.vx+=windX*dt*0.05;
+  heli.vy+=windY*dt*0.05;
+
+  heli.vx*=0.985;
+  heli.vy*=0.985;
+  const maxV=7;
+  const sp=speedOf();
+  if(sp>maxV){heli.vx*=maxV/sp;heli.vy*=maxV/sp;}
+
+  heli.x+=heli.vx*dt;
+  heli.y+=heli.vy*dt;
+
+  heli.x=Math.max(20,Math.min(W-20,heli.x));
+  heli.y=Math.max(20,Math.min(H-20,heli.y));
+
+  // obstacle collision
+  for(const o of obstacles){
+    const d=Math.hypot(heli.x-o.x,heli.y-o.y);
+    if(d<o.r+16){loseLife('obstacle');return;}
+  }
+
+  if(state==='toLZ'){
+    const overLZ=rectContains({x:lz.x,y:lz.y,w:lz.w,h:lz.h+20},heli.x,heli.y+10);
+    if(overLZ&&speedOf()<1.1){
+      hoverHold+=dt;
+      if(hoverHold>1.4){
+        state='toHospital';
+        timeLeft=timeLimit;
+        hoverHold=0;
+        SFX.catch();
+      }
+    }else{
+      hoverHold=Math.max(0,hoverHold-dt*2);
+    }
+  }else if(state==='toHospital'){
+    timeLeft-=dt;
+    if(timeLeft<=0){loseLife('timeout');return;}
+    const overHosp=rectContains({x:hospital.x,y:hospital.y,w:hospital.w,h:hospital.h+20},heli.x,heli.y+8);
+    if(overHosp&&speedOf()<1.3){
+      hoverHold+=dt;
+      if(hoverHold>1.0){
+        completeMission();
+        return;
+      }
+    }else{
+      hoverHold=Math.max(0,hoverHold-dt*2);
+    }
+  }
+}
+
+function drawTerrain(){
+  ctx.fillStyle='#16304a';
+  ctx.fillRect(0,0,W,H);
+  // ground hill near LZ
+  ctx.fillStyle='#2f4f3a';
+  ctx.beginPath();
+  ctx.moveTo(0,H);
+  ctx.lineTo(0,H-60);
+  ctx.quadraticCurveTo(80,H-120,lz.x-60,H-80);
+  ctx.lineTo(lz.x-lz.w/2-6,lz.y+lz.h/2+2);
+  ctx.lineTo(lz.x+lz.w/2+6,lz.y+lz.h/2+2);
+  ctx.quadraticCurveTo(lz.x+90,H-70,260,H-30);
+  ctx.lineTo(260,H);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawLZ(){
+  const flash=Math.sin(performance.now()/180)>0;
+  ctx.save();
+  ctx.strokeStyle=flash?'#ffd54f':'#ff8a65';
+  ctx.lineWidth=3;
+  ctx.setLineDash([6,4]);
+  ctx.strokeRect(lz.x-lz.w/2,lz.y-lz.h/2,lz.w,lz.h);
+  ctx.setLineDash([]);
+  ctx.fillStyle='rgba(255,213,79,0.18)';
+  ctx.fillRect(lz.x-lz.w/2,lz.y-lz.h/2,lz.w,lz.h);
+  ctx.fillStyle='#fff';
+  ctx.font='bold 11px Arial';ctx.textAlign='center';
+  if(state==='toLZ')ctx.fillText(I18N.t('lz_label','LZ'),lz.x,lz.y+4);
+  else{
+    // patient marker already picked up
+  }
+  ctx.restore();
+  if(state==='toLZ'){
+    ctx.fillStyle='#fdfdfd';
+    ctx.beginPath();ctx.arc(lz.x,lz.y-2,5,0,Math.PI*2);ctx.fill();
+  }
+}
+
+function drawHospital(){
+  ctx.save();
+  ctx.fillStyle='#fdfdfd';
+  ctx.fillRect(hospital.x-hospital.w/2,hospital.y-hospital.h/2,hospital.w,hospital.h);
+  ctx.strokeStyle='#e94560';ctx.lineWidth=4;
+  ctx.strokeRect(hospital.x-hospital.w/2,hospital.y-hospital.h/2,hospital.w,hospital.h);
+  ctx.fillStyle='#e94560';
+  ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText('H',hospital.x,hospital.y+6);
+  ctx.restore();
+}
+
+function drawObstacles(){
+  obstacles.forEach(o=>{
+    ctx.save();
+    ctx.fillStyle='#3d8020';
+    ctx.beginPath();ctx.arc(o.x,o.y,o.r,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#285c15';
+    ctx.beginPath();ctx.arc(o.x,o.y-o.r*0.3,o.r*0.7,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  });
+}
+
+function drawWindIndicator(){
+  ctx.save();
+  ctx.font='12px Arial';ctx.fillStyle='rgba(255,255,255,0.65)';ctx.textAlign='left';
+  const windX=Math.sin(wind.phase)*wind.strength;
+  ctx.fillText(I18N.t('wind_label','Wind')+': '+(windX>0?'→':'←')+' '+Math.abs(windX).toFixed(1),10,20);
+  ctx.fillText(I18N.t('hint_hold','Hold steady over the ')+(state==='toLZ'?I18N.t('target_lz','landing zone'):I18N.t('target_hosp','hospital pad')),10,H-10);
+  ctx.restore();
+}
+
+function drawHoldMeter(){
+  const need=state==='toLZ'?1.4:1.0;
+  const pct=Math.min(1,hoverHold/need);
+  if(pct<=0)return;
+  ctx.save();
+  ctx.fillStyle='rgba(255,255,255,0.25)';
+  ctx.fillRect(heli.x-20,heli.y-34,40,5);
+  ctx.fillStyle='#4caf50';
+  ctx.fillRect(heli.x-20,heli.y-34,40*pct,5);
+  ctx.restore();
+}
+
+function draw(){
+  ctx.save();
+  if(shakeT>0){
+    ctx.translate(rnd(-4,4),rnd(-4,4));
+    shakeT--;
+  }
+  drawTerrain();
+  drawObstacles();
+  drawLZ();
+  drawHospital();
+  drawHeli();
+  drawHoldMeter();
+  drawWindIndicator();
+  ctx.restore();
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('mission_failed','MISSION FAILED'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint3','Tap, click or press Space to try again'),W/2,H/2+24);
+  }
+}
+
+let lastTime=null;
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min(3,(ts-lastTime)/16.6667);
+  lastTime=ts;
+  update(dt);
+  draw();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+newGame();
+requestAnimationFrame(loop);
+</script></body></html>

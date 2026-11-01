@@ -1,0 +1,250 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Air Show Formation</title><meta name="description" content="Play Air Show Formation free online — Steer with Arrow Keys/WASD or drag/tap to hold tight formation on the lead jet through a full display routine of turns and passes."><link rel="canonical" href="https://games.multiportllc.com/games/airshowformation"><meta property="og:title" content="Air Show Formation - Multiport Games"><meta property="og:description" content="Play Air Show Formation free online — Steer with Arrow Keys/WASD or drag/tap to hold tight formation on the lead jet through a full display routine of turns and passes."><meta property="og:url" content="https://games.multiportllc.com/games/airshowformation"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Air Show Formation","description":"Play Air Show Formation free online instantly. Steer your jet with Arrow Keys/WASD or by dragging/tapping to hold a precise relative position on the lead aircraft through a scripted routine of turns and passes in front of the crowd, scored on formation tightness and smoothness. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/airshowformation","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0a3a5c;display:block;border-radius:8px;touch-action:none}
+#hud{color:#fff;font-size:1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span{color:#9fe3ff}
+#meterWrap{max-width:800px;margin:0 auto 6px;height:10px;background:rgba(255,255,255,.1);border-radius:6px;overflow:hidden}
+#meter{height:100%;width:0%;background:linear-gradient(90deg,#e94560,#ffd54f,#7ec850);transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Air Show Formation</div>
+  <div class="game-frame">
+    <div id="hud">Show: <span id="timeVal">60</span>s | Tightness: <span id="tightVal">0</span>% | Hi: <span id="hiVal">0</span>%</div>
+    <div id="meterWrap"><div id="meter"></div></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Use <b>Arrow Keys / WASD</b>, or <b>drag/tap</b> anywhere on the display, to steer your jet (the white triangle) and hold the target slot just behind and left of the lead jet (the blue diamond), marked by the dashed circle. The lead flies a full scripted routine of turns and passes — stay inside the circle to keep your formation score climbing. Drift too far off-screen and the show ends early!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const KEY='mp_hi_airshowformation';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+document.getElementById('hiVal').textContent=hi;
+
+let keys={};
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  keys[k]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright'].includes(k))e.preventDefault();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+let pointerTarget=null;
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  const cx=t.clientX-r.left,cy=t.clientY-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+c.addEventListener('pointerdown',e=>{pointerTarget=pointerPos(e);if(!started)startShow();});
+c.addEventListener('pointermove',e=>{if(pointerTarget)pointerTarget=pointerPos(e);});
+c.addEventListener('pointerup',()=>{pointerTarget=null;});
+c.addEventListener('pointerleave',()=>{pointerTarget=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();pointerTarget=pointerPos(e);if(!started)startShow();},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();pointerTarget=pointerPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerTarget=null;},{passive:false});
+
+// Scripted display routine: sequence of {dur (seconds), turn (rad/frame-ish)} segments.
+const SCRIPT=[
+  {dur:5,turn:0},
+  {dur:4,turn:0.012},
+  {dur:3,turn:0},
+  {dur:4,turn:-0.012},
+  {dur:3,turn:0},
+  {dur:5,turn:0.02},
+  {dur:5,turn:0},
+  {dur:4,turn:-0.02},
+  {dur:3,turn:0},
+  {dur:4,turn:0.015},
+  {dur:4,turn:-0.015},
+  {dur:16,turn:0}
+];
+const SHOW_DUR=SCRIPT.reduce((a,s)=>a+s.dur,0);
+const OFFSET={dx:-80,dy:40}; // target slot: behind & left of lead, in lead's local frame
+const TOLERANCE=34; // px radius counted as "tight"
+
+let lead,player,showTime,scoreSum,scoreSamples,running,started,ended,lastTime,finalPct;
+
+function resetGame(){
+  lead={x:W/2,y:H*0.45,heading:-Math.PI/2,speed:2.2};
+  player={x:W/2-80,y:H*0.45+70,vx:0,vy:0};
+  showTime=0;scoreSum=0;scoreSamples=0;running=false;started=false;ended=false;lastTime=null;finalPct=0;
+  pointerTarget=null;
+  document.getElementById('timeVal').textContent=Math.ceil(SHOW_DUR);
+  document.getElementById('tightVal').textContent='0';
+  document.getElementById('meter').style.width='0%';
+}
+
+function startShow(){
+  if(started)return;
+  started=true;running=true;
+  SFX.select();
+}
+
+function segmentTurnAt(t){
+  let acc=0;
+  for(const seg of SCRIPT){
+    if(t<acc+seg.dur)return seg.turn;
+    acc+=seg.dur;
+  }
+  return 0;
+}
+
+function rotate(dx,dy,ang){
+  return {x:dx*Math.cos(ang)-dy*Math.sin(ang), y:dx*Math.sin(ang)+dy*Math.cos(ang)};
+}
+
+function update(dt){
+  // Lead flies the script
+  const turn=segmentTurnAt(showTime);
+  lead.heading+=turn*dt*60/1; // scaled so values above feel right at ~60fps baseline
+  lead.x+=Math.cos(lead.heading)*lead.speed*dt*60;
+  lead.y+=Math.sin(lead.heading)*lead.speed*dt*60;
+  // keep lead roughly centered on screen by wrapping gently
+  if(lead.x<60)lead.x=60; if(lead.x>W-60)lead.x=W-60;
+  if(lead.y<60)lead.y=60; if(lead.y>H-60)lead.y=H-60;
+
+  // Player steering
+  const accel=0.5;
+  if(keys['arrowup']||keys['w'])player.vy-=accel;
+  if(keys['arrowdown']||keys['s'])player.vy+=accel;
+  if(keys['arrowleft']||keys['a'])player.vx-=accel;
+  if(keys['arrowright']||keys['d'])player.vx+=accel;
+  if(pointerTarget){
+    const dx=pointerTarget.x-player.x, dy=pointerTarget.y-player.y;
+    player.vx+=dx*0.006; player.vy+=dy*0.006;
+  }
+  player.vx*=0.92; player.vy*=0.92;
+  player.x+=player.vx*dt*60; player.y+=player.vy*dt*60;
+
+  // Off-screen check -> show ends early
+  if(player.x<-40||player.x>W+40||player.y<-40||player.y>H+40){
+    SFX.lose();
+    finishShow(true);
+    return;
+  }
+
+  // Scoring: distance from the target slot (rotated by lead heading)
+  const off=rotate(OFFSET.dx,OFFSET.dy,lead.heading+Math.PI/2);
+  const slotX=lead.x+off.x, slotY=lead.y+off.y;
+  const dist=Math.hypot(player.x-slotX,player.y-slotY);
+  const closeness=Math.max(0,1-dist/160);
+  scoreSum+=closeness; scoreSamples++;
+  const pct=Math.round((scoreSum/Math.max(1,scoreSamples))*100);
+  document.getElementById('tightVal').textContent=pct;
+  document.getElementById('meter').style.width=pct+'%';
+  if(dist<=TOLERANCE){
+    if(Math.random()<0.02)SFX.tick();
+  }
+
+  showTime+=dt;
+  const remain=Math.max(0,SHOW_DUR-showTime);
+  document.getElementById('timeVal').textContent=Math.ceil(remain);
+  if(showTime>=SHOW_DUR){
+    finishShow(false);
+  }
+}
+
+function finishShow(crashed){
+  running=false;ended=true;
+  finalPct=Math.round((scoreSum/Math.max(1,scoreSamples))*100);
+  if(finalPct>hi){hi=finalPct;localStorage.setItem(KEY,String(hi));}
+  document.getElementById('hiVal').textContent=hi;
+  if(!crashed){
+    if(finalPct>=50)SFX.win(); else SFX.fail();
+  }
+}
+
+function drawLead(){
+  ctx.save();
+  ctx.translate(lead.x,lead.y);
+  ctx.rotate(lead.heading);
+  ctx.fillStyle='#4d9fff';
+  ctx.beginPath();
+  ctx.moveTo(16,0);ctx.lineTo(-10,10);ctx.lineTo(-4,0);ctx.lineTo(-10,-10);
+  ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+function drawPlayer(){
+  ctx.save();
+  const ang=Math.atan2(player.vy,player.vx||0.0001);
+  ctx.translate(player.x,player.y);
+  if(Math.hypot(player.vx,player.vy)>0.3)ctx.rotate(ang);
+  ctx.fillStyle='#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(14,0);ctx.lineTo(-10,9);ctx.lineTo(-10,-9);
+  ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+function drawTargetSlot(){
+  const off=rotate(OFFSET.dx,OFFSET.dy,lead.heading+Math.PI/2);
+  const slotX=lead.x+off.x, slotY=lead.y+off.y;
+  ctx.save();
+  ctx.strokeStyle='rgba(255,213,79,.8)';
+  ctx.setLineDash([6,5]);
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.arc(slotX,slotY,TOLERANCE,0,Math.PI*2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/1000,0.05);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#06243d');sky.addColorStop(1,'#145580');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // crowd line at bottom
+  ctx.fillStyle='rgba(255,255,255,.08)';
+  ctx.fillRect(0,H-26,W,26);
+
+  if(running)update(dt);
+
+  drawTargetSlot();
+  drawLead();
+  drawPlayer();
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='#ffffffcc';ctx.font='bold 24px Arial';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Press a key to begin the show'),W/2,H/2-120);
+  } else if(ended){
+    ctx.fillStyle='#000a';ctx.fillRect(W/2-220,H/2-70,440,140);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('show_over_title','SHOW COMPLETE'),W/2,H/2-20);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('final_score_label','Formation Score: {p}%').replace('{p}',finalPct),W/2,H/2+16);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Click / Tap to fly again'),W/2,H/2+44);
+  }
+  requestAnimationFrame(loop);
+}
+
+function handleRestartClick(){
+  if(ended)resetGame();
+}
+c.addEventListener('pointerdown',handleRestartClick);
+c.addEventListener('touchstart',handleRestartClick,{passive:true});
+document.addEventListener('keydown',e=>{
+  if(ended&&(e.code==='Space'))resetGame();
+  else if(!started&&!ended)startShow();
+});
+
+resetGame();
+requestAnimationFrame(loop);
+</script></body></html>

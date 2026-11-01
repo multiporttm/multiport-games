@@ -1,0 +1,185 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Cockpit Checklist - Multiport Games</title><meta name="description" content="Play Cockpit Checklist free online — Flip switches and set dials in the exact order the checklist calls out before the departure clock runs out."><link rel="canonical" href="https://games.multiportllc.com/games/cockpitchecklist"><meta property="og:title" content="Cockpit Checklist - Multiport Games"><meta property="og:description" content="Play Cockpit Checklist free online — Flip switches and set dials in the exact order the checklist calls out before the departure clock runs out."><meta property="og:url" content="https://games.multiportllc.com/games/cockpitchecklist"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Cockpit Checklist","description":"Play Cockpit Checklist free online instantly. As the pilot, run the cockpit startup checklist by flipping switches and dials in exactly the order read aloud — get it wrong and a system warning sounds. Race to be ready for departure before the clock runs out, across increasingly long checklists. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/cockpitchecklist","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#panel{background:#15202b;border-radius:14px;padding:18px;max-width:700px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;color:#ffd54f;font-weight:800;font-size:1rem;margin-bottom:6px;flex-wrap:wrap;gap:6px}
+#clockWrap{background:#0b0f14;border-radius:8px;height:10px;overflow:hidden;margin-bottom:10px}
+#clockBar{height:100%;background:#4caf50;width:100%;transition:width .2s linear}
+#checklist{background:#0b0f14;border-radius:10px;padding:10px 14px;margin-bottom:14px;color:#cfe8ff;font-size:.95rem;max-height:120px;overflow-y:auto}
+#checklist .step{padding:3px 0;opacity:.45}
+#checklist .step.done{opacity:.3;text-decoration:line-through;color:#4caf50}
+#checklist .step.next{opacity:1;font-weight:800;color:#ffd54f}
+#controls{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.ctrl{background:#1f2f3d;border:2px solid #34506a;border-radius:10px;padding:14px 8px;text-align:center;color:#fff;cursor:pointer;font-size:.85rem;font-weight:700;user-select:none;touch-action:manipulation;transition:transform .08s,background .15s}
+.ctrl:active{transform:scale(.95)}
+.ctrl .ico{font-size:1.6rem;display:block;margin-bottom:4px}
+.ctrl.correct{background:#1e4620;border-color:#4caf50}
+.ctrl.wrong{background:#4a1620;border-color:#e94560}
+.ctrl.used{opacity:.35;cursor:default}
+#banner{text-align:center;color:#fff;font-weight:800;font-size:1.2rem;min-height:1.8em;margin-top:10px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Cockpit Checklist</div>
+  <div class="game-frame">
+    <div id="panel">
+      <div id="hud"><span id="levelLbl">Level 1</span><span id="scoreLbl">Score: 0 | Hi: 0</span></div>
+      <div id="clockWrap"><div id="clockBar"></div></div>
+      <div id="checklist"></div>
+      <div id="controls"></div>
+      <div id="banner"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Read the checklist and click (or press the number key shown) the switches and dials in <b>exactly</b> that order before the clock runs out. A wrong press sounds a warning and costs time. Clear the checklist to depart and move to a longer one!</div>
+</div>
+<script>
+const HI_KEY='cockpitchecklist_hi';
+const CONTROL_POOL=[
+  {id:'battery',label:'Battery Switch',ico:'🔋'},
+  {id:'avionics',label:'Avionics Master',ico:'📡'},
+  {id:'fuelpump',label:'Fuel Pump',ico:'⛽'},
+  {id:'mixture',label:'Mixture Lever',ico:'🎛️'},
+  {id:'throttle',label:'Throttle Idle',ico:'🕹️'},
+  {id:'flaps',label:'Flaps Set',ico:'🛩️'},
+  {id:'trim',label:'Trim Wheel',ico:'⚙️'},
+  {id:'lights',label:'Nav Lights',ico:'💡'},
+  {id:'transponder',label:'Transponder',ico:'📶'},
+  {id:'altimeter',label:'Altimeter Set',ico:'🧭'},
+  {id:'ignition',label:'Ignition Switch',ico:'🔑'},
+  {id:'brakes',label:'Parking Brake',ico:'🛑'}
+];
+function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+let level=1,score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let sequence=[],nextIdx=0,controls=[],timeLeft=0,timeMax=0,timerId=null,locked=false;
+
+function setHud(){
+  document.getElementById('levelLbl').textContent=I18N.t('level_label','Level {l}').replace('{l}',level);
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label2','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+function banner(msg){document.getElementById('banner').textContent=msg;}
+
+function startLevel(){
+  locked=false;
+  const len=Math.min(CONTROL_POOL.length,3+level);
+  const chosen=shuffle(CONTROL_POOL).slice(0,len);
+  sequence=chosen.map(c=>c.id);
+  controls=shuffle(chosen);
+  nextIdx=0;
+  timeMax=8+len*4;
+  timeLeft=timeMax;
+  renderChecklist();
+  renderControls();
+  banner(I18N.t('go_prompt','Begin the startup sequence!'));
+  setHud();
+  clearInterval(timerId);
+  timerId=setInterval(tick,100);
+}
+
+function tick(){
+  if(locked)return;
+  timeLeft-=0.1;
+  document.getElementById('clockBar').style.width=Math.max(0,(timeLeft/timeMax*100))+'%';
+  if(timeLeft<=timeMax*0.3)document.getElementById('clockBar').style.background='#e94560';
+  else document.getElementById('clockBar').style.background='#4caf50';
+  if(timeLeft<=0){
+    clearInterval(timerId);
+    fail(I18N.t('ran_out','⏰ Time ran out before departure!'));
+  }
+}
+
+function renderChecklist(){
+  const el=document.getElementById('checklist');
+  el.innerHTML='';
+  sequence.forEach((id,i)=>{
+    const c=CONTROL_POOL.find(x=>x.id===id);
+    const d=document.createElement('div');
+    d.className='step'+(i<nextIdx?' done':'')+(i===nextIdx?' next':'');
+    d.textContent=(i+1)+'. '+c.ico+' '+I18N.t('step_'+id,c.label);
+    el.appendChild(d);
+  });
+}
+
+function renderControls(){
+  const el=document.getElementById('controls');
+  el.innerHTML='';
+  controls.forEach((c,i)=>{
+    const d=document.createElement('div');
+    d.className='ctrl';
+    d.dataset.id=c.id;
+    d.innerHTML='<span class="ico">'+c.ico+'</span>'+I18N.t('step_'+c.id,c.label)+' <small>('+(i+1)+')</small>';
+    d.addEventListener('click',()=>press(c.id,d));
+    el.appendChild(d);
+  });
+}
+
+function press(id,el){
+  if(locked||el.classList.contains('used'))return;
+  const expected=sequence[nextIdx];
+  if(id===expected){
+    el.classList.add('correct','used');
+    SFX.select();
+    nextIdx++;
+    score+=10;
+    renderChecklist();
+    setHud();
+    if(nextIdx>=sequence.length){
+      locked=true;
+      clearInterval(timerId);
+      score+=Math.round(timeLeft*5);
+      SFX.win();
+      if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+      setHud();
+      banner(I18N.t('departed','🛫 Departure checklist complete! Tap for next level.'));
+    }
+  } else {
+    el.classList.add('wrong');
+    setTimeout(()=>el.classList.remove('wrong'),300);
+    SFX.error();
+    score=Math.max(0,score-5);
+    timeLeft=Math.max(0,timeLeft-3);
+    setHud();
+    banner(I18N.t('warning_msg','⚠️ Warning! Wrong control — check the checklist order.'));
+  }
+}
+
+function fail(msg){
+  locked=true;
+  SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+  setHud();
+  banner(msg+' '+I18N.t('tap_retry','Tap to retry this level.'));
+}
+
+document.getElementById('panel').addEventListener('click',(e)=>{
+  if(locked&&!e.target.classList.contains('ctrl')){
+    if(nextIdx>=sequence.length){level++;startLevel();}
+    else {startLevel();}
+  }
+});
+document.getElementById('banner').addEventListener('click',()=>{
+  if(locked){
+    if(nextIdx>=sequence.length){level++;}
+    startLevel();
+  }
+});
+
+document.addEventListener('keydown',e=>{
+  if(/^[1-9]$/.test(e.key)){
+    const idx=parseInt(e.key,10)-1;
+    const els=[...document.querySelectorAll('.ctrl')];
+    if(els[idx])press(controls[idx].id,els[idx]);
+  } else if((e.key==='Enter'||e.key===' ')&&locked){
+    if(nextIdx>=sequence.length)level++;
+    startLevel();
+  }
+});
+
+startLevel();
+</script></body></html>

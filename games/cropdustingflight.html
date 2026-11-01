@@ -1,0 +1,246 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Crop Dusting Flight</title><meta name="description" content="Play Crop Dusting Flight free online — Hold Spray while banking along each field row, then Pull Up in time to clear the power lines and trees at the row's end before fuel runs out."><link rel="canonical" href="https://games.multiportllc.com/games/cropdustingflight"><meta property="og:title" content="Crop Dusting Flight - Multiport Games"><meta property="og:description" content="Play Crop Dusting Flight free online — Hold Spray while banking along each field row, then Pull Up in time to clear the power lines and trees at the row's end before fuel runs out."><meta property="og:url" content="https://games.multiportllc.com/games/cropdustingflight"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Crop Dusting Flight","description":"Play Crop Dusting Flight free online instantly. Fly a low-altitude crop duster in tight banking turns along farm field rows, spraying each row evenly and pulling up sharply to clear power lines and trees at the field's edge, all before you run out of spray. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/cropdustingflight","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#355e24;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#score-display{color:#d8f0c0;font-size:1.05rem;font-weight:700;text-align:center;padding:6px}
+#touchBtns{display:flex;justify-content:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+#touchBtns button{padding:12px 20px;border:none;border-radius:10px;color:#fff;font-weight:900;font-size:1rem;cursor:pointer;min-width:90px}
+#sprayBtn{background:#2f8f4e}
+#sprayBtn:active{background:#3dbb67}
+#pullBtn{background:#c0392b}
+#pullBtn:active{background:#e74c3c}
+@media(min-width:720px){#touchBtns{display:none}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Crop Dusting Flight</div>
+  <div class="game-frame">
+    <div id="score-display">Row 1/6 | Spray: 100% | Lives: 3 | Hi: 0</div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <div id="touchBtns">
+      <button id="sprayBtn">🌫 SPRAY</button>
+      <button id="pullBtn">⬆ PULL UP</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Hold <b>Space</b> (or the <b>SPRAY</b> button) to spray the row beneath you — keep it held across the whole row for even coverage. As you near the power line or trees at the row's edge, press <b>Up Arrow</b> (or <b>PULL UP</b>) at the right moment to clear the obstacle; too early or too late and you'll crash. Finish all rows before your spray tank runs dry!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const HI_KEY='mp_hi_cropdustingflight';
+const ROWS=6, FIELD_LEFT=80, FIELD_RIGHT=720, ROW_H=48, ROW_TOP=70;
+let hi=0,score=0,lives=3,gameOver=false,started=false,win=false;
+let row,dir,planeX,planeY,targetY,bandOffset,climbing,climbT,spraying,fuel,coverage,obstaclePassed,crashFlashT,keys={},frame;
+
+function loadHi(){hi=parseInt(localStorage.getItem(HI_KEY)||'0');}
+function saveHi(){if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}}
+
+function rowY(r){ return ROW_TOP + r*ROW_H + ROW_H/2; }
+
+function resetRow(){
+  dir = row%2===0 ? 1 : -1;
+  planeX = dir===1 ? FIELD_LEFT-20 : FIELD_RIGHT+20;
+  targetY = rowY(row);
+  planeY = targetY;
+  bandOffset = 0;
+  climbing=false; climbT=0;
+  obstaclePassed=false;
+  coverage = new Array(40).fill(false);
+}
+
+function reset(){
+  score=0;lives=3;gameOver=false;started=false;win=false;row=0;fuel=100;spraying=false;frame=0;crashFlashT=0;
+  resetRow();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['Space','ArrowUp','ArrowDown','KeyW','KeyS'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(gameOver){ reset(); return; }
+  if(!started)started=true;
+  if(e.code==='Space')spraying=true;
+  if(e.code==='ArrowUp'||e.code==='KeyW')triggerClimb();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false; if(e.code==='Space')spraying=false;});
+
+function triggerClimb(){ if(!climbing){climbing=true;climbT=0;SFX.jump();} }
+
+function mountBtn(id,downFn,upFn){
+  const el=document.getElementById(id);
+  const on=e=>{e.preventDefault(); if(gameOver){reset();return;} if(!started)started=true; downFn();};
+  const off=e=>{e.preventDefault(); if(upFn)upFn();};
+  el.addEventListener('mousedown',on);el.addEventListener('mouseup',off);el.addEventListener('mouseleave',off);
+  el.addEventListener('touchstart',on,{passive:false});el.addEventListener('touchend',off,{passive:false});
+}
+mountBtn('sprayBtn',()=>spraying=true,()=>spraying=false);
+mountBtn('pullBtn',()=>triggerClimb(),null);
+
+c.addEventListener('click',()=>{ if(gameOver)reset(); else if(!started)started=true; });
+c.addEventListener('touchstart',e=>{ if(gameOver)reset(); else if(!started)started=true; },{passive:true});
+
+function drawField(){
+  ctx.fillStyle='#355e24';ctx.fillRect(0,0,W,H);
+  for(let r=0;r<ROWS;r++){
+    const y=ROW_TOP+r*ROW_H;
+    ctx.fillStyle = r%2===0 ? '#3f6c2a' : '#366123';
+    ctx.fillRect(FIELD_LEFT,y,FIELD_RIGHT-FIELD_LEFT,ROW_H);
+  }
+  ctx.strokeStyle='rgba(0,0,0,0.25)';ctx.lineWidth=2;
+  ctx.strokeRect(FIELD_LEFT,ROW_TOP,FIELD_RIGHT-FIELD_LEFT,ROWS*ROW_H);
+  // obstacles on both edges
+  drawObstacleEdge(FIELD_LEFT-6);
+  drawObstacleEdge(FIELD_RIGHT+6);
+}
+
+function drawObstacleEdge(x){
+  ctx.strokeStyle='#5d4037';ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(x,ROW_TOP-10);ctx.lineTo(x,ROW_TOP+ROWS*ROW_H+10);ctx.stroke();
+  ctx.fillStyle='#4e342e';
+  for(let r=0;r<=ROWS;r++){ ctx.fillRect(x-10,ROW_TOP+r*ROW_H-6,20,12); }
+}
+
+function drawCoverage(){
+  const r=row;
+  const segW=(FIELD_RIGHT-FIELD_LEFT)/coverage.length;
+  for(let i=0;i<coverage.length;i++){
+    if(coverage[i]){
+      ctx.fillStyle='rgba(180,230,255,0.35)';
+      ctx.fillRect(FIELD_LEFT+i*segW,ROW_TOP+r*ROW_H+6,segW,ROW_H-12);
+    }
+  }
+}
+
+function drawPlane(){
+  ctx.save();
+  ctx.translate(planeX,planeY);
+  ctx.scale(dir,1);
+  const arc = climbing ? -Math.sin(Math.min(1,climbT/26)*Math.PI)*34 : 0;
+  ctx.translate(0,arc);
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(-20,-7,40,14);
+  ctx.fillStyle='#e53935';
+  ctx.fillRect(-3,-18,8,12);
+  ctx.fillStyle='#fff';
+  ctx.beginPath();ctx.moveTo(20,0);ctx.lineTo(32,-5);ctx.lineTo(32,5);ctx.closePath();ctx.fill();
+  ctx.restore();
+  if(spraying && !climbing){
+    ctx.fillStyle='rgba(255,255,255,0.45)';
+    ctx.beginPath();
+    ctx.moveTo(planeX-8*dir,planeY+8);
+    ctx.lineTo(planeX-30*dir,planeY+30);
+    ctx.lineTo(planeX+16*dir,planeY+30);
+    ctx.lineTo(planeX+6*dir,planeY+8);
+    ctx.closePath();ctx.fill();
+  }
+}
+
+function finishRow(){
+  const covered=coverage.filter(Boolean).length/coverage.length;
+  const bonus=Math.round(covered*150);
+  score+=bonus;
+  if(covered>=0.75)SFX.levelup(); else SFX.point();
+  row++;
+  if(row>=ROWS){
+    win=true;gameOver=true;score+=300;saveHi();SFX.win();
+    return;
+  }
+  resetRow();
+}
+
+function crash(){
+  lives--;
+  SFX.hurt();
+  crashFlashT=20;
+  if(lives<=0){ gameOver=true; win=false; saveHi(); SFX.lose(); }
+  else { row++; if(row>=ROWS){ win=true; gameOver=true; saveHi(); SFX.win(); } else resetRow(); }
+}
+
+function update(dt){
+  if(!started||gameOver)return;
+  frame+=dt;
+
+  if(climbing){
+    climbT+=dt;
+    if(climbT>=26){ climbing=false; }
+  }
+
+  const speed=3.4*dt;
+  planeX += dir*speed;
+
+  if(spraying && fuel>0 && !climbing){
+    fuel-=0.06*dt;
+    const idx=Math.floor((planeX-FIELD_LEFT)/(FIELD_RIGHT-FIELD_LEFT)*coverage.length);
+    if(idx>=0&&idx<coverage.length)coverage[idx]=true;
+    if(frame%8<dt)SFX.tick();
+  }
+  if(fuel<=0 && !gameOver){
+    fuel=0;
+    gameOver=true; win=false; saveHi(); SFX.lose();
+    return;
+  }
+
+  const edgeX = dir===1 ? FIELD_RIGHT : FIELD_LEFT;
+  const nearEdge = dir===1 ? planeX>=edgeX-70 : planeX<=edgeX+70;
+  const pastEdge = dir===1 ? planeX>=edgeX : planeX<=edgeX;
+
+  if(pastEdge && !obstaclePassed){
+    obstaclePassed=true;
+    if(climbing && climbT<22){
+      finishRow();
+    } else {
+      crash();
+    }
+  } else if(nearEdge && !climbing && (dir===1? planeX>=edgeX-16 : planeX<=edgeX+16) && !obstaclePassed){
+    // too late warning handled by pastEdge check above
+  }
+}
+
+function drawHud(){
+  document.getElementById('score-display').textContent=
+    I18N.t('crop2_hud','Row {r}/{n} | Spray: {f}% | Lives: {l} | Score: {s} | Hi: {h}')
+      .replace('{r}',Math.min(row+1,ROWS)).replace('{n}',ROWS).replace('{f}',Math.max(0,Math.round(fuel)))
+      .replace('{l}',Math.max(0,lives)).replace('{s}',Math.floor(score)).replace('{h}',Math.floor(Math.max(score,hi)));
+}
+
+function loop(){
+  update(1);
+  drawField();
+  drawCoverage();
+  drawPlane();
+
+  // fuel bar
+  ctx.fillStyle='#1b2e12';ctx.fillRect(FIELD_LEFT,20,FIELD_RIGHT-FIELD_LEFT,12);
+  ctx.fillStyle=fuel>30?'#7ec850':'#ff5252';
+  ctx.fillRect(FIELD_LEFT,20,(FIELD_RIGHT-FIELD_LEFT)*Math.max(0,fuel)/100,12);
+  ctx.strokeStyle='#2c4a1e';ctx.strokeRect(FIELD_LEFT,20,FIELD_RIGHT-FIELD_LEFT,12);
+  ctx.fillStyle='#d8f0c0';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('crop2_tank','Spray Tank'),W/2,16);
+
+  if(crashFlashT>0){ ctx.fillStyle='rgba(255,0,0,0.25)';ctx.fillRect(0,0,W,H);crashFlashT--; }
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.4)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('crop2_start','Space/Tap to start — hold SPRAY, press PULL UP at row end'),W/2,H/2);
+  } else if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(win?I18N.t('crop2_win','FIELD COMPLETE!'):I18N.t('crop2_over','GAME OVER'),W/2,H/2-14);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('crop2_restart','Space or Tap to fly again'),W/2,H/2+20);
+  }
+
+  drawHud();
+  requestAnimationFrame(loop);
+}
+
+loadHi();
+reset();
+loop();
+</script></body></html>

@@ -1,0 +1,237 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Seaplane Landing</title><meta name="description" content="Play Seaplane Landing free online — Use Up/Down to control sink rate and Left/Right to pick the calmest lane, then touch down gently on open water before you run out of approach distance."><link rel="canonical" href="https://games.multiportllc.com/games/seaplanelanding"><meta property="og:title" content="Seaplane Landing - Multiport Games"><meta property="og:description" content="Play Seaplane Landing free online — Use Up/Down to control sink rate and Left/Right to pick the calmest lane, then touch down gently on open water before you run out of approach distance."><meta property="og:url" content="https://games.multiportllc.com/games/seaplanelanding"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Seaplane Landing","description":"Play Seaplane Landing free online instantly. Pilot a floatplane onto open water — read the wave patterns to pick the calmest lane, manage your approach angle and sink rate to touch down smoothly without stalling or slamming down, across increasingly choppy conditions. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/seaplanelanding","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0b3d5c;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#score-display{color:#9fd8ff;font-size:1.05rem;font-weight:700;text-align:center;padding:6px}
+#touchBtns{display:flex;justify-content:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+#touchBtns button{padding:10px 16px;border:none;border-radius:10px;background:#16628f;color:#dff3ff;font-weight:800;font-size:1rem;cursor:pointer;min-width:64px}
+#touchBtns button:active{background:#1f82bb}
+@media(min-width:720px){#touchBtns{display:none}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Seaplane Landing</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0 | Level: 1 | Lives: 3</div>
+    <canvas id="c" width="800" height="400"></canvas>
+    <div id="touchBtns">
+      <button id="btnLeft">◀ Lane</button>
+      <button id="btnUp">▲ Nose Up</button>
+      <button id="btnDown">▼ Nose Down</button>
+      <button id="btnRight">Lane ▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Hold <b>Up/W</b> to raise the nose and slow your descent, <b>Down/S</b> to dive faster. Press <b>Left/Right</b> (A/D) to shift between the three water lanes — watch the wave heights to find the calmest one. Touch down gently (low sink rate, calm lane) before your approach distance runs out. Too fast or too choppy and you'll crash!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400,waterY=320;
+const HI_KEY='mp_hi_seaplanelanding';
+let hi=0,score=0,level=1,lives=3,gameOver=false,started=false,crashed=false,landed=false;
+let alt,vSpeed,lane,laneX,progress,maxProgress,amps,freqs,phases,msg,keys={},t=0;
+
+function loadHi(){hi=parseInt(localStorage.getItem(HI_KEY)||'0');}
+function saveHi(){if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}}
+
+const LANE_CX=[180,400,620];
+
+function resetAttempt(){
+  alt=180;vSpeed=0.4;lane=1;laneX=LANE_CX[1];progress=0;maxProgress=560;
+  crashed=false;landed=false;msg='';
+  amps=[rnd(4,10),rnd(4,10),rnd(4,10)];
+  const choppy=1+level*0.18;
+  amps=amps.map(a=>a*choppy);
+  freqs=[rnd(0.02,0.04),rnd(0.02,0.04),rnd(0.02,0.04)];
+  phases=[Math.random()*10,Math.random()*10,Math.random()*10];
+}
+function reset(){score=0;level=1;lives=3;gameOver=false;started=false;resetAttempt();}
+function rnd(a,b){return a+Math.random()*(b-a);}
+
+function waveAt(laneIdx,x,time){ return Math.sin(x*freqs[laneIdx]+time*0.05+phases[laneIdx])*amps[laneIdx]; }
+
+function startIfNeeded(){ if(!started)started=true; }
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(gameOver){ if(e.code==='Space'){reset();} return; }
+  startIfNeeded();
+  if(e.code==='ArrowLeft'||e.code==='KeyA')shiftLane(-1);
+  if(e.code==='ArrowRight'||e.code==='KeyD')shiftLane(1);
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let laneLock=false;
+function shiftLane(dir){
+  if(laneLock)return;
+  const n=Math.max(0,Math.min(2,lane+dir));
+  if(n!==lane){lane=n;SFX.click();}
+  laneLock=true; setTimeout(()=>laneLock=false,180);
+}
+
+function btn(id,fn){
+  const el=document.getElementById(id);
+  const on=e=>{e.preventDefault(); if(gameOver){reset();return;} startIfNeeded(); fn(true);};
+  const off=e=>{e.preventDefault(); fn(false);};
+  el.addEventListener('mousedown',on);el.addEventListener('mouseup',off);el.addEventListener('mouseleave',off);
+  el.addEventListener('touchstart',on,{passive:false});el.addEventListener('touchend',off,{passive:false});
+}
+btn('btnUp',down=>keys['ArrowUp']=down);
+btn('btnDown',down=>keys['ArrowDown']=down);
+btn('btnLeft',down=>{ if(down)shiftLane(-1); });
+btn('btnRight',down=>{ if(down)shiftLane(1); });
+
+c.addEventListener('click',()=>{ if(gameOver)reset(); else startIfNeeded(); });
+c.addEventListener('touchstart',e=>{ if(gameOver){reset();} else startIfNeeded(); },{passive:true});
+
+function drawWater(){
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#0a2a44');grad.addColorStop(1,'#0b3d5c');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+  for(let i=0;i<3;i++){
+    const cx0=LANE_CX[i]-100;
+    ctx.save();
+    ctx.beginPath();ctx.rect(cx0,waterY-40,200,H-(waterY-40));ctx.clip();
+    ctx.fillStyle=i===lane?'rgba(255,255,255,0.05)':'rgba(255,255,255,0.0)';
+    ctx.fillRect(cx0,waterY-40,200,H-(waterY-40));
+    ctx.strokeStyle='rgba(255,255,255,0.35)';ctx.lineWidth=2;
+    for(let yy=0;yy<4;yy++){
+      ctx.beginPath();
+      for(let x=cx0;x<=cx0+200;x+=8){
+        const w=waveAt(i,x+progress*2,t)+yy*14;
+        if(x===cx0)ctx.moveTo(x,waterY+w);else ctx.lineTo(x,waterY+w);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  // lane dividers + calm indicator
+  ctx.font='bold 13px Arial';ctx.textAlign='center';
+  for(let i=0;i<3;i++){
+    ctx.fillStyle=i===lane?'#ffd54f':'#6fa8c9';
+    ctx.fillText('Chop: '+amps[i].toFixed(1),LANE_CX[i],waterY-50);
+  }
+}
+
+function planeScreenX(){ return 120+ (laneX-LANE_CX[1])*0; }
+
+function drawPlane(){
+  const px=W/2, py=waterY-alt;
+  ctx.save();
+  ctx.translate(px,py);
+  const tilt=Math.max(-0.3,Math.min(0.3,vSpeed*0.06));
+  ctx.rotate(tilt);
+  ctx.fillStyle='#e8e8e8';
+  ctx.beginPath();ctx.moveTo(-34,0);ctx.lineTo(28,-4);ctx.lineTo(34,0);ctx.lineTo(28,5);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#ff6b35';ctx.fillRect(-6,-16,10,14);
+  ctx.fillStyle='#cfe8ff';ctx.fillRect(10,-2,16,4);
+  ctx.strokeStyle='#8899aa';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(-16,10);ctx.lineTo(-22,20);ctx.moveTo(10,10);ctx.lineTo(16,20);ctx.stroke();
+  ctx.fillStyle='#c0d0e0';ctx.fillRect(-28,18,16,4);ctx.fillRect(6,18,16,4);
+  ctx.restore();
+}
+
+function finishAttempt(outcome,impact){
+  landed=true;
+  if(outcome==='perfect'){ score+=200+level*20; SFX.success(); SFX.land(); msg=I18N.t('sea_perfect','Smooth touchdown! Perfect lane read.'); level++; }
+  else if(outcome==='ok'){ score+=80; SFX.land(); msg=I18N.t('sea_ok','Bumpy but you made it down.'); level++; }
+  else if(outcome==='crash'){ crashed=true; lives--; SFX.lose(); msg=I18N.t('sea_crash','Crash! Sink rate '+impact.toFixed(1)+' was too hard for this water.'); }
+  else if(outcome==='stall'){ crashed=true; lives--; SFX.lose(); msg=I18N.t('sea_stall','Stalled — nose too high, you dropped out of the sky.'); }
+  else if(outcome==='overshoot'){ crashed=true; lives--; SFX.lose(); msg=I18N.t('sea_overshoot','Ran out of approach distance — go around failed.'); }
+  saveHi();
+  if(lives<=0){ gameOver=true; SFX.lose(); }
+}
+
+function update(dt){
+  t+=dt;
+  if(!started||gameOver||landed)return;
+  progress+=2.2*dt;
+  const gravity=0.018*dt;
+  vSpeed+=gravity;
+  if(keys['ArrowUp']||keys['KeyW'])vSpeed-=0.05*dt;
+  if(keys['ArrowDown']||keys['KeyS'])vSpeed+=0.045*dt;
+  vSpeed=Math.max(-1.6,Math.min(4.2,vSpeed));
+  alt-=vSpeed*dt;
+  laneX+=(LANE_CX[lane]-laneX)*0.12*dt;
+
+  if(vSpeed<-1.2 && alt>60){
+    finishAttempt('stall',0);
+    return;
+  }
+  if(progress>=maxProgress && alt>14){
+    finishAttempt('overshoot',0);
+    return;
+  }
+  if(alt<=0){
+    const chop=waveAt(lane,W/2+progress*2,t);
+    const impact=vSpeed + Math.abs(chop)*0.35;
+    if(impact>5.5){ finishAttempt('crash',impact); }
+    else if(impact>2.6){ finishAttempt('ok',impact); }
+    else { finishAttempt('perfect',impact); }
+  }
+}
+
+function drawHud(){
+  document.getElementById('score-display').textContent=
+    I18N.t('sea_score_label','Score: {s} | Hi: {h} | Level: {l} | Lives: {v}')
+      .replace('{s}',Math.floor(score)).replace('{h}',Math.floor(Math.max(score,hi))).replace('{l}',level).replace('{v}',Math.max(0,lives));
+}
+
+function loop(ts){
+  const dt=1;
+  update(dt);
+  drawWater();
+  if(!landed||!gameOver)drawPlane();
+
+  // approach bar
+  ctx.fillStyle='#09263d';ctx.fillRect(20,20,200,14);
+  ctx.fillStyle='#ffd54f';ctx.fillRect(20,20,200*Math.min(1,progress/maxProgress),14);
+  ctx.strokeStyle='#345';ctx.strokeRect(20,20,200,14);
+  ctx.fillStyle='#cfe8ff';ctx.font='bold 11px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('sea_approach','Approach'),20,16);
+
+  // sink rate gauge
+  ctx.fillStyle='#09263d';ctx.fillRect(580,20,200,14);
+  const sinkFrac=Math.max(0,Math.min(1,(vSpeed+1.6)/(4.2+1.6)));
+  ctx.fillStyle=sinkFrac<0.45?'#7ec850':sinkFrac<0.7?'#ffd54f':'#ff5252';
+  ctx.fillRect(580,20,200*sinkFrac,14);
+  ctx.strokeStyle='#345';ctx.strokeRect(580,20,200,14);
+  ctx.fillStyle='#cfe8ff';ctx.textAlign='right';
+  ctx.fillText(I18N.t('sea_sinkrate','Sink Rate'),780,16);
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('sea_start_hint','Press Space/Tap, then Up/Down + Left/Right'),W/2,H/2);
+  } else if(landed){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(gameOver?I18N.t('sea_restart','Tap or Space to fly again'):I18N.t('sea_next','Tap or Space for next approach'),W/2,H/2+20);
+    if(!clickArmed){
+      clickArmed=true;
+      const advance=()=>{ document.removeEventListener('keydown',advanceKey); c.removeEventListener('click',advance); c.removeEventListener('touchstart',advance);
+        clickArmed=false;
+        if(gameOver){reset();}else{resetAttempt();}
+      };
+      const advanceKey=e=>{ if(e.code==='Space'||e.code==='Enter')advance(); };
+      document.addEventListener('keydown',advanceKey);
+      c.addEventListener('click',advance);
+      c.addEventListener('touchstart',advance,{passive:true});
+    }
+  }
+
+  drawHud();
+  requestAnimationFrame(loop);
+}
+let clickArmed=false;
+
+loadHi();
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

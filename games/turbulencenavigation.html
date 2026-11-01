@@ -1,0 +1,241 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Turbulence Navigation</title><meta name="description" content="Play Turbulence Navigation free online — Steer your plane with Arrow Keys/WASD or drag/touch. Dodge turbulence pockets and lightning on the radar before your stress meter maxes out."><link rel="canonical" href="https://games.multiportllc.com/games/turbulencenavigation"><meta property="og:title" content="Turbulence Navigation - Multiport Games"><meta property="og:description" content="Play Turbulence Navigation free online — Steer your plane with Arrow Keys/WASD or drag/touch. Dodge turbulence pockets and lightning on the radar before your stress meter maxes out."><meta property="og:url" content="https://games.multiportllc.com/games/turbulencenavigation"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Turbulence Navigation","description":"Play Turbulence Navigation free online instantly. Steer your small aircraft through a storm on a weather radar display, dodging sudden turbulence pockets and lightning flashes to reach clear skies before your stress meter maxes out. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/turbulencenavigation","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#060912}
+#c{background:#051506;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;gap:10px;color:#9fe8a0;font-size:1rem;font-weight:700;padding:6px 4px;max-width:800px;margin:0 auto}
+#stressWrap{flex:1;max-width:260px;background:rgba(255,255,255,.08);border-radius:8px;height:18px;overflow:hidden;align-self:center;position:relative}
+#stressBar{height:100%;width:0%;background:linear-gradient(90deg,#4caf50,#ffca28,#e94560);transition:width .12s linear}
+#stressLabel{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:.7rem;color:#fff;text-shadow:0 1px 2px #000}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Turbulence Navigation</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="distLabel">Dist: 0 / 3000 | Hi: 0</span>
+      <span id="stressWrap"><span id="stressBar"></span><span id="stressLabel">STRESS 0%</span></span>
+    </div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Arrow Keys / WASD</b> or <b>drag / tap</b> to steer the plane. Avoid the red turbulence pockets and yellow lightning flashes on the radar — each hit raises your <b>stress meter</b>. Reach clear skies before stress maxes out!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+const GOAL=3000;
+let plane={x:90,y:200,vx:0,vy:0};
+let hazards=[];
+let dist=0,stress=0,hi=0,gameOver=false,won=false,started=false;
+let keys={};
+let lastTime=null,spawnTimer=0,flashTimer=0,frame=0;
+let pointerTarget=null;
+
+try{hi=parseFloat(localStorage.getItem('hi_turbulencenavigation'))||0;}catch(e){hi=0;}
+
+function reset(){
+  plane={x:90,y:200,vx:0,vy:0};
+  hazards=[];dist=0;stress=0;gameOver=false;won=false;started=false;
+  lastTime=null;spawnTimer=0;flashTimer=0;frame=0;pointerTarget=null;
+}
+
+function spawnHazard(){
+  const type=Math.random()<0.65?'turb':'lightning';
+  const y=40+Math.random()*(H-80);
+  if(type==='turb'){
+    hazards.push({type,x:W+40,y,r:26+Math.random()*20,drift:(Math.random()-0.5)*1.2,age:0});
+  }else{
+    hazards.push({type,x:W+40,y,r:34,age:0,life:0,warn:40});
+  }
+}
+
+function startIfNeeded(){ if(!started){started=true;} }
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','w','a','s','d','W','A','S','D',' '].includes(e.key)){e.preventDefault();}
+  keys[e.key.toLowerCase()]=true;
+  if(e.key===' '&&(gameOver||won)){reset();return;}
+  startIfNeeded();
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+c.addEventListener('pointerdown',e=>{
+  if(gameOver||won){reset();return;}
+  startIfNeeded();
+  pointerTarget=pointerPos(e);
+});
+c.addEventListener('pointermove',e=>{ if(pointerTarget)pointerTarget=pointerPos(e); });
+window.addEventListener('pointerup',()=>{pointerTarget=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(gameOver||won){reset();return;}startIfNeeded();pointerTarget=pointerPos(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(pointerTarget)pointerTarget=pointerPos(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerTarget=null;},{passive:false});
+
+function circleRectHit(hx,hy,hr,px,py,pw,ph){
+  const cx=Math.max(px,Math.min(hx,px+pw));
+  const cy=Math.max(py,Math.min(hy,py+ph));
+  const dx=hx-cx,dy=hy-cy;
+  return dx*dx+dy*dy<hr*hr;
+}
+
+function drawRadarBg(){
+  ctx.fillStyle='#051506';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(80,220,100,0.12)';ctx.lineWidth=1;
+  for(let gx=0;gx<W;gx+=40){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,H);ctx.stroke();}
+  for(let gy=0;gy<H;gy+=40){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();}
+  // sweeping radar line
+  const sweepAngle=(frame*0.015)%(Math.PI*2);
+  ctx.save();
+  ctx.translate(W/2,H/2);
+  const grad=ctx.createLinearGradient(0,0,Math.cos(sweepAngle)*500,Math.sin(sweepAngle)*500);
+  grad.addColorStop(0,'rgba(80,255,120,0.28)');grad.addColorStop(1,'rgba(80,255,120,0)');
+  ctx.strokeStyle=grad;ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(sweepAngle)*500,Math.sin(sweepAngle)*500);ctx.stroke();
+  ctx.restore();
+}
+
+function drawPlane(){
+  ctx.save();
+  ctx.translate(plane.x,plane.y);
+  const tilt=Math.max(-0.5,Math.min(0.5,plane.vy*0.08));
+  ctx.rotate(tilt);
+  ctx.fillStyle='#bfe9ff';
+  ctx.beginPath();
+  ctx.moveTo(22,0);ctx.lineTo(-18,-10);ctx.lineTo(-10,0);ctx.lineTo(-18,10);
+  ctx.closePath();ctx.fill();
+  ctx.fillStyle='#5aaadd';
+  ctx.fillRect(-6,-18,8,36);
+  ctx.restore();
+}
+
+function drawHazard(hz){
+  if(hz.type==='turb'){
+    const pulse=1+0.08*Math.sin(hz.age*0.15);
+    ctx.save();
+    ctx.globalAlpha=0.75;
+    const g=ctx.createRadialGradient(hz.x,hz.y,2,hz.x,hz.y,hz.r*pulse);
+    g.addColorStop(0,'rgba(233,69,96,0.85)');g.addColorStop(1,'rgba(233,69,96,0.05)');
+    ctx.fillStyle=g;
+    ctx.beginPath();ctx.arc(hz.x,hz.y,hz.r*pulse,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  }else{
+    const t=hz.age/hz.warn;
+    if(t<1){
+      ctx.strokeStyle=`rgba(255,220,80,${0.3+0.5*Math.sin(hz.age*0.5)})`;
+      ctx.lineWidth=3;
+      ctx.beginPath();ctx.arc(hz.x,hz.y,hz.r,0,Math.PI*2);ctx.stroke();
+    }else{
+      ctx.fillStyle='rgba(255,230,80,0.85)';
+      ctx.beginPath();ctx.arc(hz.x,hz.y,hz.r*1.1,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#fff';
+      ctx.beginPath();
+      ctx.moveTo(hz.x-4,hz.y-14);ctx.lineTo(hz.x+6,hz.y-2);ctx.lineTo(hz.x-2,hz.y-2);ctx.lineTo(hz.x+4,hz.y+14);
+      ctx.closePath();ctx.fill();
+    }
+  }
+}
+
+function updateHud(){
+  document.getElementById('distLabel').textContent=
+    I18N.t('tn_dist_label','Dist: {d} / {g} | Hi: {h}')
+      .replace('{d}',Math.floor(dist)).replace('{g}',GOAL).replace('{h}',Math.floor(hi));
+  document.getElementById('stressBar').style.width=Math.min(100,stress)+'%';
+  document.getElementById('stressLabel').textContent=I18N.t('tn_stress_label','STRESS {s}%').replace('{s}',Math.floor(Math.min(100,stress)));
+}
+
+function loop(){
+  drawRadarBg();
+
+  if(!started){
+    ctx.fillStyle='#9fe8a0cc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press any arrow key / drag to start'),W/2,H/2);
+    drawPlane();
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver||won){
+    drawPlane();
+    hazards.forEach(drawHazard);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('tn_clear_title','CLEAR SKIES!'):I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+26);
+    if(won&&dist>hi){hi=dist;try{localStorage.setItem('hi_turbulencenavigation',hi);}catch(e){}}
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frame+=dt;
+
+  // steering
+  let ax=0,ay=0;
+  if(keys['arrowup']||keys['w'])ay-=1;
+  if(keys['arrowdown']||keys['s'])ay+=1;
+  if(keys['arrowleft']||keys['a'])ax-=1;
+  if(keys['arrowright']||keys['d'])ax+=1;
+  if(pointerTarget){
+    ax+=Math.max(-1,Math.min(1,(pointerTarget.x-plane.x)/40));
+    ay+=Math.max(-1,Math.min(1,(pointerTarget.y-plane.y)/40));
+  }
+  plane.vx+=ax*0.5*dt;plane.vy+=ay*0.5*dt;
+  plane.vx*=0.9;plane.vy*=0.9;
+  plane.x+=plane.vx*dt;plane.y+=plane.vy*dt;
+  plane.x=Math.max(30,Math.min(W-200,plane.x));
+  plane.y=Math.max(20,Math.min(H-20,plane.y));
+
+  const speed=4+dist/400;
+  dist+=speed*0.18*dt;
+  if(dist>hi)hi=dist;
+
+  spawnTimer+=dt;
+  const interval=Math.max(26,60-dist/80);
+  if(spawnTimer>=interval){spawnTimer-=interval;spawnHazard();}
+
+  hazards=hazards.filter(h=>h.x>-60);
+  hazards.forEach(h=>{
+    h.age+=dt;
+    h.x-=speed*dt;
+    if(h.type==='turb')h.y+=h.drift*dt;
+    drawHazard(h);
+    const active=(h.type==='turb')||(h.age>=h.warn);
+    if(active){
+      const planeBox={x:plane.x-18,y:plane.y-10,w:40,h:20};
+      if(circleRectHit(h.x,h.y,h.r,planeBox.x,planeBox.y,planeBox.w,planeBox.h)&&!h.hit){
+        h.hit=true;
+        stress+=h.type==='turb'?14:22;
+        SFX.hurt();
+        if(stress>=100){stress=100;gameOver=true;SFX.lose();}
+      }
+    }
+  });
+
+  stress=Math.max(0,stress-0.06*dt);
+
+  drawPlane();
+
+  if(dist>=GOAL){won=true;SFX.win();}
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

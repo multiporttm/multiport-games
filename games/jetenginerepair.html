@@ -1,0 +1,223 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Jet Engine Repair</title><meta name="description" content="Play Jet Engine Repair free online — Click or tap components in the correct order to disassemble the engine, find the faulty part from the clue, replace it, then reassemble before the clock runs out."><link rel="canonical" href="https://games.multiportllc.com/games/jetenginerepair"><meta property="og:title" content="Jet Engine Repair - Multiport Games"><meta property="og:description" content="Play Jet Engine Repair free online — Click or tap components in the correct order to disassemble the engine, find the faulty part from the clue, replace it, then reassemble before the clock runs out."><meta property="og:url" content="https://games.multiportllc.com/games/jetenginerepair"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Jet Engine Repair","description":"Play Jet Engine Repair free online instantly. Click or tap components in the correct order to disassemble the engine on the maintenance stand, find the faulty part from the inspection clue, replace it, then reassemble everything before the aircraft's next scheduled flight. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/jetenginerepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#rig{background:#121622;border-radius:14px;padding:18px;text-align:center}
+#hud{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;color:#fff;font-weight:700;margin-bottom:10px;font-size:.95rem}
+#hud span{color:#9fb3ff}
+#clockbar{height:10px;border-radius:6px;background:rgba(255,255,255,.08);overflow:hidden;margin-bottom:12px}
+#clockfill{height:100%;background:linear-gradient(90deg,#7ec850,#ffd54f,#e94560);width:100%;transition:width .15s linear}
+#phaseLabel{color:#ffd54f;font-weight:800;font-size:1.05rem;margin-bottom:6px;min-height:1.4em}
+#clue{color:#9fe3ff;font-size:.88rem;min-height:1.6em;margin-bottom:10px}
+#parts{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:560px;margin:0 auto}
+.part{background:#1c2238;border:2px solid rgba(255,255,255,.1);border-radius:12px;padding:14px 8px;cursor:pointer;color:#dfe6ff;font-weight:700;font-size:.82rem;transition:transform .12s,background .15s,border-color .15s;user-select:none}
+.part .ico{font-size:1.8rem;display:block;margin-bottom:4px}
+.part:hover{transform:translateY(-2px);border-color:rgba(255,255,255,.25)}
+.part.done{opacity:.25;cursor:default;pointer-events:none}
+.part.next{border-color:#7ec850;box-shadow:0 0 14px rgba(126,200,80,.4)}
+.part.faulty{border-color:#e94560;background:#2a1420}
+.part.bad-flash{background:#e94560!important;border-color:#e94560!important}
+.part.good-flash{background:#2d5a27!important;border-color:#7ec850!important}
+#msg{color:#fff;font-size:1rem;font-weight:700;min-height:2.6em;margin-top:12px}
+#overlay{display:none;margin-top:14px}
+#overlay button{padding:10px 26px;background:#e94560;border:none;border-radius:20px;color:#fff;font-size:1rem;font-weight:700;cursor:pointer}
+@media(max-width:480px){#parts{grid-template-columns:repeat(2,1fr)}.part{font-size:.75rem}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Jet Engine Repair</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="rig">
+      <div id="hud"><div>Repairs: <span id="repairsVal">0</span> | Hi: <span id="hiVal">0</span></div><div>Strikes: <span id="strikesVal">0</span>/3</div></div>
+      <div id="clockbar"><div id="clockfill"></div></div>
+      <div id="phaseLabel">Disassemble the engine in order</div>
+      <div id="clue">&nbsp;</div>
+      <div id="parts"></div>
+      <div id="msg"></div>
+      <div id="overlay"><button id="restartBtn">Start New Shift</button></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A jet engine is mounted on the stand in six stages: Cowling, Fan Blades, Compressor, Combustor Seal, Turbine Blades, Exhaust Nozzle. <b>Click or tap</b> the glowing component (or press <b>1–6</b>) to remove parts <b>in that exact order</b>. Once disassembled, read the maintenance clue and click the <b>faulty component</b> it describes. Then <b>reassemble</b> everything in reverse order before the countdown clock reaches zero. Three wrong moves ends your shift — repair as many engines as you can!
+  </div>
+</div>
+<script>
+const PARTS=[
+  {id:'cowling',ico:'🛡️',name:'Cowling'},
+  {id:'fan',ico:'🌀',name:'Fan Blades'},
+  {id:'compressor',ico:'⚙️',name:'Compressor'},
+  {id:'seal',ico:'💍',name:'Combustor Seal'},
+  {id:'turbine',ico:'🔥',name:'Turbine Blades'},
+  {id:'nozzle',ico:'🚀',name:'Exhaust Nozzle'}
+];
+const CLUES={
+  seal:'Oily residue and a hissing sound near the midsection — inspect the combustor seal.',
+  turbine:'Unusual vibration and heat discoloration near the rear — inspect the turbine blades.'
+};
+const KEY='mp_hi_jetenginerepair';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let repairs=0,strikes=0,phase='disassemble',ptr=0,order=[],faultyId=null,timeLeft=0,timeTotal=0,timerHandle=null,locked=false;
+
+const partsEl=document.getElementById('parts'),phaseEl=document.getElementById('phaseLabel'),clueEl=document.getElementById('clue'),
+  msgEl=document.getElementById('msg'),clockfill=document.getElementById('clockfill'),overlay=document.getElementById('overlay'),
+  repairsVal=document.getElementById('repairsVal'),hiVal=document.getElementById('hiVal'),strikesVal=document.getElementById('strikesVal');
+
+function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+function setMsg(t){msgEl.textContent=t;}
+function updateHud(){
+  repairsVal.textContent=repairs;hiVal.textContent=hi;strikesVal.textContent=strikes;
+}
+
+function startShift(){
+  repairs=0;strikes=0;overlay.style.display='none';
+  updateHud();startRound();
+}
+
+function startRound(){
+  order=shuffle(PARTS.map(p=>p.id));
+  faultyId=Math.random()<0.5?'seal':'turbine';
+  ptr=0;phase='disassemble';locked=false;
+  timeTotal=Math.max(16,42-repairs*2);timeLeft=timeTotal;
+  phaseEl.textContent=I18N.t('phase_disassemble','Disassemble the engine in order');
+  clueEl.innerHTML='&nbsp;';
+  setMsg(I18N.t('round_start','Remove the glowing component next.'));
+  render();
+  clearInterval(timerHandle);
+  timerHandle=setInterval(tick,100);
+}
+
+function tick(){
+  timeLeft-=0.1;
+  clockfill.style.width=Math.max(0,(timeLeft/timeTotal)*100)+'%';
+  if(timeLeft<=0){
+    clearInterval(timerHandle);
+    SFX.lose();
+    setMsg(I18N.t('time_up','Time\'s up! The flight departed without this engine.'));
+    endShift();
+  }
+}
+
+function render(){
+  partsEl.innerHTML='';
+  const displayOrder=PARTS; // bench layout stays fixed; status changes
+  displayOrder.forEach(p=>{
+    const div=document.createElement('div');
+    div.className='part';
+    let removed;
+    if(phase==='disassemble'){
+      removed=order.indexOf(p.id)<ptr;
+    } else if(phase==='inspect'){
+      removed=false;
+    } else { // reassemble
+      removed = reassembleRemaining.indexOf(p.id)===-1;
+    }
+    if(phase==='disassemble'&&!removed&&order[ptr]===p.id)div.classList.add('next');
+    if(removed&&phase!=='inspect')div.classList.add('done');
+    div.innerHTML=`<span class="ico">${p.ico}</span>${I18N.t('part_'+p.id,p.name)}`;
+    div.dataset.id=p.id;
+    div.onclick=()=>handleClick(p.id,div);
+    partsEl.appendChild(div);
+  });
+}
+
+let reassembleRemaining=[];
+
+function handleClick(id,el){
+  if(locked)return;
+  if(phase==='disassemble'){
+    if(order[ptr]===id){
+      ptr++;SFX.click();
+      el.classList.add('good-flash');
+      setTimeout(()=>el.classList.remove('good-flash'),150);
+      if(ptr>=order.length){
+        phase='inspect';
+        phaseEl.textContent=I18N.t('phase_inspect','All parts removed — find the faulty one');
+        clueEl.textContent=I18N.t('clue_'+faultyId,CLUES[faultyId]);
+        setMsg(I18N.t('inspect_hint','Click the component matching the clue above.'));
+      }
+      render();
+    } else {
+      strike(el,I18N.t('wrong_order','Wrong part — follow the disassembly order!'));
+    }
+  } else if(phase==='inspect'){
+    if(id===faultyId){
+      SFX.powerup();
+      el.classList.add('good-flash');
+      setTimeout(()=>el.classList.remove('good-flash'),150);
+      phase='reassemble';
+      reassembleRemaining=shuffle(PARTS.map(p=>p.id)); // placeholder, overwritten below
+      reassembleRemaining=order.slice().reverse();
+      ptr=0;
+      phaseEl.textContent=I18N.t('phase_reassemble','Reassemble in reverse order');
+      clueEl.innerHTML='&nbsp;';
+      setMsg(I18N.t('reassemble_hint','Replace the faulty part, then rebuild the engine.'));
+      render();
+    } else {
+      strike(el,I18N.t('wrong_part','That part checks out fine — keep inspecting.'));
+    }
+  } else if(phase==='reassemble'){
+    if(reassembleRemaining[0]===id){
+      reassembleRemaining.shift();SFX.click();
+      el.classList.add('good-flash');
+      setTimeout(()=>el.classList.remove('good-flash'),150);
+      if(reassembleRemaining.length===0){
+        finishRound();
+      } else render();
+    } else {
+      strike(el,I18N.t('wrong_reassemble','Wrong part — reassemble in reverse order!'));
+    }
+  }
+}
+
+function strike(el,text){
+  strikes++;SFX.error();
+  el.classList.add('bad-flash');
+  setTimeout(()=>el.classList.remove('bad-flash'),200);
+  setMsg(text);
+  updateHud();
+  if(strikes>=3){
+    clearInterval(timerHandle);
+    SFX.lose();
+    setMsg(I18N.t('too_many_mistakes','Too many mistakes — the engine is grounded.'));
+    endShift();
+  }
+}
+
+function finishRound(){
+  clearInterval(timerHandle);
+  repairs++;
+  const bonus=Math.max(0,Math.floor(timeLeft));
+  if(repairs>hi){hi=repairs;localStorage.setItem(KEY,String(hi));}
+  SFX.success();SFX.win();
+  setMsg(I18N.t('repair_complete','Engine certified airworthy! +{b}s bonus speed.').replace('{b}',bonus));
+  updateHud();
+  locked=true;
+  setTimeout(()=>{locked=false;startRound();},1400);
+}
+
+function endShift(){
+  locked=true;
+  if(repairs>hi){hi=repairs;localStorage.setItem(KEY,String(hi));}
+  updateHud();
+  overlay.style.display='block';
+}
+
+document.getElementById('restartBtn').onclick=startShift;
+
+document.addEventListener('keydown',e=>{
+  const n=parseInt(e.key,10);
+  if(n>=1&&n<=6){
+    const p=PARTS[n-1];
+    const el=partsEl.children[n-1];
+    if(el&&!el.classList.contains('done'))handleClick(p.id,el);
+  }
+});
+
+startShift();
+</script></body></html>
