@@ -1,0 +1,305 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Pest Control Spray - Multiport Games</title><meta name="description" content="Play Pest Control Spray free online — Click or tap bugs attacking your plants to spray them before they do damage. Avoid spraying ladybugs and bees!"><link rel="canonical" href="https://games.multiportllc.com/games/pestcontrolspray"><meta property="og:title" content="Pest Control Spray - Multiport Games"><meta property="og:description" content="Play Pest Control Spray free online — Click or tap bugs attacking your plants to spray them before they do damage. Avoid spraying ladybugs and bees!"><meta property="og:url" content="https://games.multiportllc.com/games/pestcontrolspray"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Pest Control Spray","description":"Play Pest Control Spray free online instantly. Click or tap bugs attacking your plants to spray them before they do damage. Avoid spraying ladybugs and bees! No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/pestcontrolspray","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2d5a27;display:block;border-radius:8px;cursor:crosshair;touch-action:none}
+#score-display{color:#7ec850;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Pest Control Spray</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0 | Plants lost: 0/3</div>
+    <canvas id="c" width="800" height="300"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    Move the sprayer with your <b>mouse, finger, or arrow keys</b> and press <b>Space / Click / Tap</b> to spray. Prioritize the most-damaged plants! Spray <b>aphids 🦗, beetles 🪲 and caterpillars 🐛</b> before they destroy the plants — but <b>don't spray ladybugs 🐞 or bees 🐝</b>, they're helping you. Survive until 3 plants are lost or rack up the highest score you can.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=300;
+const HS_KEY='pestcontrolspray_hi';
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+
+const PLANT_COUNT=5;
+const SPRAY_RADIUS=36;
+let plants,bugs,score,plantsLost,gameOver,started,cursor,bugTimer,lastTime,sprayFlashes;
+
+const PESTS=[
+  {key:'aphid',emoji:'🦗',dmg:4,speedDmgInterval:50},
+  {key:'beetle',emoji:'🪲',dmg:7,speedDmgInterval:70},
+  {key:'caterpillar',emoji:'🐛',dmg:10,speedDmgInterval:90},
+];
+const BENEFICIAL=[
+  {key:'ladybug',emoji:'🐞'},
+  {key:'bee',emoji:'🐝'},
+];
+
+function initPlants(){
+  plants=[];
+  const spacing=W/(PLANT_COUNT+1);
+  for(let i=0;i<PLANT_COUNT;i++){
+    plants.push({x:spacing*(i+1),y:H-40,hp:100,dead:false});
+  }
+}
+
+function reset(){
+  initPlants();
+  bugs=[];
+  score=0;plantsLost=0;gameOver=false;started=false;
+  cursor={x:W/2,y:H/2};
+  bugTimer=0;lastTime=null;sprayFlashes=[];
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('score-display').textContent=
+    I18N.t('score_full_label','Score: {s} | Hi: {h} | Plants lost: {p}/3')
+      .replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi)).replace('{p}',plantsLost);
+}
+
+function spawnBug(){
+  // choose the neediest alive plant more often (prioritize threatened plants design cue)
+  const alive=plants.filter(p=>!p.dead);
+  if(alive.length===0)return;
+  alive.sort((a,b)=>a.hp-b.hp);
+  const plant = Math.random()<0.6 ? alive[0] : alive[Math.floor(Math.random()*alive.length)];
+  const isPest = Math.random()<0.75;
+  const type = isPest ? PESTS[Math.floor(Math.random()*PESTS.length)] : BENEFICIAL[Math.floor(Math.random()*BENEFICIAL.length)];
+  bugs.push({
+    plant,
+    isPest,
+    type,
+    x:plant.x+(Math.random()*40-20),
+    y:plant.y-30-Math.random()*30,
+    vx:(Math.random()-0.5)*0.6,
+    vy:(Math.random()-0.5)*0.6,
+    dmgTimer:0,
+    life:0,
+  });
+}
+
+function rectHit(bx,by,px,py,r){
+  const dx=bx-px,dy=by-py;
+  return dx*dx+dy*dy<=r*r;
+}
+
+function sprayAt(x,y){
+  if(gameOver){ if(started) reset(); return; }
+  if(!started)started=true;
+  SFX.swoosh();
+  sprayFlashes.push({x,y,life:12});
+  let hitSomething=false;
+  bugs=bugs.filter(b=>{
+    if(rectHit(b.x,b.y,x,y,SPRAY_RADIUS)){
+      hitSomething=true;
+      if(b.isPest){
+        score+=10;
+        SFX.point();
+      } else {
+        score=Math.max(0,score-15);
+        SFX.error();
+      }
+      return false;
+    }
+    return true;
+  });
+  if(!hitSomething)SFX.click();
+  updateHud();
+}
+
+c.addEventListener('mousemove',e=>{
+  const r=c.getBoundingClientRect();
+  cursor.x=(e.clientX-r.left)*(W/r.width);
+  cursor.y=(e.clientY-r.top)*(H/r.height);
+});
+c.addEventListener('click',e=>{
+  const r=c.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width);
+  const y=(e.clientY-r.top)*(H/r.height);
+  cursor.x=x;cursor.y=y;
+  sprayAt(x,y);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.touches[0];
+  const r=c.getBoundingClientRect();
+  const x=(t.clientX-r.left)*(W/r.width);
+  const y=(t.clientY-r.top)*(H/r.height);
+  cursor.x=x;cursor.y=y;
+  sprayAt(x,y);
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  const t=e.touches[0];
+  const r=c.getBoundingClientRect();
+  cursor.x=(t.clientX-r.left)*(W/r.width);
+  cursor.y=(t.clientY-r.top)*(H/r.height);
+},{passive:false});
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'){ if(!started)started=true; sprayAt(cursor.x,cursor.y); }
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function updateCursorKeys(dt){
+  const spd=5*dt;
+  if(keys['ArrowUp'])cursor.y-=spd;
+  if(keys['ArrowDown'])cursor.y+=spd;
+  if(keys['ArrowLeft'])cursor.x-=spd;
+  if(keys['ArrowRight'])cursor.x+=spd;
+  cursor.x=Math.max(0,Math.min(W,cursor.x));
+  cursor.y=Math.max(0,Math.min(H,cursor.y));
+}
+
+function drawPlant(p){
+  ctx.save();
+  if(p.dead){
+    ctx.fillStyle='#5c4a2e';
+    ctx.fillRect(p.x-5,p.y,10,30);
+  } else {
+    const healthFrac=p.hp/100;
+    ctx.fillStyle=`rgb(${Math.round(160-100*healthFrac)},${Math.round(90+80*healthFrac)},50)`;
+    ctx.fillRect(p.x-6,p.y,12,40);
+    ctx.fillStyle=`rgba(90,${Math.round(140+60*healthFrac)},50,1)`;
+    ctx.beginPath();
+    ctx.ellipse(p.x,p.y-10,22,16+8*healthFrac,0,0,Math.PI*2);
+    ctx.fill();
+  }
+  // health bar
+  ctx.fillStyle='#000a';
+  ctx.fillRect(p.x-24,p.y-48,48,8);
+  ctx.fillStyle = p.hp>50 ? '#4caf50' : p.hp>20 ? '#ffb300' : '#e53935';
+  ctx.fillRect(p.x-23,p.y-47,46*(Math.max(0,p.hp)/100),6);
+  ctx.restore();
+}
+
+function drawBug(b){
+  ctx.save();
+  ctx.font='22px Arial';
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  ctx.fillText(b.type.emoji,b.x,b.y);
+  ctx.restore();
+}
+
+function drawCursor(){
+  ctx.save();
+  ctx.strokeStyle='#ffffffcc';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.arc(cursor.x,cursor.y,SPRAY_RADIUS*0.5,0,Math.PI*2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cursor.x-10,cursor.y);ctx.lineTo(cursor.x+10,cursor.y);
+  ctx.moveTo(cursor.x,cursor.y-10);ctx.lineTo(cursor.x,cursor.y+10);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawFlashes(){
+  sprayFlashes=sprayFlashes.filter(f=>f.life>0);
+  sprayFlashes.forEach(f=>{
+    ctx.save();
+    ctx.globalAlpha=f.life/12;
+    ctx.strokeStyle='#bfffcf';
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    ctx.arc(f.x,f.y,SPRAY_RADIUS*(1-(f.life/12)*0.3),0,Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+    f.life--;
+  });
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H-50);
+  sky.addColorStop(0,'#0d3b1e');sky.addColorStop(1,'#2d5a27');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H-50);
+  ctx.fillStyle='#5aaa30';ctx.fillRect(0,H-50,W,50);
+  ctx.fillStyle='#3d8020';ctx.fillRect(0,H-50,W,4);
+
+  if(!started){
+    ctx.fillStyle='#ffffffcc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint2','Click / Tap / Space to start spraying'),W/2,H/2);
+    plants.forEach(drawPlant);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    plants.forEach(drawPlant);
+    bugs.forEach(drawBug);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title2','GARDEN LOST'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap / Click / Space to try again'),W/2,H/2+24);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  updateCursorKeys(dt);
+
+  score+=0.05*dt;
+
+  bugTimer+=dt;
+  const spawnInterval=Math.max(22,55-score/20);
+  if(bugTimer>=spawnInterval){bugTimer-=spawnInterval;spawnBug();}
+
+  bugs.forEach(b=>{
+    b.life+=dt;
+    b.x+=b.vx*dt;b.y+=b.vy*dt;
+    if(b.x<b.plant.x-45)b.vx=Math.abs(b.vx);
+    if(b.x>b.plant.x+45)b.vx=-Math.abs(b.vx);
+    if(b.isPest){
+      b.dmgTimer+=dt;
+      if(b.dmgTimer>=b.type.speedDmgInterval){
+        b.dmgTimer=0;
+        if(!b.plant.dead){
+          b.plant.hp-=b.type.dmg;
+          SFX.hit();
+          if(b.plant.hp<=0){
+            b.plant.hp=0;
+            b.plant.dead=true;
+            plantsLost++;
+            SFX.fail();
+          }
+        }
+      }
+    }
+  });
+  // bugs eventually fly off if left too long (keeps list bounded, rewards proactive spraying)
+  bugs=bugs.filter(b=>b.life<600);
+
+  plants.forEach(drawPlant);
+  bugs.forEach(drawBug);
+  drawFlashes();
+  drawCursor();
+
+  updateHud();
+
+  if(plantsLost>=3){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(Math.floor(hi)));}
+    SFX.lose();
+  }
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

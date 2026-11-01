@@ -1,0 +1,219 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Greenhouse Pest Inspection</title><meta name="description" content="Play Greenhouse Pest Inspection free online — Inspect every plant for tiny hidden signs of pests or disease, flag the affected ones, and submit your checklist before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/greenhousepestinspection"><meta property="og:title" content="Greenhouse Pest Inspection - Multiport Games"><meta property="og:description" content="Play Greenhouse Pest Inspection free online — Inspect every plant for tiny hidden signs of pests or disease, flag the affected ones, and submit your checklist before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/greenhousepestinspection"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Greenhouse Pest Inspection","description":"Play Greenhouse Pest Inspection free online instantly. Inspect every plant for tiny hidden signs of pests or disease, flag the affected ones, and submit your checklist before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/greenhousepestinspection","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#house{background:#132619;border-radius:14px;padding:16px;text-align:center}
+#hud{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;color:#dff2d6;font-weight:800;font-size:.9rem;max-width:560px;margin:0 auto 10px}
+#timer{color:#ffd54f}
+#timer.low{color:#e94560}
+#grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;max-width:560px;margin:10px auto;touch-action:manipulation}
+.tile{position:relative;aspect-ratio:1/1;background:radial-gradient(circle at 35% 30%,#3f8a3f,#1f4d22);border-radius:10px;cursor:pointer;overflow:hidden;border:2px solid transparent}
+.tile.focus{border-color:#ffd54f}
+.tile .leaf{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:1.8rem}
+.tile .mark{position:absolute;border-radius:50%;opacity:.55}
+.tile .mark.spot{background:#5a3414;}
+.tile .mark.web{background:none;border:1px solid rgba(255,255,255,.5);border-radius:0;height:1px;width:14px;transform-origin:left center;}
+.tile .mark.discolor{background:#c9b23a;border-radius:40%;}
+.tile .flagIcon{position:absolute;top:3px;right:3px;font-size:1rem;display:none}
+.tile.flagged .flagIcon{display:block}
+.tile.flagged{outline:3px solid #e94560}
+.tile.reveal.infested{outline:3px solid #2f8a3e}
+.tile.reveal.missed{outline:3px solid #e94560}
+.tile.reveal.falseflag{outline:3px solid #ff9800}
+#status{color:#ffd54f;font-weight:800;min-height:1.6em;margin:8px 0}
+#submitBtn{padding:10px 24px;border:none;border-radius:20px;background:#3dd9a3;color:#133;font-weight:800;cursor:pointer;font-size:1rem;margin-top:6px}
+#msgOverlay{display:none;color:#fff;font-size:1.15rem;font-weight:800;margin-top:10px}
+@media(max-width:480px){#grid{grid-template-columns:repeat(3,1fr)}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Greenhouse Pest Inspection</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="house">
+      <div id="hud">
+        <span id="round">Round: 1</span>
+        <span id="timer">Time: 30</span>
+        <span id="lives">Lives: ❤❤❤</span>
+        <span id="hiscore">Hi: 0</span>
+      </div>
+      <div id="grid"></div>
+      <div id="status">Flag every plant that shows signs of pests or disease.</div>
+      <button id="submitBtn" onclick="submitChecklist()">Submit Checklist (Enter)</button>
+      <div id="msgOverlay"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Look closely at each plant for tiny spots, webbing, or discoloration. Click (or tap) a plant to flag it as infested. Submit your checklist before time runs out. Keyboard: arrow keys move the cursor, <b>Space</b> flags/unflags, <b>Enter</b> submits. Flag correctly with no false alarms to clear the round — 3 mistakes and it's game over!
+  </div>
+</div>
+<script>
+const HS_KEY='hs_greenhousepestinspection';
+let round=1,lives=3,score=0,hi=0,timeLeft=30,timerId=null,gameOver=false,locked=false;
+let tiles=[],cursor=0;
+
+function loadHi(){ try{hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0;}catch(e){hi=0;} }
+function saveHi(){ try{ if(score>hi){hi=score; localStorage.setItem(HS_KEY,String(hi));} }catch(e){} }
+
+function updateHud(){
+  document.getElementById('round').textContent=I18N.t('round_label','Round: {r}').replace('{r}',round);
+  const t=document.getElementById('timer');
+  t.textContent=I18N.t('time_label','Time: {t}').replace('{t}',timeLeft);
+  t.classList.toggle('low',timeLeft<=8);
+  document.getElementById('lives').textContent=I18N.t('lives_label','Lives: {h}').replace('{h}','❤'.repeat(Math.max(0,lives)));
+  document.getElementById('hiscore').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+}
+function setStatus(t){ document.getElementById('status').textContent=t; }
+
+function buildRound(){
+  const count = Math.min(16, 8 + round*2);
+  const infestedCount = Math.max(2, Math.round(count*0.3));
+  const idxs=new Set();
+  while(idxs.size<infestedCount) idxs.add(Math.floor(Math.random()*count));
+  tiles=[];
+  for(let i=0;i<count;i++){
+    const infested=idxs.has(i);
+    const marks=[];
+    if(infested){
+      const n=1+Math.floor(Math.random()*3);
+      for(let m=0;m<n;m++){
+        const type=['spot','web','discolor'][Math.floor(Math.random()*3)];
+        marks.push({type,x:10+Math.random()*75,y:10+Math.random()*75,size:3+Math.random()*4,rot:Math.random()*360});
+      }
+    }
+    tiles.push({infested,marks,flagged:false});
+  }
+  timeLeft=Math.max(15,30-round*2);
+  cursor=0;
+}
+
+function renderGrid(){
+  const el=document.getElementById('grid');
+  el.innerHTML='';
+  const cols = window.innerWidth<=480?3:4;
+  el.style.gridTemplateColumns=`repeat(${cols},1fr)`;
+  tiles.forEach((t,i)=>{
+    const div=document.createElement('div');
+    div.className='tile'+(t.flagged?' flagged':'');
+    div.innerHTML='<div class="leaf">🌿</div><div class="flagIcon">🚩</div>';
+    t.marks.forEach(mk=>{
+      const m=document.createElement('div');
+      m.className='mark '+mk.type;
+      m.style.left=mk.x+'%';
+      m.style.top=mk.y+'%';
+      if(mk.type==='web'){ m.style.transform=`rotate(${mk.rot}deg)`; }
+      else { m.style.width=mk.size+'px'; m.style.height=mk.size+'px'; }
+      div.appendChild(m);
+    });
+    div.onclick=()=>toggleFlag(i);
+    el.appendChild(div);
+  });
+  markCursor();
+}
+
+function markCursor(){
+  document.querySelectorAll('.tile').forEach(e=>e.classList.remove('focus'));
+  const el=document.querySelectorAll('.tile')[cursor];
+  if(el)el.classList.add('focus');
+}
+
+function toggleFlag(i){
+  if(gameOver||locked)return;
+  tiles[i].flagged=!tiles[i].flagged;
+  SFX.click();
+  renderGrid();
+}
+
+function tickTimer(){
+  timeLeft--;
+  updateHud();
+  if(timeLeft<=5&&timeLeft>0)SFX.tick();
+  if(timeLeft<=0){ clearInterval(timerId); submitChecklist(); }
+}
+
+function submitChecklist(){
+  if(gameOver||locked)return;
+  locked=true;
+  clearInterval(timerId);
+  let correct=0,missed=0,falseFlags=0;
+  document.querySelectorAll('.tile').forEach((el,i)=>{
+    const t=tiles[i];
+    if(t.infested&&t.flagged){ correct++; el.classList.add('reveal','infested'); }
+    else if(t.infested&&!t.flagged){ missed++; el.classList.add('reveal','missed'); }
+    else if(!t.infested&&t.flagged){ falseFlags++; el.classList.add('reveal','falseflag'); }
+  });
+  const totalInfested=tiles.filter(t=>t.infested).length;
+  const perfect = missed===0 && falseFlags===0;
+  score += correct*10 - missed*5 - falseFlags*5;
+  if(score<0)score=0;
+  updateHud();
+  if(perfect){
+    SFX.levelup();
+    setStatus(I18N.t('round_pass','✓ Perfect inspection! Round '+round+' clear.'));
+  } else if(missed+falseFlags<=Math.max(1,Math.floor(totalInfested/2))){
+    SFX.success();
+    setStatus(I18N.t('round_ok','Round '+round+' passed, but '+(missed+falseFlags)+' mistake(s) were made.'));
+  } else {
+    lives--;
+    SFX.fail();
+    setStatus(I18N.t('round_fail','✗ Too many mistakes this round! Lives left: '+Math.max(0,lives)));
+  }
+  updateHud();
+  setTimeout(()=>{
+    if(lives<=0){ endGame(); return; }
+    round++;
+    locked=false;
+    startRound();
+  },1600);
+}
+
+function startRound(){
+  buildRound();
+  renderGrid();
+  updateHud();
+  setStatus(I18N.t('inspect_hint','Flag every plant that shows signs of pests or disease.'));
+  clearInterval(timerId);
+  timerId=setInterval(tickTimer,1000);
+}
+
+function endGame(){
+  gameOver=true;
+  clearInterval(timerId);
+  saveHi();
+  updateHud();
+  SFX.lose();
+  const overlay=document.getElementById('msgOverlay');
+  overlay.style.display='block';
+  overlay.textContent=I18N.t('lose_msg','🐛 The infestation spread! Final score: '+score+' (reached round '+round+')');
+  const btn=document.createElement('button');
+  btn.textContent=I18N.t('play_again','Play Again');
+  btn.style.cssText='margin-top:10px;padding:9px 22px;background:#3dd9a3;border:none;border-radius:20px;color:#133;cursor:pointer;font-size:1rem;font-weight:800;display:block;margin-left:auto;margin-right:auto';
+  btn.onclick=startGame;
+  overlay.appendChild(document.createElement('br'));
+  overlay.appendChild(btn);
+}
+
+function startGame(){
+  round=1;lives=3;score=0;gameOver=false;locked=false;
+  document.getElementById('msgOverlay').style.display='none';
+  document.getElementById('msgOverlay').innerHTML='';
+  startRound();
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameOver)return;
+  if(e.key==='ArrowRight'){ e.preventDefault(); cursor=Math.min(tiles.length-1,cursor+1); markCursor(); }
+  else if(e.key==='ArrowLeft'){ e.preventDefault(); cursor=Math.max(0,cursor-1); markCursor(); }
+  else if(e.key==='ArrowDown'){ e.preventDefault(); const cols=window.innerWidth<=480?3:4; cursor=Math.min(tiles.length-1,cursor+cols); markCursor(); }
+  else if(e.key==='ArrowUp'){ e.preventDefault(); const cols=window.innerWidth<=480?3:4; cursor=Math.max(0,cursor-cols); markCursor(); }
+  else if(e.key===' '){ e.preventDefault(); toggleFlag(cursor); }
+  else if(e.key==='Enter'){ e.preventDefault(); submitChecklist(); }
+});
+
+loadHi();
+startGame();
+</script></body></html>
