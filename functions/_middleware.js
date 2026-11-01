@@ -26,7 +26,7 @@ export async function onRequest(context) {
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'unsafe-hashes' ${HANDLER_HASHES} https://cdn.counter.dev`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https://files.scamadviser.com",
+    "img-src 'self' data: blob: https://files.scamadviser.com https://cdn.counter.dev",
     "font-src 'self' data:",
     "media-src 'self'",
     "connect-src 'self' https://cdn.counter.dev",
