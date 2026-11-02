@@ -1,0 +1,291 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Toy Train Painting</title><meta name="description" content="Play Toy Train Painting free online — Pick the right color, paint each section of the wooden train in the reference order, and let each coat dry before the next!"><link rel="canonical" href="https://games.multiportllc.com/games/toytrainpainting"><meta property="og:title" content="Toy Train Painting - Multiport Games"><meta property="og:description" content="Play Toy Train Painting free online — Pick the right color, paint each section of the wooden train in the reference order, and let each coat dry before the next!"><meta property="og:url" content="https://games.multiportllc.com/games/toytrainpainting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Toy Train Painting","description":"Play Toy Train Painting free online instantly. Pick the right color, paint each section of the wooden train in the reference order, and let each coat dry before the next! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/toytrainpainting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#16222e;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#4ecdc4;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Toy Train Painting</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0 | Lives: 3</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Follow the reference strip: pick the matching color swatch (click/tap or keys 1-5), then click/tap the train section it belongs on (body, wheels, trim, numbering — or keys Q W E R). Wait for each coat to dry (the bar fills) before painting the next section, or you'll smudge it!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisplay=document.getElementById('score-display');
+const HS_KEY='hs_toytrainpainting';
+
+const COLORS=['#e94560','#4ecdc4','#ffd54f','#7ec850','#b06fd1'];
+const SECTIONS=['body','wheels','trim','number'];
+const SECTION_KEYS={q:'body',w:'wheels',e:'trim',r:'number'};
+
+let score=0,hi=parseInt(localStorage.getItem(HS_KEY)||'0',10),lives=3,level=1;
+let recipe=[],stepIdx=0,selectedColor=-1;
+let painted=[]; // {section,color} applied so far (for current car cycle, keyed by section name -> color)
+let dryTimer=0,dryNeeded=46,drying=false;
+let state='idle'; // idle, picking, drying, roundwin, gameover
+let flashMsg='',flashUntil=0,flashOk=true;
+let lastTime=null,winAnim=0;
+
+function updateHud(){
+  scoreDisplay.textContent=I18N.t('score_hi_lives_label','Score: {s} | Hi: {h} | Lives: {l}')
+    .replace('{s}',score).replace('{h}',hi).replace('{l}',Math.max(0,lives));
+}
+function saveHi(){ if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));} }
+
+function buildRecipe(){
+  const cars=Math.min(1+Math.floor((level-1)/1),5);
+  const r=[];
+  for(let car=0;car<cars;car++){
+    const order=SECTIONS.slice();
+    // shuffle order per car
+    for(let i=order.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [order[i],order[j]]=[order[j],order[i]]; }
+    order.forEach(sec=>{ r.push({section:sec,color:Math.floor(Math.random()*COLORS.length)}); });
+  }
+  return r;
+}
+
+function startRound(){
+  recipe=buildRecipe();
+  stepIdx=0;
+  selectedColor=-1;
+  painted={};
+  drying=false;dryTimer=0;
+  dryNeeded=Math.max(20,46-level*2);
+  state='picking';
+}
+
+function flash(msg,ok){ flashMsg=msg;flashOk=ok;flashUntil=performance.now()+900; }
+
+function sectionRect(name){
+  // single train car drawn centered
+  if(name==='body')return {x:260,y:170,w:280,h:90};
+  if(name==='wheels')return {x:260,y:262,w:280,h:40};
+  if(name==='trim')return {x:260,y:150,w:280,h:20};
+  if(name==='number')return {x:380,y:190,w:60,h:40};
+}
+
+function swatchRect(i){ return {x:120+i*72,y:360,w:56,h:40}; }
+
+function drawTrain(){
+  // body
+  const bodyColor = painted['body']!=null ? COLORS[painted['body']] : '#3a4a5a';
+  ctx.fillStyle=bodyColor;
+  const b=sectionRect('body');
+  ctx.fillRect(b.x,b.y,b.w,b.h);
+  // trim stripe
+  const trimColor = painted['trim']!=null ? COLORS[painted['trim']] : '#2a3a4a';
+  const t=sectionRect('trim');
+  ctx.fillStyle=trimColor;
+  ctx.fillRect(t.x,t.y,t.w,t.h);
+  // number plate
+  const numColor = painted['number']!=null ? COLORS[painted['number']] : '#2a3a4a';
+  const n=sectionRect('number');
+  ctx.fillStyle=numColor;
+  ctx.fillRect(n.x,n.y,n.w,n.h);
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(String(level),n.x+n.w/2,n.y+n.h/2);
+  // chimney
+  ctx.fillStyle='#222';ctx.fillRect(b.x+20,b.y-24,24,24);
+  // wheels
+  const wheelColor = painted['wheels']!=null ? COLORS[painted['wheels']] : '#2a3a4a';
+  ctx.fillStyle=wheelColor;
+  for(let i=0;i<4;i++){
+    ctx.beginPath();ctx.arc(b.x+40+i*70,302,18,0,Math.PI*2);ctx.fill();
+  }
+  // outlines
+  ctx.strokeStyle='#0c1420';ctx.lineWidth=3;
+  ctx.strokeRect(b.x,b.y,b.w,b.h);
+}
+
+function highlightSection(name,color){
+  const r=sectionRect(name);
+  ctx.save();
+  ctx.strokeStyle=color;ctx.lineWidth=4;
+  ctx.shadowColor=color;ctx.shadowBlur=14;
+  ctx.strokeRect(r.x-4,r.y-4,r.w+8,r.h+8);
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,800,420);
+  const bg=ctx.createLinearGradient(0,0,0,420);
+  bg.addColorStop(0,'#0e1a26');bg.addColorStop(1,'#1b2e3e');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,420);
+
+  ctx.fillStyle='#4ecdc4';ctx.font='bold 18px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('level_label','Level {n}').replace('{n}',level),400,26);
+
+  // reference strip
+  ctx.font='13px Arial';ctx.fillStyle='#9fd';
+  ctx.fillText(I18N.t('reference_label','Reference step {i} / {n}').replace('{i}',Math.min(stepIdx+1,recipe.length)).replace('{n}',recipe.length),400,48);
+  for(let i=0;i<recipe.length;i++){
+    const x=60+ (i%20)*36;
+    const y= 64 + Math.floor(i/20)*22;
+    ctx.fillStyle = i<stepIdx ? '#2a3a2a' : (i===stepIdx?'#ffffff33':'#0000');
+    if(i<=stepIdx+6){
+      ctx.fillStyle=COLORS[recipe[i].color];
+      ctx.globalAlpha = i<stepIdx?0.35:1;
+      ctx.beginPath();ctx.arc(x,y,10,0,Math.PI*2);ctx.fill();
+      ctx.globalAlpha=1;
+      if(i===stepIdx){ ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,13,0,Math.PI*2);ctx.stroke(); }
+    }
+  }
+
+  if(state==='picking'||state==='drying'||state==='roundwin'){
+    drawTrain();
+    if(state==='picking'&&stepIdx<recipe.length){
+      highlightSection(recipe[stepIdx].section,'#ffffff55');
+    }
+  }
+
+  // swatches
+  for(let i=0;i<COLORS.length;i++){
+    const r=swatchRect(i);
+    ctx.fillStyle=COLORS[i];
+    ctx.fillRect(r.x,r.y,r.w,r.h);
+    ctx.strokeStyle= selectedColor===i?'#fff':'#0008';
+    ctx.lineWidth=selectedColor===i?4:2;
+    ctx.strokeRect(r.x,r.y,r.w,r.h);
+    ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+    ctx.fillText(String(i+1),r.x+r.w/2,r.y+r.h+16);
+  }
+
+  if(drying){
+    ctx.fillStyle='#ffd54f';ctx.font='bold 14px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('drying_label','Drying...'),400,330);
+    ctx.fillStyle='#223';ctx.fillRect(300,335,200,10);
+    ctx.fillStyle='#ffd54f';ctx.fillRect(300,335,200*Math.min(1,dryTimer/dryNeeded),10);
+  }
+
+  if(performance.now()<flashUntil){
+    ctx.fillStyle=flashOk?'#7ec850':'#e94560';
+    ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,400,150);
+  }
+
+  if(state==='roundwin'){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('batch_shipped_label','Batch matches the design — shipped!'),400,358);
+  }
+
+  if(state==='idle'){
+    ctx.fillStyle='#4ecdc4cc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint2','Tap or press 1-5 to start'),400,230);
+  }
+
+  if(state==='gameover'){
+    ctx.fillStyle='#0009';ctx.fillRect(0,0,800,420);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,190);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final score: {s}').replace('{s}',score),400,226);
+    ctx.fillText(I18N.t('restart_hint2','Tap or press Enter to restart'),400,254);
+  }
+}
+
+function pickColor(i){
+  if(state==='idle'){ restartGame(); return; }
+  if(state==='gameover'){ restartGame(); return; }
+  if(state!=='picking')return;
+  selectedColor=i;
+  SFX.select();
+}
+
+function pickSection(name){
+  if(state!=='picking')return;
+  if(selectedColor<0){ flash(I18N.t('pick_color_first','Pick a color first!'),false); SFX.error(); return; }
+  if(stepIdx>=recipe.length)return;
+  const want=recipe[stepIdx];
+  if(want.section!==name||want.color!==selectedColor){
+    flash(I18N.t('wrong_coat','Wrong coat for that part!'),false);
+    SFX.error();
+    lives--;
+    updateHud();
+    selectedColor=-1;
+    if(lives<=0){ SFX.lose(); saveHi(); state='gameover'; }
+    return;
+  }
+  painted[name]=selectedColor;
+  SFX.point();
+  flash(I18N.t('nice_coat','Nice coat!'),true);
+  stepIdx++;
+  selectedColor=-1;
+  if(stepIdx>=recipe.length){
+    SFX.success();
+    state='roundwin';
+    winAnim=0;
+  } else {
+    drying=true;dryTimer=0;state='drying';
+  }
+}
+
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(state==='drying'){
+    dryTimer+=dt;
+    if(dryTimer>=dryNeeded){ drying=false;state='picking'; }
+  } else if(state==='roundwin'){
+    winAnim+=dt/60;
+    if(winAnim>1.4){ score+=15*level; level++; saveHi(); startRound(); }
+  }
+  draw();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function restartGame(){
+  score=0;lives=3;level=1;
+  updateHud();
+  startRound();
+}
+
+function canvasPos(evt){
+  const rect=c.getBoundingClientRect();
+  const cx=(evt.touches?evt.touches[0].clientX:evt.clientX)-rect.left;
+  const cy=(evt.touches?evt.touches[0].clientY:evt.clientY)-rect.top;
+  return {x:cx*(800/rect.width),y:cy*(420/rect.height)};
+}
+
+function handlePointer(x,y){
+  if(state==='idle'||state==='gameover'){ restartGame(); return; }
+  if(state==='drying')return;
+  for(let i=0;i<COLORS.length;i++){
+    const r=swatchRect(i);
+    if(x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h){ pickColor(i); return; }
+  }
+  for(const name of SECTIONS){
+    const r=sectionRect(name);
+    if(x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h){ pickSection(name); return; }
+  }
+}
+
+c.addEventListener('click',e=>{ const p=canvasPos(e); handlePointer(p.x,p.y); });
+c.addEventListener('touchstart',e=>{ e.preventDefault(); const p=canvasPos(e); handlePointer(p.x,p.y); },{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(state==='idle'){ restartGame(); return; }
+  if(state==='gameover'){ if(e.key==='Enter'||e.code==='Space') restartGame(); return; }
+  if(/^[1-5]$/.test(e.key)){ pickColor(parseInt(e.key,10)-1); return; }
+  const k=e.key.toLowerCase();
+  if(SECTION_KEYS[k]) pickSection(SECTION_KEYS[k]);
+});
+
+state='idle';
+updateHud();
+draw();
+requestAnimationFrame(loop);
+</script></body></html>

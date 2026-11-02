@@ -1,0 +1,243 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Marionette Control Bar Balancing</title><meta name="description" content="Play Marionette Control Bar Balancing free online — Tilt the control bar with arrow keys, A/D, or drag to walk, turn, and gesture your marionette through its choreography without tangling the strings."><link rel="canonical" href="https://games.multiportllc.com/games/marionettecontrolbarbalancing"><meta property="og:title" content="Marionette Control Bar Balancing - Multiport Games"><meta property="og:description" content="Play Marionette Control Bar Balancing free online — Tilt the control bar with arrow keys, A/D, or drag to walk, turn, and gesture your marionette through its choreography without tangling the strings."><meta property="og:url" content="https://games.multiportllc.com/games/marionettecontrolbarbalancing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Marionette Control Bar Balancing","description":"Play Marionette Control Bar Balancing free online instantly. Tilt the control bar with arrow keys, A/D, or drag to walk, turn, and gesture your marionette through its choreography without tangling the strings. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/marionettecontrolbarbalancing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1420;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;color:#cdb4ff;font-size:1rem;font-weight:700;padding:8px 14px;flex-wrap:wrap;gap:4px}
+#hud .lives{color:#ff8fa3}
+#hud .hi{color:#ffd54f}
+#tangleBarWrap{height:8px;background:rgba(255,255,255,0.1);border-radius:4px;margin:0 14px 8px;overflow:hidden}
+#tangleBar{height:100%;width:0%;background:linear-gradient(90deg,#7ec850,#ffd54f,#e94560);transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Marionette Control Bar Balancing</div>
+  <div class="game-frame">
+    <div id="hud"><span id="scoreLbl">Score: 0</span><span id="levelLbl">Level: 1</span><span class="lives" id="livesLbl">❤❤❤</span><span class="hi" id="hiLbl">Hi: 0</span></div>
+    <div id="tangleBarWrap"><div id="tangleBar"></div></div>
+    <canvas id="c" width="800" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>←/→</b> (or A/D, or drag left-right on the stage) to tilt the control bar and step the marionette <b>left/right</b>; use <b>↑/↓</b> (or W/S) to raise an arm cue. Match each cue arrow the moment it reaches the stage line. Jerky or late moves fill the <b>tangle meter</b> — let it max out and you lose a life. 3 lives, and the choreography speeds up every level!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const STAGE_Y=240;
+let score=0,hi=0,lives=3,level=1,gameOver=false,win=false,started=false,maxLevel=8;
+let barAngle=0,tangle=0,cues=[],cueTimer=0,cueInterval=95,cueSpeed=3.2,cuesThisLevel=0,cuesPerLevel=10,lastTime=null;
+let keyL=false,keyR=false,keyU=false,keyD=false;
+let dragStartX=null,dragAngle=0;
+let shakeT=0;
+
+try{hi=parseInt(localStorage.getItem('mcb_hi')||'0',10)||0;}catch(e){hi=0;}
+
+const CUE_TYPES=['left','right','up','down'];
+const LINE_X=130;
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;win=false;started=false;
+  barAngle=0;tangle=0;cues=[];cueTimer=0;cueInterval=95;cueSpeed=3.2;cuesThisLevel=0;lastTime=null;
+}
+function saveHi(){ if(score>hi){hi=Math.floor(score);try{localStorage.setItem('mcb_hi',String(hi));}catch(e){}} }
+
+function spawnCue(){
+  const type=CUE_TYPES[Math.floor(Math.random()*CUE_TYPES.length)];
+  cues.push({x:820,type,resolved:false});
+}
+
+function currentDir(){
+  if(keyL)return 'left';
+  if(keyR)return 'right';
+  if(keyU)return 'up';
+  if(keyD)return 'down';
+  if(dragAngle<-12)return 'left';
+  if(dragAngle>12)return 'right';
+  return null;
+}
+
+function addTangle(amt){
+  tangle=Math.min(100,tangle+amt);
+  if(tangle>=100){
+    lives--;
+    tangle=0;
+    shakeT=10;
+    SFX.hurt();
+    if(lives<=0){gameOver=true;win=false;saveHi();SFX.lose();}
+  }
+}
+function reduceTangle(amt){ tangle=Math.max(0,tangle-amt); }
+
+function checkLevelUp(){
+  if(cuesThisLevel>=cuesPerLevel){
+    cuesThisLevel=0;level++;cueSpeed+=0.5;cueInterval=Math.max(48,cueInterval-6);
+    SFX.levelup();
+    if(level>maxLevel){gameOver=true;win=true;saveHi();SFX.win();}
+  }
+}
+
+function resolveCues(dt){
+  cues.forEach(cue=>{
+    if(cue.resolved)return;
+    if(cue.x<=LINE_X){
+      cue.resolved=true;
+      const dir=currentDir();
+      if(dir===cue.type){
+        score+=90;
+        reduceTangle(14);
+        SFX.success();
+        cuesThisLevel++;
+        checkLevelUp();
+      }else{
+        addTangle(26);
+        SFX.error();
+      }
+    }
+  });
+}
+
+document.addEventListener('keydown',e=>{
+  if(!started){ if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS','Space'].includes(e.code)){started=true;lastTime=null;} }
+  if(gameOver){ if(e.code==='Space'){reset();} return; }
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){keyL=true;e.preventDefault();}
+  if(e.code==='ArrowRight'||e.code==='KeyD'){keyR=true;e.preventDefault();}
+  if(e.code==='ArrowUp'||e.code==='KeyW'){keyU=true;e.preventDefault();}
+  if(e.code==='ArrowDown'||e.code==='KeyS'){keyD=true;e.preventDefault();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keyL=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keyR=false;
+  if(e.code==='ArrowUp'||e.code==='KeyW')keyU=false;
+  if(e.code==='ArrowDown'||e.code==='KeyS')keyD=false;
+});
+
+function pointerDown(x){
+  if(!started){started=true;lastTime=null;return;}
+  if(gameOver){reset();return;}
+  dragStartX=x;
+}
+function pointerMove(x){
+  if(dragStartX==null)return;
+  dragAngle=Math.max(-45,Math.min(45,(x-dragStartX)*0.6));
+}
+function pointerUp(){ dragStartX=null; dragAngle=0; }
+
+c.addEventListener('mousedown',e=>{const r=c.getBoundingClientRect();pointerDown((e.clientX-r.left)*(c.width/r.width));});
+c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();pointerMove((e.clientX-r.left)*(c.width/r.width));});
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();const r=c.getBoundingClientRect();const t=e.touches[0];pointerDown((t.clientX-r.left)*(c.width/r.width));},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();const r=c.getBoundingClientRect();const t=e.touches[0];pointerMove((t.clientX-r.left)*(c.width/r.width));},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerUp();},{passive:false});
+
+function drawBar(){
+  const targetAngle=keyL?-30:keyR?30:keyU?-10:keyD?10:dragAngle;
+  barAngle+=(targetAngle-barAngle)*0.25;
+  ctx.save();
+  ctx.translate(LINE_X,40);
+  ctx.rotate(barAngle*Math.PI/180);
+  ctx.fillStyle='#caa96b';
+  ctx.fillRect(-55,-6,110,12);
+  ctx.fillStyle='#8a6a3a';
+  ctx.beginPath();ctx.arc(-55,0,6,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(55,0,6,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+  return barAngle;
+}
+
+function drawMarionette(angle){
+  const lean=angle*0.5;
+  const px=LINE_X+lean*0.6;
+  const headY=100,bodyTop=118,bodyBot=190;
+  ctx.strokeStyle='rgba(255,255,255,0.25)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(LINE_X-55,46);ctx.lineTo(px-14,bodyTop);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(LINE_X+55,46);ctx.lineTo(px+14,bodyTop);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(LINE_X-20,46);ctx.lineTo(px,headY);ctx.stroke();
+  ctx.save();
+  ctx.translate(px,0);
+  ctx.rotate(lean*0.02);
+  ctx.fillStyle='#f0c088';
+  ctx.beginPath();ctx.arc(0,headY,16,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(-14,bodyTop,28,bodyBot-bodyTop);
+  const armLift=keyU?-18:0, armDrop=keyD?14:0;
+  ctx.strokeStyle='#f0c088';ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(-14,bodyTop+10);ctx.lineTo(-30,bodyTop+30+armLift+armDrop);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(14,bodyTop+10);ctx.lineTo(30,bodyTop+30+armLift+armDrop);ctx.stroke();
+  const walkOff=Math.sin(performance.now()/120)*8;
+  ctx.beginPath();ctx.moveTo(-8,bodyBot);ctx.lineTo(-8+walkOff,bodyBot+34);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(8,bodyBot);ctx.lineTo(8-walkOff,bodyBot+34);ctx.stroke();
+  ctx.restore();
+}
+
+const ARROW_GLYPH={left:'←',right:'→',up:'↑',down:'↓'};
+function drawCue(cue){
+  ctx.fillStyle=cue.resolved?'rgba(255,255,255,0.15)':'#e94560';
+  ctx.font='bold 30px Arial';ctx.textAlign='center';
+  ctx.fillText(ARROW_GLYPH[cue.type],cue.x,STAGE_Y-60);
+}
+
+function loop(){
+  if(shakeT>0){ctx.save();ctx.translate((Math.random()-0.5)*shakeT*0.6,(Math.random()-0.5)*shakeT*0.6);shakeT--;}
+  const grd=ctx.createLinearGradient(0,0,0,340);
+  grd.addColorStop(0,'#241a33');grd.addColorStop(1,'#120c1a');
+  ctx.fillStyle=grd;ctx.fillRect(0,0,800,340);
+  ctx.fillStyle='#3a2a4a';ctx.fillRect(0,STAGE_Y,800,100);
+  ctx.strokeStyle='#cdb4ff';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(LINE_X,60);ctx.lineTo(LINE_X,STAGE_Y);ctx.stroke();
+
+  document.getElementById('scoreLbl').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelLbl').textContent=I18N.t('level_label2','Level: {l}').replace('{l}',level);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+  document.getElementById('hiLbl').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+  document.getElementById('tangleBar').style.width=tangle+'%';
+
+  if(!started){
+    const angle=drawBar();
+    drawMarionette(angle);
+    ctx.fillStyle='#cdb4ffcc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press a direction key or drag to begin'),400,30);
+    if(shakeT>0)ctx.restore();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    const angle=drawBar();
+    drawMarionette(angle);
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,800,340);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(win?I18N.t('show_complete','SHOW COMPLETE!'):I18N.t('strings_tangled','STRINGS TANGLED!'),400,150);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',Math.floor(score)),400,190);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press Space or tap to try again'),400,220);
+    if(shakeT>0)ctx.restore();
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  cueTimer+=dt;
+  if(cueTimer>=cueInterval){cueTimer-=cueInterval;spawnCue();}
+
+  cues=cues.filter(cue=>cue.x>LINE_X-40);
+  cues.forEach(cue=>{ cue.x-=cueSpeed*dt; drawCue(cue); });
+  resolveCues(dt);
+
+  // passive tangle drift if idle too long without matching
+  if(currentDir()===null) addTangle(0.05*dt);
+
+  const angle=drawBar();
+  drawMarionette(angle);
+
+  if(shakeT>0)ctx.restore();
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

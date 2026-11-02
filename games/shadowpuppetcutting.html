@@ -1,0 +1,246 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Shadow Puppet Cutting</title><meta name="description" content="Play Shadow Puppet Cutting free online — Click or tap cells to cut the leather exactly along the pattern. Match the target silhouette before you run out of mistakes."><link rel="canonical" href="https://games.multiportllc.com/games/shadowpuppetcutting"><meta property="og:title" content="Shadow Puppet Cutting - Multiport Games"><meta property="og:description" content="Play Shadow Puppet Cutting free online — Click or tap cells to cut the leather exactly along the pattern. Match the target silhouette before you run out of mistakes."><meta property="og:url" content="https://games.multiportllc.com/games/shadowpuppetcutting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Shadow Puppet Cutting","description":"Play Shadow Puppet Cutting free online instantly. Click or tap cells to cut the leather exactly along the pattern. Match the target silhouette before you run out of mistakes. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/shadowpuppetcutting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1b1410;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{display:flex;justify-content:space-between;color:#f5deb3;font-size:1rem;font-weight:700;padding:8px 14px;flex-wrap:wrap;gap:4px}
+#hud .mist{color:#ff8fa3}
+#hud .hi{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Shadow Puppet Cutting</div>
+  <div class="game-frame">
+    <div id="hud"><span id="scoreLbl">Score: 0</span><span id="levelLbl">Level: 1</span><span class="mist" id="mistLbl">Mistakes: 0/3</span><span class="hi" id="hiLbl">Hi: 0</span></div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">The <b>glowing outline</b> on the left is the pattern to follow. Click or tap cells on the <b>leather card</b> on the right to cut them away so light shows through, matching the pattern exactly. Cutting a cell the pattern wants kept — or leaving one that should be cut — costs a mistake. 3 mistakes per attempt; finish each puppet to advance, with bigger, trickier silhouettes each level!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+let GRID=8,CELL=0,score=0,hi=0,level=1,mistakes=0,maxMistakes=3,maxLevel=8;
+let target=[],cut=[],gameOver=false,win=false,levelWin=false,started=false,timeLeft=0,levelStartTime=0;
+const BOARD_W=360;
+
+try{hi=parseInt(localStorage.getItem('spc_hi')||'0',10)||0;}catch(e){hi=0;}
+
+function genSilhouette(size){
+  // Build a connected blob silhouette resembling a puppet (torso+head+limbs) via simple shape rules + noise, guaranteed non-trivial
+  const g=Array.from({length:size},()=>Array(size).fill(false));
+  const cx=Math.floor(size/2);
+  // head
+  const headR=Math.max(1,Math.floor(size*0.14));
+  const headY=Math.floor(size*0.16);
+  for(let y=0;y<size;y++)for(let x=0;x<size;x++){
+    if((x-cx)**2+(y-headY)**2<=headR*headR+1)g[y][x]=true;
+  }
+  // torso
+  const tTop=Math.floor(size*0.3),tBot=Math.floor(size*0.68),tHalfW=Math.max(1,Math.floor(size*0.16));
+  for(let y=tTop;y<=tBot;y++)for(let x=cx-tHalfW;x<=cx+tHalfW;x++){
+    if(x>=0&&x<size)g[y][x]=true;
+  }
+  // arms (diagonal, random angle per side for variety)
+  for(const side of [-1,1]){
+    let ax=cx+side*(tHalfW), ay=tTop+1;
+    const len=Math.floor(size*0.3);
+    for(let i=0;i<len;i++){
+      ax+=side; ay+=(i%2===0?1:0);
+      const xi=Math.round(ax),yi=Math.round(ay);
+      if(xi>=0&&xi<size&&yi>=0&&yi<size)g[yi][xi]=true;
+    }
+  }
+  // legs
+  for(const side of [-1,1]){
+    let lx=cx+side*Math.floor(tHalfW*0.6), ly=tBot;
+    const len=size-tBot-1;
+    for(let i=0;i<len;i++){
+      ly+=1;
+      const xi=Math.round(lx),yi=Math.round(ly);
+      if(xi>=0&&xi<size&&yi>=0&&yi<size)g[yi][xi]=true;
+    }
+  }
+  // detail holes (eyes + a few decorative joint holes) — these must be CUT even though inside filled region
+  const holes=[];
+  holes.push([headY,cx-Math.max(1,Math.floor(headR*0.4))]);
+  holes.push([headY,cx+Math.max(1,Math.floor(headR*0.4))]);
+  const extraHoles=2+Math.min(4,level-1);
+  for(let i=0;i<extraHoles;i++){
+    const hy=tTop+1+Math.floor(Math.random()*(tBot-tTop-1));
+    const hx=cx+(Math.random()<0.5?-1:1)*Math.floor(Math.random()*tHalfW);
+    if(hy>=0&&hy<size&&hx>=0&&hx<size&&g[hy][hx])holes.push([hy,hx]);
+  }
+  holes.forEach(([hy,hx])=>{ if(hy>=0&&hy<size&&hx>=0&&hx<size) g[hy][hx]=false; });
+  return g;
+}
+
+function newLevel(){
+  GRID=Math.min(14,7+Math.floor((level-1)*0.8));
+  CELL=BOARD_W/GRID;
+  target=genSilhouette(GRID);
+  cut=Array.from({length:GRID},()=>Array(GRID).fill(false));
+  mistakes=0;
+  levelWin=false;
+  started=true;
+  levelStartTime=performance.now();
+}
+
+function reset(){
+  score=0;level=1;gameOver=false;win=false;started=false;
+  newLevel();
+}
+
+function saveHi(){
+  if(score>hi){hi=Math.floor(score);try{localStorage.setItem('spc_hi',String(hi));}catch(e){}}
+}
+
+function cellAt(mx,my,offsetX){
+  const gx=Math.floor((mx-offsetX)/CELL);
+  const gy=Math.floor(my/CELL);
+  if(gx<0||gx>=GRID||gy<0||gy>=GRID)return null;
+  return [gy,gx];
+}
+
+function handlePoint(clientX,clientY){
+  if(!started)return;
+  if(gameOver){reset();return;}
+  const rect=c.getBoundingClientRect();
+  const scaleX=c.width/rect.width, scaleY=c.height/rect.height;
+  const mx=(clientX-rect.left)*scaleX;
+  const my=(clientY-rect.top)*scaleY;
+  const rightOffset=800-BOARD_W-20;
+  const pos=cellAt(mx,my,rightOffset);
+  if(!pos)return;
+  const [gy,gx]=pos;
+  if(cut[gy][gx])return; // already cut, no re-toggle needed
+  const shouldCut=!target[gy][gx];
+  cut[gy][gx]=true;
+  if(shouldCut){
+    score+=15;
+    SFX.click();
+  }else{
+    mistakes++;
+    score=Math.max(0,score-5);
+    SFX.error();
+    if(mistakes>=maxMistakes){
+      gameOver=true;win=false;saveHi();SFX.lose();return;
+    }
+  }
+  checkComplete();
+}
+
+function checkComplete(){
+  for(let y=0;y<GRID;y++)for(let x=0;x<GRID;x++){
+    const shouldBeCut=!target[y][x];
+    if(shouldBeCut&&!cut[y][x])return;
+  }
+  // level complete
+  const timeTaken=(performance.now()-levelStartTime)/1000;
+  const bonus=Math.max(0,Math.floor(200-timeTaken*4))+ (maxMistakes-mistakes)*20;
+  score+=250+bonus;
+  SFX.levelup();
+  if(level>=maxLevel){
+    gameOver=true;win=true;saveHi();SFX.win();
+  }else{
+    level++;
+    newLevel();
+  }
+}
+
+c.addEventListener('click',e=>handlePoint(e.clientX,e.clientY));
+c.addEventListener('touchstart',e=>{e.preventDefault();const t=e.changedTouches[0];handlePoint(t.clientX,t.clientY);},{passive:false});
+
+let kx=0,ky=0;
+document.addEventListener('keydown',e=>{
+  if(!started||gameOver)return;
+  if(e.code==='ArrowUp'){ky=Math.max(0,ky-1);e.preventDefault();}
+  else if(e.code==='ArrowDown'){ky=Math.min(GRID-1,ky+1);e.preventDefault();}
+  else if(e.code==='ArrowLeft'){kx=Math.max(0,kx-1);e.preventDefault();}
+  else if(e.code==='ArrowRight'){kx=Math.min(GRID-1,kx+1);e.preventDefault();}
+  else if(e.code==='Space'||e.code==='Enter'){
+    e.preventDefault();
+    if(cut[ky]&&!cut[ky][kx]){
+      const shouldCut=!target[ky][kx];
+      cut[ky][kx]=true;
+      if(shouldCut){score+=15;SFX.click();}
+      else{mistakes++;score=Math.max(0,score-5);SFX.error(); if(mistakes>=maxMistakes){gameOver=true;win=false;saveHi();SFX.lose();return;}}
+      checkComplete();
+    }
+  }
+});
+
+function drawPattern(offsetX){
+  ctx.fillStyle='#120a08';ctx.fillRect(offsetX,0,BOARD_W,BOARD_W);
+  for(let y=0;y<GRID;y++)for(let x=0;x<GRID;x++){
+    if(target[y][x]){
+      ctx.fillStyle='#ffd54f';
+      ctx.fillRect(offsetX+x*CELL+1,y*CELL+1,CELL-2,CELL-2);
+    }
+  }
+  ctx.strokeStyle='rgba(255,255,255,0.08)';
+  for(let i=0;i<=GRID;i++){
+    ctx.beginPath();ctx.moveTo(offsetX+i*CELL,0);ctx.lineTo(offsetX+i*CELL,BOARD_W);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(offsetX,i*CELL);ctx.lineTo(offsetX+BOARD_W,i*CELL);ctx.stroke();
+  }
+}
+
+function drawBoard(offsetX){
+  // backlight glow behind card
+  ctx.fillStyle='#2a1a10';ctx.fillRect(offsetX,0,BOARD_W,BOARD_W);
+  for(let y=0;y<GRID;y++)for(let x=0;x<GRID;x++){
+    if(cut[y][x]){
+      // cut-away cell: show light (yellow if correctly matches target empty, else still light but will count as mistake already resolved)
+      ctx.fillStyle='#fff3c4';
+      ctx.fillRect(offsetX+x*CELL+1,y*CELL+1,CELL-2,CELL-2);
+    }else{
+      ctx.fillStyle='#4a2f1d';
+      ctx.fillRect(offsetX+x*CELL+1,y*CELL+1,CELL-2,CELL-2);
+    }
+  }
+  if(kx>=0&&ky>=0&&kx<GRID&&ky<GRID){
+    ctx.strokeStyle='#e94560';ctx.lineWidth=3;
+    ctx.strokeRect(offsetX+kx*CELL+2,ky*CELL+2,CELL-4,CELL-4);
+  }
+  ctx.strokeStyle='rgba(0,0,0,0.35)';
+  for(let i=0;i<=GRID;i++){
+    ctx.beginPath();ctx.moveTo(offsetX+i*CELL,0);ctx.lineTo(offsetX+i*CELL,BOARD_W);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(offsetX,i*CELL);ctx.lineTo(offsetX+BOARD_W,i*CELL);ctx.stroke();
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,440);
+  ctx.fillStyle='#1b1410';ctx.fillRect(0,0,800,440);
+
+  ctx.fillStyle='#f5deb3aa';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('pattern_label','PATTERN'),20+BOARD_W/2,BOARD_W+20);
+  ctx.fillText(I18N.t('your_cut_label','YOUR CUT'),800-BOARD_W-20+BOARD_W/2,BOARD_W+20);
+
+  drawPattern(20);
+  drawBoard(800-BOARD_W-20);
+
+  document.getElementById('scoreLbl').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelLbl').textContent=I18N.t('level_label2','Level: {l}').replace('{l}',level);
+  document.getElementById('mistLbl').textContent=I18N.t('mistakes_label','Mistakes: {m}/{n}').replace('{m}',mistakes).replace('{n}',maxMistakes);
+  document.getElementById('hiLbl').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,800,440);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(win?I18N.t('puppet_finished','PUPPET FINISHED!'):I18N.t('leather_ruined','LEATHER RUINED!'),400,190);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',Math.floor(score)),400,230);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space to try again'),400,260);
+  }
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>
