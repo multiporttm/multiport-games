@@ -1,0 +1,367 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Museum Exhibit Lighting</title><meta name="description" content="Play Museum Exhibit Lighting free online — Dial in each spotlight's angle, color temperature, and brightness to showcase the specimen without glare or UV damage. 3 lives, gets harder fast."><link rel="canonical" href="https://games.multiportllc.com/games/museumexhibitlighting"><meta property="og:title" content="Museum Exhibit Lighting - Multiport Games"><meta property="og:description" content="Play Museum Exhibit Lighting free online — Dial in each spotlight's angle, color temperature, and brightness to showcase the specimen without glare or UV damage. 3 lives, gets harder fast."><meta property="og:url" content="https://games.multiportllc.com/games/museumexhibitlighting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Museum Exhibit Lighting","description":"Play Museum Exhibit Lighting free online instantly. Design the lighting for a museum display case by choosing angle, color temperature, and brightness for each spotlight to properly highlight a specimen without glare or harsh shadows, and without UV levels that would damage delicate materials over time. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/museumexhibitlighting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1a2e;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffd54f;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lv{color:#7ec8e8}
+#hud span.hs{color:#8fbf7a}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Museum Exhibit Lighting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0</span>
+      <span class="lv" id="levelDisp">Round: 1</span>
+      <span id="livesDisp">Lives: ❤❤❤</span>
+      <span class="hs" id="hsDisp">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Pick a spotlight with <b>Tab</b> or <b>click/tap</b> its column, then drag a slider (<b>mouse/touch</b>) or use <b>Arrow Keys</b> (Left/Right picks the slider, Up/Down adjusts it) to set <b>Angle</b>, <b>Color Temperature</b>, and <b>Brightness</b>. Keep every spotlight inside the safe green range — too hot/bright causes glare, too cool/bright builds up damaging UV — then press <b>Enter/Space</b> to confirm the case before the exhibit opens.</div>
+</div>
+<script>
+(function(){
+const HS_KEY='museumexhibitlighting_hs';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+
+let score=0,lives=3,round=1,hi=0,gameOver=false,started=false;
+let lastTime=null,timeLeft=0,timeLimit=24;
+let selLight=0,selParam=0;
+let flashT=0,flashColor='#4caf50';
+let dragging=null;
+
+let lights=[];
+const PARAMS=['angle','temp','bright'];
+const RANGES={angle:[0,90],temp:[2000,8000],bright:[0,100]};
+
+function loadHi(){ try{ hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0; }catch(e){ hi=0; } }
+function saveHi(){ try{ localStorage.setItem(HS_KEY,String(hi)); }catch(e){} }
+loadHi();
+
+function rand(lo,hi){ return lo+Math.random()*(hi-lo); }
+
+function buildRound(){
+  const count=round<3?1:(round<6?2:3);
+  const tol = { angle:Math.max(6,22-round*2), temp:Math.max(250,900-round*70), bright:Math.max(6,22-round*2) };
+  lights=[];
+  for(let i=0;i<count;i++){
+    lights.push({
+      angle:45,temp:4500,bright:50,
+      targetAngle:rand(15,75),targetTemp:rand(2800,6500),targetBright:rand(25,80),
+      tol,
+      ok:false
+    });
+  }
+  selLight=0;selParam=0;
+}
+
+function setupRound(){
+  timeLimit=Math.max(10,26-round*1.2);
+  timeLeft=timeLimit;
+  buildRound();
+}
+
+function reset(){
+  score=0;lives=3;round=1;gameOver=false;started=false;lastTime=null;
+  setupRound();
+}
+reset();
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelDisp').textContent=I18N.t('round_label','Round: {l}').replace('{l}',round);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {h}').replace('{h}','❤'.repeat(Math.max(0,lives)));
+  document.getElementById('hsDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+}
+
+function startGame(){ if(!started){started=true;} else if(gameOver){reset();started=true;} }
+
+function checkLight(L){
+  const da=Math.abs(L.angle-L.targetAngle);
+  const dt=Math.abs(L.temp-L.targetTemp);
+  const db=Math.abs(L.bright-L.targetBright);
+  return da<=L.tol.angle && dt<=L.tol.temp && db<=L.tol.bright;
+}
+
+function glareUvOf(L){
+  // glare: direct low angle + high brightness; uv: cool temp + high brightness
+  const glare = (L.angle<25?(25-L.angle):0) * (L.bright/40);
+  const uv = (L.temp>5500?(L.temp-5500)/200:0) * (L.bright/40);
+  return {glare,uv};
+}
+
+function allOk(){ return lights.every(L=>checkLight(L)); }
+
+function loseLife(){
+  lives--;SFX.hurt();flashT=10;flashColor='#e94560';
+  if(lives<=0)endGame();
+}
+
+function finishRound(){
+  score+=140*round;SFX.levelup();
+  round++;
+  setupRound();
+}
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;saveHi();}
+  SFX.lose();
+}
+
+function submit(){
+  lights.forEach(L=>L.ok=checkLight(L));
+  if(allOk()){
+    score+=60*round;
+    SFX.success();flashT=8;flashColor='#4caf50';
+    finishRound();
+  } else {
+    SFX.error();
+    loseLife();
+    if(!gameOver){ /* keep trying same round */ }
+  }
+}
+
+const colW=()=>Math.min(220,(W-60)/Math.max(1,lights.length));
+
+function sliderRect(lightIdx,paramIdx){
+  const cw=colW();
+  const cx=40+lightIdx*cw+cw/2;
+  const topY=120,sliderH=160;
+  const sx=cx-50+paramIdx*50;
+  return {x:sx,y:topY,w:26,h:sliderH,cx:sx+13};
+}
+
+function valueFromY(param,y,rect){
+  const [lo,hi]=RANGES[param];
+  let pct=1-(y-rect.y)/rect.h;
+  pct=Math.max(0,Math.min(1,pct));
+  return lo+pct*(hi-lo);
+}
+function pctOf(param,v){
+  const [lo,hi]=RANGES[param];
+  return Math.max(0,Math.min(1,(v-lo)/(hi-lo)));
+}
+
+function canvasPt(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+
+function hitSlider(mx,my){
+  for(let li=0;li<lights.length;li++){
+    for(let pi=0;pi<PARAMS.length;pi++){
+      const r=sliderRect(li,pi);
+      if(mx>=r.x-10&&mx<=r.x+r.w+10&&my>=r.y-10&&my<=r.y+r.h+10)return {li,pi,r};
+    }
+  }
+  return null;
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(!started||gameOver){startGame();return;}
+  const pt=canvasPt(e.clientX,e.clientY);
+  const hit=hitSlider(pt.x,pt.y);
+  if(hit){
+    dragging=hit; selLight=hit.li; selParam=hit.pi;
+    lights[hit.li][PARAMS[hit.pi]]=valueFromY(PARAMS[hit.pi],pt.y,hit.r);
+    SFX.click();
+  }
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const pt=canvasPt(e.clientX,e.clientY);
+  lights[dragging.li][PARAMS[dragging.pi]]=valueFromY(PARAMS[dragging.pi],pt.y,dragging.r);
+});
+window.addEventListener('pointerup',()=>{ dragging=null; });
+
+document.addEventListener('keydown',e=>{
+  if(!started||gameOver){ if(e.code==='Space'||e.code==='Enter'){startGame();} return; }
+  if(e.code==='Tab'){
+    e.preventDefault();
+    selLight=(selLight+1)%lights.length;
+  } else if(e.code==='ArrowLeft'){
+    e.preventDefault();
+    selParam=(selParam+PARAMS.length-1)%PARAMS.length;
+  } else if(e.code==='ArrowRight'){
+    e.preventDefault();
+    selParam=(selParam+1)%PARAMS.length;
+  } else if(e.code==='ArrowUp'||e.code==='ArrowDown'){
+    e.preventDefault();
+    const L=lights[selLight],p=PARAMS[selParam];
+    const [lo,hi]=RANGES[p];
+    const step=(hi-lo)/40*(e.code==='ArrowUp'?1:-1);
+    L[p]=Math.max(lo,Math.min(hi,L[p]+step));
+  } else if(e.code==='Enter'||e.code==='Space'){
+    e.preventDefault();
+    submit();
+  }
+});
+
+function tempColor(t){
+  if(t<3200)return '#ffb347';
+  if(t<4500)return '#ffe0a3';
+  if(t<5800)return '#fff6e8';
+  if(t<7000)return '#dceeff';
+  return '#b9d9ff';
+}
+
+function drawCase(li,L,isSel){
+  const cw=colW();
+  const cx=40+li*cw+cw/2;
+  const caseY=330,caseW=cw-24,caseH=40;
+  const {glare,uv}=glareUvOf(L);
+  // light cone
+  const rad=(90-L.angle)*Math.PI/180;
+  const srcX=cx, srcY=60;
+  const targetX=cx, targetY=caseY;
+  ctx.save();
+  const col=tempColor(L.temp);
+  const grad=ctx.createRadialGradient(targetX,targetY,5,targetX,targetY,80);
+  grad.addColorStop(0,col+'');
+  grad.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.globalAlpha=Math.min(1,0.25+L.bright/120);
+  ctx.fillStyle=grad;
+  ctx.beginPath();ctx.ellipse(targetX,targetY,70,34,0,0,Math.PI*2);ctx.fill();
+  ctx.globalAlpha=1;
+  // spotlight fixture
+  ctx.save();
+  ctx.translate(srcX,srcY);
+  ctx.rotate((L.angle-45)*Math.PI/180*0.6);
+  ctx.fillStyle='#444';
+  ctx.beginPath();ctx.moveTo(-10,-14);ctx.lineTo(10,-14);ctx.lineTo(16,10);ctx.lineTo(-16,10);ctx.closePath();ctx.fill();
+  ctx.fillStyle=col;
+  ctx.beginPath();ctx.arc(0,10,6,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle='rgba(255,255,255,0.08)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(srcX,srcY);ctx.lineTo(targetX,targetY);ctx.stroke();
+  // display case + specimen
+  ctx.fillStyle='#2a2a3e';ctx.fillRect(cx-caseW/2,caseY,caseW,caseH);
+  ctx.strokeStyle='#555';ctx.lineWidth=2;ctx.strokeRect(cx-caseW/2,caseY,caseW,caseH);
+  ctx.fillStyle='#d9c08a';
+  ctx.beginPath();ctx.ellipse(cx,caseY+20,22,12,0,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+
+  // warning icons
+  if(glare>5){
+    ctx.fillStyle='#ffd54f';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText('✦',cx+caseW/2-10,caseY-6);
+  }
+  if(uv>5){
+    ctx.fillStyle='#8a5aff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+    ctx.fillText('UV',cx-caseW/2+16,caseY-6);
+  }
+
+  // column highlight
+  if(isSel){
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;ctx.setLineDash([4,4]);
+    ctx.strokeRect(cx-cw/2+6,50,cw-12,330);
+    ctx.setLineDash([]);
+  }
+
+  // status badge
+  const ok=checkLight(L);
+  ctx.fillStyle=ok?'#4caf50':'#e94560';
+  ctx.beginPath();ctx.arc(cx,caseY+caseH+14,6,0,Math.PI*2);ctx.fill();
+}
+
+function drawSliders(li,L){
+  PARAMS.forEach((p,pi)=>{
+    const r=sliderRect(li,pi);
+    ctx.fillStyle='rgba(255,255,255,0.08)';
+    ctx.fillRect(r.x,r.y,r.w,r.h);
+    // target band
+    const [lo,hi]=RANGES[p];
+    const tgt=L['target'+p[0].toUpperCase()+p.slice(1)];
+    const tol=L.tol[p];
+    const bandTopPct=1-Math.min(1,(tgt+tol-lo)/(hi-lo));
+    const bandBotPct=1-Math.max(0,(tgt-tol-lo)/(hi-lo));
+    ctx.fillStyle='rgba(76,175,80,0.35)';
+    ctx.fillRect(r.x,r.y+bandTopPct*r.h,r.w,(bandBotPct-bandTopPct)*r.h);
+    // handle
+    const pct=pctOf(p,L[p]);
+    const hy=r.y+(1-pct)*r.h;
+    const isActive=(li===selLight&&pi===selParam);
+    ctx.fillStyle=isActive?'#ffd54f':'#aaa';
+    ctx.fillRect(r.x-4,hy-4,r.w+8,8);
+    ctx.strokeStyle='#222';ctx.lineWidth=1;ctx.strokeRect(r.x-4,hy-4,r.w+8,8);
+    // label
+    ctx.fillStyle='#cfd8e8';ctx.font='10px Arial';ctx.textAlign='center';
+    const label=p==='angle'?'∠':(p==='temp'?'K':'☀');
+    ctx.fillText(label,r.cx,r.y+r.h+16);
+    let valTxt = p==='temp'?Math.round(L.temp)+'K':Math.round(L[p])+(p==='angle'?'°':'%');
+    ctx.fillText(valTxt,r.cx,r.y-8);
+  });
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0f0f1e');bg.addColorStop(1,'#1a1a2e');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#ffd54f';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to start'),W/2,H/2);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    lights.forEach((L,i)=>{drawCase(i,L,false);drawSliders(i,L);});
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Score: {s} — Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi)),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+48);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  timeLeft-=dt/60;
+  if(timeLeft<=2&&timeLeft>0&&Math.floor(timeLeft*5)%5===0)SFX.tick();
+  if(timeLeft<=0){
+    timeLeft=0;
+    loseLife();
+    if(!gameOver){ setupRound(); }
+  }
+
+  lights.forEach((L,i)=>{ drawCase(i,L,i===selLight); drawSliders(i,L); });
+
+  ctx.fillStyle='#ffd54f';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('lighting_hint','Keep every slider in the green band — avoid glare ✦ and UV build-up, then Enter/Space to confirm'),W/2,24);
+
+  const barW=300,pct=Math.max(0,timeLeft/timeLimit);
+  ctx.fillStyle='rgba(255,255,255,0.15)';ctx.fillRect(W/2-barW/2,34,barW,8);
+  ctx.fillStyle=pct<0.3?'#e94560':'#4caf50';
+  ctx.fillRect(W/2-barW/2,34,barW*pct,8);
+
+  if(flashT>0){
+    flashT--;
+    ctx.fillStyle=flashColor==='#4caf50'?'rgba(76,175,80,'+(flashT/8*0.3)+')':'rgba(233,69,96,'+(flashT/10*0.35)+')';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script></body></html>

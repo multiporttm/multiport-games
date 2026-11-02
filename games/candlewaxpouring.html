@@ -1,0 +1,279 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Candle Wax Pouring</title><meta name="description" content="Play Candle Wax Pouring free online — Heat the wax to temperature, then pour a slow steady stream into each jar to fill it exactly to the line. 3 lives, speeds up each round."><link rel="canonical" href="https://games.multiportllc.com/games/candlewaxpouring"><meta property="og:title" content="Candle Wax Pouring - Multiport Games"><meta property="og:description" content="Play Candle Wax Pouring free online — Heat the wax to temperature, then pour a slow steady stream into each jar to fill it exactly to the line. 3 lives, speeds up each round."><meta property="og:url" content="https://games.multiportllc.com/games/candlewaxpouring"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Candle Wax Pouring","description":"Play Candle Wax Pouring free online instantly. Heat the melted wax to the right temperature, then pour a slow, steady stream into each candle jar — filling exactly to the target line without overflowing, cracking the surface, or leaving air pockets. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/candlewaxpouring","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1a1109}
+#c{background:#2b1c10;display:block;border-radius:8px;touch-action:none;margin:0 auto}
+#hud{color:#e8c17a;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lv{color:#d98c3a}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#e05a5a}
+#touchControls{display:flex;justify-content:center;gap:10px;margin:10px 0;flex-wrap:wrap}
+#touchControls button{padding:14px 20px;border:none;border-radius:12px;font-weight:800;font-size:1rem;cursor:pointer;color:#fff;-webkit-tap-highlight-color:transparent;user-select:none}
+#heatBtn{background:#c0392b}
+#pourBtn{background:#d98c3a}
+#doneBtn{background:#3d8020}
+#touchControls button:active{transform:scale(.95)}
+@media(min-width:720px){#touchControls{display:none}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Candle Wax Pouring</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>Score: <b id="scoreVal">0</b></span>
+      <span class="lv">Level <b id="levelVal">1</b></span>
+      <span class="lives">Lives: <b id="livesVal">3</b></span>
+      <span class="hs">Hi: <b id="hiVal">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <div id="touchControls">
+      <button id="heatBtn">🔥 Heat</button>
+      <button id="pourBtn">🫗 Pour</button>
+      <button id="doneBtn">✅ Done</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    Hold <b>H</b> (or the 🔥 Heat button) to warm the wax into the green temperature zone. Hold <b>Space</b> (or 🫗 Pour) to pour it into the jar. Press <b>Enter</b> (or ✅ Done) once the fill line sits inside the target band to seal the candle. Pour outside the safe temperature and the surface cracks — overflow the jar and it's ruined. 3 lives, levels get tighter and faster.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const scoreEl=document.getElementById('scoreVal'),levelEl=document.getElementById('levelVal'),livesEl=document.getElementById('livesVal'),hiEl=document.getElementById('hiVal');
+
+const HS_KEY='candlewaxpouring_hiscore';
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+hiEl.textContent=hi;
+
+let score=0,level=1,lives=3,gameOver=false,started=false;
+let temp=20; // ambient
+let fill=0; // 0..jarCapacity px of wax height
+let crackAmt=0;
+let msg='',msgTimer=0;
+let heating=false,pouring=false;
+let lastTime=null;
+
+const JAR_X=W/2,JAR_W=160,JAR_TOP=120,JAR_BOTTOM=380,JAR_H=JAR_BOTTOM-JAR_TOP;
+
+let bandMin,bandMax,safeMin,safeMax,coolRate,pourRate,jitter;
+
+function setupLevel(){
+  const tightness=Math.max(10,34-level*2.2);
+  const center=JAR_H*0.42+Math.random()*JAR_H*0.2;
+  bandMin=center-tightness/2;
+  bandMax=center+tightness/2;
+  const safeW=Math.max(14,30-level*1.3);
+  const safeCenter=55+Math.random()*10;
+  safeMin=safeCenter-safeW/2;
+  safeMax=safeCenter+safeW/2;
+  coolRate=0.15+level*0.03;
+  pourRate=1.4+level*0.12;
+  jitter=level*0.04;
+  fill=0;crackAmt=0;
+  temp=20;
+}
+setupLevel();
+
+function fmt(k,f){return (window.I18N?I18N.t(k,f):f);}
+
+function flashMsg(k,f,ms){msg=fmt(k,f);msgTimer=ms||70;}
+
+function loseLife(k,f){
+  lives--;
+  SFX.hurt();
+  flashMsg(k,f,90);
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+  } else {
+    fill=0;crackAmt=0;temp=20;
+  }
+}
+
+function sealJar(){
+  if(crackAmt>=100)return;
+  if(fill>=bandMin&&fill<=bandMax){
+    const centerDist=Math.abs(fill-(bandMin+bandMax)/2);
+    const bandHalf=(bandMax-bandMin)/2;
+    const acc=1-Math.min(1,centerDist/bandHalf);
+    const gained=Math.round(80+120*acc)*level;
+    score+=gained;
+    SFX.success();
+    flashMsg('poured_ok','Candle sealed! +'+gained,80);
+    level++;
+    setupLevel();
+  } else if(fill<bandMin){
+    SFX.fail();
+    loseLife('too_little','Underfilled — jar ruined!');
+    setupLevel();
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&!started){}
+  if(e.code==='KeyH'){heating=true;if(!started)started=true;e.preventDefault();}
+  if(e.code==='Space'){pouring=true;if(!started)started=true;e.preventDefault();}
+  if(e.code==='Enter'){if(!started)started=true;else sealJar();if(gameOver){restart();}}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='KeyH')heating=false;
+  if(e.code==='Space')pouring=false;
+});
+
+function restart(){
+  score=0;level=1;lives=3;gameOver=false;started=true;
+  setupLevel();
+  livesEl.textContent=lives;
+}
+
+const heatBtn=document.getElementById('heatBtn'),pourBtn=document.getElementById('pourBtn'),doneBtn=document.getElementById('doneBtn');
+function holdable(btn,onDown,onUp){
+  btn.addEventListener('pointerdown',e=>{e.preventDefault();if(gameOver){restart();return;}if(!started)started=true;onDown();});
+  btn.addEventListener('pointerup',e=>{e.preventDefault();onUp();});
+  btn.addEventListener('pointerleave',e=>{onUp();});
+  btn.addEventListener('pointercancel',e=>{onUp();});
+}
+holdable(heatBtn,()=>heating=true,()=>heating=false);
+holdable(pourBtn,()=>pouring=true,()=>pouring=false);
+doneBtn.addEventListener('pointerdown',e=>{e.preventDefault();if(gameOver){restart();return;}if(!started){started=true;return;}sealJar();});
+
+c.addEventListener('pointerdown',e=>{if(gameOver)restart();else if(!started)started=true;});
+
+function drawThermo(x,y,w,h){
+  ctx.fillStyle='#111';
+  ctx.fillRect(x,y,w,h);
+  ctx.fillStyle='rgba(60,180,80,.35)';
+  const safeY1=y+h-(safeMax/100)*h;
+  const safeY2=y+h-(safeMin/100)*h;
+  ctx.fillRect(x,safeY1,w,safeY2-safeY1);
+  const tY=y+h-(Math.min(100,temp)/100)*h;
+  let col='#5aa7ff';
+  if(temp>=safeMin&&temp<=safeMax)col='#3d8020';
+  else if(temp>safeMax)col='#e05a5a';
+  ctx.fillStyle=col;
+  ctx.fillRect(x,tY,w,y+h-tY);
+  ctx.strokeStyle='#555';ctx.strokeRect(x,y,w,h);
+  ctx.fillStyle='#ddd';ctx.font='12px Arial';ctx.textAlign='center';
+  ctx.fillText(fmt('temp_label','Temp'),x+w/2,y-8);
+}
+
+function drawJar(){
+  ctx.strokeStyle='#cfe0ea';
+  ctx.lineWidth=4;
+  ctx.strokeRect(JAR_X-JAR_W/2,JAR_TOP,JAR_W,JAR_H);
+  // target band
+  ctx.fillStyle='rgba(120,200,120,.22)';
+  const by1=JAR_BOTTOM-bandMax,by2=JAR_BOTTOM-bandMin;
+  ctx.fillRect(JAR_X-JAR_W/2,by1,JAR_W,by2-by1);
+  ctx.strokeStyle='#7ec850';ctx.lineWidth=2;
+  ctx.setLineDash([6,4]);
+  ctx.beginPath();ctx.moveTo(JAR_X-JAR_W/2,by1);ctx.lineTo(JAR_X+JAR_W/2,by1);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(JAR_X-JAR_W/2,by2);ctx.lineTo(JAR_X+JAR_W/2,by2);ctx.stroke();
+  ctx.setLineDash([]);
+  // wax fill
+  const fy=JAR_BOTTOM-fill;
+  const grad=ctx.createLinearGradient(0,fy,0,JAR_BOTTOM);
+  grad.addColorStop(0,'#f5d98a');grad.addColorStop(1,'#d9a94a');
+  ctx.fillStyle=grad;
+  ctx.fillRect(JAR_X-JAR_W/2+2,fy,JAR_W-4,JAR_BOTTOM-fy);
+  // cracks
+  if(crackAmt>5){
+    ctx.strokeStyle='rgba(120,60,10,'+Math.min(1,crackAmt/100)+')';
+    ctx.lineWidth=1.5;
+    const n=Math.floor(crackAmt/12);
+    for(let i=0;i<n;i++){
+      const cx=JAR_X-JAR_W/2+10+((i*53)%(JAR_W-20));
+      ctx.beginPath();ctx.moveTo(cx,fy+2);ctx.lineTo(cx+8,fy+10);ctx.lineTo(cx-4,fy+18);ctx.stroke();
+    }
+  }
+  // overflow stream
+  if(pouring&&!gameOver&&fill<JAR_H+10){
+    ctx.fillStyle='rgba(217,169,74,.85)';
+    const streamJitter=(Math.random()-0.5)*6*jitter*10;
+    ctx.fillRect(JAR_X-5+streamJitter*0.1,JAR_TOP-60,10,60);
+  }
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#241508');sky.addColorStop(1,'#120a04');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#e8c17a';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(fmt('start_hint','Hold H to heat, Space to pour, Enter to seal'),W/2,60);
+    drawThermo(60,120,50,260);
+    drawJar();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawThermo(60,120,50,260);
+    drawJar();
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(fmt('game_over_title','GAME OVER'),W/2,60);
+    ctx.font='18px Arial';
+    ctx.fillText(fmt('restart_hint','Tap or Enter to restart'),W/2,90);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(heating){temp+=0.55*dt;}
+  temp-=coolRate*dt*(heating?0:1);
+  temp=Math.max(0,Math.min(100,temp));
+
+  if(pouring){
+    const inSafe=temp>=safeMin&&temp<=safeMax;
+    const tooCold=temp<safeMin;
+    const tooHot=temp>safeMax;
+    let rate=pourRate;
+    if(tooCold)rate*=0.35;
+    if(tooHot){rate*=1.6;crackAmt+=0.9*dt;}
+    if(!inSafe&&!tooCold&&!tooHot){}
+    rate+= (Math.random()-0.5)*jitter;
+    fill+=Math.max(0,rate)*dt;
+    if(fill>JAR_H){
+      fill=JAR_H;
+      SFX.hit();
+      loseLife('overflow','Overflow — wax spilled over!');
+    }
+  }
+
+  drawThermo(60,120,50,260);
+  drawJar();
+
+  if(crackAmt>=100){
+    SFX.hit();
+    loseLife('cracked','Surface cracked — candle ruined!');
+  }
+
+  if(msgTimer>0){
+    msgTimer-=dt;
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,40);
+  }
+
+  scoreEl.textContent=Math.floor(score);
+  levelEl.textContent=level;
+  livesEl.textContent=Math.max(0,lives);
+  hiEl.textContent=hi;
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
