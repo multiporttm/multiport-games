@@ -1,0 +1,250 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Space Cargo Unloading</title><meta name="description" content="Play Space Cargo Unloading free online — Tap/click a floating cargo bag to select it, then use the arrow keys or on-screen D-pad to push it in microgravity. It slides until it hits a wall or bag — avoid station equipment and guide every bag into its matching colored storage zone before the timer runs out."><link rel="canonical" href="https://games.multiportllc.com/games/spacecargounloading"><meta property="og:title" content="Space Cargo Unloading - Multiport Games"><meta property="og:description" content="Play Space Cargo Unloading free online — Tap/click a floating cargo bag to select it, then use the arrow keys or on-screen D-pad to push it in microgravity. It slides until it hits a wall or bag — avoid station equipment and guide every bag into its matching colored storage zone before the timer runs out."><meta property="og:url" content="https://games.multiportllc.com/games/spacecargounloading"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Space Cargo Unloading","description":"Play Space Cargo Unloading free online instantly. Select a floating cargo bag and push it along the station corridor with arrow keys or a D-pad. In microgravity it slides until it hits a wall, another bag, or station equipment, so plan each push carefully to steer every bag into its matching colored storage zone before the resupply capsule's docking timer runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/spacecargounloading","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#060611}
+#c{background:#0b1430;display:block;border-radius:8px;touch-action:none}
+#hud{color:#bfe3ff;font-size:1rem;font-weight:700;text-align:center;padding:6px;display:flex;justify-content:center;gap:14px;flex-wrap:wrap}
+#hud span{white-space:nowrap}
+#dpad{display:grid;grid-template-columns:48px 48px 48px;grid-template-rows:44px 44px;gap:6px;justify-content:center;margin:10px auto 0}
+#dpad button{background:#1b2a52;color:#bfe3ff;border:1px solid #3a5a9a;border-radius:8px;font-size:1.3rem;cursor:pointer}
+#dpad button:active{background:#2a3f78}
+#up{grid-column:2;grid-row:1}
+#left{grid-column:1;grid-row:2}
+#down{grid-column:2;grid-row:2}
+#right{grid-column:3;grid-row:2}
+#msg{color:#ffd54f;text-align:center;font-weight:700;min-height:1.4em;margin-top:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Space Cargo Unloading</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="levelDisp">Capsule: 1</span>
+      <span id="livesDisp">Hull: ❤❤❤</span>
+      <span id="timeDisp">Time: 60</span>
+      <span id="scoreDisp">Stowed: 0 | Hi: 0</span>
+    </div>
+    <canvas id="c" width="450" height="300"></canvas>
+    <div id="msg"></div>
+    <div id="dpad">
+      <button id="up">↑</button>
+      <button id="left">←</button>
+      <button id="down">↓</button>
+      <button id="right">→</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Tap or click a floating cargo bag to select it (ring shows selection), then press the <b>Arrow Keys</b> or the on-screen <b>D-pad</b> to push it. In microgravity it slides until it hits a wall, another bag, or station equipment — bumping equipment damages the hull! Guide every bag into its matching colored storage zone before time runs out to clear the capsule.</div>
+</div>
+<script>
+const KEY='hiscore_spacecargounloading';
+const CELL=50,COLS=9,ROWS=6;
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const COLORS=['#ff6b6b','#4dd0e1','#ffd54f','#9ccc65','#ba68c8','#ff9f43'];
+
+let level=1,lives=3,score=0,hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let obstacles=[],bags=[],targets=[],selected=-1;
+let timeLeft=60,timerId=null,gameOver=false,levelClear=false,started=false;
+
+function occupied(x,y,list){return list.some(o=>o.x===x&&o.y===y);}
+
+function genLevel(){
+  obstacles=[];bags=[];targets=[];selected=-1;levelClear=false;
+  const nBags=Math.min(3+Math.floor(level/2),6);
+  const nObs=Math.min(4+level,16);
+  const used=[];
+  function freeCell(){
+    let x,y,tries=0;
+    do{x=Math.floor(Math.random()*COLS);y=Math.floor(Math.random()*ROWS);tries++;}
+    while(used.some(u=>u.x===x&&u.y===y)&&tries<500);
+    used.push({x,y});
+    return {x,y};
+  }
+  for(let i=0;i<nObs;i++){const p=freeCell();obstacles.push(p);}
+  for(let i=0;i<nBags;i++){
+    const b=freeCell();const t=freeCell();
+    const color=COLORS[i%COLORS.length];
+    bags.push({x:b.x,y:b.y,color,stored:false});
+    targets.push({x:t.x,y:t.y,color});
+  }
+  timeLeft=Math.max(25,60-level*3);
+  document.getElementById('msg').textContent='';
+}
+
+function allStored(){return bags.every(b=>b.stored);}
+
+function slide(dx,dy){
+  if(selected<0||gameOver||levelClear)return;
+  const b=bags[selected];
+  if(b.stored)return;
+  let x=b.x,y=b.y;
+  while(true){
+    const nx=x+dx,ny=y+dy;
+    if(nx<0||nx>=COLS||ny<0||ny>=ROWS)break;
+    if(occupied(nx,ny,obstacles)){
+      lives--;
+      SFX.hit();
+      updateHud();
+      flashMsg(I18N.t('bump_msg','Bumped station equipment!'));
+      if(lives<=0){endGame(false);return;}
+      break;
+    }
+    const otherBag=bags.find((ob,idx)=>idx!==selected&&!ob.stored&&ob.x===nx&&ob.y===ny);
+    if(otherBag)break;
+    x=nx;y=ny;
+  }
+  if(x!==b.x||y!==b.y)SFX.swoosh();
+  b.x=x;b.y=y;
+  const tgt=targets[selected];
+  if(b.x===tgt.x&&b.y===tgt.y){
+    b.stored=true;score++;SFX.point();
+    flashMsg(I18N.t('stowed_msg','Cargo stowed!'));
+    selected=-1;
+    if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+    if(allStored()){
+      levelClear=true;
+      SFX.levelup();
+      flashMsg(I18N.t('capsule_clear_msg','Capsule cleared! Next docking incoming...'));
+      clearInterval(timerId);
+      setTimeout(()=>{level++;lives=Math.min(3,lives+1);genLevel();startTimer();},1400);
+    }
+  }
+  draw();
+}
+
+function flashMsg(t){document.getElementById('msg').textContent=t;}
+
+function startTimer(){
+  clearInterval(timerId);
+  timerId=setInterval(()=>{
+    if(gameOver||levelClear)return;
+    timeLeft--;
+    if(timeLeft<=0){timeLeft=0;endGame(true);}
+    updateHud();
+    draw();
+  },1000);
+}
+
+function endGame(timedOut){
+  gameOver=true;
+  clearInterval(timerId);
+  SFX.lose();
+  flashMsg(timedOut?I18N.t('docking_missed_msg','Docking window missed! Tap/click to retry.'):I18N.t('hull_breach_msg','Too much equipment damage! Tap/click to retry.'));
+  draw();
+}
+
+function updateHud(){
+  document.getElementById('levelDisp').textContent=I18N.t('level_label','Capsule: {n}').replace('{n}',level);
+  document.getElementById('livesDisp').textContent=I18N.t('hull_label','Hull: {h}').replace('{h}','❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives)));
+  document.getElementById('timeDisp').textContent=I18N.t('time_label','Time: {t}').replace('{t}',timeLeft);
+  document.getElementById('scoreDisp').textContent=I18N.t('stowed_hi_label','Stowed: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+
+function cellCenter(x,y){return {cx:x*CELL+CELL/2,cy:y*CELL+CELL/2};}
+
+function draw(){
+  ctx.clearRect(0,0,c.width,c.height);
+  const bg=ctx.createLinearGradient(0,0,0,c.height);
+  bg.addColorStop(0,'#0b1430');bg.addColorStop(1,'#071022');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,c.width,c.height);
+  ctx.strokeStyle='rgba(120,160,255,0.08)';
+  for(let x=0;x<=COLS;x++){ctx.beginPath();ctx.moveTo(x*CELL,0);ctx.lineTo(x*CELL,ROWS*CELL);ctx.stroke();}
+  for(let y=0;y<=ROWS;y++){ctx.beginPath();ctx.moveTo(0,y*CELL);ctx.lineTo(COLS*CELL,y*CELL);ctx.stroke();}
+
+  targets.forEach((t,i)=>{
+    if(bags[i].stored)return;
+    const {cx,cy}=cellCenter(t.x,t.y);
+    ctx.strokeStyle=t.color;ctx.lineWidth=3;
+    ctx.strokeRect(t.x*CELL+6,t.y*CELL+6,CELL-12,CELL-12);
+    ctx.lineWidth=1;
+  });
+
+  obstacles.forEach(o=>{
+    ctx.fillStyle='#45506b';
+    ctx.fillRect(o.x*CELL+4,o.y*CELL+4,CELL-8,CELL-8);
+    ctx.strokeStyle='#8a97b8';
+    ctx.strokeRect(o.x*CELL+4,o.y*CELL+4,CELL-8,CELL-8);
+    ctx.fillStyle='#ffd54f';
+    ctx.fillRect(o.x*CELL+CELL/2-2,o.y*CELL+6,4,4);
+  });
+
+  bags.forEach((b,i)=>{
+    if(b.stored)return;
+    const {cx,cy}=cellCenter(b.x,b.y);
+    ctx.beginPath();ctx.arc(cx,cy,CELL*0.32,0,Math.PI*2);
+    ctx.fillStyle=b.color;ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.stroke();
+    if(i===selected){
+      ctx.beginPath();ctx.arc(cx,cy,CELL*0.42,0,Math.PI*2);
+      ctx.strokeStyle='#ffffff';ctx.lineWidth=2;ctx.stroke();ctx.lineWidth=1;
+    }
+  });
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,c.width,c.height);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),c.width/2,c.height/2-6);
+    ctx.font='15px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or click to restart'),c.width/2,c.height/2+20);
+  } else if(!started){
+    ctx.fillStyle='rgba(255,255,255,0.75)';ctx.font='bold 17px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap a bag to begin'),c.width/2,c.height/2);
+  }
+}
+
+function cellFromEvent(e){
+  const r=c.getBoundingClientRect();
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  const x=Math.floor((clientX-r.left)/(r.width/COLS));
+  const y=Math.floor((clientY-r.top)/(r.height/ROWS));
+  return {x,y};
+}
+
+function handleTap(e){
+  e.preventDefault();
+  if(!started)started=true;
+  if(gameOver){lives=3;score=0;level=1;gameOver=false;genLevel();startTimer();draw();return;}
+  if(levelClear)return;
+  const {x,y}=cellFromEvent(e);
+  const idx=bags.findIndex(b=>!b.stored&&b.x===x&&b.y===y);
+  if(idx>=0)selected=idx;
+  draw();
+}
+
+c.addEventListener('click',handleTap);
+c.addEventListener('touchstart',handleTap,{passive:false});
+
+function dirPress(dx,dy){
+  if(!started){started=true;}
+  if(gameOver||levelClear)return;
+  slide(dx,dy);
+}
+document.getElementById('up').addEventListener('click',()=>dirPress(0,-1));
+document.getElementById('down').addEventListener('click',()=>dirPress(0,1));
+document.getElementById('left').addEventListener('click',()=>dirPress(-1,0));
+document.getElementById('right').addEventListener('click',()=>dirPress(1,0));
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
+  if(gameOver){
+    if(e.code==='Space'||e.code==='Enter'){lives=3;score=0;level=1;gameOver=false;genLevel();startTimer();draw();}
+    return;
+  }
+  if(!started)started=true;
+  if(e.code==='ArrowUp')dirPress(0,-1);
+  else if(e.code==='ArrowDown')dirPress(0,1);
+  else if(e.code==='ArrowLeft')dirPress(-1,0);
+  else if(e.code==='ArrowRight')dirPress(1,0);
+});
+
+genLevel();
+updateHud();
+draw();
+startTimer();
+</script></body></html>

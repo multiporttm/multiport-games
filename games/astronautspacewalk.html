@@ -1,0 +1,260 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Astronaut Spacewalk</title><meta name="description" content="Play Astronaut Spacewalk free online — Press Space or Tap right when the grip meter is in the green zone to move hand-over-hand along the station's handholds. Fetch the tool and make it back before your oxygen runs out."><link rel="canonical" href="https://games.multiportllc.com/games/astronautspacewalk"><meta property="og:title" content="Astronaut Spacewalk - Multiport Games"><meta property="og:description" content="Play Astronaut Spacewalk free online — Press Space or Tap right when the grip meter is in the green zone to move hand-over-hand along the station's handholds. Fetch the tool and make it back before your oxygen runs out."><meta property="og:url" content="https://games.multiportllc.com/games/astronautspacewalk"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Astronaut Spacewalk","description":"Play Astronaut Spacewalk free online instantly. Time your grip to move hand-over-hand across the station's exterior handholds, retrieve a tool, and make it back to the airlock before you drift away or run out of oxygen. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/astronautspacewalk","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#060611}
+#c{background:#02030a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#cfe8ff;font-size:.95rem;font-weight:700;text-align:center;padding:8px;display:flex;flex-wrap:wrap;justify-content:center;gap:14px}
+#hud b{color:#7ec8ff}
+#touchControls{display:flex;justify-content:center;gap:16px;padding:10px 14px 16px}
+.tc-btn{min-width:90px;height:54px;border-radius:12px;background:rgba(255,255,255,0.09);border:1px solid rgba(255,255,255,0.18);color:#cfe8ff;font-size:1rem;font-weight:800;display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none;touch-action:none;padding:0 16px}
+.tc-btn:active{background:rgba(255,255,255,0.22)}
+@media(hover:hover) and (pointer:fine){#touchControls{display:none}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Astronaut Spacewalk</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>O₂: <b id="o2Disp">100</b>%</span>
+      <span>Tool: <b id="toolDisp">No</b></span>
+      <span>Progress: <b id="progDisp">0/0</b></span>
+      <span>Hi: <b id="hiDisp">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="360"></canvas>
+    <div id="touchControls">
+      <div class="tc-btn" id="btnBack">◀ Back</div>
+      <div class="tc-btn" id="btnFwd">Forward ▶</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>Goal:</b> move hand-over-hand across the station's handholds. Press <b>Right Arrow / D / Space</b> (or tap <b>Forward</b>) to reach for the next handhold, and <b>Left Arrow / A</b> (or tap <b>Back</b>) to reach backward — time your press for when the sweeping grip meter is in the <b>green zone</b>. Grab the tool, then return to the airlock before your grip slips too many times or your oxygen runs out, or you'll drift off into space!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=360;
+const GAME_ID='astronautspacewalk';
+let hi=parseInt(localStorage.getItem(GAME_ID+'_hi')||'0',10);
+document.getElementById('hiDisp').textContent=hi;
+
+const N_HOLDS=13;
+const TOOL_IDX=9;
+const HOLD_SPACING=90;
+
+let state='start'; // start, playing, drifting, win, lose
+let cur, haveTool, o2, elapsed, lastTime, phase, driftTimer, resultMsg, shakeT, cameraX, stars, bob;
+
+function reset(){
+  cur=0; haveTool=false; o2=100; elapsed=0; lastTime=null; phase=0;
+  driftTimer=0; resultMsg=''; shakeT=0; cameraX=0; bob=0;
+  stars=[];
+  for(let i=0;i<60;i++)stars.push({x:Math.random()*2000-200,y:Math.random()*H*0.6,r:Math.random()*1.6+.3});
+  state='start';
+  updateHud();
+}
+reset();
+
+function updateHud(){
+  document.getElementById('o2Disp').textContent=Math.max(0,Math.round(o2));
+  document.getElementById('toolDisp').textContent=haveTool?'Yes':'No';
+  document.getElementById('progDisp').textContent=cur+'/'+(N_HOLDS-1);
+}
+
+function startGame(){
+  if(state==='start'){state='playing';}
+  else if(state==='win'||state==='lose'){reset();state='playing';}
+}
+
+function zoneWidth(){ return Math.max(0.16,0.32-elapsed*0.0022); }
+
+function attempt(dir){
+  if(state!=='playing'&&state!=='drifting')return;
+  const target=cur+dir;
+  if(target<0||target>N_HOLDS-1)return;
+  const p=(Math.sin(phase)+1)/2; // 0..1
+  const zw=zoneWidth();
+  const good=Math.abs(p-0.5)<=zw/2;
+  const ok=Math.abs(p-0.5)<=zw;
+  if(state==='drifting'){
+    if(good||ok){
+      state='playing'; driftTimer=0; SFX.catch();
+    } else {
+      SFX.hit();
+    }
+    return;
+  }
+  if(good){
+    cur=target; SFX.click(); o2-=2.2; phase=Math.random()*Math.PI;
+    if(cur===TOOL_IDX&&!haveTool){ haveTool=true; SFX.success(); }
+    if(cur===0&&haveTool){ doWin(); return; }
+  } else if(ok){
+    cur=target; SFX.hit(); o2-=5; phase=Math.random()*Math.PI;
+    if(cur===TOOL_IDX&&!haveTool){ haveTool=true; SFX.success(); }
+    if(cur===0&&haveTool){ doWin(); return; }
+  } else {
+    state='drifting'; driftTimer=3.2; SFX.hurt();
+  }
+  updateHud();
+}
+
+window.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','KeyA','KeyD','Space'].includes(e.code))e.preventDefault();
+  if(e.repeat)return;
+  if(e.code==='Space'){ startGame(); if(state==='playing'||state==='drifting')attempt(1); return; }
+  if(state==='start'){ startGame(); return; }
+  if(state==='win'||state==='lose'){ startGame(); return; }
+  if(e.code==='ArrowRight'||e.code==='KeyD')attempt(1);
+  if(e.code==='ArrowLeft'||e.code==='KeyA')attempt(-1);
+});
+
+function bindBtn(id,dir){
+  const el=document.getElementById(id);
+  el.addEventListener('pointerdown',e=>{
+    e.preventDefault();
+    if(state==='start'||state==='win'||state==='lose'){startGame();return;}
+    attempt(dir);
+  });
+}
+bindBtn('btnFwd',1);
+bindBtn('btnBack',-1);
+c.addEventListener('pointerdown',e=>{
+  if(state==='start'||state==='win'||state==='lose'){startGame();return;}
+  const rect=c.getBoundingClientRect();
+  const x=(e.clientX-rect.left)/rect.width*W;
+  attempt(x>W/2?1:-1);
+});
+
+function doWin(){
+  state='win';
+  const score=Math.round(o2*8+500);
+  if(score>hi){hi=score;localStorage.setItem(GAME_ID+'_hi',hi);document.getElementById('hiDisp').textContent=hi;}
+  resultMsg=I18N.t('spacewalk_win','TOOL RETRIEVED — SAFE RETURN!');
+  SFX.win();
+}
+function doLose(msg){
+  state='lose'; shakeT=20;
+  resultMsg=I18N.t('spacewalk_lose',msg);
+  SFX.lose();
+}
+
+function update(dt){
+  elapsed+=dt;
+  phase+=dt*0.045;
+  bob+=dt*0.08;
+  o2-=dt*0.18;
+  if(o2<=0){ o2=0; doLose('Oxygen depleted!'); return; }
+  if(state==='drifting'){
+    driftTimer-=dt/60;
+    if(driftTimer<=0){ doLose('You drifted away into space!'); return; }
+  }
+  updateHud();
+  const targetCam=cur*HOLD_SPACING-W/2+60;
+  cameraX+=(targetCam-cameraX)*Math.min(1,dt*0.12);
+}
+
+function drawStars(){
+  ctx.fillStyle='#0b0f22';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#cfe8ff';
+  stars.forEach(s=>{
+    const sx=s.x-cameraX*0.3;
+    const wrapped=((sx%2000)+2000)%2000-100;
+    ctx.globalAlpha=0.4+0.4*Math.sin(elapsed+s.x);
+    ctx.fillRect(wrapped,s.y,s.r,s.r);
+  });
+  ctx.globalAlpha=1;
+}
+
+function drawHull(){
+  ctx.fillStyle='#394a5c';
+  ctx.fillRect(-cameraX-200,220,2000,80);
+  ctx.strokeStyle='#263340';ctx.lineWidth=2;
+  for(let i=-2;i<N_HOLDS+2;i++){
+    const x=i*HOLD_SPACING-cameraX;
+    ctx.beginPath();ctx.moveTo(x,220);ctx.lineTo(x,300);ctx.stroke();
+  }
+}
+
+function drawHolds(){
+  for(let i=0;i<N_HOLDS;i++){
+    const x=i*HOLD_SPACING-cameraX;
+    if(x<-40||x>W+40)continue;
+    ctx.fillStyle=i===TOOL_IDX&&!haveTool?'#ffd54f':(i===0?'#7ecb6a':'#8aa0b8');
+    ctx.beginPath();ctx.arc(x,230,9,0,Math.PI*2);ctx.fill();
+    if(i===TOOL_IDX&&!haveTool){
+      ctx.fillStyle='#ffd54f';ctx.font='20px Arial';ctx.textAlign='center';
+      ctx.fillText('🔧',x,210);
+    }
+    if(i===0){
+      ctx.fillStyle='#7ecb6a';ctx.font='12px Arial';ctx.textAlign='center';
+      ctx.fillText('AIRLOCK',x,195);
+    }
+  }
+}
+
+function drawAstronaut(){
+  const x=cur*HOLD_SPACING-cameraX;
+  let y=230+Math.sin(bob)*3;
+  let driftOffset=0;
+  if(state==='drifting'){ driftOffset=Math.min(60,(3.2-driftTimer)*20); y+=driftOffset*0.6; }
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle='#e8edf2';
+  ctx.beginPath();ctx.arc(0,-26,11,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#2b3a4a';ctx.beginPath();ctx.arc(0,-26,7,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#e8edf2';
+  ctx.fillRect(-10,-16,20,28);
+  ctx.strokeStyle='#c7cfd6';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(-10,-10);ctx.lineTo(-24,0+driftOffset*0.3);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(10,-10);ctx.lineTo(24,0+driftOffset*0.3);ctx.stroke();
+  if(haveTool){ ctx.font='16px Arial';ctx.fillText('🔧',14,-4); }
+  ctx.restore();
+}
+
+function drawMeter(){
+  if(state!=='playing'&&state!=='drifting')return;
+  const barX=W/2-150,barY=320,barW=300,barH=18;
+  ctx.fillStyle='rgba(255,255,255,.12)';ctx.fillRect(barX,barY,barW,barH);
+  const zw=zoneWidth();
+  ctx.fillStyle=state==='drifting'?'rgba(255,140,80,.5)':'rgba(120,220,120,.5)';
+  ctx.fillRect(barX+barW*(0.5-zw/2),barY,barW*zw,barH);
+  const p=(Math.sin(phase)+1)/2;
+  ctx.fillStyle='#fff';
+  ctx.fillRect(barX+barW*p-2,barY-4,4,barH+8);
+  ctx.fillStyle='#cfe8ff';ctx.font='12px Arial';ctx.textAlign='center';
+  ctx.fillText(state==='drifting'?I18N.t('regrab_hint','DRIFTING! Press to re-grab!'):I18N.t('grip_hint','Press in the GREEN zone'),W/2,barY-10);
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  let ox=0,oy=0;
+  if(shakeT>0){shakeT-=dt;ox=(Math.random()-0.5)*8;oy=(Math.random()-0.5)*8;}
+
+  ctx.save();ctx.translate(ox,oy);
+  drawStars();
+  drawHull();
+  drawHolds();
+  if(state==='playing'||state==='drifting'){ update(dt); drawAstronaut(); drawMeter(); }
+  else drawAstronaut();
+
+  if(state==='start'){
+    ctx.fillStyle='#cfe8ff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap Forward to start'),W/2,80);
+  } else if(state==='win'||state==='lose'){
+    ctx.fillStyle=state==='win'?'#7ecb6a':'#ff6b6b';
+    ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(resultMsg,W/2,80);
+    ctx.fillStyle='#cfe8ff';ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press Space / Tap to try again'),W/2,112);
+  }
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

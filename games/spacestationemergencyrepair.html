@@ -1,0 +1,215 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Space Station Emergency Repair</title><meta name="description" content="Play Space Station Emergency Repair free online — A depressurization alarm just sounded! Move between station modules with WASD/arrows or tap, follow the pressure-drop indicator to find the hull breach, then mash Space or tap PATCH to seal it before cabin pressure hits zero."><link rel="canonical" href="https://games.multiportllc.com/games/spacestationemergencyrepair"><meta property="og:title" content="Space Station Emergency Repair - Multiport Games"><meta property="og:description" content="Play Space Station Emergency Repair free online — A depressurization alarm just sounded! Move between station modules with WASD/arrows or tap, follow the pressure-drop indicator to find the hull breach, then mash Space or tap PATCH to seal it before cabin pressure hits zero."><meta property="og:url" content="https://games.multiportllc.com/games/spacestationemergencyrepair"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Space Station Emergency Repair","description":"Play Space Station Emergency Repair free online instantly. An alarm sounds when a hull breach opens somewhere on the station — race between modules following the pressure-drop indicator to locate it, then apply the emergency patch kit before cabin pressure drops to a dangerous level. New breaches keep coming, faster each round. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/spacestationemergencyrepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#07070f}
+#c{background:#0c1222;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffb3b3;font-size:1rem;font-weight:700;text-align:center;padding:6px;display:flex;justify-content:center;gap:14px;flex-wrap:wrap}
+#pressureWrap{width:90%;max-width:420px;margin:4px auto 0;background:#1a1a2e;border-radius:8px;height:16px;overflow:hidden;border:1px solid #3a3a5a}
+#pressureBar{height:100%;background:linear-gradient(90deg,#4caf50,#ffd54f,#ff5252);width:100%;transition:width .2s linear}
+#sigWrap{width:90%;max-width:420px;margin:6px auto 0;background:#1a1a2e;border-radius:8px;height:10px;overflow:hidden;border:1px solid #3a3a5a}
+#sigBar{height:100%;background:#4dd0e1;width:0%;transition:width .15s linear}
+#labels{display:flex;justify-content:space-between;width:90%;max-width:420px;margin:2px auto;color:#9fb0d0;font-size:.75rem}
+#patchBtn{display:block;margin:12px auto 0;padding:10px 26px;background:#e94560;border:none;border-radius:22px;color:#fff;font-weight:800;font-size:1.05rem;cursor:pointer}
+#patchBtn:disabled{opacity:.35;cursor:not-allowed}
+#msg{color:#ffd54f;text-align:center;font-weight:700;min-height:1.4em;margin-top:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Space Station Emergency Repair</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Sealed: 0 | Hi: 0</span>
+      <span id="levelDisp">Alert Level: 1</span>
+    </div>
+    <div id="labels"><span data-i18n="pressure_lbl">Cabin Pressure</span><span data-i18n="signal_lbl">Breach Signal</span></div>
+    <div style="display:flex;gap:10px;justify-content:center;align-items:center">
+      <div id="pressureWrap" style="flex:1"><div id="pressureBar"></div></div>
+    </div>
+    <div id="sigWrap"><div id="sigBar"></div></div>
+    <canvas id="c" width="440" height="260"></canvas>
+    <button id="patchBtn">PATCH</button>
+    <div id="msg"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">A depressurization alarm has sounded! Move your repair bot between modules with <b>WASD</b>/<b>Arrow Keys</b> or by tapping a module. Watch the <b>Breach Signal</b> bar — it rises the closer you are to the hull breach. Once you're in the right module, press <b>Space</b> or tap <b>PATCH</b> repeatedly to seal it before <b>Cabin Pressure</b> drops to zero.</div>
+</div>
+<script>
+const KEY='hiscore_spacestationemergencyrepair';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const COLS=4,ROWS=2,CELL=100,GAP=10;
+const OX=(c.width-(COLS*CELL+(COLS-1)*GAP))/2,OY=30;
+
+let score=0,hi=parseInt(localStorage.getItem(KEY)||'0',10),level=1;
+let pressure=100,drainRate=1.1,playerX=0,playerY=0,breach={x:0,y:0};
+let patchProgress=0,patchNeeded=3,gameOver=false,started=false,lastTime=null;
+
+function roomCenter(x,y){return {cx:OX+x*(CELL+GAP)+CELL/2,cy:OY+y*(CELL+GAP)+CELL/2};}
+
+function newBreach(){
+  let bx,by;
+  do{bx=Math.floor(Math.random()*COLS);by=Math.floor(Math.random()*ROWS);}
+  while(bx===playerX&&by===playerY);
+  breach={x:bx,y:by};
+  patchProgress=0;
+}
+
+function reset(){
+  score=0;level=1;pressure=100;drainRate=1.1;playerX=0;playerY=0;gameOver=false;
+  newBreach();
+  document.getElementById('patchBtn').disabled=false;
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('sealed_hi_label','Sealed: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('levelDisp').textContent=I18N.t('alert_level_label','Alert Level: {n}').replace('{n}',level);
+  document.getElementById('pressureBar').style.width=Math.max(0,pressure)+'%';
+}
+
+function signalStrength(){
+  const dist=Math.abs(playerX-breach.x)+Math.abs(playerY-breach.y);
+  return Math.max(0,100-dist*35);
+}
+
+function inBreach(){return playerX===breach.x&&playerY===breach.y;}
+
+function doPatch(){
+  if(gameOver||!started)return;
+  if(!inBreach()){
+    flashMsg(I18N.t('no_breach_here_msg','No breach here — follow the signal!'));
+    return;
+  }
+  patchProgress++;
+  SFX.hit();
+  if(patchProgress>=patchNeeded){
+    score++;
+    SFX.success();
+    if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+    pressure=Math.min(100,pressure+22);
+    if(score%3===0){level++;drainRate+=0.35;patchNeeded=Math.min(6,patchNeeded+1);}
+    flashMsg(I18N.t('breach_sealed_msg','Breach sealed! Pressure restored.'));
+    newBreach();
+    updateHud();
+  }
+}
+
+function flashMsg(t){document.getElementById('msg').textContent=t;}
+
+function movePlayer(dx,dy){
+  if(gameOver||!started)return;
+  const nx=playerX+dx,ny=playerY+dy;
+  if(nx<0||nx>=COLS||ny<0||ny>=ROWS)return;
+  playerX=nx;playerY=ny;patchProgress=0;
+  SFX.click();
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  document.getElementById('patchBtn').disabled=true;
+  flashMsg(I18N.t('depressurized_msg','Module depressurized! Tap or press Space to restart.'));
+}
+
+function draw(){
+  ctx.clearRect(0,0,c.width,c.height);
+  ctx.fillStyle='#0c1222';ctx.fillRect(0,0,c.width,c.height);
+  for(let y=0;y<ROWS;y++){
+    for(let x=0;x<COLS;x++){
+      const px=OX+x*(CELL+GAP),py=OY+y*(CELL+GAP);
+      const isBreach=started&&!gameOver&&breach.x===x&&breach.y===y;
+      ctx.fillStyle=isBreach?'#5a1f1f':'#1b2742';
+      ctx.fillRect(px,py,CELL,CELL);
+      ctx.strokeStyle='#3a5a9a';ctx.strokeRect(px,py,CELL,CELL);
+      if(isBreach){
+        ctx.strokeStyle='#ff5252';ctx.lineWidth=2;
+        ctx.strokeRect(px+6,py+6,CELL-12,CELL-12);
+        ctx.lineWidth=1;
+        ctx.fillStyle='#ffb3b3';ctx.font='11px Arial';ctx.textAlign='center';
+        ctx.fillText(I18N.t('breach_tag','BREACH'),px+CELL/2,py+CELL/2+4);
+      }
+    }
+  }
+  const {cx,cy}=roomCenter(playerX,playerY);
+  ctx.beginPath();ctx.arc(cx,cy,16,0,Math.PI*2);
+  ctx.fillStyle='#4dd0e1';ctx.fill();
+  ctx.strokeStyle='#fff';ctx.stroke();
+  ctx.fillStyle='#07131a';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText('🛠',cx,cy+4);
+
+  if(!started){
+    ctx.fillStyle='rgba(255,255,255,0.8)';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap a module or press any key to start'),c.width/2,c.height-14);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,c.width,c.height);
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),c.width/2,c.height/2-6);
+    ctx.font='14px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space to restart'),c.width/2,c.height/2+18);
+  }
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min((ts-lastTime)/1000,0.1);
+  lastTime=ts;
+  if(started&&!gameOver){
+    pressure-=drainRate*dt;
+    if(pressure<=0){pressure=0;endGame();}
+    document.getElementById('sigBar').style.width=signalStrength()+'%';
+    document.getElementById('pressureBar').style.width=Math.max(0,pressure)+'%';
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function cellFromEvent(e){
+  const r=c.getBoundingClientRect();
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  const scaleX=c.width/r.width,scaleY=c.height/r.height;
+  const px=(clientX-r.left)*scaleX,py=(clientY-r.top)*scaleY;
+  const x=Math.floor((px-OX)/(CELL+GAP));
+  const y=Math.floor((py-OY)/(CELL+GAP));
+  return {x,y};
+}
+
+function handleTap(e){
+  e.preventDefault();
+  if(gameOver){reset();started=true;return;}
+  if(!started){started=true;return;}
+  const {x,y}=cellFromEvent(e);
+  if(x>=0&&x<COLS&&y>=0&&y<ROWS){
+    playerX=x;playerY=y;patchProgress=0;
+    SFX.click();
+  }
+}
+c.addEventListener('click',handleTap);
+c.addEventListener('touchstart',handleTap,{passive:false});
+
+document.getElementById('patchBtn').addEventListener('click',()=>{
+  if(!started){started=true;return;}
+  if(gameOver){reset();started=true;return;}
+  doPatch();
+});
+
+document.addEventListener('keydown',e=>{
+  const nav=['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD','Space'];
+  if(nav.includes(e.code))e.preventDefault();
+  if(gameOver){reset();started=true;return;}
+  if(!started){started=true;}
+  if(e.code==='ArrowUp'||e.code==='KeyW')movePlayer(0,-1);
+  else if(e.code==='ArrowDown'||e.code==='KeyS')movePlayer(0,1);
+  else if(e.code==='ArrowLeft'||e.code==='KeyA')movePlayer(-1,0);
+  else if(e.code==='ArrowRight'||e.code==='KeyD')movePlayer(1,0);
+  else if(e.code==='Space')doPatch();
+});
+
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

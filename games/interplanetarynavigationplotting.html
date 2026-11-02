@@ -1,0 +1,244 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Interplanetary Navigation Plotting</title><meta name="description" content="Play Interplanetary Navigation Plotting free online — Drag the Burn Power slider until the apoapsis ring matches the destination planet's orbit, watch the two planets circle the sun, and hit LAUNCH the instant the window glows green to intercept where the planet will be, not where it is now."><link rel="canonical" href="https://games.multiportllc.com/games/interplanetarynavigationplotting"><meta property="og:title" content="Interplanetary Navigation Plotting - Multiport Games"><meta property="og:description" content="Play Interplanetary Navigation Plotting free online — Drag the Burn Power slider until the apoapsis ring matches the destination planet's orbit, watch the two planets circle the sun, and hit LAUNCH the instant the window glows green to intercept where the planet will be, not where it is now."><meta property="og:url" content="https://games.multiportllc.com/games/interplanetarynavigationplotting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Interplanetary Navigation Plotting","description":"Play Interplanetary Navigation Plotting free online instantly. Plot a transfer trajectory between two orbiting planets: tune the burn power so your transfer ellipse's apoapsis matches the destination planet's orbit, then launch at the exact moment that lets your ship arrive where the destination planet will be after the transfer, not where it is now. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/interplanetarynavigationplotting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#060611}
+#c{background:#05060f;display:block;border-radius:8px;margin:0 auto}
+#hud{color:#bfe3ff;font-size:1rem;font-weight:700;text-align:center;padding:6px;display:flex;justify-content:center;gap:14px;flex-wrap:wrap}
+#controls{max-width:440px;margin:6px auto 0;color:#cfe0ff}
+#controls label{display:block;font-size:.85rem;margin-bottom:2px}
+#burnSlider{width:100%}
+#windowBar{height:14px;border-radius:7px;background:#3a1f1f;margin-top:8px;transition:background .15s}
+#windowBar.go{background:#1f6b2e}
+#launchBtn{display:block;margin:12px auto 0;padding:10px 30px;background:#e94560;border:none;border-radius:22px;color:#fff;font-weight:800;font-size:1.05rem;cursor:pointer}
+#launchBtn:disabled{opacity:.4;cursor:not-allowed}
+#msg{color:#ffd54f;text-align:center;font-weight:700;min-height:1.4em;margin-top:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Interplanetary Navigation Plotting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Transfers: 0 | Hi: 0</span>
+      <span id="livesDisp">Fuel: ❤❤❤</span>
+      <span id="levelDisp">Mission: 1</span>
+    </div>
+    <canvas id="c" width="420" height="420"></canvas>
+    <div id="controls">
+      <label for="burnSlider" data-i18n="burn_lbl">Burn Power (sets transfer apoapsis)</label>
+      <input type="range" id="burnSlider" min="0" max="100" value="50">
+      <div id="windowBar"></div>
+    </div>
+    <button id="launchBtn">LAUNCH</button>
+    <div id="msg"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the <b>Burn Power</b> slider (or use <b>Up/Down Arrows</b>) until the dashed apoapsis ring lines up with the destination planet's orbit. Watch the planets circle the sun, and press <b>LAUNCH</b> (or <b>Space</b>) the instant the bar below the slider glows green — that means your transfer ellipse will intercept the destination planet's <i>future</i> position, not where it is right now.</div>
+</div>
+<script>
+const KEY='hiscore_interplanetarynavigationplotting';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const CX=210,CY=210;
+const BASE_W=0.55; // rad/s for origin orbit (R1)
+
+let score=0,hi=parseInt(localStorage.getItem(KEY)||'0',10),lives=3,level=1;
+let R1=70,R2=130,theta1=0,theta2=0;
+let angleTol=0.34,radiusTol=16,windowTol=0.3;
+let animating=false,animT=0,animFrom=null,animTo=null,animSuccess=false;
+let started=false,gameOver=false,lastTime=null;
+
+const slider=document.getElementById('burnSlider');
+
+function apoRadiusFromSlider(){
+  const v=parseFloat(slider.value)/100;
+  return R1+10+v*(R2+70-(R1+10));
+}
+
+function semiMajor(apo){return (R1+apo)/2;}
+function transferTime(apo){
+  const a=semiMajor(apo);
+  return (Math.PI/BASE_W)*Math.pow(a/R1,1.5);
+}
+function w2speed(){return BASE_W*Math.pow(R1/R2,1.5);}
+
+function wrapPi(a){
+  while(a>Math.PI)a-=2*Math.PI;
+  while(a<-Math.PI)a+=2*Math.PI;
+  return a;
+}
+
+function newMission(keepLevel){
+  R2=120+Math.floor(Math.random()*50); // 120-170
+  theta1=Math.random()*Math.PI*2;
+  theta2=Math.random()*Math.PI*2;
+  slider.value=50;
+  if(!keepLevel){
+    angleTol=Math.max(0.14,0.34-level*0.02);
+    radiusTol=Math.max(6,16-level*0.9);
+    windowTol=Math.max(0.13,0.3-level*0.018);
+  }
+  flashMsg('');
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;animating=false;
+  newMission(false);
+  document.getElementById('launchBtn').disabled=false;
+  updateHud();
+}
+
+function flashMsg(t){document.getElementById('msg').textContent=t;}
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('transfers_hi_label','Transfers: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesDisp').textContent=I18N.t('fuel_label','Fuel: {f}').replace('{f}','❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives)));
+  document.getElementById('levelDisp').textContent=I18N.t('mission_label','Mission: {n}').replace('{n}',level);
+}
+
+function currentWindowOk(){
+  const apo=apoRadiusFromSlider();
+  const tt=transferTime(apo);
+  const w2=w2speed();
+  const requiredPhase=wrapPi(Math.PI-w2*tt);
+  const curPhase=wrapPi(theta2-theta1);
+  const phaseDiff=Math.abs(wrapPi(curPhase-requiredPhase));
+  const radiusDiff=Math.abs(apo-R2);
+  return {ok:phaseDiff<windowTol&&radiusDiff<radiusTol,phaseDiff,radiusDiff,apo};
+}
+
+function doLaunch(){
+  if(!started||gameOver||animating)return;
+  const chk=currentWindowOk();
+  animSuccess=chk.ok&&chk.radiusDiff<radiusTol&&chk.phaseDiff<angleTol;
+  animFrom={x:CX+R1*Math.cos(theta1),y:CY+R1*Math.sin(theta1)};
+  const arriveAngle=theta1+Math.PI;
+  animTo={x:CX+chk.apo*Math.cos(arriveAngle),y:CY+chk.apo*Math.sin(arriveAngle)};
+  animating=true;animT=0;
+  document.getElementById('launchBtn').disabled=true;
+  SFX.powerup();
+  flashMsg(I18N.t('transfer_burn_msg','Executing transfer burn...'));
+}
+
+function finishLaunch(){
+  animating=false;
+  document.getElementById('launchBtn').disabled=false;
+  if(animSuccess){
+    score++;level++;
+    SFX.win();
+    if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+    flashMsg(I18N.t('intercept_success_msg','Intercept confirmed! Trajectory nominal.'));
+    newMission(false);
+  } else {
+    lives--;
+    SFX.fail();
+    flashMsg(I18N.t('intercept_fail_msg','Missed the intercept window — fuel reserve used.'));
+    if(lives<=0){
+      endGame();
+    } else {
+      newMission(true);
+    }
+  }
+  updateHud();
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  document.getElementById('launchBtn').disabled=true;
+  flashMsg(I18N.t('out_of_fuel_msg','Out of fuel reserves! Tap or press Space to restart.'));
+}
+
+function draw(){
+  ctx.clearRect(0,0,c.width,c.height);
+  ctx.fillStyle='#05060f';ctx.fillRect(0,0,c.width,c.height);
+
+  ctx.strokeStyle='rgba(120,160,255,0.25)';
+  ctx.beginPath();ctx.arc(CX,CY,R1,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.arc(CX,CY,R2,0,Math.PI*2);ctx.stroke();
+
+  if(started&&!gameOver){
+    const apo=apoRadiusFromSlider();
+    ctx.save();
+    ctx.setLineDash([5,5]);
+    ctx.strokeStyle=Math.abs(apo-R2)<radiusTol?'#6be37a':'#ff9f43';
+    ctx.beginPath();ctx.arc(CX,CY,apo,0,Math.PI*2);ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.beginPath();ctx.arc(CX,CY,14,0,Math.PI*2);
+  ctx.fillStyle='#ffd54f';ctx.fill();
+
+  const p1={x:CX+R1*Math.cos(theta1),y:CY+R1*Math.sin(theta1)};
+  const p2={x:CX+R2*Math.cos(theta2),y:CY+R2*Math.sin(theta2)};
+  ctx.beginPath();ctx.arc(p1.x,p1.y,8,0,Math.PI*2);ctx.fillStyle='#4dd0e1';ctx.fill();
+  ctx.beginPath();ctx.arc(p2.x,p2.y,10,0,Math.PI*2);ctx.fillStyle='#ff6b6b';ctx.fill();
+
+  if(animating){
+    const t=Math.min(1,animT);
+    const midR=Math.max(R1,Math.min(apoRadiusFromSlider(),  R1+(apoRadiusFromSlider()-R1)));
+    const ang=theta1+Math.PI*t;
+    const rad=R1+(apoRadiusFromSlider()-R1)*Math.sin(t*Math.PI/2);
+    const x=CX+rad*Math.cos(ang),y=CY+rad*Math.sin(ang);
+    ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.fillStyle='#ffffff';ctx.fill();
+  }
+
+  if(!started){
+    ctx.fillStyle='rgba(255,255,255,0.8)';ctx.font='bold 15px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap LAUNCH or press any key to begin'),CX,CY+170);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,c.width,c.height);
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),CX,CY-6);
+    ctx.font='14px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space to restart'),CX,CY+18);
+  }
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min((ts-lastTime)/1000,0.1);
+  lastTime=ts;
+  if(started&&!gameOver){
+    theta1=(theta1+BASE_W*dt)%(Math.PI*2);
+    theta2=(theta2+w2speed()*dt)%(Math.PI*2);
+    const win=document.getElementById('windowBar');
+    if(!animating){
+      const chk=currentWindowOk();
+      win.classList.toggle('go',chk.ok);
+    }
+    if(animating){
+      animT+=dt*1.3;
+      if(animT>=1)finishLaunch();
+    }
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('launchBtn').addEventListener('click',()=>{
+  if(gameOver){reset();started=true;return;}
+  if(!started){started=true;return;}
+  doLaunch();
+});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','Space','Enter'].includes(e.code))e.preventDefault();
+  if(gameOver){reset();started=true;return;}
+  if(!started){started=true;return;}
+  if(e.code==='ArrowUp'){slider.value=Math.min(100,parseFloat(slider.value)+3);}
+  else if(e.code==='ArrowDown'){slider.value=Math.max(0,parseFloat(slider.value)-3);}
+  else if(e.code==='Space'||e.code==='Enter'){doLaunch();}
+});
+
+slider.addEventListener('input',()=>{ if(!started)started=true; });
+c.addEventListener('click',()=>{ if(gameOver){reset();started=true;} else if(!started){started=true;} });
+c.addEventListener('touchstart',e=>{ e.preventDefault(); if(gameOver){reset();started=true;} else if(!started){started=true;} },{passive:false});
+
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

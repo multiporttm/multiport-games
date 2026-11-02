@@ -1,0 +1,257 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Space Station Docking</title><meta name="description" content="Play Space Station Docking free online — Use Left/Right (or A/D) to match your capsule's spin rate to the rotating station, and Up/Down (or W/S) to control approach speed. Dock softly without hitting the solar panels."><link rel="canonical" href="https://games.multiportllc.com/games/spacestationdocking"><meta property="og:title" content="Space Station Docking - Multiport Games"><meta property="og:description" content="Play Space Station Docking free online — Use Left/Right (or A/D) to match your capsule's spin rate to the rotating station, and Up/Down (or W/S) to control approach speed. Dock softly without hitting the solar panels."><meta property="og:url" content="https://games.multiportllc.com/games/spacestationdocking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Space Station Docking","description":"Play Space Station Docking free online instantly. Match your resupply capsule's rotation rate and approach velocity to a slowly spinning space station, then dock softly without clipping its solar panel arrays. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/spacestationdocking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#060611}
+#c{background:#02030a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#cfe8ff;font-size:.95rem;font-weight:700;text-align:center;padding:8px;display:flex;flex-wrap:wrap;justify-content:center;gap:14px}
+#hud span{white-space:nowrap}
+#hud b{color:#7ec8ff}
+.ok{color:#7ecb6a!important}
+.bad{color:#ff6b6b!important}
+#touchControls{display:flex;justify-content:space-between;padding:10px 14px 16px;gap:10px}
+.tc-group{display:flex;gap:8px}
+.tc-btn{width:54px;height:54px;border-radius:12px;background:rgba(255,255,255,0.09);border:1px solid rgba(255,255,255,0.18);color:#cfe8ff;font-size:1.3rem;font-weight:800;display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none;touch-action:none}
+.tc-btn:active{background:rgba(255,255,255,0.22)}
+@media(hover:hover) and (pointer:fine){#touchControls{display:none}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Space Station Docking</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>Spin: <b id="spinDisp">0</b>/<b id="targetSpinDisp">0</b>°/s</span>
+      <span>Approach: <b id="velDisp">0.0</b></span>
+      <span>Fuel: <b id="fuelDisp">100</b>%</span>
+      <span>Time: <b id="timeDisp">90</b>s</span>
+      <span>Hi: <b id="hiDisp">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+    <div id="touchControls">
+      <div class="tc-group">
+        <div class="tc-btn" id="btnLeft">⟲</div>
+        <div class="tc-btn" id="btnRight">⟳</div>
+      </div>
+      <div class="tc-group">
+        <div class="tc-btn" id="btnDown">▼</div>
+        <div class="tc-btn" id="btnUp">▲</div>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>Goal:</b> dock your capsule with the slowly rotating station. Use <b>Left/Right</b> (or <b>A/D</b>, or the ⟲/⟳ buttons) to fire RCS thrusters and match your capsule's spin rate to the station's. Use <b>Up/Down</b> (or <b>W/S</b>, or ▲/▼) to control your approach speed. Reach the station with your spin rate matched and your approach speed slow for a soft dock — mismatched spin or excess speed means a collision with the solar panels. Watch your fuel and the clock!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+const GAME_ID='spacestationdocking';
+let hi=parseInt(localStorage.getItem(GAME_ID+'_hi')||'0',10);
+document.getElementById('hiDisp').textContent=hi;
+
+const SPIN_TOL=10;      // deg/s tolerance for a safe dock
+const SAFE_VEL=1.1;     // units/sec safe approach speed
+const TIME_LIMIT=90;
+
+let state='start'; // start, playing, win, lose
+let distance, approachVel, capsuleAngle, capsuleSpin, stationAngle, stationSpin;
+let fuel, elapsed, keys, lastTime, stars, resultMsg, shakeT;
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function reset(){
+  distance=380;
+  approachVel=0;
+  capsuleAngle=0;
+  capsuleSpin=rand(-70,70);
+  stationAngle=0;
+  stationSpin=(Math.random()<0.5?-1:1)*rand(28,55);
+  fuel=100;
+  elapsed=0;
+  lastTime=null;
+  shakeT=0;
+  resultMsg='';
+  keys={};
+  stars=[];
+  for(let i=0;i<70;i++)stars.push({x:Math.random()*W,y:Math.random()*H,r:Math.random()*1.6+.3});
+  state='start';
+}
+reset();
+
+function startGame(){ if(state==='start'){state='playing';} else if(state==='win'||state==='lose'){reset();state='playing';} }
+
+window.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS','Space','Enter'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'||e.code==='Enter')startGame();
+});
+window.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function bindBtn(id,code){
+  const el=document.getElementById(id);
+  const on=e=>{e.preventDefault();keys[code]=true;startGame();};
+  const off=e=>{e.preventDefault();keys[code]=false;};
+  el.addEventListener('pointerdown',on);
+  el.addEventListener('pointerup',off);
+  el.addEventListener('pointerleave',off);
+  el.addEventListener('pointercancel',off);
+}
+bindBtn('btnLeft','ArrowLeft');
+bindBtn('btnRight','ArrowRight');
+bindBtn('btnUp','ArrowUp');
+bindBtn('btnDown','ArrowDown');
+c.addEventListener('pointerdown',startGame);
+
+function useFuel(amt){ if(fuel<=0)return false; fuel=Math.max(0,fuel-amt); return true; }
+
+function update(dt){
+  elapsed+=dt;
+  if(elapsed>=TIME_LIMIT){ doLose('Ran out of time — resupply window missed!'); return; }
+
+  const left=keys['ArrowLeft']||keys['KeyA'];
+  const right=keys['ArrowRight']||keys['KeyD'];
+  const up=keys['ArrowUp']||keys['KeyW'];
+  const down=keys['ArrowDown']||keys['KeyS'];
+
+  if(left&&useFuel(0.18*dt)) capsuleSpin-=55*dt;
+  if(right&&useFuel(0.18*dt)) capsuleSpin+=55*dt;
+  capsuleSpin*=Math.pow(0.992,dt);
+
+  if(up&&useFuel(0.22*dt)) approachVel+=0.55*dt;
+  if(down&&useFuel(0.22*dt)) approachVel-=0.55*dt;
+  approachVel*=Math.pow(0.996,dt);
+  approachVel=Math.max(-1.6,Math.min(2.6,approachVel));
+
+  capsuleAngle=(capsuleAngle+capsuleSpin*dt/60*6)%360;
+  stationAngle=(stationAngle+stationSpin*dt/60*6)%360;
+
+  distance-=approachVel*dt*0.6;
+
+  document.getElementById('spinDisp').textContent=Math.round(capsuleSpin);
+  document.getElementById('spinDisp').className=Math.abs(capsuleSpin-stationSpin)<=SPIN_TOL?'ok':'bad';
+  document.getElementById('targetSpinDisp').textContent=Math.round(stationSpin);
+  document.getElementById('velDisp').textContent=approachVel.toFixed(2);
+  document.getElementById('velDisp').className=Math.abs(approachVel)<=SAFE_VEL?'ok':'bad';
+  document.getElementById('fuelDisp').textContent=Math.round(fuel);
+  document.getElementById('timeDisp').textContent=Math.max(0,Math.ceil(TIME_LIMIT-elapsed));
+
+  if(distance<=40){
+    distance=40;
+    const spinOk=Math.abs(capsuleSpin-stationSpin)<=SPIN_TOL;
+    const velOk=Math.abs(approachVel)<=SAFE_VEL&&approachVel>-0.2;
+    if(spinOk&&velOk){ doWin(); }
+    else { doLose(spinOk?'Too fast — you clipped the solar panel array!':'Spin mismatch — you struck a solar panel array!'); }
+  } else if(distance>420){
+    distance=420;
+    if(approachVel<0)approachVel*=0.3;
+  }
+}
+
+function doWin(){
+  state='win';
+  const score=Math.round(fuel*6+Math.max(0,(TIME_LIMIT-elapsed))*4);
+  if(score>hi){hi=score;localStorage.setItem(GAME_ID+'_hi',hi);document.getElementById('hiDisp').textContent=hi;}
+  resultMsg=I18N.t('dock_success','SOFT DOCK SUCCESSFUL! Score: ')+score;
+  SFX.win();
+}
+function doLose(msg){
+  state='lose';
+  shakeT=20;
+  resultMsg=I18N.t('dock_fail',msg);
+  SFX.lose();
+}
+
+function drawStars(){
+  ctx.fillStyle='#0b0f22';
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#cfe8ff';
+  stars.forEach(s=>{ctx.globalAlpha=0.5+0.5*Math.sin(elapsed*2+s.x);ctx.fillRect(s.x,s.y,s.r,s.r);});
+  ctx.globalAlpha=1;
+}
+
+function drawStation(cx,cy,scale){
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.rotate(stationAngle*Math.PI/180);
+  // central hub
+  ctx.fillStyle='#8aa0b8';
+  ctx.beginPath();ctx.arc(0,0,22*scale,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#5c7086';
+  ctx.beginPath();ctx.arc(0,0,22*scale,0,Math.PI*2);ctx.stroke();
+  // docking port (little nub)
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(-6*scale,-30*scale,12*scale,10*scale);
+  // solar arms (hazard)
+  ctx.fillStyle='#2f6fb5';
+  for(let a=0;a<4;a++){
+    ctx.save();
+    ctx.rotate(a*Math.PI/2);
+    ctx.fillRect(-7*scale,24*scale,14*scale,95*scale);
+    ctx.strokeStyle='#1c4a80';ctx.lineWidth=1;
+    for(let k=0;k<4;k++)ctx.strokeRect(-7*scale,(24+k*24)*scale,14*scale,22*scale);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawCapsule(cx,cy,scale){
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.rotate(capsuleAngle*Math.PI/180);
+  ctx.fillStyle='#e8edf2';
+  ctx.beginPath();
+  ctx.moveTo(0,-20*scale);
+  ctx.lineTo(13*scale,14*scale);
+  ctx.lineTo(-13*scale,14*scale);
+  ctx.closePath();ctx.fill();
+  ctx.fillStyle='#ff8a3d';
+  ctx.fillRect(-4*scale,14*scale,8*scale,10*scale);
+  ctx.fillStyle='#2b3a4a';
+  ctx.beginPath();ctx.arc(0,-2*scale,6*scale,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  let ox=0,oy=0;
+  if(shakeT>0){shakeT-=dt;ox=rand(-6,6);oy=rand(-6,6);}
+
+  ctx.save();
+  ctx.translate(ox,oy);
+  drawStars();
+
+  const t=Math.max(0,Math.min(1,(420-distance)/380));
+  const stationY=70+ (1-t)*0; // station fixed near top
+  drawStation(W/2,70,1);
+
+  const capsuleY=70+ t*300+30;
+  const capScale=0.75+t*0.6;
+  drawCapsule(W/2,capsuleY,capScale);
+
+  // distance gauge
+  ctx.strokeStyle='rgba(255,255,255,.25)';
+  ctx.beginPath();ctx.moveTo(W/2,110);ctx.lineTo(W/2,capsuleY-20);ctx.stroke();
+
+  if(state==='start'){
+    ctx.fillStyle='#cfe8ff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to begin approach'),W/2,H-40);
+  } else if(state==='playing'){
+    update(dt);
+  } else {
+    ctx.fillStyle=state==='win'?'#7ecb6a':'#ff6b6b';
+    ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(resultMsg,W/2,H/2-10);
+    ctx.fillStyle='#cfe8ff';ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press Space / Tap to try again'),W/2,H/2+26);
+  }
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
