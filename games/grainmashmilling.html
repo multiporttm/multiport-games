@@ -1,0 +1,255 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Grain Mash Milling</title><meta name="description" content="Play Grain Mash Milling free online — keep the mill's gap setting dialed in so the barley grinds to the right consistency and clear clogs before they jam. 3 lives."><link rel="canonical" href="https://games.multiportllc.com/games/grainmashmilling"><meta property="og:title" content="Grain Mash Milling - Multiport Games"><meta property="og:description" content="Play Grain Mash Milling free online — keep the mill's gap setting dialed in so the barley grinds to the right consistency and clear clogs before they jam. 3 lives."><meta property="og:url" content="https://games.multiportllc.com/games/grainmashmilling"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Grain Mash Milling","description":"Play Grain Mash Milling free online instantly. Operate a grain mill grinding malted barley to the right consistency, adjusting the gap setting and clearing clogs before they jam the mash, across rounds that speed up and tighten the target range. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/grainmashmilling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a2e1a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#e8d9a8;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#d9a63e}
+#hud span.hs{color:#7ec850}
+#ctrls{display:flex;justify-content:center;gap:10px;padding:6px 0;flex-wrap:wrap}
+#ctrls button{padding:12px 20px;border:none;border-radius:16px;font-weight:900;cursor:pointer;font-size:1.1rem;background:#5a4321;color:#fff3d6}
+#ctrls button:active{transform:scale(.95)}
+#clogBtn{background:#c0392b!important;color:#fff!important}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Grain Mash Milling</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0</span>
+      <span class="lv" id="levelDisp">Batch: 1</span>
+      <span id="livesDisp">Lives: ❤❤❤</span>
+      <span class="hs" id="hsDisp">Hi: 0</span>
+    </div>
+    <canvas id="c" width="600" height="340"></canvas>
+    <div id="ctrls">
+      <button id="gapDown">▼ Narrow Gap</button>
+      <button id="clogBtn">Clear Clog (Space)</button>
+      <button id="gapUp">▲ Widen Gap</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Up/Down Arrow</b> or the <b>▲ / ▼</b> buttons to adjust the mill's gap setting and keep the grind consistency inside the green target zone — too fine clogs the mill, too coarse wastes the mash. When a clog flashes, press <b>Space</b> or tap <b>Clear Clog</b> fast before it jams the mill. The target zone narrows and clogs come faster each batch.</div>
+</div>
+<script>
+(function(){
+const HS_KEY='grainmashmilling_hs';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=600,H=340;
+
+let score=0,lives=3,level=1,hi=0,gameOver=false,started=false;
+let gapSetting=50; // 0-100, player controlled
+let grind=50; // actual grind consistency, lags gapSetting + drift noise
+let targetLo=35,targetHi=65;
+let inZoneTime=0;
+let clog=null; // {timer, limit}
+let clogCooldown=180;
+let lastTime=null;
+let keyUp=false,keyDown=false;
+
+function loadHi(){ try{ hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0; }catch(e){ hi=0; } }
+function saveHi(){ try{ localStorage.setItem(HS_KEY,String(hi)); }catch(e){} }
+loadHi();
+
+function newBatch(){
+  const span=Math.max(14,34-level*2);
+  const center=30+Math.random()*40;
+  targetLo=Math.max(5,center-span/2);
+  targetHi=Math.min(95,center+span/2);
+  gapSetting=50;grind=50;
+  clog=null;
+  clogCooldown=Math.max(70,170-level*8);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;lastTime=null;
+  newBatch();
+}
+reset();
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelDisp').textContent=I18N.t('batch_label','Batch: {l}').replace('{l}',level);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {h}').replace('{h}','❤'.repeat(Math.max(0,lives)));
+  document.getElementById('hsDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+}
+
+function adjustGap(d){ if(!started||gameOver)return; gapSetting=Math.max(0,Math.min(100,gapSetting+d)); }
+
+function triggerClog(){
+  if(clog)return;
+  clog={timer:0,limit:Math.max(55,110-level*5)};
+  SFX.hit();
+}
+
+function clearClog(){
+  if(!clog)return;
+  score+=25+level*3;
+  SFX.success();
+  clog=null;
+  clogCooldown=Math.max(70,170-level*8);
+}
+
+function startGame(){ if(!started){started=true;} else if(gameOver){reset();started=true;} }
+
+document.addEventListener('keydown',e=>{
+  if(!started||gameOver){ if(e.code==='Space'||e.code.startsWith('Arrow')){ e.preventDefault(); startGame(); } return; }
+  if(e.code==='ArrowUp'){e.preventDefault();keyUp=true;}
+  else if(e.code==='ArrowDown'){e.preventDefault();keyDown=true;}
+  else if(e.code==='Space'){e.preventDefault();clearClog();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp')keyUp=false;
+  else if(e.code==='ArrowDown')keyDown=false;
+});
+
+document.getElementById('gapUp').addEventListener('pointerdown',e=>{e.stopPropagation(); if(!started||gameOver){startGame();return;} adjustGap(6);});
+document.getElementById('gapDown').addEventListener('pointerdown',e=>{e.stopPropagation(); if(!started||gameOver){startGame();return;} adjustGap(-6);});
+document.getElementById('clogBtn').addEventListener('pointerdown',e=>{e.stopPropagation(); if(!started||gameOver){startGame();return;} clearClog();});
+c.addEventListener('pointerdown',()=>{ if(!started||gameOver)startGame(); });
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;saveHi();}
+  SFX.lose();
+}
+
+function drawMill(){
+  // Hopper
+  ctx.fillStyle='#6b5433';
+  ctx.fillRect(220,20,160,50);
+  ctx.fillStyle='#8a6d3f';
+  ctx.beginPath();ctx.moveTo(220,70);ctx.lineTo(380,70);ctx.lineTo(320,110);ctx.lineTo(280,110);ctx.closePath();ctx.fill();
+
+  // Gap gauge
+  const gaugeX=100,gaugeY=140,gaugeW=400,gaugeH=26;
+  ctx.fillStyle='#241a0c';ctx.fillRect(gaugeX,gaugeY,gaugeW,gaugeH);
+  // target zone
+  ctx.fillStyle='rgba(126,200,80,0.45)';
+  ctx.fillRect(gaugeX+targetLo/100*gaugeW,gaugeY,(targetHi-targetLo)/100*gaugeW,gaugeH);
+  ctx.strokeStyle='#7ec850';ctx.lineWidth=2;
+  ctx.strokeRect(gaugeX+targetLo/100*gaugeW,gaugeY,(targetHi-targetLo)/100*gaugeW,gaugeH);
+  // grind needle
+  const gx=gaugeX+grind/100*gaugeW;
+  ctx.fillStyle=(grind>=targetLo&&grind<=targetHi)?'#ffd54f':'#e94560';
+  ctx.fillRect(gx-3,gaugeY-8,6,gaugeH+16);
+
+  ctx.fillStyle='#e8d9a8';ctx.font='12px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('coarse_label','Coarse'),gaugeX,gaugeY-12);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('fine_label','Fine'),gaugeX+gaugeW,gaugeY-12);
+
+  // Gap setting indicator (player control)
+  ctx.textAlign='center';
+  ctx.fillStyle='#d9a63e';ctx.font='bold 14px Arial';
+  ctx.fillText(I18N.t('gap_setting_label','Gap Setting: {g}').replace('{g}',Math.round(gapSetting)),W/2,gaugeY+gaugeH+28);
+
+  // Grain stream animation
+  ctx.fillStyle='#c9a24a';
+  for(let i=0;i<8;i++){
+    const gy=((Date.now()/8+i*40)%80)+100;
+    ctx.beginPath();ctx.arc(300+Math.sin(i)*20,gy,3,0,Math.PI*2);ctx.fill();
+  }
+}
+
+function drawClog(){
+  if(!clog)return;
+  const pct=1-clog.timer/clog.limit;
+  ctx.fillStyle='rgba(192,57,43,0.25)';
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#e94560';ctx.font='bold 26px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('clog_warning','CLOG! Clear it!'),W/2,210);
+  ctx.fillStyle='#241a0c';ctx.fillRect(W/2-120,230,240,16);
+  ctx.fillStyle='#ffd54f';ctx.fillRect(W/2-120,230,240*(1-pct),16);
+}
+
+let clogSpawnTimer=0,lastLevel=1;
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#241a0c';ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    drawMill();
+    ctx.fillStyle='#e8d9a8';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to start'),W/2,300);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawMill();
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score_label','Score: {s} — Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi)),W/2,H/2+14);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+44);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(keyUp)adjustGap(0.9*dt);
+  if(keyDown)adjustGap(-0.9*dt);
+
+  // Grind drifts toward gap setting with some noise, slightly lagging
+  grind+=(gapSetting-grind)*0.06*dt + (Math.random()-0.5)*0.6*dt;
+  grind=Math.max(0,Math.min(100,grind));
+
+  if(!clog){
+    if(grind>=targetLo&&grind<=targetHi){
+      inZoneTime+=dt;
+      score+=0.12*dt*(1+level*0.1);
+    }
+    clogSpawnTimer+=dt;
+    if(clogSpawnTimer>=clogCooldown){
+      clogSpawnTimer=0;
+      triggerClog();
+    }
+  } else {
+    clog.timer+=dt;
+    if(clog.timer>=clog.limit){
+      lives--;
+      SFX.fail();
+      clog=null;
+      grind=Math.max(0,Math.min(100,grind+(Math.random()>0.5?20:-20)));
+      if(lives<=0){ endGame(); return; }
+    }
+  }
+
+  if(score>hi)hi=score;
+  if(Math.floor(score)>0 && Math.floor(score)%150===0 && Math.floor(score)!==0){
+    // periodic difficulty bump handled via level derived from score
+  }
+  level=1+Math.floor(score/180);
+  if(level!==lastLevel){
+    lastLevel=level;
+    const span=Math.max(14,34-level*2);
+    const center=30+Math.random()*40;
+    targetLo=Math.max(5,center-span/2);
+    targetHi=Math.min(95,center+span/2);
+    clogCooldown=Math.max(70,170-level*8);
+    SFX.levelup();
+  }
+
+  drawMill();
+  drawClog();
+
+  updateHud();
+  if(score>hi){hi=score;saveHi();}
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script></body></html>

@@ -1,0 +1,305 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Whiskey Aging Warehouse</title><meta name="description" content="Play Whiskey Aging Warehouse free online — Manage a rickhouse of aging barrels, rotate them between levels, sample them, and pull each one for bottling right at its peak."><link rel="canonical" href="https://games.multiportllc.com/games/whiskeyagingwarehouse"><meta property="og:title" content="Whiskey Aging Warehouse - Multiport Games"><meta property="og:description" content="Play Whiskey Aging Warehouse free online — Manage a rickhouse of aging barrels, rotate them between levels, sample them, and pull each one for bottling right at its peak."><meta property="og:url" content="https://games.multiportllc.com/games/whiskeyagingwarehouse"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Whiskey Aging Warehouse","description":"Play Whiskey Aging Warehouse free online instantly. Manage a rickhouse full of aging whiskey barrels, tracking each barrel's position — which affects temperature swings and aging speed — rotating barrels between levels and periodically sampling to pull each one for bottling at its peak. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/whiskeyagingwarehouse","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a140f;display:block;border-radius:8px;touch-action:none}
+#hud{color:#c99a4b;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#actionRow{display:flex;justify-content:center;gap:8px;padding:6px 10px 14px;flex-wrap:wrap}
+#actionRow button{padding:10px 16px;border:none;border-radius:16px;font-weight:800;cursor:pointer;font-size:0.9rem;color:#fff;background:#6d4c2a}
+#actionRow button:disabled{opacity:.4;cursor:not-allowed}
+#actionRow button:active{transform:scale(0.95)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Whiskey Aging Warehouse</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0</span>
+      <span class="lv" id="levelDisp">Season: 1</span>
+      <span id="livesDisp">Lives: ❤❤❤</span>
+      <span class="hs" id="hsDisp">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="380"></canvas>
+    <div id="actionRow">
+      <button id="btnSample">Sample (S)</button>
+      <button id="btnRotUp">Move Up (↑)</button>
+      <button id="btnRotDown">Move Down (↓)</button>
+      <button id="btnPull">Pull & Bottle (P)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> or <b>tap</b> a barrel to select it, then <b>Sample</b> to check how close it is to peak, move it <b>Up/Down</b> a rickhouse level (top levels swing hotter and age faster, bottom levels age slow and steady), or <b>Pull & Bottle</b> it once it peaks. Pull too early or too late — or let one spoil — and you lose a life!</div>
+</div>
+<script>
+(function(){
+const HS_KEY='whiskeyagingwarehouse_hs';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=380;
+const LEVELS=4, SLOTS=5;
+const LEVEL_SPEED=[1.6,1.25,0.9,0.6]; // top (0) fastest/hottest .. bottom (3) slowest
+const LEVEL_NAMES=['Top Rick (Hot)','Upper Rick','Lower Rick','Floor (Cool)'];
+
+let score=0,lives=3,level=1,hi=0,gameOver=false,started=false;
+let barrels=[],selR=0,selC=0,spawnTimer=0,msg='',msgTimer=0;
+
+function loadHi(){ try{ hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0; }catch(e){ hi=0; } }
+function saveHi(){ try{ localStorage.setItem(HS_KEY,String(hi)); }catch(e){} }
+loadHi();
+
+function emptyGrid(){
+  const g=[];
+  for(let r=0;r<LEVELS;r++){ g.push(new Array(SLOTS).fill(null)); }
+  return g;
+}
+
+function peakFor(){ return 260+Math.random()*60; } // age units to reach peak
+function spoilFor(pk){ return pk*1.7; }
+
+function newBarrel(){
+  const pk=peakFor();
+  return {age:0,peak:pk,spoil:spoilFor(pk),sampled:false,id:Math.random()};
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;
+  barrels=emptyGrid();
+  selR=LEVELS-1;selC=0;
+  spawnTimer=0;msg='';msgTimer=0;
+  // seed a few barrels on the floor to start
+  barrels[LEVELS-1][0]=newBarrel();
+  barrels[LEVELS-1][1]=newBarrel();
+}
+reset();
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelDisp').textContent=I18N.t('season_label','Season: {l}').replace('{l}',level);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {h}').replace('{h}','❤'.repeat(Math.max(0,lives)));
+  document.getElementById('hsDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+}
+
+function levelUp(){ level++; SFX.levelup(); }
+
+function showMsg(t,ms){ msg=t; msgTimer=ms||120; }
+
+function loseLife(reason){
+  lives--;SFX.fail();
+  showMsg(reason,140);
+  if(lives<=0){ endGame(); }
+}
+
+function startGame(){ if(!started){started=true;} else if(gameOver){reset();started=true;} }
+
+function selected(){ return barrels[selR][selC]; }
+
+function moveSel(dr,dc){
+  selR=Math.max(0,Math.min(LEVELS-1,selR+dr));
+  selC=Math.max(0,Math.min(SLOTS-1,selC+dc));
+  SFX.click();
+}
+
+function sample(){
+  const b=selected();
+  if(!b)return;
+  b.sampled=true;
+  SFX.select();
+  const frac=b.age/b.peak;
+  if(frac<0.7)showMsg(I18N.t('msg_young','Still young — needs more time.'),110);
+  else if(frac<0.95)showMsg(I18N.t('msg_close','Getting close to peak...'),110);
+  else if(frac<=1.15)showMsg(I18N.t('msg_peak','Right at peak — pull it now!'),110);
+  else showMsg(I18N.t('msg_past','Past peak — pull soon or it will spoil!'),110);
+}
+
+function rotate(dir){
+  const b=selected();
+  if(!b)return;
+  const nr=selR+dir;
+  if(nr<0||nr>=LEVELS)return;
+  if(barrels[nr][selC])return; // occupied
+  barrels[nr][selC]=b;
+  barrels[selR][selC]=null;
+  selR=nr;
+  SFX.swoosh();
+}
+
+function pull(){
+  const b=selected();
+  if(!b)return;
+  const frac=b.age/b.peak;
+  barrels[selR][selC]=null;
+  if(frac>=0.85&&frac<=1.25){
+    const quality=1-Math.abs(1-frac);
+    score+=Math.round(140*level*Math.max(0.3,quality));
+    SFX.coin();SFX.success();
+    showMsg(I18N.t('msg_good_pull','Excellent barrel bottled!'),100);
+    if(score>=level*420)levelUp();
+  } else if(frac<0.85){
+    score=Math.max(0,score-20);
+    SFX.error();
+    loseLife(I18N.t('msg_early_pull','Pulled too early — weak spirit!'));
+  } else {
+    score=Math.max(0,score-20);
+    SFX.error();
+    loseLife(I18N.t('msg_late_pull','Pulled too late — over-oaked!'));
+  }
+}
+
+document.getElementById('btnSample').addEventListener('pointerdown',e=>{e.stopPropagation(); if(started&&!gameOver)sample();});
+document.getElementById('btnRotUp').addEventListener('pointerdown',e=>{e.stopPropagation(); if(started&&!gameOver)rotate(-1);});
+document.getElementById('btnRotDown').addEventListener('pointerdown',e=>{e.stopPropagation(); if(started&&!gameOver)rotate(1);});
+document.getElementById('btnPull').addEventListener('pointerdown',e=>{e.stopPropagation(); if(started&&!gameOver)pull();});
+
+c.addEventListener('pointerdown',e=>{
+  if(!started||gameOver){startGame();return;}
+  const rect=c.getBoundingClientRect();
+  const x=(e.clientX-rect.left)*(W/rect.width);
+  const y=(e.clientY-rect.top)*(H/rect.height);
+  const grid=gridMetrics();
+  const col=Math.floor((x-grid.x0)/grid.cellW);
+  const row=Math.floor((y-grid.y0)/grid.cellH);
+  if(row>=0&&row<LEVELS&&col>=0&&col<SLOTS){ selR=row;selC=col; SFX.click(); }
+});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='Enter'){ e.preventDefault(); if(!started||gameOver)startGame(); return; }
+  if(!started||gameOver)return;
+  if(e.code==='ArrowLeft'){ e.preventDefault(); moveSel(0,-1); }
+  else if(e.code==='ArrowRight'){ e.preventDefault(); moveSel(0,1); }
+  else if(e.code==='ArrowUp'){ e.preventDefault(); rotate(-1); }
+  else if(e.code==='ArrowDown'){ e.preventDefault(); rotate(1); }
+  else if(e.code==='KeyS'){ e.preventDefault(); sample(); }
+  else if(e.code==='KeyP'){ e.preventDefault(); pull(); }
+});
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;saveHi();}
+  SFX.lose();
+}
+
+function gridMetrics(){
+  const cellW=90,cellH=60,x0=W/2-(SLOTS*cellW)/2,y0=60;
+  return {cellW,cellH,x0,y0};
+}
+
+function drawGrid(){
+  const {cellW,cellH,x0,y0}=gridMetrics();
+  for(let r=0;r<LEVELS;r++){
+    ctx.font='13px Arial';ctx.fillStyle='#9a8266';ctx.textAlign='right';
+    ctx.fillText(I18N.t('level_'+r,LEVEL_NAMES[r]),x0-8,y0+r*cellH+cellH/2+4);
+    for(let col=0;col<SLOTS;col++){
+      const x=x0+col*cellW,y=y0+r*cellH;
+      ctx.strokeStyle='rgba(255,255,255,0.12)';ctx.lineWidth=1;
+      ctx.strokeRect(x,y,cellW-6,cellH-6);
+      const b=barrels[r][col];
+      if(b){
+        const frac=Math.min(1.3,b.age/b.peak);
+        let col1='#8a5a2b';
+        if(frac>=0.85&&frac<=1.15)col1='#2ecc71';
+        else if(frac>1.15)col1='#c0392b';
+        ctx.fillStyle=col1;
+        ctx.fillRect(x+10,y+6,cellW-32,cellH-18);
+        ctx.strokeStyle='#3a2410';ctx.lineWidth=2;
+        ctx.strokeRect(x+10,y+6,cellW-32,cellH-18);
+        if(b.sampled){
+          ctx.fillStyle='#fff';ctx.font='10px Arial';ctx.textAlign='center';
+          ctx.fillText(Math.round(frac*100)+'%',x+10+(cellW-32)/2,y+6+(cellH-18)/2+4);
+        }
+      }
+      if(r===selR&&col===selC){
+        ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+        ctx.strokeRect(x+1,y+1,cellW-8,cellH-8);
+      }
+    }
+  }
+}
+
+function maybeSpawn(dt){
+  spawnTimer+=dt;
+  const interval=Math.max(140,340-level*14);
+  if(spawnTimer>=interval){
+    spawnTimer-=interval;
+    const openFloor=[];
+    for(let col=0;col<SLOTS;col++) if(!barrels[LEVELS-1][col]) openFloor.push(col);
+    if(openFloor.length){
+      const col=openFloor[Math.floor(Math.random()*openFloor.length)];
+      barrels[LEVELS-1][col]=newBarrel();
+      SFX.point();
+    }
+  }
+}
+
+function tickAging(dt){
+  for(let r=0;r<LEVELS;r++){
+    for(let col=0;col<SLOTS;col++){
+      const b=barrels[r][col];
+      if(!b)continue;
+      b.age+=dt*0.05*LEVEL_SPEED[r]*(1+level*0.03);
+      if(b.age>=b.spoil){
+        barrels[r][col]=null;
+        score=Math.max(0,score-10);
+        loseLife(I18N.t('msg_spoiled','A barrel spoiled on the rack!'));
+      }
+    }
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#100c08');bg.addColorStop(1,'#1a140f');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#c99a4b';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to start'),W/2,30);
+    drawGrid();
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawGrid();
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Score: {s} — Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi)),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+48);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  const dt=1;
+  maybeSpawn(dt);
+  tickAging(dt);
+  if(msgTimer>0)msgTimer--;
+
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('rickhouse_label','The Rickhouse'),W/2,30);
+
+  drawGrid();
+
+  if(msgTimer>0){
+    ctx.fillStyle='#ffe082';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,H-20);
+  } else {
+    ctx.fillStyle='#8a7a66';ctx.font='14px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('hint_select','Select a barrel, then Sample / Move / Pull'),W/2,H-20);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script></body></html>
