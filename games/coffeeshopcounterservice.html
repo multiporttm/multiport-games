@@ -1,0 +1,265 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Coffee Shop Counter Service</title><meta name="description" content="Play Coffee Shop Counter Service free online — Juggle taking orders, brewing drinks, calling them out and restocking pastries during the morning rush!"><link rel="canonical" href="https://games.multiportllc.com/games/coffeeshopcounterservice"><meta property="og:title" content="Coffee Shop Counter Service - Multiport Games"><meta property="og:description" content="Play Coffee Shop Counter Service free online — Juggle taking orders, brewing drinks, calling them out and restocking pastries during the morning rush!"><meta property="og:url" content="https://games.multiportllc.com/games/coffeeshopcounterservice"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Coffee Shop Counter Service","description":"Play Coffee Shop Counter Service free online instantly. Juggle taking orders, brewing drinks, calling them out, handling payment and restocking pastries during the morning rush. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/coffeeshopcounterservice","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a2a1c;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#f0c674;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#controls{text-align:center;padding:10px 0 16px;display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
+#controls button{padding:9px 18px;background:#8c5a2b;border:none;border-radius:16px;color:#fff;cursor:pointer;font-size:.9rem;font-weight:700}
+#controls button:hover{background:#a3692f}
+#controls button.restock{background:#5a7c2a}
+#controls button.restock:hover{background:#6f9433}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Coffee Shop Counter Service</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="340"></canvas>
+    <div id="controls">
+      <button id="btnOrder" data-key="o">Take Order (O)</button>
+      <button id="btnBrew" data-key="b">Brew Drink (B)</button>
+      <button id="btnServe" data-key="s">Serve & Pay (S)</button>
+      <button id="btnRestock" class="restock" data-key="r">Restock Pastries (R)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Click a ticket (slot 1/2/3, or press <b>1</b>/<b>2</b>/<b>3</b>) to select it, then use <b>Take Order</b>, <b>Brew Drink</b> or <b>Serve &amp; Pay</b> (keys <b>O/B/S</b>) in the right sequence before the customer's patience runs out. Keep an eye on the pastry case — click <b>Restock</b> (<b>R</b>) when it's running low. 3 reputation hearts — don't lose them all!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const HI_KEY='coffeeshopcounterservice_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+const STEPS=['order','brew','serve'];
+const STEP_LABEL={order:'Needs order taken',brew:'Needs drink brewed',serve:'Needs serving & pay'};
+const SLOT_X=[70,310,550],SLOT_W=220,SLOT_Y=70,SLOT_H=140;
+
+let score=0,lives=3,level=1,served=0,started=false,gameOver=false,won=false;
+let slots=[null,null,null]; // {stepIdx,patience,maxPatience,busyUntil}
+let selSlot=0;
+let queueCount=0;
+let pastry=100; // 0-100
+let spawnTimer=0;
+const WIN_TARGET=20;
+
+function patienceForLevel(){ return Math.max(10,22-level*1.2); }
+function spawnIntervalForLevel(){ return Math.max(2.2,5-level*0.3); }
+
+function newCustomer(){
+  return {stepIdx:0,patience:patienceForLevel(),maxPatience:patienceForLevel(),busyUntil:0};
+}
+
+function startGame(){
+  score=0;lives=3;level=1;served=0;started=true;gameOver=false;won=false;
+  slots=[newCustomer(),newCustomer(),null];
+  selSlot=0;pastry=100;spawnTimer=0;
+}
+
+function doStep(stepName){
+  const now=performance.now()/1000;
+  const slot=slots[selSlot];
+  if(!slot)return;
+  if(slot.busyUntil>now){ SFX.error(); return; }
+  const needed=STEPS[slot.stepIdx];
+  if(needed!==stepName){ SFX.error(); return; }
+  if(stepName==='brew'){
+    slot.busyUntil=now+1.2; // brewing takes time, other slots still work
+  }
+  slot.stepIdx++;
+  SFX.click();
+  if(slot.stepIdx>=STEPS.length){
+    score+=15*level;
+    served++;
+    SFX.success();
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    slots[selSlot]=null;
+    if(served>0 && served%6===0){ level++; SFX.levelup(); }
+    if(served>=WIN_TARGET){ winGame(); return; }
+    refillSlot(selSlot);
+  }
+}
+
+function refillSlot(i){
+  slots[i]=newCustomer();
+}
+
+function missSlot(i){
+  lives--;
+  SFX.error();
+  slots[i]=null;
+  if(lives<=0){ endGame(); } else { refillSlot(i); }
+}
+
+function restock(){
+  if(pastry>=99){ return; }
+  pastry=100;
+  score+=5;
+  SFX.powerup();
+}
+
+function winGame(){
+  won=true;gameOver=true;started=true;
+  SFX.win();
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+}
+function endGame(){
+  gameOver=true;started=true;won=false;
+  SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+}
+
+function selectSlot(i){
+  if(i<0||i>2)return;
+  selSlot=i;
+  SFX.select();
+}
+
+document.getElementById('btnOrder').onclick=()=>doStep('order');
+document.getElementById('btnBrew').onclick=()=>doStep('brew');
+document.getElementById('btnServe').onclick=()=>doStep('serve');
+document.getElementById('btnRestock').onclick=restock;
+
+function canvasPos(px,py){
+  const rect=c.getBoundingClientRect();
+  const scaleX=c.width/rect.width, scaleY=c.height/rect.height;
+  return {x:(px-rect.left)*scaleX, y:(py-rect.top)*scaleY};
+}
+function handlePointer(px,py){
+  if(!started||gameOver){ startGame(); return; }
+  const {x,y}=canvasPos(px,py);
+  for(let i=0;i<3;i++){
+    if(x>=SLOT_X[i]&&x<=SLOT_X[i]+SLOT_W&&y>=SLOT_Y&&y<=SLOT_Y+SLOT_H){
+      selectSlot(i);return;
+    }
+  }
+}
+c.addEventListener('click',e=>handlePointer(e.clientX,e.clientY));
+c.addEventListener('touchstart',e=>{ e.preventDefault(); const t=e.touches[0]; handlePointer(t.clientX,t.clientY); },{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(!started||gameOver){ if(e.key==='Enter'||e.code==='Space')startGame(); return; }
+  const k=e.key.toLowerCase();
+  if(k==='1'||k==='2'||k==='3'){ selectSlot(parseInt(k,10)-1); return; }
+  if(k==='o'){ e.preventDefault(); doStep('order'); return; }
+  if(k==='b'){ e.preventDefault(); doStep('brew'); return; }
+  if(k==='s'){ e.preventDefault(); doStep('serve'); return; }
+  if(k==='r'){ e.preventDefault(); restock(); return; }
+});
+
+let lastTime=null;
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  ctx.clearRect(0,0,800,340);
+  const bg=ctx.createLinearGradient(0,0,0,340);
+  bg.addColorStop(0,'#241a10');bg.addColorStop(1,'#3a2a1c');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,340);
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='#f0c674';ctx.font='bold 24px Arial';
+    ctx.fillText(I18N.t('start_hint','Tap / Enter to open the shop'),400,170);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';
+    ctx.fillText(won?I18N.t('win_title','SHIFT COMPLETE!'):I18N.t('game_over_title','SHOP CLOSED'),400,140);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),400,175);
+    ctx.fillText(I18N.t('restart_hint','Tap or Enter to restart'),400,200);
+    document.getElementById('score-display').textContent=I18N.t('score_hi_lives_label','Score: {s} | Hi: {h} | Lives: {l}').replace('{s}',score).replace('{h}',hi).replace('{l}',lives);
+    requestAnimationFrame(loop);return;
+  }
+
+  // spawn new customers into empty slots
+  spawnTimer+=dt;
+  if(spawnTimer>=spawnIntervalForLevel()){
+    spawnTimer=0;
+    for(let i=0;i<3;i++){ if(slots[i]===null){ slots[i]=newCustomer(); break; } }
+  }
+
+  // pastry depletes over time
+  pastry=Math.max(0,pastry-dt*(2+level*0.3));
+
+  // patience countdown
+  for(let i=0;i<3;i++){
+    const s=slots[i];
+    if(!s)continue;
+    s.patience-=dt;
+    if(s.patience<=0){ missSlot(i); }
+  }
+
+  // header
+  ctx.fillStyle='#fff';ctx.font='bold 15px Arial';
+  ctx.fillText(I18N.t('level_served_label','Level {l} — Served {n}/{t}').replace('{l}',level).replace('{n}',served).replace('{t}',WIN_TARGET),400,20);
+
+  // pastry meter
+  ctx.textAlign='left';
+  ctx.fillStyle='#f0c674';ctx.font='12px Arial';
+  ctx.fillText(I18N.t('pastry_label','Pastry case'),30,45);
+  ctx.fillStyle='rgba(255,255,255,.15)';ctx.fillRect(30,50,180,10);
+  ctx.fillStyle=pastry<30?'#e05a4a':'#7ec850';
+  ctx.fillRect(30,50,180*(pastry/100),10);
+  if(pastry<30){
+    ctx.fillStyle='#e05a4a';ctx.font='bold 11px Arial';
+    ctx.fillText(I18N.t('pastry_low','LOW! Restock (R)'),30,78);
+  }
+
+  // slots
+  ctx.textAlign='center';
+  for(let i=0;i<3;i++){
+    const x=SLOT_X[i],y=SLOT_Y;
+    ctx.fillStyle=i===selSlot?'rgba(255,213,79,.15)':'rgba(255,255,255,.06)';
+    ctx.fillRect(x,y,SLOT_W,SLOT_H);
+    ctx.strokeStyle=i===selSlot?'#ffd54f':'rgba(255,255,255,.2)';
+    ctx.lineWidth=i===selSlot?3:1;
+    ctx.strokeRect(x,y,SLOT_W,SLOT_H);
+
+    const s=slots[i];
+    ctx.fillStyle='#fff';ctx.font='bold 13px Arial';
+    ctx.fillText(I18N.t('slot_label','Slot {n}').replace('{n}',i+1),x+SLOT_W/2,y+20);
+    if(s){
+      const now=performance.now()/1000;
+      const busy=s.busyUntil>now;
+      const need=STEPS[s.stepIdx];
+      ctx.font='12px Arial';
+      ctx.fillStyle='#f0c674';
+      ctx.fillText(busy?I18N.t('brewing_label','Brewing...'):I18N.t(need+'_step_label',STEP_LABEL[need]),x+SLOT_W/2,y+42);
+      // patience bar
+      const pct=Math.max(0,s.patience/s.maxPatience);
+      ctx.fillStyle='rgba(255,255,255,.15)';ctx.fillRect(x+10,y+SLOT_H-24,SLOT_W-20,10);
+      ctx.fillStyle=pct<0.3?'#e05a4a':'#7ec850';
+      ctx.fillRect(x+10,y+SLOT_H-24,(SLOT_W-20)*pct,10);
+      // progress dots
+      for(let d=0;d<STEPS.length;d++){
+        ctx.fillStyle=d<s.stepIdx?'#7ec850':'rgba(255,255,255,.25)';
+        ctx.beginPath();ctx.arc(x+SLOT_W/2-20+d*20,y+70,7,0,Math.PI*2);ctx.fill();
+      }
+    } else {
+      ctx.font='12px Arial';ctx.fillStyle='rgba(255,255,255,.4)';
+      ctx.fillText(I18N.t('empty_slot_label','(empty)'),x+SLOT_W/2,y+70);
+    }
+  }
+
+  // lives hearts
+  ctx.textAlign='left';ctx.font='18px Arial';
+  for(let i=0;i<3;i++){
+    ctx.fillStyle=i<lives?'#e05a4a':'rgba(255,255,255,.2)';
+    ctx.fillText('♥',30+i*24,110);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('score_hi_lives_label','Score: {s} | Hi: {h} | Lives: {l}').replace('{s}',score).replace('{h}',hi).replace('{l}',lives);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

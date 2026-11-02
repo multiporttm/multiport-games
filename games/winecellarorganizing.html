@@ -1,0 +1,331 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Wine Cellar Organizing</title><meta name="description" content="Play Wine Cellar Organizing free online — Click or press 1-6 to shelve each incoming bottle in its matching region rack before time runs out, then find requested bottles fast when the cellar calls for them."><link rel="canonical" href="https://games.multiportllc.com/games/winecellarorganizing"><meta property="og:title" content="Wine Cellar Organizing - Multiport Games"><meta property="og:description" content="Play Wine Cellar Organizing free online — Click or press 1-6 to shelve each incoming bottle in its matching region rack before time runs out, then find requested bottles fast when the cellar calls for them."><meta property="og:url" content="https://games.multiportllc.com/games/winecellarorganizing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Wine Cellar Organizing","description":"Play Wine Cellar Organizing free online instantly. Shelve each incoming bottle into its matching region rack before time runs out, then find requested bottles fast as the cellar's inventory keeps growing. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/winecellarorganizing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#241307;display:block;border-radius:8px}
+#hud{color:#f3e2c7;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#e0a847}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Wine Cellar Organizing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>Level: <b id="levelNum">1</b></span>
+      <span>Lives: <b id="lives">3</b></span>
+      <span>Score: <b id="score">0</b></span>
+      <span>Hi: <b id="hi">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Each incoming bottle shows its <b>region</b> and <b>vintage</b> — click its matching rack column (or press <b>1-6</b>) before the timer runs out to shelve it correctly. Every so often the cellar calls out a bottle to find — click the exact shelf slot that holds it. Shelve fast and remember where things go: the rack only gets fuller!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=340;
+const REGIONS=[
+  {name:'Bordeaux',color:'#7b1e3a'},
+  {name:'Burgundy',color:'#8c2f1c'},
+  {name:'Napa',color:'#3a6b2e'},
+  {name:'Rioja',color:'#6b2fa0'},
+  {name:'Tuscany',color:'#b06a1c'},
+  {name:'Mosel',color:'#1c6b7b'}
+];
+const COLS=6,ROWS=5;
+const rackX=60,rackY=70,colW=110,rowH=42;
+
+let grid; // grid[c][r] = null or {vintage}
+let score=0,hi=0,lives=3,level=1,placedThisLevel=0,totalPlaced=0;
+let started=false,gameOver=false,won=false;
+let current=null; // {col,vintage,timeLeft,timeMax}
+let request=null; // {col,row,vintage,timeLeft,timeMax}
+let resultMsg='',resultTimer=0,shake=0;
+let lastTime=null;
+let cursorCol=0;
+
+const HI_KEY='winecellarorganizing_hi';
+try{hi=parseInt(localStorage.getItem(HI_KEY)||'0',10)||0;}catch(e){}
+
+const MAX_LEVEL=8;
+
+function setHud(){
+  document.getElementById('levelNum').textContent=Math.min(level,MAX_LEVEL);
+  document.getElementById('lives').textContent=lives;
+  document.getElementById('score').textContent=Math.floor(score);
+  document.getElementById('hi').textContent=Math.floor(hi);
+}
+
+function timeForLevel(lv){ return Math.max(2.2,6.5-(lv-1)*0.5); }
+function requestEvery(lv){ return Math.max(3,6-Math.floor(lv/2)); }
+
+function resetGame(){
+  grid=[];
+  for(let col=0;col<COLS;col++){ grid.push(new Array(ROWS).fill(null)); }
+  score=0;lives=3;level=1;placedThisLevel=0;totalPlaced=0;started=true;gameOver=false;won=false;
+  current=null;request=null;resultMsg='';resultTimer=0;cursorCol=0;
+  spawnBottle();
+  setHud();
+}
+
+function spawnBottle(){
+  const col=Math.floor(Math.random()*COLS);
+  const vintage=1990+Math.floor(Math.random()*34);
+  const tmax=timeForLevel(level);
+  current={col,vintage,timeLeft:tmax,timeMax:tmax};
+}
+
+function firstOpenRow(col){
+  for(let r=ROWS-1;r>=0;r--) if(grid[col][r]===null) return r;
+  return -1;
+}
+
+function filledSlots(){
+  const list=[];
+  for(let col=0;col<COLS;col++) for(let r=0;r<ROWS;r++) if(grid[col][r]) list.push({col,row:r,vintage:grid[col][r].vintage});
+  return list;
+}
+
+function maybeSpawnRequest(){
+  if(request)return;
+  const list=filledSlots();
+  if(list.length<3)return;
+  if(placedThisLevel>0 && placedThisLevel%requestEvery(level)===0){
+    const pick=list[Math.floor(Math.random()*list.length)];
+    const tmax=Math.max(3,7-(level-1)*0.3);
+    request={col:pick.col,row:pick.row,vintage:pick.vintage,timeLeft:tmax,timeMax:tmax};
+    SFX.levelup();
+  }
+}
+
+function placeBottle(col){
+  if(!current||gameOver)return;
+  if(col!==current.col){
+    failPlacement(I18N.t('wrong_rack','Wrong rack! That bottle doesn\'t belong there.'));
+    return;
+  }
+  const row=firstOpenRow(col);
+  if(row<0){
+    failPlacement(I18N.t('rack_full','That rack is full!'));
+    return;
+  }
+  grid[col][row]={vintage:current.vintage};
+  score+=30;totalPlaced++;placedThisLevel++;
+  SFX.success();
+  current=null;
+  if(score>hi){hi=score;try{localStorage.setItem(HI_KEY,String(hi));}catch(e){}}
+  setHud();
+  checkLevelUp();
+  maybeSpawnRequest();
+  if(!gameOver) spawnBottle();
+}
+
+function failPlacement(msg){
+  lives--;shake=10;SFX.error();
+  resultMsg=msg;resultTimer=45;
+  current=null;
+  setHud();
+  checkGameOver();
+  if(!gameOver){ maybeSpawnRequest(); spawnBottle(); }
+}
+
+function checkLevelUp(){
+  if(placedThisLevel>=10){
+    if(level>=MAX_LEVEL){
+      gameOver=true;won=true;SFX.win();
+      resultMsg=I18N.t('cellar_organized','Cellar Fully Organized!');
+    } else {
+      level++;placedThisLevel=0;SFX.levelup();
+    }
+  }
+}
+
+function checkGameOver(){
+  if(lives<=0){
+    gameOver=true;won=false;SFX.lose();
+    resultMsg=I18N.t('cellar_chaos','The cellar has fallen into chaos!');
+  }
+}
+
+function clickSlot(col,row){
+  if(request){
+    if(col===request.col&&row===request.row){
+      score+=80;SFX.success();
+      resultMsg=I18N.t('found_bottle','Found it! Great memory.');resultTimer=45;
+      request=null;
+      if(score>hi){hi=score;try{localStorage.setItem(HI_KEY,String(hi));}catch(e){}}
+      setHud();
+    }
+    return;
+  }
+  placeBottle(col);
+}
+
+function colAtX(x){
+  const col=Math.floor((x-rackX)/colW);
+  return (col>=0&&col<COLS)?col:-1;
+}
+function rowAtY(y){
+  const row=Math.floor((y-rackY)/rowH);
+  return (row>=0&&row<ROWS)?row:-1;
+}
+
+function handlePointer(x,y){
+  if(!started){started=true;setHud();return;}
+  if(gameOver){resetGame();return;}
+  const col=colAtX(x),row=rowAtY(y);
+  if(col<0)return;
+  if(row<0){ clickSlot(col,-1); return; }
+  clickSlot(col,row);
+}
+
+c.addEventListener('pointerdown',e=>{
+  const r=c.getBoundingClientRect();
+  const sx=(e.clientX-r.left)*(W/r.width),sy=(e.clientY-r.top)*(H/r.height);
+  handlePointer(sx,sy);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.touches[0];const r=c.getBoundingClientRect();
+  const sx=(t.clientX-r.left)*(W/r.width),sy=(t.clientY-r.top)*(H/r.height);
+  handlePointer(sx,sy);
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(!started){ if(e.code==='Space'){started=true;setHud();} return; }
+  if(gameOver){ if(e.code==='Space'){resetGame();} return; }
+  if(e.code>='Digit1'&&e.code<='Digit6'){
+    const col=parseInt(e.code.slice(5),10)-1;
+    if(col<COLS){
+      if(request){ clickSlot(col,request.row===undefined?0:request.row); }
+      else placeBottle(col);
+    }
+  } else if(e.code==='ArrowLeft'){ cursorCol=(cursorCol+COLS-1)%COLS; }
+  else if(e.code==='ArrowRight'){ cursorCol=(cursorCol+1)%COLS; }
+  else if(e.code==='Space'||e.code==='Enter'){
+    e.preventDefault();
+    if(request) clickSlot(request.col,request.row);
+    else placeBottle(cursorCol);
+  }
+});
+
+function drawRack(){
+  for(let col=0;col<COLS;col++){
+    const region=REGIONS[col];
+    ctx.fillStyle='#3a2414';
+    ctx.fillRect(rackX+col*colW,rackY-26,colW-6,ROWS*rowH+26);
+    ctx.fillStyle=region.color;
+    ctx.fillRect(rackX+col*colW,rackY-26,colW-6,22);
+    ctx.fillStyle='#fff';ctx.font='bold 12px Arial';ctx.textAlign='center';
+    ctx.fillText(region.name,rackX+col*colW+(colW-6)/2,rackY-10);
+    if(col===cursorCol&&!gameOver){
+      ctx.strokeStyle='#e0a847';ctx.lineWidth=3;
+      ctx.strokeRect(rackX+col*colW+1,rackY-26+1,colW-8,ROWS*rowH+24);
+    }
+    for(let row=0;row<ROWS;row++){
+      const slotX=rackX+col*colW+6,slotY=rackY+row*rowH+4,slotW=colW-18,slotH=rowH-8;
+      const bottle=grid[col][row];
+      const isReqTarget=request&&request.col===col&&request.row===row;
+      ctx.fillStyle=bottle?region.color:'#1a1008';
+      ctx.fillRect(slotX,slotY,slotW,slotH);
+      if(bottle){
+        ctx.fillStyle='#f3e2c7';ctx.font='11px Arial';ctx.textAlign='center';
+        ctx.fillText(''+bottle.vintage,slotX+slotW/2,slotY+slotH/2+4);
+      }
+      if(isReqTarget){
+        ctx.strokeStyle='#ff5050';ctx.lineWidth=3;
+        ctx.strokeRect(slotX-2,slotY-2,slotW+4,slotH+4);
+      }
+    }
+  }
+}
+
+function drawCurrent(){
+  if(!current)return;
+  const region=REGIONS[current.col];
+  const bx=W/2-60,by=H-56;
+  ctx.fillStyle='#2a1a0d';ctx.fillRect(bx-10,by-10,220,56);
+  ctx.fillStyle=region.color;ctx.fillRect(bx,by,36,36);
+  ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(region.name+' · '+current.vintage,bx+44,by+15);
+  ctx.font='11px Arial';ctx.fillStyle='#e0a847';
+  ctx.fillText(I18N.t('shelve_hint','Shelve before time runs out!'),bx+44,by+32);
+  const pct=current.timeLeft/current.timeMax;
+  ctx.fillStyle='#1a1008';ctx.fillRect(bx,by+42,200,6);
+  ctx.fillStyle=pct>0.3?'#6ab04c':'#e94560';
+  ctx.fillRect(bx,by+42,200*Math.max(0,pct),6);
+}
+
+function drawRequest(){
+  if(!request)return;
+  ctx.fillStyle='#ff5050';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('find_bottle','Find: {r} {v}!').replace('{r}',REGIONS[request.col].name).replace('{v}',request.vintage),W/2,40);
+  const pct=request.timeLeft/request.timeMax;
+  ctx.fillStyle='#1a1008';ctx.fillRect(W/2-100,48,200,6);
+  ctx.fillStyle='#ff5050';ctx.fillRect(W/2-100,48,200*Math.max(0,pct),6);
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  let ox=0,oy=0;
+  if(shake>0){shake-=dt;ox=(Math.random()-0.5)*shake;oy=(Math.random()-0.5)*shake;}
+
+  ctx.save();
+  ctx.translate(ox,oy);
+  ctx.fillStyle='#241307';ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#e0a847cc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_cellar','Click / Tap / Space to start organizing'),W/2,H/2);
+    ctx.restore();requestAnimationFrame(loop);return;
+  }
+
+  if(!gameOver){
+    if(current){
+      current.timeLeft-=dt/60;
+      if(current.timeLeft<=0){ failPlacement(I18N.t('bottle_dropped','Too slow — bottle shattered!')); }
+    }
+    if(request){
+      request.timeLeft-=dt/60;
+      if(request&&request.timeLeft<=0){
+        lives--;shake=10;SFX.fail();
+        resultMsg=I18N.t('request_missed','Ran out of time looking!');resultTimer=45;
+        request=null;setHud();checkGameOver();
+      }
+    }
+  }
+
+  drawRack();
+  drawCurrent();
+  drawRequest();
+
+  if(resultTimer>0){
+    resultTimer-=dt;
+    ctx.fillStyle='#fff';ctx.font='bold 15px Arial';ctx.textAlign='center';
+    ctx.fillText(resultMsg,W/2,H-6);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(resultMsg,W/2,H/2-30);
+    ctx.font='bold 20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',Math.floor(score)),W/2,H/2+4);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+34);
+  }
+
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+setHud();
+loop();
+</script></body></html>

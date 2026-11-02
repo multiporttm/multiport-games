@@ -1,0 +1,231 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Barista Order Taking</title><meta name="description" content="Play Barista Order Taking free online — Listen to each customer's order, build the drink ticket (size, milk, shots, flavor), then punch it in before time runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/baristaordertaking"><meta property="og:title" content="Barista Order Taking - Multiport Games"><meta property="og:description" content="Play Barista Order Taking free online — Listen to each customer's order, build the drink ticket (size, milk, shots, flavor), then punch it in before time runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/baristaordertaking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Barista Order Taking","description":"Play Barista Order Taking free online instantly. Listen to each customer's order, build the drink ticket (size, milk, shots, flavor), then punch it in before time runs out. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/baristaordertaking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a2418;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#e0b084;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#controls{padding:10px 14px 16px;max-width:800px;margin:0 auto}
+.row{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:8px}
+.row .label{color:#caa27a;font-weight:800;font-size:.8rem;width:100%;text-align:center;margin-bottom:2px}
+.opt{padding:7px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;font-size:.85rem;cursor:pointer;font-family:inherit}
+.opt.sel{background:#e0b084;color:#2a1810;border-color:#e0b084;font-weight:800}
+#punchBtn{display:block;margin:10px auto 0;padding:10px 28px;border-radius:10px;border:none;background:#8c5a2b;color:#fff;font-weight:800;font-size:1rem;cursor:pointer}
+#punchBtn:hover{background:#a3692f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Barista Order Taking</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="230"></canvas>
+    <div id="controls">
+      <div class="row"><div class="label">Size (s/m/l)</div><div id="sizeRow"></div></div>
+      <div class="row"><div class="label">Milk (w/o/a/k)</div><div id="milkRow"></div></div>
+      <div class="row"><div class="label">Shots (1/2/3)</div><div id="shotsRow"></div></div>
+      <div class="row"><div class="label">Flavor (n/v/c/x)</div><div id="flavorRow"></div></div>
+      <button id="punchBtn">Punch In (Enter)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A customer's order ticket appears above. Match it using the <b>Size</b>, <b>Milk</b>, <b>Shots</b> and <b>Flavor</b> buttons (or keyboard: s/m/l, w/o/a/k, 1/2/3, n/v/c/x), then click <b>Punch In</b> (or press <b>Enter</b>) before the timer runs out. Wrong orders or a timeout cost a life — don't let the line get too long!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const SIZES=['Small','Medium','Large'];
+const SIZE_KEYS={s:0,m:1,l:2};
+const MILKS=['Whole','Oat','Almond','Skim'];
+const MILK_KEYS={w:0,o:1,a:2,k:3};
+const SHOTS=[1,2,3];
+const SHOT_KEYS={'1':0,'2':1,'3':2};
+const FLAVORS=['None','Vanilla','Caramel','Mocha'];
+const FLAVOR_KEYS={n:0,v:1,c:2,x:3};
+
+const HI_KEY='baristaordertaking_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let score=0,lives=3,level=1,served=0,gameOver=false,started=false;
+let queue=[]; // waiting customers
+let active=null; // {ticket, timeLeft, maxTime}
+let sel={size:0,milk:0,shots:0,flavor:0};
+const MAX_QUEUE=7;
+
+function randTicket(){
+  return {
+    size:Math.floor(Math.random()*SIZES.length),
+    milk:Math.floor(Math.random()*MILKS.length),
+    shots:Math.floor(Math.random()*SHOTS.length),
+    flavor:Math.floor(Math.random()*FLAVORS.length)
+  };
+}
+function ticketText(t){
+  return `${SIZES[t.size]} ${MILKS[t.milk]} Milk, ${SHOTS[t.shots]} Shot${SHOTS[t.shots]>1?'s':''}, ${FLAVORS[t.flavor]}`;
+}
+function timeForLevel(){ return Math.max(5,12-level*0.5); }
+
+function spawnQueue(){
+  queue.push(randTicket());
+}
+function pullNext(){
+  if(queue.length===0)spawnQueue();
+  const t=queue.shift();
+  active={ticket:t,timeLeft:timeForLevel(),maxTime:timeForLevel()};
+  sel={size:0,milk:0,shots:0,flavor:0};
+  renderSelectors();
+}
+
+function buildRow(id,labels,keyFor){
+  const el=document.getElementById(id);
+  el.innerHTML='';
+  labels.forEach((lab,i)=>{
+    const b=document.createElement('button');
+    b.className='opt';b.textContent=lab;
+    b.onclick=()=>{ keyFor(i); };
+    el.appendChild(b);
+  });
+}
+buildRow('sizeRow',SIZES,i=>{sel.size=i;renderSelectors();});
+buildRow('milkRow',MILKS,i=>{sel.milk=i;renderSelectors();});
+buildRow('shotsRow',SHOTS.map(s=>s+' shot'+(s>1?'s':'')),i=>{sel.shots=i;renderSelectors();});
+buildRow('flavorRow',FLAVORS,i=>{sel.flavor=i;renderSelectors();});
+
+function renderSelectors(){
+  const rows=[['sizeRow','size'],['milkRow','milk'],['shotsRow','shots'],['flavorRow','flavor']];
+  rows.forEach(([rid,key])=>{
+    const el=document.getElementById(rid);
+    Array.from(el.children).forEach((b,i)=>b.classList.toggle('sel',sel[key]===i));
+  });
+}
+
+function punchIn(){
+  if(!started){started=true;pullNext();renderSelectors();return;}
+  if(gameOver){resetGame();return;}
+  if(!active)return;
+  const t=active.ticket;
+  const correct = sel.size===t.size && sel.milk===t.milk && sel.shots===t.shots && sel.flavor===t.flavor;
+  if(correct){
+    score+=10*level;
+    served++;
+    SFX.success();
+    if(served%5===0){level++;SFX.levelup();}
+  } else {
+    lives--;
+    SFX.error();
+  }
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  if(lives<=0){ endGame(); return; }
+  pullNext();
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+}
+
+function resetGame(){
+  score=0;lives=3;level=1;served=0;gameOver=false;started=true;queue=[];active=null;
+  pullNext();
+}
+
+document.getElementById('punchBtn').onclick=punchIn;
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();punchIn();return;}
+  const k=e.key.toLowerCase();
+  if(k in SIZE_KEYS){sel.size=SIZE_KEYS[k];renderSelectors();return;}
+  if(k in MILK_KEYS){sel.milk=MILK_KEYS[k];renderSelectors();return;}
+  if(k in SHOT_KEYS){sel.shots=SHOT_KEYS[k];renderSelectors();return;}
+  if(k in FLAVOR_KEYS){sel.flavor=FLAVOR_KEYS[k];renderSelectors();return;}
+});
+c.addEventListener('click',()=>{ if(!started||gameOver)punchIn(); });
+c.addEventListener('touchstart',e=>{ e.preventDefault(); if(!started||gameOver)punchIn(); },{passive:false});
+
+function drawQueueIcon(x,y,unhappy){
+  ctx.fillStyle=unhappy?'#e05a4a':'#caa27a';
+  ctx.beginPath();ctx.arc(x,y,12,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#2a1810';
+  ctx.beginPath();ctx.arc(x-4,y-2,2,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(x+4,y-2,2,0,Math.PI*2);ctx.fill();
+}
+
+let lastTime=null;
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  ctx.clearRect(0,0,800,230);
+  const bg=ctx.createLinearGradient(0,0,0,230);
+  bg.addColorStop(0,'#2a1810');bg.addColorStop(1,'#4a2e1c');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,230);
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='#e0b084';ctx.font='bold 26px Arial';
+    ctx.fillText(I18N.t('start_hint','Tap / Enter to start your shift'),400,110);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','SHOP CLOSED'),400,95);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),400,130);
+    ctx.fillText(I18N.t('restart_hint','Tap or Enter to restart'),400,160);
+    document.getElementById('score-display').textContent=I18N.t('score_hi_lives_label','Score: {s} | Hi: {h} | Lives: {l}').replace('{s}',score).replace('{h}',hi).replace('{l}',lives);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(active){
+    active.timeLeft-=dt;
+    if(active.timeLeft<=0){
+      lives--;
+      SFX.error();
+      if(lives<=0){ endGame(); } else { pullNext(); }
+    }
+  }
+
+  // random new customers joining queue
+  if(Math.random()<0.004+level*0.0008 && queue.length<MAX_QUEUE-1){
+    spawnQueue();
+  }
+  if(queue.length>=MAX_QUEUE){
+    endGame();
+  }
+
+  // Ticket
+  if(active){
+    ctx.fillStyle='#fdf6ec';
+    ctx.fillRect(140,20,520,70);
+    ctx.fillStyle='#2a1810';ctx.font='bold 16px Arial';
+    ctx.fillText(I18N.t('order_label','ORDER TICKET'),400,40);
+    ctx.font='16px Arial';
+    ctx.fillText(ticketText(active.ticket),400,65);
+    ctx.font='12px Arial';
+    ctx.fillText(I18N.t('level_label','Level {l}').replace('{l}',level),400,83);
+
+    // timer bar
+    const pct=Math.max(0,active.timeLeft/active.maxTime);
+    ctx.fillStyle='rgba(255,255,255,.15)';ctx.fillRect(140,98,520,10);
+    ctx.fillStyle=pct<0.3?'#e05a4a':'#7ec850';
+    ctx.fillRect(140,98,520*pct,10);
+  }
+
+  // queue line
+  ctx.font='13px Arial';ctx.fillStyle='#e0b084';
+  ctx.fillText(I18N.t('queue_label','Line: {n} waiting').replace('{n}',queue.length),400,130);
+  for(let i=0;i<queue.length;i++){
+    drawQueueIcon(360-Math.min(queue.length,8)*14+i*28+14,165,i>3);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('score_hi_lives_label','Score: {s} | Hi: {h} | Lives: {l}').replace('{s}',score).replace('{h}',hi).replace('{l}',lives);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

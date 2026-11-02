@@ -1,0 +1,282 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Wine Decanting Service</title><meta name="description" content="Play Wine Decanting Service free online — Hold to pour and use Up/Down (or drag) to control the tilt. Keep the flow steady to fill the decanter to the target line without disturbing the sediment or splashing."><link rel="canonical" href="https://games.multiportllc.com/games/winedecantingservice"><meta property="og:title" content="Wine Decanting Service - Multiport Games"><meta property="og:description" content="Play Wine Decanting Service free online — Hold to pour and use Up/Down (or drag) to control the tilt. Keep the flow steady to fill the decanter to the target line without disturbing the sediment or splashing."><meta property="og:url" content="https://games.multiportllc.com/games/winedecantingservice"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Wine Decanting Service","description":"Play Wine Decanting Service free online instantly. Hold to pour and control the tilt angle to keep the flow steady, filling the decanter to the target line without disturbing the sediment or splashing, across a full dinner service of bottles. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/winedecantingservice","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a0e14;display:block;border-radius:8px}
+#hud{color:#f3dfe8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#c9437a}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Wine Decanting Service</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>Bottle: <b id="bottleNum">1</b>/<b id="bottleTotal">8</b></span>
+      <span>Lives: <b id="lives">3</b></span>
+      <span>Score: <b id="score">0</b></span>
+      <span>Hi: <b id="hi">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Space</b> (or press and hold on screen) to pour. Use <b>Up/Down Arrow</b> — or drag up/down while holding on a touch screen — to control the <b>tilt</b>: a steeper tilt pours faster but risks shaking up the sediment. Release right when the decanter hits the target line. Serve the full dinner's worth of bottles!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320;
+const TOTAL_BOTTLES=8;
+const maxFuel=1000;
+
+let score=0,hi=0,lives=3,bottleIndex=0;
+let fill=0,target=0,tilt=0;
+let pouring=false,started=false,gameOver=false,awaitingNext=false;
+let sedimentRisk=0,sedimentSafeTilt=70;
+let resultMsg='',resultTimer=0,shake=0;
+let lastTime=null;
+let dragBaseY=null;
+
+const HI_KEY='winedecantingservice_hi';
+try{hi=parseInt(localStorage.getItem(HI_KEY)||'0',10)||0;}catch(e){}
+
+function setHud(){
+  document.getElementById('bottleNum').textContent=Math.min(bottleIndex+1,TOTAL_BOTTLES);
+  document.getElementById('bottleTotal').textContent=TOTAL_BOTTLES;
+  document.getElementById('lives').textContent=lives;
+  document.getElementById('score').textContent=Math.floor(score);
+  document.getElementById('hi').textContent=Math.floor(hi);
+}
+
+function tolForIndex(i){ return {tight:16+Math.max(0,8-i), wide:48+Math.max(0,16-i*2)}; }
+function safeTiltForIndex(i){ return Math.max(40,72-i*4); }
+
+function newTarget(){
+  target=350+Math.floor(Math.random()*450);
+  sedimentSafeTilt=safeTiltForIndex(bottleIndex);
+}
+
+function resetGame(){
+  score=0;lives=3;bottleIndex=0;gameOver=false;awaitingNext=false;started=true;
+  fill=0;tilt=0;sedimentRisk=0;newTarget();resultMsg='';resultTimer=0;
+  setHud();
+}
+
+function startPour(){
+  if(gameOver){resetGame();return;}
+  if(!started){started=true;newTarget();setHud();return;}
+  if(awaitingNext)return;
+  pouring=true;
+}
+function stopPour(){
+  pouring=false;dragBaseY=null;
+  if(started&&!gameOver&&!awaitingNext) evaluate();
+}
+
+function spoil(msg){
+  pouring=false;lives--;shake=10;SFX.fail();
+  resultMsg=msg;resultTimer=85;awaitingNext=true;
+  bottleIndex++;
+  setHud();
+  if(lives<=0){ gameOver=true;awaitingNext=false;resultTimer=99999;SFX.lose(); resultMsg=I18N.t('service_ruined','The service has fallen apart!'); }
+  else if(bottleIndex>=TOTAL_BOTTLES){ gameOver=true;awaitingNext=false;resultTimer=99999;resultMsg=I18N.t('service_complete','Service Complete!');SFX.win(); }
+}
+
+function evaluate(){
+  if(!started||gameOver||awaitingNext)return;
+  const tol=tolForIndex(bottleIndex);
+  const diff=Math.abs(fill-target);
+  let gained=0,msg='';
+  if(diff<=tol.tight){ gained=100;msg=I18N.t('perfect_pour','Perfect pour!');SFX.success(); }
+  else if(diff<=tol.wide){ gained=50;msg=I18N.t('ok_pour','Decent pour.');SFX.point(); }
+  else {
+    gained=0;lives--;shake=10;
+    msg=fill>target?I18N.t('overfilled','Overfilled the decanter!'):I18N.t('underfilled','Underfilled — guests shorted!');
+    SFX.fail();
+  }
+  score+=gained;
+  if(score>hi){hi=score;try{localStorage.setItem(HI_KEY,String(hi));}catch(e){}}
+  resultMsg=msg;resultTimer=85;awaitingNext=true;
+  bottleIndex++;
+  setHud();
+  if(lives<=0){ gameOver=true;awaitingNext=false;resultTimer=99999;SFX.lose(); resultMsg=I18N.t('service_ruined','The service has fallen apart!'); }
+  else if(bottleIndex>=TOTAL_BOTTLES){ gameOver=true;awaitingNext=false;resultTimer=99999;resultMsg=I18N.t('service_complete','Service Complete!');SFX.win(); }
+}
+
+function nextBottle(){
+  fill=0;tilt=0;sedimentRisk=0;awaitingNext=false;newTarget();resultMsg='';
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){ e.preventDefault(); if(!pouring) startPour(); }
+  else if(e.code==='ArrowUp'){ e.preventDefault(); tilt=Math.min(100,tilt+3); }
+  else if(e.code==='ArrowDown'){ e.preventDefault(); tilt=Math.max(0,tilt-3); }
+});
+document.addEventListener('keyup',e=>{ if(e.code==='Space'){ e.preventDefault(); stopPour(); } });
+
+c.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  const r=c.getBoundingClientRect();
+  dragBaseY=(e.clientY-r.top)*(H/r.height);
+  startPour();
+});
+window.addEventListener('pointermove',e=>{
+  if(!pouring||dragBaseY===null)return;
+  const r=c.getBoundingClientRect();
+  const y=(e.clientY-r.top)*(H/r.height);
+  const delta=dragBaseY-y;
+  tilt=Math.max(0,Math.min(100,50+delta*0.8));
+});
+window.addEventListener('pointerup',()=>stopPour());
+c.addEventListener('pointercancel',()=>stopPour());
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.touches[0];const r=c.getBoundingClientRect();
+  dragBaseY=(t.clientY-r.top)*(H/r.height);
+  startPour();
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(!pouring||dragBaseY===null)return;
+  const t=e.touches[0];const r=c.getBoundingClientRect();
+  const y=(t.clientY-r.top)*(H/r.height);
+  const delta=dragBaseY-y;
+  tilt=Math.max(0,Math.min(100,50+delta*0.8));
+},{passive:false});
+c.addEventListener('touchend',e=>{ e.preventDefault(); stopPour(); },{passive:false});
+
+function drawBottle(x,y,tiltDeg){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(tiltDeg*Math.PI/180);
+  ctx.fillStyle='#2e5a30';
+  ctx.fillRect(-14,-70,28,110);
+  ctx.beginPath();ctx.moveTo(-6,-70);ctx.lineTo(-4,-96);ctx.lineTo(4,-96);ctx.lineTo(6,-70);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#5a1020';
+  ctx.fillRect(-12,10,24,22);
+  ctx.restore();
+}
+
+function drawDecanter(){
+  const dx=560,dy=240,dw=160,dh=130;
+  ctx.strokeStyle='#c9437a';ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(dx-dw/2,dy-dh);
+  ctx.lineTo(dx-dw/2,dy-dh*0.35);
+  ctx.quadraticCurveTo(dx-dw/2-10,dy,dx,dy+10);
+  ctx.quadraticCurveTo(dx+dw/2+10,dy,dx+dw/2,dy-dh*0.35);
+  ctx.lineTo(dx+dw/2,dy-dh);
+  ctx.stroke();
+
+  function yFor(v){ return (dy+6)-(v/maxFuel)*(dh*0.95); }
+  const tol=tolForIndex(bottleIndex);
+  const wideTop=yFor(Math.min(maxFuel,target+tol.wide)),wideBot=yFor(Math.max(0,target-tol.wide));
+  ctx.fillStyle='rgba(255,213,79,0.3)';
+  ctx.fillRect(dx-dw/2+6,wideTop,dw-12,wideBot-wideTop);
+  const tightTop=yFor(Math.min(maxFuel,target+tol.tight)),tightBot=yFor(Math.max(0,target-tol.tight));
+  ctx.fillStyle='rgba(126,200,80,0.55)';
+  ctx.fillRect(dx-dw/2+6,tightTop,dw-12,tightBot-tightTop);
+
+  const fy=yFor(fill);
+  const grad=ctx.createLinearGradient(0,fy,0,dy+6);
+  grad.addColorStop(0,'#c9437a');grad.addColorStop(1,'#5a1020');
+  ctx.fillStyle=grad;
+  ctx.fillRect(dx-dw/2+8,fy,dw-16,(dy+6)-fy);
+
+  const ty=yFor(target);
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(dx-dw/2-8,ty);ctx.lineTo(dx+dw/2+8,ty);ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText(Math.floor(fill)+' mL',dx,dy+28);
+}
+
+function drawTiltMeter(){
+  const mx=60,my=60,mw=24,mh=180;
+  ctx.fillStyle='#2a1420';ctx.fillRect(mx,my,mw,mh);
+  const safeY=my+mh-(sedimentSafeTilt/100)*mh;
+  ctx.fillStyle='rgba(126,200,80,0.5)';ctx.fillRect(mx,safeY,mw,my+mh-safeY);
+  ctx.fillStyle='rgba(233,69,96,0.5)';ctx.fillRect(mx,my,mw,safeY-my);
+  const fy=my+mh-(tilt/100)*mh;
+  ctx.fillStyle='#f3dfe8';ctx.fillRect(mx-4,fy-3,mw+8,6);
+  ctx.fillStyle='#f3dfe8';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('tilt_label','Tilt'),mx+mw/2,my-8);
+  ctx.fillText(Math.round(tilt)+'°',mx+mw/2,my+mh+16);
+}
+
+function drawSedimentWarning(){
+  if(sedimentRisk<=0)return;
+  ctx.fillStyle='#e94560';
+  ctx.font='bold 13px Arial';ctx.textAlign='center';
+  const pct=Math.min(100,Math.round(sedimentRisk));
+  ctx.fillText(I18N.t('sediment_warning','Sediment disturbed! {p}%').replace('{p}',pct),200,40);
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  let ox=0,oy=0;
+  if(shake>0){shake-=dt;ox=(Math.random()-0.5)*shake;oy=(Math.random()-0.5)*shake;}
+
+  ctx.save();
+  ctx.translate(ox,oy);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#1a0e14');bg.addColorStop(1,'#2a1420');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#c9437acc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_decant','Hold Space / Tap to start the service'),W/2,120);
+    drawBottle(200,160,15);
+    drawDecanter();
+    ctx.restore();requestAnimationFrame(loop);return;
+  }
+
+  const tiltDeg=5+tilt*0.35;
+  drawBottle(200,160,pouring?tiltDeg:10);
+  drawDecanter();
+  drawTiltMeter();
+
+  if(started&&!gameOver){
+    if(awaitingNext){
+      resultTimer-=dt;
+      ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+      ctx.fillText(resultMsg,W/2,120);
+      if(resultTimer<=0) nextBottle();
+    } else if(pouring){
+      const flowRate=1.2+tilt*0.055;
+      fill+=flowRate*dt;
+      if(tilt>sedimentSafeTilt){
+        sedimentRisk+=(tilt-sedimentSafeTilt)*0.55*dt;
+      } else if(sedimentRisk>0){
+        sedimentRisk-=0.4*dt;
+      }
+      if(sedimentRisk>=100){
+        spoil(I18N.t('sediment_spoiled','Sediment stirred into the pour — bottle ruined!'));
+      } else if(fill>=maxFuel){
+        fill=maxFuel;spoil(I18N.t('decanter_overflow','Overflowed the decanter!'));
+      }
+      drawSedimentWarning();
+    }
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(resultMsg,W/2,130);
+    ctx.font='bold 20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',Math.floor(score)),W/2,166);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,196);
+  }
+
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+setHud();
+loop();
+</script></body></html>
