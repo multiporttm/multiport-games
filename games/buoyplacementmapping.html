@@ -1,0 +1,235 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Buoy Placement Mapping</title><meta name="description" content="Play Buoy Placement Mapping free online — Read each channel situation and choose the correct navigation buoy (port, starboard, or hazard) before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/buoyplacementmapping"><meta property="og:title" content="Buoy Placement Mapping - Multiport Games"><meta property="og:description" content="Play Buoy Placement Mapping free online — Read each channel situation and choose the correct navigation buoy (port, starboard, or hazard) before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/buoyplacementmapping"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Buoy Placement Mapping","description":"Play Buoy Placement Mapping free online instantly. Plan and place navigation buoys to mark a harbor's safe channel around shoals and hazards, choosing buoy type (port, starboard, hazard) and position so incoming and outgoing ships can follow a clear, correctly marked route. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/buoyplacementmapping","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0a2a3d;display:block;border-radius:8px;touch-action:none}
+#hud{color:#5ad1e6;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#choiceBtns{display:flex;justify-content:center;gap:10px;padding:6px 10px;flex-wrap:wrap}
+#choiceBtns button{padding:10px 18px;border:none;border-radius:16px;font-weight:800;cursor:pointer;font-size:0.95rem;color:#fff}
+#choiceBtns button:active{transform:scale(0.95)}
+#choiceBtns button.port{background:#c0392b}
+#choiceBtns button.starboard{background:#1a8f4c}
+#choiceBtns button.hazard{background:#b8860b}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Buoy Placement Mapping</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0</span>
+      <span class="lv" id="levelDisp">Round: 1</span>
+      <span id="livesDisp">Lives: ❤❤❤</span>
+      <span class="hs" id="hsDisp">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="320"></canvas>
+    <div id="choiceBtns"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Read the channel situation, then choose the correct buoy: <b>1 = Port (red)</b>, <b>2 = Starboard (green)</b>, <b>3 = Hazard (yellow)</b>. Press the matching <b>number key</b> or <b>tap</b> a buoy button before the survey window closes. Remember: lateral marks reverse meaning for outbound ships!</div>
+</div>
+<script>
+(function(){
+const HS_KEY='buoyplacementmapping_hs';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320;
+
+const SCN=[
+  {key:'leftIn',side:'left',heading:'in',desc:'Mark the LEFT edge of the channel — ship inbound from sea',correct:'port',minLevel:1},
+  {key:'rightIn',side:'right',heading:'in',desc:'Mark the RIGHT edge of the channel — ship inbound from sea',correct:'starboard',minLevel:1},
+  {key:'leftOut',side:'left',heading:'out',desc:'Mark the LEFT edge of the channel — ship outbound to sea',correct:'starboard',minLevel:2},
+  {key:'rightOut',side:'right',heading:'out',desc:'Mark the RIGHT edge of the channel — ship outbound to sea',correct:'port',minLevel:2},
+  {key:'shoalMid',side:'mid',heading:'in',desc:'A shallow shoal breaks the surface in mid-channel',correct:'hazard',minLevel:3},
+  {key:'wreckMid',side:'mid',heading:'out',desc:'A sunken wreck is an isolated danger near the fairway',correct:'hazard',minLevel:3},
+  {key:'rockMid',side:'mid',heading:'in',desc:'A rock ledge lies just off the marked channel',correct:'hazard',minLevel:3}
+];
+const CHOICES=[
+  {key:'port',label:'Port',cls:'port',color:'#e74c3c'},
+  {key:'starboard',label:'Starboard',cls:'starboard',color:'#2ecc71'},
+  {key:'hazard',label:'Hazard',cls:'hazard',color:'#f1c40f'}
+];
+
+let score=0,lives=3,level=1,hi=0,gameOver=false,started=false;
+let scn=null,timeLeft=0,timeLimit=0,resolved=false,survey=0,surveyDone=false;
+
+function loadHi(){ try{ hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0; }catch(e){ hi=0; } }
+function saveHi(){ try{ localStorage.setItem(HS_KEY,String(hi)); }catch(e){} }
+loadHi();
+
+function pool(){ return SCN.filter(s=>s.minLevel<=level); }
+
+function buildButtons(){
+  const el=document.getElementById('choiceBtns');
+  el.innerHTML='';
+  CHOICES.forEach((ch,i)=>{
+    const btn=document.createElement('button');
+    btn.className=ch.cls;
+    btn.textContent=(i+1)+' '+I18N.t('buoy_'+ch.key,ch.label);
+    btn.addEventListener('pointerdown',e=>{e.stopPropagation(); onGuess(i);});
+    el.appendChild(btn);
+  });
+}
+
+function newRound(){
+  timeLimit=Math.max(190,440-level*22);
+  timeLeft=timeLimit;
+  survey=0;surveyDone=false;resolved=false;
+  const p=pool();
+  scn=p[Math.floor(Math.random()*p.length)];
+  buildButtons();
+}
+
+function reset(){ score=0;lives=3;level=1;gameOver=false;started=false;newRound(); }
+reset();
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelDisp').textContent=I18N.t('round_label','Round: {l}').replace('{l}',level);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {h}').replace('{h}','❤'.repeat(Math.max(0,lives)));
+  document.getElementById('hsDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+}
+
+function levelUp(){ level++; SFX.levelup(); }
+
+function failRound(){
+  lives--;SFX.fail();
+  if(lives<=0){ endGame(); return; }
+  newRound();
+}
+
+function passRound(){
+  score+=25*level;SFX.coin();
+  if(score>=level*260)levelUp();
+  newRound();
+}
+
+function onGuess(i){
+  if(!started||gameOver)return;
+  if(!surveyDone||resolved)return;
+  resolved=true;
+  if(CHOICES[i].key===scn.correct){ passRound(); }
+  else { failRound(); }
+}
+
+function startGame(){ if(!started){started=true;} else if(gameOver){reset();started=true;} }
+
+c.addEventListener('pointerdown',()=>{ if(!started||gameOver)startGame(); });
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='Enter'){ e.preventDefault(); if(!started||gameOver)startGame(); return; }
+  const m=e.code.match(/^Digit([1-9])$/);
+  if(m&&started&&!gameOver){ e.preventDefault(); onGuess(parseInt(m[1],10)-1); }
+});
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;saveHi();}
+  SFX.lose();
+}
+
+function drawShip(x,y,headingIn){
+  ctx.save();
+  ctx.translate(x,y);
+  if(!headingIn)ctx.rotate(Math.PI);
+  ctx.fillStyle='#e0e0e0';
+  ctx.beginPath();
+  ctx.moveTo(0,-22);ctx.lineTo(12,10);ctx.lineTo(-12,10);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#90a4ae';ctx.fillRect(-5,2,10,10);
+  ctx.restore();
+}
+
+function drawDiagram(){
+  const cx=W/2,topY=55,botY=255;
+  ctx.save();
+  // water
+  ctx.fillStyle='#0a2a3d';ctx.fillRect(0,0,W,H);
+  // fairway
+  ctx.strokeStyle='#4fc3f7';ctx.lineWidth=3;ctx.setLineDash([10,8]);
+  ctx.beginPath();ctx.moveTo(cx-70,topY);ctx.lineTo(cx-70,botY);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(cx+70,topY);ctx.lineTo(cx+70,botY);ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='rgba(79,195,247,0.08)';ctx.fillRect(cx-70,topY,140,botY-topY);
+
+  if(scn){
+    const headingIn=scn.heading==='in';
+    drawShip(cx,headingIn?botY-10:topY+20,headingIn);
+
+    let mx=cx,my=(topY+botY)/2;
+    if(scn.side==='left'){mx=cx-70;}
+    else if(scn.side==='right'){mx=cx+70;}
+    else {mx=cx;my=(topY+botY)/2+30;}
+
+    const pulse=surveyDone?(0.6+0.4*Math.sin(performance.now()/180)):1;
+    const ch=CHOICES.find(c2=>c2.key===scn.correct);
+    ctx.globalAlpha=surveyDone?pulse:0.5;
+    ctx.fillStyle=surveyDone?ch.color:'#888';
+    ctx.beginPath();ctx.arc(mx,my,14,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(mx,my,14,0,Math.PI*2);ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#05141f');bg.addColorStop(1,'#0a2a3d');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#5ad1e6';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to start'),W/2,H/2);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    if(scn)drawDiagram();
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Score: {s} — Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi)),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+48);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(!surveyDone){
+    survey+=0.015+level*0.0015;
+    if(survey>=1){survey=1;surveyDone=true;SFX.swoosh();}
+  } else {
+    timeLeft--;
+    if(timeLeft<=0){ failRound(); }
+  }
+
+  drawDiagram();
+
+  ctx.fillStyle='#fff';ctx.font='bold 17px Arial';ctx.textAlign='center';
+  ctx.fillText(scn?I18N.t('scenario_'+scn.key,scn.desc):'',W/2,30);
+  ctx.font='14px Arial';ctx.fillStyle='#b2dfdb';
+  ctx.fillText(surveyDone?I18N.t('pick_hint','Choose the correct buoy — press 1-3 or tap below'):I18N.t('surveying_hint','Surveying channel...'),W/2,300);
+
+  if(surveyDone){
+    const barW=400,barH=8,barX=W/2-barW/2,barY=42;
+    ctx.fillStyle='#222';ctx.fillRect(barX,barY,barW,barH);
+    const frac=Math.max(0,timeLeft/timeLimit);
+    ctx.fillStyle=frac>0.4?'#2ecc71':(frac>0.18?'#ffd54f':'#e74c3c');
+    ctx.fillRect(barX,barY,barW*frac,barH);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script></body></html>

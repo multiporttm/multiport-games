@@ -1,0 +1,264 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Harbor Pilot Navigation</title><meta name="description" content="Play Harbor Pilot Navigation free online — Guide the cargo ship through the winding channel, call rudder and speed changes, and dock safely at the berth."><link rel="canonical" href="https://games.multiportllc.com/games/harborpilotnavigation"><meta property="og:title" content="Harbor Pilot Navigation - Multiport Games"><meta property="og:description" content="Play Harbor Pilot Navigation free online — Guide the cargo ship through the winding channel, call rudder and speed changes, and dock safely at the berth."><meta property="og:url" content="https://games.multiportllc.com/games/harborpilotnavigation"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Harbor Pilot Navigation","description":"Play Harbor Pilot Navigation free online instantly. Board an incoming cargo ship and guide it through a narrow, winding channel into port, calling small rudder and speed adjustments to avoid shoals and other traffic before docking safely at the assigned berth. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/harborpilotnavigation","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0a3d55;display:block;border-radius:8px;touch-action:none}
+#hud{color:#bfe9ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lv{color:#ffb74d}
+#hud span.hs{color:#7ec850}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Harbor Pilot Navigation</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0</span>
+      <span class="lv" id="levelDisp">Channel: 1</span>
+      <span id="livesDisp">Lives: ❤❤❤</span>
+      <span class="hs" id="hsDisp">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Left/Right Arrow</b> or <b>A/D</b> to turn the rudder, <b>Up/Down Arrow</b> or <b>W/S</b> to adjust speed (or <b>drag/tap</b> left and right of the ship on touch). Steer the ship down the channel, staying clear of shoals and crossing traffic, and reach the berth at the bottom without running aground.</div>
+</div>
+<script>
+(function(){
+const HS_KEY='harborpilotnavigation_hs';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+
+let score=0,lives=3,level=1,hi=0,gameOver=false,started=false;
+let ship,channel,obstacles,berth,scrollY,spawnTimer,distToBerth,flashT=0,shakeT=0;
+
+function loadHi(){ try{hi=parseFloat(localStorage.getItem(HS_KEY))||0;}catch(e){hi=0;} }
+function saveHi(){ try{localStorage.setItem(HS_KEY,String(hi));}catch(e){} }
+loadHi();
+
+function channelWidthAt(y){
+  // base width narrows a bit with level, with a sine wiggle for winding feel
+  const base=Math.max(140,260-level*12);
+  return base;
+}
+function channelCenterAt(y){
+  return W/2 + Math.sin(y*0.012+level)*  (90+level*6);
+}
+
+function buildLevel(){
+  ship={x:W/2,y:H-60,w:34,h:60,angle:0,speed:1.4,turn:0};
+  scrollY=0;
+  obstacles=[];
+  spawnTimer=0;
+  distToBerth=3200+level*500; // total channel length to travel
+  berth={placed:false};
+}
+
+function reset(){ score=0;lives=3;level=1;gameOver=false;started=false;buildLevel(); }
+reset();
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelDisp').textContent=I18N.t('channel_label','Channel: {l}').replace('{l}',level);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {h}').replace('{h}','❤'.repeat(Math.max(0,lives)));
+  document.getElementById('hsDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+}
+
+function startGame(){ if(!started){started=true;} else if(gameOver){reset();started=true;} }
+
+function spawnObstacle(){
+  const y=-40;
+  const cx=channelCenterAt(scrollY+y);
+  const cw=channelWidthAt(scrollY+y);
+  const type=Math.random()<0.5?'shoal':'boat';
+  let x;
+  if(type==='shoal'){
+    // shoal hugs one edge of channel
+    const side=Math.random()<0.5?-1:1;
+    x=cx+side*(cw/2-20+Math.random()*10);
+  } else {
+    x=cx+(Math.random()-0.5)*(cw-60);
+  }
+  obstacles.push({x,y,w:type==='shoal'?46:40,h:type==='shoal'?30:34,type});
+}
+
+function loseLife(){
+  lives--;SFX.hurt();shakeT=14;
+  if(lives<=0)endGame(); else { ship.x=channelCenterAt(scrollY+ship.y); ship.angle=0; }
+}
+
+function endGame(fail){
+  gameOver=true;
+  if(score>hi){hi=score;saveHi();}
+  SFX.lose();
+}
+
+function winLevel(){
+  score+=200*level;
+  SFX.levelup();
+  level++;
+  buildLevel();
+}
+
+// Controls
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'||e.code==='Enter'){ if(!started||gameOver)startGame(); }
+});
+document.addEventListener('keyup',e=>{ keys[e.code]=false; });
+
+let pointerSide=0;
+function canvasPt(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+c.addEventListener('pointerdown',e=>{
+  if(!started||gameOver){startGame();return;}
+  const pt=canvasPt(e.clientX,e.clientY);
+  pointerSide=pt.x<W/2?-1:1;
+});
+c.addEventListener('pointerup',()=>{pointerSide=0;});
+c.addEventListener('pointercancel',()=>{pointerSide=0;});
+c.addEventListener('touchstart',e=>{e.preventDefault();},{passive:false});
+
+function rectHit(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+
+  if(!started){
+    drawWater(0);
+    ctx.fillStyle='#bfe9ffcc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawWater(0);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+16);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  // Steering
+  let turnInput=0;
+  if(keys['ArrowLeft']||keys['KeyA'])turnInput-=1;
+  if(keys['ArrowRight']||keys['KeyD'])turnInput+=1;
+  turnInput+=pointerSide;
+  turnInput=Math.max(-1,Math.min(1,turnInput));
+  ship.turn+=(turnInput*1.6-ship.turn)*0.12;
+  ship.angle+=ship.turn*0.03;
+  ship.angle=Math.max(-0.55,Math.min(0.55,ship.angle));
+
+  let speedInput=0;
+  if(keys['ArrowUp']||keys['KeyW'])speedInput=1;
+  if(keys['ArrowDown']||keys['KeyS'])speedInput=-1;
+  ship.speed+=speedInput*0.05;
+  ship.speed=Math.max(0.6,Math.min(3.2,ship.speed));
+
+  ship.x+=Math.sin(ship.angle)*ship.speed*2.2;
+  scrollY+=ship.speed*2.0;
+  score+=ship.speed*0.15;
+  if(score>hi)hi=score;
+
+  // Spawn obstacles
+  spawnTimer-=ship.speed;
+  if(spawnTimer<=0){ spawnObstacle(); spawnTimer=60-Math.min(30,level*2); }
+
+  // Check end of channel -> berth
+  if(scrollY>=distToBerth){
+    winLevel();
+  }
+
+  drawWater(scrollY);
+
+  // Draw channel banks
+  ctx.strokeStyle='#2d5a27';
+  for(let yy=0;yy<H+40;yy+=20){
+    const worldY=scrollY+yy;
+    const cx=channelCenterAt(worldY),cw=channelWidthAt(worldY);
+    ctx.fillStyle='#1c7a3a';
+    ctx.fillRect(0,yy,cx-cw/2,4);
+    ctx.fillRect(cx+cw/2,yy,W-(cx+cw/2),4);
+  }
+
+  // Berth marker near end
+  const berthWorldY=distToBerth;
+  const berthScreenY=berthWorldY-scrollY;
+  if(berthScreenY>-60&&berthScreenY<H+60){
+    const cx=channelCenterAt(berthWorldY);
+    ctx.fillStyle='#ffd54f';
+    ctx.fillRect(cx-70,berthScreenY-8,140,16);
+    ctx.fillStyle='#1a1a2e';ctx.font='bold 12px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('berth_label','BERTH'),cx,berthScreenY+4);
+  }
+
+  // Update + draw obstacles, check collision with ship
+  const shipWorldY=scrollY+ship.y;
+  const cx=channelCenterAt(shipWorldY),cw=channelWidthAt(shipWorldY);
+  // out of channel bounds check
+  const outOfBounds = ship.x-ship.w/2<cx-cw/2 || ship.x+ship.w/2>cx+cw/2;
+
+  obstacles=obstacles.filter(o=>o.y-scrollY<H+60);
+  const shipBox={x:ship.x-ship.w/2,y:ship.y-ship.h/2,w:ship.w,h:ship.h};
+  let hitThisFrame=false;
+  obstacles.forEach(o=>{
+    const screenY=o.y; // already screen-relative, decremented below
+    ctx.fillStyle=o.type==='shoal'?'#8d6e63':'#444';
+    ctx.beginPath();
+    if(o.type==='shoal'){
+      ctx.ellipse(o.x,screenY,o.w/2,o.h/2,0,0,Math.PI*2);
+    } else {
+      ctx.rect(o.x-o.w/2,screenY-o.h/2,o.w,o.h);
+    }
+    ctx.fill();
+    const obox={x:o.x-o.w/2,y:screenY-o.h/2,w:o.w,h:o.h};
+    if(rectHit(shipBox,obox)&&!hitThisFrame){ hitThisFrame=true; }
+  });
+  obstacles.forEach(o=>{ o.y+=ship.speed*2.0; });
+  obstacles=obstacles.filter(o=>o.y<H+60);
+
+  if((outOfBounds||hitThisFrame)&&!gameOver){ loseLife(); }
+
+  // Draw ship
+  ctx.save();
+  if(shakeT>0){ ctx.translate((Math.random()-0.5)*6,(Math.random()-0.5)*6); shakeT--; }
+  ctx.translate(ship.x,ship.y);
+  ctx.rotate(ship.angle);
+  ctx.fillStyle='#d9d9d9';
+  ctx.fillRect(-ship.w/2,-ship.h/2,ship.w,ship.h);
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(-ship.w/2,-ship.h/2,ship.w,10);
+  ctx.fillStyle='#1a1a2e';
+  ctx.fillRect(-6,-ship.h/2+14,12,16);
+  ctx.restore();
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function drawWater(scroll){
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#0a3d55');g.addColorStop(1,'#145d7a');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,0.08)';
+  for(let i=0;i<8;i++){
+    const yy=((i*60+scroll*0.5)%(H+60))-30;
+    ctx.beginPath();ctx.moveTo(0,yy);ctx.lineTo(W,yy);ctx.stroke();
+  }
+}
+
+loop();
+})();
+</script></body></html>

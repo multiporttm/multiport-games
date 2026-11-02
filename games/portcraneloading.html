@@ -1,0 +1,250 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Port Crane Loading</title><meta name="description" content="Play Port Crane Loading free online — Lift containers and stack them in the right order so the ship stays balanced and nothing blocks the next port's load."><link rel="canonical" href="https://games.multiportllc.com/games/portcraneloading"><meta property="og:title" content="Port Crane Loading - Multiport Games"><meta property="og:description" content="Play Port Crane Loading free online — Lift containers and stack them in the right order so the ship stays balanced and nothing blocks the next port's load."><meta property="og:url" content="https://games.multiportllc.com/games/portcraneloading"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Port Crane Loading","description":"Play Port Crane Loading free online instantly. Operate a container crane loading a cargo ship, lifting each shipping container and placing it into its assigned stack position on deck in the correct loading order so the ship stays balanced and nothing blocks access to containers needed at the next port. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/portcraneloading","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1b2a3a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffd54f;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lv{color:#ffb74d}
+#hud span.hs{color:#7ec850}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Port Crane Loading</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0</span>
+      <span class="lv" id="levelDisp">Ship: 1</span>
+      <span id="livesDisp">Mistakes left: 3</span>
+      <span class="hs" id="hsDisp">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click/tap a highlighted <b>next container</b> in the queue, then click/tap its target column, or use <b>Left/Right Arrow</b> to pick the container and column, <b>Enter/Space</b> to drop it. Load containers in order, never burying one that's needed before a container already above it in its column — and never overload one side of the ship.</div>
+</div>
+<script>
+(function(){
+const HS_KEY='portcraneloading_hs';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+const COLORS=['#e94560','#2d9cdb','#f2994a','#27ae60','#9b51e0','#f1c40f'];
+
+let score=0,mistakesLeft=3,level=1,hi=0,gameOver=false,started=false;
+let queue,cols,numCols,colHeights,selIdx,selCol,flashT=0,shakeT=0,craneX=0,craneTargetX=0,craneHoldIdx=-1,animT=0;
+
+function loadHi(){ try{hi=parseFloat(localStorage.getItem(HS_KEY))||0;}catch(e){hi=0;} }
+function saveHi(){ try{localStorage.setItem(HS_KEY,String(hi));}catch(e){} }
+loadHi();
+
+const COL_X0=160, COL_W=90, COL_GAP=14;
+
+function colX(i){ return COL_X0+i*(COL_W+COL_GAP); }
+
+function buildLevel(){
+  numCols=Math.min(6,3+Math.floor(level/2));
+  const totalContainers=6+level*2;
+  queue=[];
+  for(let i=0;i<totalContainers;i++){
+    queue.push({
+      id:i,
+      port:1+Math.floor(Math.random()*Math.min(3,1+Math.floor(level/2))), // delivery port number: lower = unload sooner, must be on top
+      color:COLORS[i%COLORS.length]
+    });
+  }
+  cols=[]; for(let i=0;i<numCols;i++)cols.push([]);
+  selIdx=0;selCol=0;
+  craneX=colX(0)+COL_W/2;craneTargetX=craneX;craneHoldIdx=-1;
+}
+
+function reset(){ score=0;mistakesLeft=3;level=1;gameOver=false;started=false;buildLevel(); }
+reset();
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelDisp').textContent=I18N.t('ship_label','Ship: {l}').replace('{l}',level);
+  document.getElementById('livesDisp').textContent=I18N.t('mistakes_label','Mistakes left: {h}').replace('{h}',Math.max(0,mistakesLeft));
+  document.getElementById('hsDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+}
+
+function startGame(){ if(!started){started=true;} else if(gameOver){reset();started=true;} }
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;saveHi();}
+  SFX.lose();
+}
+
+function maxColHeight(){
+  let m=0; cols.forEach(c=>m=Math.max(m,c.length)); return m;
+}
+
+function isBalanced(afterCol){
+  // Balance rule: no column may have 2+ more containers than the lowest column once ship has enough containers placed
+  const heights=cols.map(c=>c.length);
+  const min=Math.min(...heights), max=Math.max(...heights);
+  return (max-min)<=2;
+}
+
+function placeContainer(container, colIdx){
+  const col=cols[colIdx];
+  // Rule: can't place a container with LOWER port number (needed sooner) UNDER a container
+  // with a HIGHER port number already in that column top, because it'd be buried — actually
+  // the check is on placing the new one: it must not be buried beneath one that needs to come off later.
+  // Simplify: container being placed must have port number >= port number of the one currently on top
+  // (so lower port numbers, which unload first, always end up on top).
+  if(col.length>0){
+    const top=col[col.length-1];
+    if(container.port<top.port){
+      // would bury a container needed sooner than the one on top already placed under it — invalid
+      return false;
+    }
+  }
+  col.push(container);
+  if(!isBalanced()){
+    col.pop();
+    return 'unbalanced';
+  }
+  return true;
+}
+
+function dropNext(colIdx){
+  if(gameOver||!started||craneHoldIdx!==-1)return;
+  if(queue.length===0)return;
+  const container=queue[0];
+  const result=placeContainer(container,colIdx);
+  if(result===true){
+    queue.shift();
+    score+=40;
+    SFX.success();
+    if(selIdx>=queue.length)selIdx=Math.max(0,queue.length-1);
+    if(queue.length===0){
+      winShip();
+    }
+  } else {
+    mistakesLeft--;
+    SFX.error();
+    flashT=12;
+    if(mistakesLeft<=0)endGame();
+  }
+}
+
+function winShip(){
+  score+=150*level;
+  SFX.levelup();
+  level++;
+  buildLevel();
+}
+
+document.addEventListener('keydown',e=>{
+  if(!started||gameOver){ if(e.code==='Space'||e.code==='Enter')startGame(); return; }
+  if(e.code==='ArrowLeft'){ selCol=(selCol-1+numCols)%numCols; e.preventDefault(); SFX.select(); }
+  else if(e.code==='ArrowRight'){ selCol=(selCol+1)%numCols; e.preventDefault(); SFX.select(); }
+  else if(e.code==='Enter'||e.code==='Space'){ e.preventDefault(); dropNext(selCol); }
+});
+
+function canvasPt(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+c.addEventListener('pointerdown',e=>{
+  if(!started||gameOver){startGame();return;}
+  const pt=canvasPt(e.clientX,e.clientY);
+  for(let i=0;i<numCols;i++){
+    const x=colX(i);
+    if(pt.x>=x-6&&pt.x<=x+COL_W+6){
+      selCol=i;
+      dropNext(i);
+      return;
+    }
+  }
+});
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawSky();
+
+  if(!started){
+    ctx.fillStyle='#ffd54fcc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start'),W/2,H/2);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+16);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  // Deck / ship base
+  ctx.fillStyle='#37474f';
+  ctx.fillRect(100,360,620,26);
+  ctx.fillStyle='#263238';
+  ctx.fillRect(80,386,660,30);
+
+  // Column guides + stacked containers
+  const CH=26;
+  for(let i=0;i<numCols;i++){
+    const x=colX(i);
+    ctx.strokeStyle=i===selCol?'#ffd54f':'rgba(255,255,255,0.25)';
+    ctx.lineWidth=i===selCol?3:1;
+    ctx.strokeRect(x,360-CH*6,COL_W,CH*6);
+    const col=cols[i];
+    col.forEach((cont,idx)=>{
+      const y=360-CH*(idx+1);
+      ctx.fillStyle=cont.color;
+      ctx.fillRect(x+3,y+2,COL_W-6,CH-4);
+      ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+      ctx.fillText('P'+cont.port,x+COL_W/2,y+CH/2+5);
+    });
+  }
+
+  // Queue display (upcoming containers) at top
+  ctx.fillStyle='rgba(255,255,255,0.6)';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('queue_label','Next containers →'),20,30);
+  const qShow=queue.slice(0,6);
+  qShow.forEach((cont,idx)=>{
+    const qx=20+idx*56, qy=40;
+    ctx.fillStyle=cont.color;
+    ctx.fillRect(qx,qy,46,40);
+    if(idx===0){ ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;ctx.strokeRect(qx,qy,46,40); }
+    ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+    ctx.fillText('P'+cont.port,qx+23,qy+24);
+  });
+
+  // Crane (decorative, follows selected column)
+  craneTargetX=colX(selCol)+COL_W/2;
+  craneX+=(craneTargetX-craneX)*0.15;
+  ctx.strokeStyle='#90a4ae';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(craneX,10);ctx.lineTo(craneX,70);ctx.stroke();
+  ctx.fillStyle='#ffb300';ctx.fillRect(craneX-16,0,32,14);
+
+  if(flashT>0){
+    ctx.fillStyle='rgba(233,69,96,'+(flashT/12*0.35)+')';
+    ctx.fillRect(0,0,W,H);
+    flashT--;
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function drawSky(){
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#1b2a3a');g.addColorStop(1,'#0d1b26');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+}
+
+loop();
+})();
+</script></body></html>

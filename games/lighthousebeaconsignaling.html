@@ -1,0 +1,274 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Lighthouse Beacon Signaling</title><meta name="description" content="Play Lighthouse Beacon Signaling free online — Flash the backup signal lamp in Morse code to warn a passing ship before it sails out of sight. Tap for a dot, hold for a dash."><link rel="canonical" href="https://games.multiportllc.com/games/lighthousebeaconsignaling"><meta property="og:title" content="Lighthouse Beacon Signaling - Multiport Games"><meta property="og:description" content="Play Lighthouse Beacon Signaling free online — Flash the backup signal lamp in Morse code to warn a passing ship before it sails out of sight. Tap for a dot, hold for a dash."><meta property="og:url" content="https://games.multiportllc.com/games/lighthousebeaconsignaling"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Lighthouse Beacon Signaling","description":"Play Lighthouse Beacon Signaling free online instantly. The power is out and a ship is passing — hand-crank the backup shutter lamp to flash your message in Morse code: a quick tap sends a dot, a held press sends a dash. Send every symbol at the right tempo before the ship moves out of sight. Messages get longer and the tempo gets stricter with every level. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/lighthousebeaconsignaling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#07131f;display:block;border-radius:8px;max-width:100%}
+#hud{color:#ffe082;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+#shutterWrap{display:flex;justify-content:center;margin:12px 0}
+#shutterBtn{width:200px;padding:18px 0;background:#ffb300;border:none;border-radius:16px;color:#2b1a00;font-size:1.1rem;font-weight:900;cursor:pointer;user-select:none;touch-action:none;box-shadow:0 4px 0 #a66d00;transition:transform .05s}
+#shutterBtn:active,#shutterBtn.pressed{transform:translateY(3px);box-shadow:0 1px 0 #a66d00;background:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Lighthouse Beacon Signaling</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span>Score: <span id="scoreVal">0</span></span>
+      <span class="lv">Level: <span id="levelVal">1</span></span>
+      <span class="lives">Lives: <span id="livesVal">3</span></span>
+      <span class="hs">Hi: <span id="hiVal">0</span></span>
+    </div>
+    <canvas id="c" width="640" height="220"></canvas>
+    <div id="shutterWrap">
+      <button id="shutterBtn">SHUTTER (tap = dot, hold = dash)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">A ship is passing in the dark! Flash the message shown at the top in <b>Morse code</b> using the <b>Shutter</b> button (or <b>Space / click</b>): a quick tap sends a <b>dot</b>, a held press sends a <b>dash</b>. Send each symbol before its timer runs out — three mistakes or missed symbols ends the game, and messages get longer and faster each level.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const MORSE={A:'.-',B:'-...',C:'-.-.',D:'-..',E:'.',F:'..-.',G:'--.',H:'....',I:'..',J:'.---',
+K:'-.-',L:'.-..',M:'--',N:'-.',O:'---',P:'.--.',Q:'--.-',R:'.-.',S:'...',T:'-',
+U:'..-',V:'...-',W:'.--',X:'-..-',Y:'-.--',Z:'--..'};
+const MESSAGES=['SOS','HELP','SHIP','AHOY','LAND','SAFE','WAIT','TURN','STORM','ROCKS','SLOW','DOCK'];
+
+const DOT_MAX=260; // ms: press shorter than this = dot, else dash
+
+let score=0,lives=3,level=1,hi=0,gameOver=false,msgsDone=0;
+let message='',symbols=[],symIndex=0,letterBreaks=[];
+let maxTime=1900,timeLeft=0,lastT=null,rafId=null,waitingNext=false;
+let pressStart=null,pressed=false,flashUntil=0;
+let shipX=640,frame=0;
+
+hi=parseInt(localStorage.getItem('lighthousebeaconsignaling_hi')||'0',10);
+
+function updateHud(){
+  document.getElementById('scoreVal').textContent=score;
+  document.getElementById('levelVal').textContent=level;
+  document.getElementById('livesVal').textContent=Math.max(0,lives);
+  document.getElementById('hiVal').textContent=hi;
+}
+
+function wordPool(){
+  const maxLen=Math.min(6,3+Math.floor(level/2));
+  const pool=MESSAGES.filter(w=>w.length<=maxLen);
+  return pool.length?pool:MESSAGES;
+}
+
+function buildSymbols(word){
+  const syms=[];
+  const breaks=[];
+  for(const ch of word){
+    const pat=MORSE[ch]||'.';
+    for(const s of pat)syms.push(s==='.'?'dot':'dash');
+    breaks.push(syms.length);
+  }
+  return {syms,breaks};
+}
+
+function nextMessage(){
+  const pool=wordPool();
+  message=pool[Math.floor(Math.random()*pool.length)];
+  const built=buildSymbols(message);
+  symbols=built.syms;
+  letterBreaks=built.breaks;
+  symIndex=0;
+  waitingNext=false;
+  startSymbolTimer();
+}
+
+function startSymbolTimer(){
+  maxTime=Math.max(650,1900-(level-1)*110);
+  timeLeft=maxTime;
+  lastT=performance.now();
+  pressStart=null;
+  pressed=false;
+}
+
+function currentLetterLabel(){
+  let letterIdx=0;
+  for(let i=0;i<letterBreaks.length;i++){ if(symIndex<letterBreaks[i]){letterIdx=i;break;} letterIdx=i+1; }
+  return message[Math.min(letterIdx,message.length-1)];
+}
+
+function onPressDown(){
+  if(gameOver){reset();return;}
+  if(waitingNext||pressed||!symbols.length)return;
+  pressed=true;
+  pressStart=performance.now();
+  document.getElementById('shutterBtn').classList.add('pressed');
+}
+
+function onPressUp(){
+  if(!pressed)return;
+  pressed=false;
+  document.getElementById('shutterBtn').classList.remove('pressed');
+  if(gameOver||waitingNext||!symbols.length)return;
+  const dur=performance.now()-pressStart;
+  const sent=dur<DOT_MAX?'dot':'dash';
+  flashUntil=performance.now()+180;
+  const expected=symbols[symIndex];
+  if(sent===expected){
+    SFX.point();
+    score+=5;
+    symIndex++;
+    if(symIndex>=symbols.length){
+      completeMessage();
+    }else{
+      startSymbolTimer();
+    }
+  }else{
+    wrongSymbol();
+  }
+  updateHud();
+}
+
+function wrongSymbol(){
+  SFX.error();
+  loseLife();
+  if(!gameOver){
+    startSymbolTimer();
+  }
+}
+
+function completeMessage(){
+  waitingNext=true;
+  msgsDone++;
+  score+=10+message.length*3;
+  if(score>hi){hi=score;localStorage.setItem('lighthousebeaconsignaling_hi',hi);}
+  SFX.success();
+  if(msgsDone%2===0)level++;
+  updateHud();
+  setTimeout(()=>{ if(!gameOver)nextMessage(); },900);
+}
+
+function loseLife(){
+  lives--;
+  updateHud();
+  if(lives<=0)endGame();
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+}
+
+function reset(){
+  score=0;lives=3;level=1;msgsDone=0;gameOver=false;
+  updateHud();
+  nextMessage();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){ e.preventDefault(); if(!e.repeat)onPressDown(); }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){ e.preventDefault(); onPressUp(); }
+});
+const btn=document.getElementById('shutterBtn');
+btn.addEventListener('pointerdown',e=>{e.preventDefault();onPressDown();});
+window.addEventListener('pointerup',()=>{ if(pressed)onPressUp(); });
+btn.addEventListener('touchstart',e=>{e.preventDefault();onPressDown();},{passive:false});
+btn.addEventListener('touchend',e=>{e.preventDefault();onPressUp();},{passive:false});
+
+function drawScene(){
+  const sky=ctx.createLinearGradient(0,0,0,160);
+  sky.addColorStop(0,'#030810');sky.addColorStop(1,'#123049');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,640,160);
+  ctx.fillStyle='#0a2235';ctx.fillRect(0,150,640,70);
+  // rain streaks
+  ctx.strokeStyle='rgba(180,210,230,.15)';ctx.lineWidth=1;
+  for(let i=0;i<30;i++){
+    const x=(i*53+frame*3)%680-20;
+    ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x-10,160);ctx.stroke();
+  }
+  // lighthouse
+  ctx.fillStyle='#2d4a7a';
+  ctx.beginPath();ctx.moveTo(40,160);ctx.lineTo(60,30);ctx.lineTo(80,30);ctx.lineTo(100,160);ctx.closePath();ctx.fill();
+  // lamp
+  const lit=performance.now()<flashUntil || (pressed && performance.now()-pressStart>60);
+  ctx.fillStyle=lit?'#ffe082':'#5c4a1e';
+  ctx.beginPath();ctx.arc(70,28,14,0,Math.PI*2);ctx.fill();
+  if(lit){ ctx.fillStyle='rgba(255,224,130,.25)'; ctx.beginPath();ctx.arc(70,28,40,0,Math.PI*2);ctx.fill(); }
+  // ship
+  shipX-=0.35;
+  if(shipX<-60)shipX=640+Math.random()*100;
+  ctx.fillStyle='#1b1b1b';
+  ctx.fillRect(shipX,110,50,14);
+  ctx.fillRect(shipX+20,96,4,16);
+  ctx.fillStyle='#ffcc00';
+  ctx.fillRect(shipX+5,113,4,4);ctx.fillRect(shipX+40,113,4,4);
+}
+
+function drawMessage(){
+  ctx.fillStyle='#80deea';ctx.font='bold 22px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('beacon_message_label','Message: {m}').replace('{m}',message),320,195);
+  // symbol progress
+  let x=150;
+  const total=symbols.length;
+  const startX=320-total*13;
+  for(let i=0;i<total;i++){
+    const sx=startX+i*26;
+    ctx.fillStyle=i<symIndex?'#4caf50':(i===symIndex?'#ffd54f':'rgba(255,255,255,.3)');
+    if(symbols[i]==='dot'){
+      ctx.beginPath();ctx.arc(sx,210,4,0,Math.PI*2);ctx.fill();
+    }else{
+      ctx.fillRect(sx-9,207,18,6);
+    }
+  }
+}
+
+function drawTimerBar(pct){
+  ctx.fillStyle='rgba(255,255,255,.15)';ctx.fillRect(20,170,600,10);
+  ctx.fillStyle=pct<0.3?'#e53935':pct<0.6?'#ffb300':'#4caf50';
+  ctx.fillRect(20,170,600*Math.max(0,pct),10);
+}
+
+function loop(now){
+  frame++;
+  ctx.clearRect(0,0,640,220);
+  drawScene();
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,640,220);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),320,95);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('score_label','Score: {s}').replace('{s}',score),320,125);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),320,150);
+    rafId=requestAnimationFrame(loop);
+    return;
+  }
+  if(!waitingNext&&symbols.length){
+    const dt=lastT===null?0:now-lastT;
+    lastT=now;
+    if(!pressed){
+      timeLeft-=dt;
+      if(timeLeft<=0){
+        timeLeft=0;
+        SFX.hurt();
+        loseLife();
+        if(!gameOver)startSymbolTimer();
+      }
+    }
+    drawTimerBar(timeLeft/maxTime);
+    drawMessage();
+  }else if(message){
+    drawMessage();
+  }
+  rafId=requestAnimationFrame(loop);
+}
+
+reset();
+rafId=requestAnimationFrame(loop);
+</script></body></html>

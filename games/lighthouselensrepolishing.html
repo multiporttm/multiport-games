@@ -1,0 +1,256 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Lighthouse Lens Repolishing</title><meta name="description" content="Play Lighthouse Lens Repolishing free online — Polish the Fresnel lens panel by panel with circular motions, clearing haze without scratching the glass."><link rel="canonical" href="https://games.multiportllc.com/games/lighthouselensrepolishing"><meta property="og:title" content="Lighthouse Lens Repolishing - Multiport Games"><meta property="og:description" content="Play Lighthouse Lens Repolishing free online — Polish the Fresnel lens panel by panel with circular motions, clearing haze without scratching the glass."><meta property="og:url" content="https://games.multiportllc.com/games/lighthouselensrepolishing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Lighthouse Lens Repolishing","description":"Play Lighthouse Lens Repolishing free online instantly. Polish a lighthouse's large Fresnel lens panel by panel, moving in steady circular motions at the right pressure to clear salt haze and grime without scratching the glass, working around the whole lens before nightfall. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/lighthouselensrepolishing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0c1a22;display:block;border-radius:8px;touch-action:none;margin:0 auto}
+#hud{color:#d6f0fa;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lv{color:#ffd54f}
+#hud span.hs{color:#7ec850}
+#hud span.liv{color:#e94560}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Lighthouse Lens Repolishing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Clean: 0%</span>
+      <span class="lv" id="levelDisp">Lens: 1</span>
+      <span class="liv" id="livesDisp">Lives: ❤❤❤</span>
+      <span class="hs" id="hsDisp">Hi: 0%</span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>Press and hold</b> (mouse or touch) on a hazy panel and move your pointer in <b>steady circles</b> around it to polish away the haze. Circle too fast and you risk <b>scratching</b> the glass — too slow barely helps. Clear every panel before the <b>nightfall timer</b> runs out. Arrow keys / WASD nudge an on-screen cursor for keyboard play. Scratching a panel costs a life — you have 3.</div>
+</div>
+<script>
+(function(){
+const HS_KEY='lighthouselensrepolishing_hi';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+
+let lensLevel=1,lives=3,gameOver=false,won=false,started=false,hi=0;
+let panels=[],cols=3,rows=2,panelSize=0,gridX=0,gridY=0;
+let timeLimit=0,timeLeft=0;
+let flashMsg='',flashT=0,flashColor='#fff';
+let pointerDown=false,lastAngle=null,activePanelIdx=-1;
+let kx=0,ky=0; // keyboard cursor offset within canvas (virtual)
+let kbActive=false,kbAngle=0,kbDown=false;
+
+function loadHi(){ try{ hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0; }catch(e){ hi=0; } }
+function saveHi(){ try{ localStorage.setItem(HS_KEY,String(hi)); }catch(e){} }
+loadHi();
+
+function layout(){
+  cols=Math.min(5,2+Math.floor((lensLevel+1)/2));
+  rows=Math.min(3,1+Math.floor(lensLevel/3));
+  const maxW=W-60,maxH=H-110;
+  panelSize=Math.floor(Math.min(maxW/cols,maxH/rows));
+  gridX=(W-cols*panelSize)/2;
+  gridY=70;
+}
+
+function initPanels(){
+  panels=[];
+  for(let r=0;r<rows;r++){
+    for(let col=0;col<cols;col++){
+      panels.push({row:r,col,haze:1,scratch:0,cx:gridX+col*panelSize+panelSize/2,cy:gridY+r*panelSize+panelSize/2});
+    }
+  }
+}
+
+function reset(){
+  lensLevel=1;lives=3;gameOver=false;won=false;started=false;
+  layout();initPanels();
+  timeLimit=Math.max(900,1800-lensLevel*0); timeLeft=timeLimit;
+}
+reset();
+
+function nextLens(){
+  lensLevel++;
+  layout();initPanels();
+  timeLimit=Math.max(600,1800-lensLevel*110);
+  timeLeft=timeLimit;
+  gameOver=false;won=false;
+}
+
+function cleanPct(){
+  const total=panels.length;
+  const done=panels.filter(p=>p.haze<=0.02&&p.scratch<1).length;
+  return Math.round(100*done/total);
+}
+
+function flash(msg,color){ flashMsg=msg; flashColor=color; flashT=40; }
+
+function panelAt(px,py){
+  const col=Math.floor((px-gridX)/panelSize);
+  const row=Math.floor((py-gridY)/panelSize);
+  if(row<0||row>=rows||col<0||col>=cols)return -1;
+  return panels.findIndex(p=>p.row===row&&p.col===col);
+}
+
+function applyCircle(idx,angleDelta,dt){
+  const p=panels[idx];
+  if(p.haze<=0.02)return;
+  const speed=Math.abs(angleDelta)/dt; // rad per frame-unit
+  const minS=0.02,maxS=0.09;
+  if(speed<minS*0.4){
+    // barely moving, negligible
+  } else if(speed<=maxS){
+    p.haze=Math.max(0,p.haze-0.012);
+  } else {
+    p.scratch+=0.02;
+    if(p.scratch>=1){
+      lives--; SFX.fail();
+      flash(I18N.t('panel_scratched_msg','A panel got scratched!'),'#e94560');
+      p.haze=Math.max(0,p.haze-0.004);
+      if(lives<=0) endGame(false);
+    }
+  }
+}
+
+function pointerXY(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+
+function startPointer(clientX,clientY){
+  if(!started){started=true;return;}
+  if(gameOver){ if(won) nextLens(); else reset(); started=true; return; }
+  const p=pointerXY(clientX,clientY);
+  const idx=panelAt(p.x,p.y);
+  if(idx>=0){
+    pointerDown=true;
+    activePanelIdx=idx;
+    const panel=panels[idx];
+    lastAngle=Math.atan2(p.y-panel.cy,p.x-panel.cx);
+  }
+}
+function movePointer(clientX,clientY){
+  if(!pointerDown||activePanelIdx<0||gameOver)return;
+  const p=pointerXY(clientX,clientY);
+  const panel=panels[activePanelIdx];
+  const ang=Math.atan2(p.y-panel.cy,p.x-panel.cx);
+  if(lastAngle!=null){
+    let d=ang-lastAngle;
+    while(d>Math.PI)d-=2*Math.PI;
+    while(d<-Math.PI)d+=2*Math.PI;
+    applyCircle(activePanelIdx,d,1);
+  }
+  lastAngle=ang;
+}
+function endPointer(){ pointerDown=false; activePanelIdx=-1; lastAngle=null; }
+
+c.addEventListener('mousedown',e=>startPointer(e.clientX,e.clientY));
+window.addEventListener('mousemove',e=>movePointer(e.clientX,e.clientY));
+window.addEventListener('mouseup',endPointer);
+c.addEventListener('touchstart',e=>{ e.preventDefault(); const t=e.touches[0]; startPointer(t.clientX,t.clientY); },{passive:false});
+c.addEventListener('touchmove',e=>{ e.preventDefault(); const t=e.touches[0]; movePointer(t.clientX,t.clientY); },{passive:false});
+c.addEventListener('touchend',e=>{ e.preventDefault(); endPointer(); },{passive:false});
+
+// Keyboard support: hold Space over a selected panel (cycled with Tab/arrows) and press arrow keys to "circle"
+let selPanel=0;
+document.addEventListener('keydown',e=>{
+  if(!started){ if(e.code==='Space'||e.code==='Enter'){started=true;} return; }
+  if(gameOver){ if(e.code==='Space'||e.code==='Enter'){ if(won) nextLens(); else reset(); started=true; } return; }
+  if(e.code==='Tab'){ e.preventDefault(); selPanel=(selPanel+1)%panels.length; return; }
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS'].includes(e.code)){
+    e.preventDefault();
+    kbAngle+=0.5; // simulate a quarter-turn of circular motion per keypress batch
+    applyCircle(selPanel,0.5,1);
+  }
+});
+
+function endGame(isWin){
+  gameOver=true; won=isWin;
+  const pct=cleanPct();
+  if(pct>hi){ hi=pct; saveHi(); }
+  if(isWin) SFX.win(); else SFX.lose();
+}
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('clean_label','Clean: {p}%').replace('{p}',cleanPct());
+  document.getElementById('levelDisp').textContent=I18N.t('lens_label','Lens: {n}').replace('{n}',lensLevel);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {hearts}').replace('{hearts}','❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives)));
+  document.getElementById('hsDisp').textContent=I18N.t('hi_pct_label','Hi: {h}%').replace('{h}',hi);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0c1a22';
+  ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap or press any key to start'),W/2,H/2);
+    ctx.textAlign='left';
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('lens_clear_title','LENS GLEAMING!'):I18N.t('lens_failed_title','THE LENS STAYED HAZY'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('clean_final_label','Clean: {p}%').replace('{p}',cleanPct()),W/2,H/2+14);
+    ctx.fillText(won?I18N.t('next_lens_hint','Tap or Space for next lens'):I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+44);
+    ctx.textAlign='left';
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  timeLeft--;
+  if(timeLeft<=0){ endGame(cleanPct()>=100); }
+  if(cleanPct()>=100 && !gameOver){ endGame(true); }
+
+  // nightfall bar
+  const pct=Math.max(0,timeLeft/timeLimit);
+  ctx.fillStyle='#1a1410';
+  ctx.fillRect(40,30,W-80,10);
+  ctx.fillStyle=pct<0.25?'#e94560':'#ffd54f';
+  ctx.fillRect(40,30,(W-80)*pct,10);
+
+  panels.forEach((p,i)=>{
+    const x=gridX+p.col*panelSize,y=gridY+p.row*panelSize;
+    const clarity=1-p.haze;
+    const base=Math.round(40+clarity*180);
+    ctx.fillStyle=`rgb(${base},${base+20},${Math.min(255,base+40)})`;
+    ctx.fillRect(x+3,y+3,panelSize-6,panelSize-6);
+    if(p.scratch>0){
+      ctx.strokeStyle=`rgba(233,69,96,${Math.min(1,p.scratch)})`;
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.moveTo(x+6,y+6); ctx.lineTo(x+panelSize-6,y+panelSize-6);
+      ctx.moveTo(x+panelSize-6,y+6); ctx.lineTo(x+6,y+panelSize-6);
+      ctx.stroke();
+    }
+    ctx.strokeStyle= i===activePanelIdx?'#ffd54f':(i===selPanel?'#7ec850':'rgba(255,255,255,0.25)');
+    ctx.lineWidth=i===activePanelIdx?3:2;
+    ctx.strokeRect(x+3,y+3,panelSize-6,panelSize-6);
+  });
+
+  if(flashT>0){
+    flashT--;
+    ctx.fillStyle=flashColor;
+    ctx.globalAlpha=Math.min(1,flashT/30);
+    ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,H-14);
+    ctx.globalAlpha=1;ctx.textAlign='left';
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script></body></html>
