@@ -1,0 +1,308 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mushroom Drying Rack</title><meta name="description" content="Play Mushroom Drying Rack free online — Sort mushroom slices onto the right tier by thickness, then pull each tray before it over-dries or stays too wet."><link rel="canonical" href="https://games.multiportllc.com/games/mushroomdryingrack"><meta property="og:title" content="Mushroom Drying Rack - Multiport Games"><meta property="og:description" content="Play Mushroom Drying Rack free online — Sort mushroom slices onto the right tier by thickness, then pull each tray before it over-dries or stays too wet."><meta property="og:url" content="https://games.multiportllc.com/games/mushroomdryingrack"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mushroom Drying Rack","description":"Play Mushroom Drying Rack free online instantly. Arrange freshly harvested mushroom slices on a multi-tier dehydrator rack, sorting thin slices away from thick ones so they do not over-dry, then watch each tier's drying time and pull it at perfect crispness. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/mushroomdryingrack","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a1f16;display:block;border-radius:8px;touch-action:none;margin:0 auto}
+#hud{color:#e8c39e;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lv{color:#ffd54f}
+#hud span.hs{color:#7ec850}
+#hud span.liv{color:#e94560}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mushroom Drying Rack</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0</span>
+      <span class="lv" id="levelDisp">Level: 1</span>
+      <span class="liv" id="livesDisp">Lives: ❤❤❤</span>
+      <span class="hs" id="hsDisp">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">A new mushroom slice drops in on the left: <b>thin</b> slices dry fast, <b>thick</b> slices dry slow. Press <b>1/2/3</b> or <b>tap a tier</b> to place it on the matching rack tier (top = thin, middle = medium, bottom = thick). Then watch each tier's drying bar — press <b>Space</b> or <b>tap the tier again</b> to pull it when the bar is in the green "perfect crispness" zone. Pull too early (soggy) or too late (burnt) and you lose a life. The pace quickens every level — you have 3 lives.</div>
+</div>
+<script>
+(function(){
+const HS_KEY='mushroomdryingrack_hs';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const TIERS=[ {name:'thin',y:70,label:'Top Tier — Thin'}, {name:'medium',y:210,label:'Mid Tier — Medium'}, {name:'thick',y:350,label:'Bottom Tier — Thick'} ];
+const TIER_H=120;
+
+let score=0,lives=3,level=1,hi=0,gameOver=false,started=false;
+let incoming=null; // slice waiting to be placed
+let trays=[null,null,null]; // per tier: {thickness, progress, target, speed} or null
+let spawnTimer=0,spawnInterval=130;
+let shakeT=0;
+let flashMsg='',flashT=0,flashColor='#fff';
+
+function loadHi(){ try{ hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0; }catch(e){ hi=0; } }
+function saveHi(){ try{ localStorage.setItem(HS_KEY,String(hi)); }catch(e){} }
+loadHi();
+
+function thicknessLabel(t){
+  if(t==='thin')return I18N.t('thin_label','Thin');
+  if(t==='medium')return I18N.t('medium_label','Medium');
+  return I18N.t('thick_label','Thick');
+}
+
+function spawnSlice(){
+  const types=['thin','medium','thick'];
+  incoming={thickness:types[Math.floor(Math.random()*types.length)],x:60,wobble:0};
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;
+  trays=[null,null,null];
+  spawnTimer=0;spawnInterval=130;
+  spawnSlice();
+}
+reset();
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelDisp').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);
+  document.getElementById('hsDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {hearts}').replace('{hearts}','❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives)));
+}
+
+function flash(msg,color){ flashMsg=msg; flashColor=color; flashT=60; }
+
+function placeSlice(tierIdx){
+  if(!incoming||gameOver||!started)return;
+  const correctIdx=TIERS.findIndex(t=>t.name===incoming.thickness);
+  if(trays[tierIdx]){ return; } // tier occupied, ignore
+  const speedBase=1.1+level*0.18;
+  const speed = incoming.thickness==='thin'?speedBase*1.5: incoming.thickness==='thick'?speedBase*0.65:speedBase;
+  trays[tierIdx]={thickness:incoming.thickness,progress:0,speed,correct:tierIdx===correctIdx};
+  if(tierIdx===correctIdx){ SFX.click(); score+=5; }
+  else { SFX.error(); score=Math.max(0,score-2); flash(I18N.t('wrong_tier_msg','Wrong tier! It will dry oddly.'),'#ff8a65'); }
+  incoming=null;
+}
+
+function pullTray(tierIdx){
+  const tr=trays[tierIdx];
+  if(!tr||gameOver||!started)return;
+  const p=tr.progress;
+  const loG=78,hiG=100; // perfect window within 0..130 scale (see progress cap below)
+  if(p<loG){
+    lives--; SFX.fail(); flash(I18N.t('too_soggy_msg','Too soggy! Pulled too early.'),'#64b5f6');
+  } else if(p>hiG){
+    lives--; SFX.fail(); flash(I18N.t('too_burnt_msg','Burnt! Pulled too late.'),'#ff5252');
+  } else {
+    const bonus = tr.correct?20:8;
+    score+=bonus; SFX.success();
+    flash(I18N.t('perfect_crisp_msg','Perfect crispness! +{b}').replace('{b}',bonus),'#7ec850');
+  }
+  trays[tierIdx]=null;
+  if(lives<=0){ endGame(); }
+  else { maybeLevelUp(); }
+}
+
+function maybeLevelUp(){
+  if(score>=level*60){ level++; spawnInterval=Math.max(55,130-level*8); SFX.levelup(); }
+}
+
+function endGame(){
+  gameOver=true; SFX.lose();
+  if(score>hi){ hi=score; saveHi(); }
+}
+
+function handleKey(e){
+  if(!started){ started=true; return; }
+  if(gameOver){
+    if(e.code==='Space'||e.code==='Enter'){ reset(); started=true; }
+    return;
+  }
+  if(e.code==='Digit1'){ placeSlice(0); }
+  else if(e.code==='Digit2'){ placeSlice(1); }
+  else if(e.code==='Digit3'){ placeSlice(2); }
+  else if(e.code==='Space'){ e.preventDefault();
+    for(let i=0;i<3;i++){ if(trays[i]) { pullTray(i); break; } }
+  }
+}
+document.addEventListener('keydown',handleKey);
+
+function tierAtY(y){
+  for(let i=0;i<3;i++){ if(y>=TIERS[i].y-10 && y<=TIERS[i].y+TIER_H) return i; }
+  return -1;
+}
+
+function pointerHandler(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  const x=(clientX-rect.left)*(W/rect.width);
+  const y=(clientY-rect.top)*(H/rect.height);
+  if(!started){ started=true; return; }
+  if(gameOver){ reset(); started=true; return; }
+  const idx=tierAtY(y);
+  if(idx<0)return;
+  if(trays[idx]){ pullTray(idx); }
+  else { placeSlice(idx); }
+}
+c.addEventListener('mousedown',e=>pointerHandler(e.clientX,e.clientY));
+c.addEventListener('touchstart',e=>{ e.preventDefault(); const t=e.touches[0]; pointerHandler(t.clientX,t.clientY); },{passive:false});
+
+function drawSliceIcon(x,y,thickness,scale){
+  scale=scale||1;
+  const w=(thickness==='thin'?34:thickness==='thick'?54:44)*scale;
+  const h=(thickness==='thin'?14:thickness==='thick'?26:20)*scale;
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle='#e0c9a6';
+  ctx.beginPath();
+  ctx.ellipse(0,0,w/2,h/2,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#caa876';
+  ctx.beginPath();
+  ctx.ellipse(0,0,w/2-4,h/2-4,0,0,Math.PI*2);
+  ctx.fill();
+  // speckles
+  ctx.fillStyle='#8a6a42';
+  for(let i=0;i<4;i++){
+    ctx.beginPath();
+    ctx.arc((Math.random()-0.5)*w*0.5,(Math.random()-0.5)*h*0.5,1.5,0,Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function colorForProgress(p){
+  if(p<78)return '#64b5f6';
+  if(p<=100)return '#7ec850';
+  return '#ff5252';
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#2a1f16';
+  ctx.fillRect(0,0,W,H);
+
+  // Tiers
+  TIERS.forEach((t,i)=>{
+    ctx.fillStyle=i%2===0?'#3a2b1e':'#352717';
+    ctx.fillRect(20,t.y,W-180,TIER_H-10);
+    ctx.strokeStyle='#5a4228';
+    ctx.lineWidth=3;
+    ctx.strokeRect(20,t.y,W-180,TIER_H-10);
+    ctx.fillStyle='#e8c39e';
+    ctx.font='bold 16px Arial';
+    ctx.textAlign='left';
+    ctx.fillText(t.label,30,t.y+22);
+    ctx.font='14px Arial';
+    ctx.fillText('Key: '+(i+1),30,t.y+TIER_H-20);
+
+    const tr=trays[i];
+    if(tr){
+      drawSliceIcon(130,t.y+TIER_H/2+5,tr.thickness,1.2);
+      // progress bar
+      const barX=180,barY=t.y+TIER_H/2-10,barW=420,barH=20;
+      ctx.fillStyle='#1a1410';
+      ctx.fillRect(barX,barY,barW,barH);
+      const pct=Math.min(1,tr.progress/130);
+      ctx.fillStyle=colorForProgress(tr.progress);
+      ctx.fillRect(barX,barY,barW*pct,barH);
+      // perfect zone marker
+      ctx.fillStyle='rgba(255,255,255,0.35)';
+      ctx.fillRect(barX+barW*(78/130),barY,barW*((100-78)/130),barH);
+      ctx.strokeStyle='#efefef';
+      ctx.lineWidth=1;
+      ctx.strokeRect(barX,barY,barW,barH);
+      if(!tr.correct){
+        ctx.fillStyle='#ff8a65';
+        ctx.font='12px Arial';
+        ctx.fillText(I18N.t('misplaced_tag','misplaced'),barX,barY-6);
+      }
+    } else {
+      ctx.fillStyle='#8a7258';
+      ctx.font='italic 14px Arial';
+      ctx.fillText(I18N.t('empty_tier_hint','Empty — place a slice here'),130,t.y+TIER_H/2+5);
+    }
+  });
+
+  // Side rack lever buttons
+  for(let i=0;i<3;i++){
+    const t=TIERS[i];
+    ctx.fillStyle='#e94560';
+    ctx.fillRect(W-150,t.y,120,TIER_H-10);
+    ctx.fillStyle='#fff';
+    ctx.font='bold 14px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(I18N.t('pull_label','PULL'),W-90,t.y+TIER_H/2-4);
+    ctx.font='12px Arial';
+    ctx.fillText(I18N.t('or_place_label','or place'),W-90,t.y+TIER_H/2+14);
+  }
+  ctx.textAlign='left';
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap or press any key to start'),W/2,H/2);
+    ctx.textAlign='left';
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','BATCH SPOILED'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',Math.floor(score)),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space to restart'),W/2,H/2+46);
+    ctx.textAlign='left';
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // incoming slice conveyor
+  if(incoming){
+    incoming.wobble+=0.12;
+    drawSliceIcon(60,80+Math.sin(incoming.wobble)*6,incoming.thickness,1.3);
+    ctx.fillStyle='#fff';
+    ctx.font='bold 14px Arial';
+    ctx.fillText(I18N.t('next_slice_label','Next: {t}').replace('{t}',thicknessLabel(incoming.thickness)),20,40);
+  }
+
+  // progress trays
+  trays.forEach((tr,i)=>{
+    if(tr){
+      tr.progress+=tr.speed*0.1;
+      if(tr.progress>160){
+        // auto burnt, loses a life if not pulled
+        lives--; SFX.fail(); trays[i]=null;
+        flash(I18N.t('left_too_long_msg','Left too long — burnt!'),'#ff5252');
+        if(lives<=0) endGame();
+      }
+    }
+  });
+
+  spawnTimer++;
+  if(!incoming && spawnTimer>=spawnInterval){ spawnTimer=0; spawnSlice(); }
+
+  if(flashT>0){
+    flashT--;
+    ctx.fillStyle=flashColor;
+    ctx.globalAlpha=Math.min(1,flashT/30);
+    ctx.font='bold 18px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,36);
+    ctx.globalAlpha=1;
+    ctx.textAlign='left';
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script></body></html>

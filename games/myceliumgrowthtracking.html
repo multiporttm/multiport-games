@@ -1,0 +1,309 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mycelium Growth Tracking</title><meta name="description" content="Play Mycelium Growth Tracking free online — Steer mycelium growth across a substrate grid with nutrients and moisture before the batch spoils."><link rel="canonical" href="https://games.multiportllc.com/games/myceliumgrowthtracking"><meta property="og:title" content="Mycelium Growth Tracking - Multiport Games"><meta property="og:description" content="Play Mycelium Growth Tracking free online — Steer mycelium growth across a substrate grid with nutrients and moisture before the batch spoils."><meta property="og:url" content="https://games.multiportllc.com/games/myceliumgrowthtracking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mycelium Growth Tracking","description":"Play Mycelium Growth Tracking free online instantly. Track mycelium network growth spreading across a grid-based substrate block over time, deciding when and where to introduce more nutrients or moisture to steer healthy colonization toward full coverage before the batch spoils. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/myceliumgrowthtracking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#11170e;display:block;border-radius:8px;touch-action:none;margin:0 auto}
+#hud{color:#d7e8c8;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lv{color:#ffd54f}
+#hud span.hs{color:#7ec850}
+#hud span.liv{color:#e94560}
+#toolBtns{display:flex;justify-content:center;gap:10px;padding:6px 0}
+#toolBtns button{padding:9px 18px;border:none;border-radius:16px;font-weight:800;cursor:pointer;font-size:0.95rem}
+#toolBtns button.active{outline:3px solid #fff}
+#toolBtns button[data-tool="nutrient"]{background:#c99a3a;color:#1a1304}
+#toolBtns button[data-tool="moisture"]{background:#3a8ec9;color:#031820}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mycelium Growth Tracking</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Coverage: 0%</span>
+      <span class="lv" id="levelDisp">Batch: 1</span>
+      <span class="liv" id="livesDisp">Lives: ❤❤❤</span>
+      <span class="hs" id="hsDisp">Hi: 0%</span>
+    </div>
+    <canvas id="c" width="800" height="400"></canvas>
+    <div id="toolBtns">
+      <button data-tool="nutrient" id="nutrientBtn">Nutrient (N)</button>
+      <button data-tool="moisture" id="moistureBtn">Moisture (M)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Mycelium spreads cell by cell across the substrate grid over time. Select a tool — <b>N</b> for Nutrient or <b>M</b> for Moisture (or tap the buttons) — then <b>click/tap a grid cell</b> to apply it there, boosting its growth. Unattended patches can turn <b>moldy (contaminated)</b> and stop spreading, costing a life; too much of one input can also spoil a cell. Reach <b>full healthy coverage</b> before the spoil timer runs out to clear the batch. Each batch raises the grid size and spoil speed — you have 3 lives.</div>
+</div>
+<script>
+(function(){
+const HS_KEY='myceliumgrowthtracking_hi';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+
+let gridSize=6,cellPx,gridOffX,gridOffY;
+let grid=[]; // {state:'empty'|'growing'|'healthy'|'moldy', growth:0-1, nutrient:0-2, moisture:0-2, moldRisk:0}
+let tool='nutrient';
+let score=0,lives=3,batch=1,hi=0,gameOver=false,won=false,started=false;
+let tickTimer=0,spoilTimer=0,spoilLimit=0;
+let flashMsg='',flashT=0,flashColor='#fff';
+
+function loadHi(){ try{ hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0; }catch(e){ hi=0; } }
+function saveHi(){ try{ localStorage.setItem(HS_KEY,String(hi)); }catch(e){} }
+loadHi();
+
+function layoutGrid(){
+  cellPx=Math.floor(Math.min((W-40)/gridSize,(H-60)/gridSize));
+  gridOffX=(W-gridSize*cellPx)/2;
+  gridOffY=50;
+}
+
+function initGrid(){
+  grid=[];
+  for(let r=0;r<gridSize;r++){
+    const row=[];
+    for(let cI=0;cI<gridSize;cI++){
+      row.push({state:'empty',growth:0,nutrient:0,moisture:0});
+    }
+    grid.push(row);
+  }
+  // seed center
+  const mid=Math.floor(gridSize/2);
+  grid[mid][mid].state='growing'; grid[mid][mid].growth=0.2;
+}
+
+function reset(){
+  score=0;lives=3;batch=1;gameOver=false;won=false;started=false;
+  gridSize=6; layoutGrid(); initGrid();
+  spoilLimit=1400; spoilTimer=0; tickTimer=0;
+}
+reset();
+
+function neighbors(r,cI){
+  const res=[];
+  [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dr,dc])=>{
+    const nr=r+dr,nc=cI+dc;
+    if(nr>=0&&nr<gridSize&&nc>=0&&nc<gridSize)res.push(grid[nr][nc]);
+  });
+  return res;
+}
+
+function updateHud(){
+  const pct=coveragePct();
+  document.getElementById('scoreDisp').textContent=I18N.t('coverage_label','Coverage: {p}%').replace('{p}',pct);
+  document.getElementById('levelDisp').textContent=I18N.t('batch_label','Batch: {b}').replace('{b}',batch);
+  document.getElementById('hsDisp').textContent=I18N.t('hi_label','Hi: {h}%').replace('{h}',hi);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {hearts}').replace('{hearts}','❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives)));
+}
+
+function coveragePct(){
+  let healthy=0,total=gridSize*gridSize;
+  for(let r=0;r<gridSize;r++)for(let cI=0;cI<gridSize;cI++) if(grid[r][cI].state==='healthy') healthy++;
+  return Math.round(100*healthy/total);
+}
+
+function flash(msg,color){ flashMsg=msg; flashColor=color; flashT=50; }
+
+function applyTool(r,cI){
+  const cell=grid[r][cI];
+  if(cell.state==='moldy')return;
+  if(tool==='nutrient'){ cell.nutrient=Math.min(2,cell.nutrient+1); }
+  else { cell.moisture=Math.min(2,cell.moisture+1); }
+  if(cell.state==='empty'){
+    // only spreads if adjacent to growing/healthy
+    const adj=neighbors(r,cI).some(n=>n.state==='growing'||n.state==='healthy');
+    if(adj){ cell.state='growing'; cell.growth=0.1; }
+  }
+  SFX.click();
+}
+
+function tierTick(){
+  // nutrient/moisture overdose risk
+  for(let r=0;r<gridSize;r++){
+    for(let cI=0;cI<gridSize;cI++){
+      const cell=grid[r][cI];
+      if(cell.state==='growing'||cell.state==='healthy'){
+        const balance = (cell.nutrient>0?1:0)+(cell.moisture>0?1:0);
+        let rate=0.004+balance*0.006;
+        if(cell.nutrient>=2&&cell.moisture>=2) rate=-0.01; // overdose hurts
+        cell.growth=Math.max(0,Math.min(1,cell.growth+rate));
+        if(cell.growth>=1) cell.state='healthy';
+        if(cell.growth<=0 && cell.state==='growing' && (cell.nutrient>=2&&cell.moisture>=2)){
+          cell.state='moldy';
+          lives--; SFX.fail();
+          flash(I18N.t('cell_contaminated_msg','A cell turned moldy!'),'#e94560');
+          if(lives<=0){ endGame(false); }
+        }
+        // slowly decay inputs
+        if(Math.random()<0.02 && cell.nutrient>0) cell.nutrient--;
+        if(Math.random()<0.02 && cell.moisture>0) cell.moisture--;
+        // spread to empty neighbors occasionally once healthy-ish
+        if(cell.growth>0.5){
+          neighbors(r,cI).forEach(n=>{
+            if(n.state==='empty' && Math.random()<0.01){ n.state='growing'; n.growth=0.05; }
+          });
+        }
+      } else if(cell.state==='empty'){
+        // random contamination risk if left totally untouched too long near edges of batch pace
+        if(Math.random()<0.0008*batch){ /* dormant decay - minor flavor, no penalty */ }
+      }
+    }
+  }
+}
+
+function endGame(isWin){
+  gameOver=true;
+  won=isWin;
+  const pct=coveragePct();
+  if(pct>hi){ hi=pct; saveHi(); }
+  if(isWin){ SFX.win(); score=pct; }
+  else { SFX.lose(); score=pct; }
+}
+
+function nextBatch(){
+  batch++;
+  gridSize=Math.min(10,5+batch);
+  spoilLimit=Math.max(700,1400-batch*90);
+  layoutGrid(); initGrid();
+  spoilTimer=0; gameOver=false; won=false;
+}
+
+function handleStart(){ if(!started){started=true;return true;} return false; }
+
+function cellAt(px,py){
+  const col=Math.floor((px-gridOffX)/cellPx);
+  const row=Math.floor((py-gridOffY)/cellPx);
+  if(row<0||row>=gridSize||col<0||col>=gridSize)return null;
+  return [row,col];
+}
+
+function pointerHandler(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  const x=(clientX-rect.left)*(W/rect.width);
+  const y=(clientY-rect.top)*(H/rect.height);
+  if(handleStart())return;
+  if(gameOver){
+    if(won) nextBatch(); else reset();
+    started=true;
+    return;
+  }
+  const pos=cellAt(x,y);
+  if(pos) applyTool(pos[0],pos[1]);
+}
+c.addEventListener('mousedown',e=>pointerHandler(e.clientX,e.clientY));
+c.addEventListener('touchstart',e=>{ e.preventDefault(); const t=e.touches[0]; pointerHandler(t.clientX,t.clientY); },{passive:false});
+
+function setTool(t){
+  tool=t;
+  document.getElementById('nutrientBtn').classList.toggle('active',t==='nutrient');
+  document.getElementById('moistureBtn').classList.toggle('active',t==='moisture');
+}
+document.getElementById('nutrientBtn').addEventListener('click',()=>setTool('nutrient'));
+document.getElementById('moistureBtn').addEventListener('click',()=>setTool('moisture'));
+setTool('nutrient');
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='KeyN'){ setTool('nutrient'); }
+  else if(e.code==='KeyM'){ setTool('moisture'); }
+  else if(e.code==='Space'||e.code==='Enter'){
+    if(handleStart())return;
+    if(gameOver){ if(won) nextBatch(); else reset(); started=true; }
+  }
+});
+
+function colorForCell(cell){
+  if(cell.state==='empty')return '#2a2418';
+  if(cell.state==='moldy')return '#5a3a5a';
+  if(cell.state==='healthy')return '#5aaa30';
+  // growing: interpolate
+  const g=cell.growth;
+  const r1=90,g1=70,b1=40, r2=126,g2=200,b2=80;
+  const r=Math.round(r1+(r2-r1)*g), gg=Math.round(g1+(g2-g1)*g), b=Math.round(b1+(b2-b1)*g);
+  return `rgb(${r},${gg},${b})`;
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#11170e';
+  ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap or press any key to start'),W/2,H/2);
+    ctx.textAlign='left';
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  // draw grid regardless
+  for(let r=0;r<gridSize;r++){
+    for(let cI=0;cI<gridSize;cI++){
+      const cell=grid[r][cI];
+      const x=gridOffX+cI*cellPx, y=gridOffY+r*cellPx;
+      ctx.fillStyle=colorForCell(cell);
+      ctx.fillRect(x+1,y+1,cellPx-2,cellPx-2);
+      if(cell.nutrient>0){
+        ctx.fillStyle='rgba(201,154,58,0.8)';
+        ctx.fillRect(x+3,y+3,6,6);
+      }
+      if(cell.moisture>0){
+        ctx.fillStyle='rgba(58,142,201,0.8)';
+        ctx.fillRect(x+cellPx-9,y+3,6,6);
+      }
+    }
+  }
+  ctx.strokeStyle='#3a3424';
+  ctx.lineWidth=1;
+  for(let i=0;i<=gridSize;i++){
+    ctx.beginPath();ctx.moveTo(gridOffX+i*cellPx,gridOffY);ctx.lineTo(gridOffX+i*cellPx,gridOffY+gridSize*cellPx);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(gridOffX,gridOffY+i*cellPx);ctx.lineTo(gridOffX+gridSize*cellPx,gridOffY+i*cellPx);ctx.stroke();
+  }
+
+  // spoil timer bar
+  const barPct=1-(spoilTimer/spoilLimit);
+  ctx.fillStyle='#1a1410';
+  ctx.fillRect(gridOffX,24,gridSize*cellPx,10);
+  ctx.fillStyle=barPct<0.25?'#e94560':'#ffd54f';
+  ctx.fillRect(gridOffX,24,gridSize*cellPx*Math.max(0,barPct),10);
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('batch_cleared_title','BATCH FULLY COLONIZED!'):I18N.t('batch_spoiled_title','BATCH SPOILED'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('coverage_final_label','Coverage: {p}%').replace('{p}',coveragePct()),W/2,H/2+16);
+    ctx.fillText(won?I18N.t('next_batch_hint','Tap or Space for next batch'):I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+46);
+    ctx.textAlign='left';
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  tickTimer++;
+  if(tickTimer>=3){ tickTimer=0; tierTick(); }
+  spoilTimer++;
+  if(spoilTimer>=spoilLimit){ endGame(false); }
+  if(coveragePct()>=100){ endGame(true); }
+
+  if(flashT>0){
+    flashT--;
+    ctx.fillStyle=flashColor;
+    ctx.globalAlpha=Math.min(1,flashT/30);
+    ctx.font='bold 18px Arial';
+    ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,H-16);
+    ctx.globalAlpha=1;
+    ctx.textAlign='left';
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script></body></html>
