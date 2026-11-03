@@ -1,0 +1,288 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Macaron Shell Piping</title><meta name="description" content="Play Macaron Shell Piping free online — Pipe macaron batter into even, matching-size circles, tap the tray to release air bubbles, and work through the whole tray before the batter starts to set."><link rel="canonical" href="https://games.multiportllc.com/games/macaronshellpiping"><meta property="og:title" content="Macaron Shell Piping - Multiport Games"><meta property="og:description" content="Play Macaron Shell Piping free online — Pipe macaron batter into even, matching-size circles, tap the tray to release air bubbles, and work through the whole tray before the batter starts to set."><meta property="og:url" content="https://games.multiportllc.com/games/macaronshellpiping"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Macaron Shell Piping","description":"Play Macaron Shell Piping free online instantly. Pipe macaron batter onto a baking sheet in perfectly even, round circles of matching size with a piping bag, tap the tray to release air bubbles, and work through a full tray before the batter starts to set. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/macaronshellpiping","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a2430;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffd9ec;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lv{color:#ffb74d}
+#hud span.hs{color:#7ec850}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Macaron Shell Piping</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0</span>
+      <span class="lv" id="levelDisp">Tray: 1</span>
+      <span id="livesDisp">Lives: ❤❤❤</span>
+      <span class="hs" id="hsDisp">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="360"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>Pipe:</b> hold <b>Space</b> or press-and-hold on the canvas to grow the shell to match the dashed template circle, then release. <b>Tap bubbles:</b> once piped, press <b>Space</b>/tap again right when "TAP NOW!" appears to knock the air bubbles out. Finish the whole tray before the batter sets — 3 lives, trays get bigger and faster each round!</div>
+</div>
+<script>
+(function(){
+const HS_KEY='macaronshellpiping_hs';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=360;
+
+let score=0,lives=3,level=1,hi=0,gameOver=false,started=false;
+let cols=4,rows=2,shells=[],idx=0,targetR=35,tolerance=8;
+let stage='pipe'; // pipe -> tapwait -> tapgo -> done
+let curR=0,holding=false;
+let tapDelay=0,tapWindow=0,tapTimer=0;
+let trayTimeLeft=0,trayTimeLimit=0;
+let flashMsg='',flashT=0,flashOk=false;
+
+function loadHi(){ try{ hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0; }catch(e){ hi=0; } }
+function saveHi(){ try{ localStorage.setItem(HS_KEY,String(hi)); }catch(e){} }
+loadHi();
+
+function newTray(){
+  cols=4;
+  rows=Math.min(4,2+Math.floor(level/2));
+  shells=[];
+  const marginX=90,marginY=70;
+  const gapX=(W-marginX*2)/(cols-1);
+  const gapY=120;
+  for(let r=0;r<rows;r++){
+    for(let col=0;col<cols;col++){
+      shells.push({x:marginX+col*gapX,y:marginY+r*gapY,state:'empty',r:0,ok:false});
+    }
+  }
+  idx=0;
+  targetR=28+Math.random()*16;
+  tolerance=Math.max(5,14-level*0.8);
+  trayTimeLimit=Math.max(900,1800-level*90);
+  trayTimeLeft=trayTimeLimit;
+  nextShell();
+}
+
+function nextShell(){
+  stage='pipe';
+  curR=0;
+  holding=false;
+  tapDelay=20+Math.random()*40;
+  tapWindow=Math.max(20,45-level*2);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;
+  newTray();
+}
+reset();
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelDisp').textContent=I18N.t('tray_label','Tray: {l}').replace('{l}',level);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {h}').replace('{h}','❤'.repeat(Math.max(0,lives)));
+  document.getElementById('hsDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+}
+
+function startGame(){ if(!started){started=true;} else if(gameOver){reset();started=true;} }
+
+function flash(msg,ok){ flashMsg=msg; flashOk=ok; flashT=50; }
+
+function finishPiping(){
+  const sh=shells[idx];
+  const diff=Math.abs(curR-targetR);
+  if(diff<=tolerance){
+    sh.ok=true;SFX.click();
+    stage='tapwait';
+  } else if(diff<=tolerance*2.5){
+    sh.ok=true;SFX.click();
+    stage='tapwait';
+  } else {
+    sh.state='bad';sh.r=curR;sh.ok=false;
+    lives--;SFX.fail();
+    flash(I18N.t('shell_bad','Uneven shell — batter wasted!'),false);
+    advanceShell();
+  }
+}
+
+function advanceShell(){
+  idx++;
+  if(lives<=0){ endGame(); return; }
+  if(idx>=shells.length){
+    score+=30*level;SFX.levelup();
+    level++;
+    setTimeout(()=>{ if(!gameOver) newTray(); },800);
+  } else {
+    nextShell();
+  }
+}
+
+function doTap(){
+  const sh=shells[idx];
+  if(stage==='tapwait'){
+    SFX.error();
+    sh.state='bad';sh.r=curR;
+    lives--;
+    flash(I18N.t('tapped_early','Tapped too early — bubbles trapped!'),false);
+    if(lives<=0){ endGame(); return; }
+    advanceShell();
+  } else if(stage==='tapgo'){
+    const diff=Math.abs(curR-targetR);
+    const bonus=diff<=tolerance?15:5;
+    sh.state='good';sh.r=curR;
+    score+=(10+bonus)*level;
+    SFX.success();
+    flash(I18N.t('shell_good','Bubbles released! +{p}').replace('{p}',(10+bonus)*level),true);
+    advanceShell();
+  }
+}
+
+function pointerDown(){
+  if(!started||gameOver){ startGame(); return; }
+  if(idx>=shells.length)return;
+  if(stage==='pipe'){ holding=true; }
+  else if(stage==='tapwait'||stage==='tapgo'){ doTap(); }
+}
+function pointerUp(){
+  if(stage==='pipe'&&holding){
+    holding=false;
+    finishPiping();
+  }
+}
+
+c.addEventListener('pointerdown',e=>{ e.preventDefault(); pointerDown(); });
+c.addEventListener('pointerup',e=>{ pointerUp(); });
+c.addEventListener('pointercancel',e=>{ pointerUp(); });
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='Enter'){
+    e.preventDefault();
+    if(!started||gameOver){ startGame(); return; }
+    if(idx>=shells.length)return;
+    if(stage==='pipe'){ if(!holding) holding=true; }
+    else if(stage==='tapwait'||stage==='tapgo'){ doTap(); }
+  }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'||e.code==='Enter'){ pointerUp(); }
+});
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;saveHi();}
+  SFX.lose();
+}
+
+function drawShells(){
+  shells.forEach((sh,i)=>{
+    if(i===idx&&(stage==='pipe'||stage==='tapwait'||stage==='tapgo')){
+      ctx.strokeStyle='rgba(255,255,255,0.5)';
+      ctx.lineWidth=2;ctx.setLineDash([4,4]);
+      ctx.beginPath();ctx.arc(sh.x,sh.y,targetR,0,Math.PI*2);ctx.stroke();
+      ctx.setLineDash([]);
+      if(curR>0){
+        ctx.fillStyle='#f2d9e8';
+        ctx.beginPath();ctx.arc(sh.x,sh.y,curR,0,Math.PI*2);ctx.fill();
+        ctx.strokeStyle='#caa0b8';ctx.lineWidth=2;ctx.stroke();
+      }
+      if(stage==='tapwait'||stage==='tapgo'){
+        ctx.fillStyle=stage==='tapgo'?'#ffd54f':'#999';
+        ctx.font='bold 14px Arial';ctx.textAlign='center';
+        ctx.fillText(stage==='tapgo'?I18N.t('tap_now','TAP NOW!'):I18N.t('tap_wait','wait...'),sh.x,sh.y-targetR-14);
+      }
+    } else if(sh.state==='good'){
+      ctx.fillStyle='#f2d9e8';
+      ctx.beginPath();ctx.arc(sh.x,sh.y,sh.r,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='#2ecc71';ctx.lineWidth=2;ctx.stroke();
+    } else if(sh.state==='bad'){
+      ctx.fillStyle='#8a7a85';
+      ctx.beginPath();ctx.ellipse(sh.x,sh.y,sh.r*1.2,sh.r*0.8,0,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='#e74c3c';ctx.lineWidth=2;ctx.stroke();
+    } else {
+      ctx.strokeStyle='rgba(255,255,255,0.15)';
+      ctx.lineWidth=1;
+      ctx.beginPath();ctx.arc(sh.x,sh.y,targetR,0,Math.PI*2);ctx.stroke();
+    }
+  });
+}
+
+function drawTrayTimer(){
+  const gx=60,gy=H-24,gw=W-120,gh=14;
+  ctx.fillStyle='#222';ctx.fillRect(gx,gy,gw,gh);
+  const frac=Math.max(0,trayTimeLeft/trayTimeLimit);
+  ctx.fillStyle=frac>0.4?'#2ecc71':(frac>0.18?'#ffd54f':'#e74c3c');
+  ctx.fillRect(gx,gy,gw*frac,gh);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#1d1824');bg.addColorStop(1,'#2a2430');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#ffd9ec';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to start'),W/2,H/2);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Score: {s} — Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi)),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+48);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  trayTimeLeft--;
+  if(trayTimeLeft<=0){
+    lives--;SFX.fail();
+    flash(I18N.t('batter_set','The batter set before you finished the tray!'),false);
+    if(lives<=0){ endGame(); }
+    else { newTray(); }
+  }
+
+  if(idx<shells.length){
+    if(stage==='pipe'&&holding){ curR=Math.min(75,curR+0.9); }
+    if(stage==='tapwait'){
+      tapDelay--;
+      if(tapDelay<=0){ stage='tapgo'; tapTimer=tapWindow; }
+    } else if(stage==='tapgo'){
+      tapTimer--;
+      if(tapTimer<=0){
+        const sh=shells[idx];
+        sh.state='good';sh.r=curR;
+        score+=5*level;
+        flash(I18N.t('missed_window','Missed the window — shell is fine but no bonus.'),true);
+        advanceShell();
+      }
+    }
+  }
+
+  drawShells();
+  drawTrayTimer();
+
+  ctx.fillStyle='#fff';ctx.font='14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('shells_left_label','Shells left: {n}').replace('{n}',Math.max(0,shells.length-idx)),W/2,24);
+
+  if(flashT>0){
+    ctx.fillStyle=flashOk?'#7ec850':'#e74c3c';
+    ctx.font='bold 16px Arial';
+    ctx.fillText(flashMsg,W/2,46);
+    flashT--;
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script></body></html>
