@@ -1,0 +1,284 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Sword Polishing</title><meta name="description" content="Play Sword Polishing free online — Work each polishing stone's stroke pattern evenly across the blade, then move to the next finer grit to reveal a mirror finish and hamon line."><link rel="canonical" href="https://games.multiportllc.com/games/swordpolishing"><meta property="og:title" content="Sword Polishing - Multiport Games"><meta property="og:description" content="Play Sword Polishing free online — Work each polishing stone's stroke pattern evenly across the blade, then move to the next finer grit to reveal a mirror finish and hamon line."><meta property="og:url" content="https://games.multiportllc.com/games/swordpolishing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Sword Polishing","description":"Play Sword Polishing free online instantly. Polish a finished sword blade through a progression of increasingly fine polishing stones: work each stone's full stroke pattern evenly across the blade before moving to the next finer grit, revealing a mirror finish and hamon line. Strokes must stay even and the grit sequence gets longer and finer each level. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/swordpolishing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1b1b24;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#e0d8c0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+#hud span.grit{color:#ce93d8}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Sword Polishing</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+      <span class="grit" id="gritLabel">Stone: Coarse</span>
+    </div>
+    <canvas id="c" width="760" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Mouse/Touch:</b> drag along the blade following the stroke arrow to polish. <b>Keyboard:</b> hold <b>Left/Right Arrows</b> to stroke the stone along the blade, <b>Up/Down Arrows</b> to move to a new section. Cover every section evenly with each stone before the stone wears out (watch the wear meter) to advance to the next, finer grit. Rushing or missing sections costs a life. Finish all grits to reveal the mirror polish and hamon line. Three lives — more, finer grits are added each level.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const KEY='swordpolishing_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,level=1,lives=3,started=false,gameOver=false;
+
+const GRIT_NAMES=['Coarse','Medium','Fine','Ultra-Fine','Mirror'];
+let gritIndex=0,gritCount=3;
+const SECTIONS=8;
+let coverage=[];
+let sectionIdx=0;
+let strokePos=0; // 0-100
+let strokeDir=1;
+let wear=0;
+let keyLeft=false,keyRight=false,keyUp=false,keyDown=false;
+let dragging=false,dragStartX=0,dragStartPos=0;
+let lastTime=null;
+let msg='',msgTime=0;
+let stoneCompleteTimer=0;
+let levelCompleteTimer=0;
+
+function hiScoreDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);}
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {d}').replace('{d}','●'.repeat(Math.max(0,lives))+'○'.repeat(Math.max(0,3-lives)));}
+function gritDisp(){document.getElementById('gritLabel').textContent=I18N.t('grit_label','Stone: {g}').replace('{g}',I18N.t('grit_'+gritIndex,GRIT_NAMES[Math.min(gritIndex,GRIT_NAMES.length-1)]));}
+
+function resetStone(){
+  coverage=[];
+  for(let i=0;i<SECTIONS;i++)coverage.push(0);
+  sectionIdx=0;
+  strokePos=50;
+  strokeDir=1;
+  wear=0;
+  stoneCompleteTimer=0;
+}
+
+function resetLevel(){
+  gritIndex=0;
+  gritCount=Math.min(GRIT_NAMES.length,2+level);
+  resetStone();
+  levelCompleteTimer=0;
+}
+
+function resetGame(){
+  score=0;level=1;lives=3;gameOver=false;started=false;
+  resetLevel();
+}
+resetGame();
+
+function showMsg(t,dur){msg=t;msgTime=dur||90;}
+
+function startGame(){
+  if(!started)started=true;
+  if(gameOver){resetGame();return;}
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
+  if(!started||gameOver){startGame();}
+  if(e.code==='ArrowLeft')keyLeft=true;
+  if(e.code==='ArrowRight')keyRight=true;
+  if(e.code==='ArrowUp')keyUp=true;
+  if(e.code==='ArrowDown')keyDown=true;
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft')keyLeft=false;
+  if(e.code==='ArrowRight')keyRight=false;
+  if(e.code==='ArrowUp')keyUp=false;
+  if(e.code==='ArrowDown')keyDown=false;
+});
+
+function pointerDown(x,y){
+  if(!started||gameOver){startGame();return;}
+  dragging=true;dragStartX=x;dragStartPos=strokePos;
+  const sec=Math.floor((y-150)/30);
+  if(sec>=0&&sec<SECTIONS)sectionIdx=sec;
+}
+function pointerMove(x,y){
+  if(!dragging)return;
+  const dx=x-dragStartX;
+  strokePos=Math.max(0,Math.min(100,dragStartPos+dx*0.4));
+}
+function pointerUp(){dragging=false;}
+
+c.addEventListener('mousedown',e=>{const r=c.getBoundingClientRect();pointerDown((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));});
+c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();pointerMove((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));});
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();const r=c.getBoundingClientRect();const t=e.touches[0];pointerDown((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();const r=c.getBoundingClientRect();const t=e.touches[0];pointerMove((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerUp();},{passive:false});
+
+function update(dt){
+  if(!started||gameOver)return;
+  if(levelCompleteTimer>0){
+    levelCompleteTimer-=dt;
+    if(levelCompleteTimer<=0){
+      level++;score+=150;
+      if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+      resetLevel();
+    }
+    return;
+  }
+  if(stoneCompleteTimer>0){
+    stoneCompleteTimer-=dt;
+    if(stoneCompleteTimer<=0){
+      gritIndex++;
+      if(gritIndex>=gritCount){
+        SFX.win();
+        showMsg(I18N.t('mirror_msg','Mirror finish achieved!'),100);
+        levelCompleteTimer=70;
+      }else{
+        resetStone();
+        SFX.success();
+      }
+    }
+    return;
+  }
+  if(keyUp)sectionIdx=Math.max(0,sectionIdx-(dt>0.3?1:0));
+  if(keyDown)sectionIdx=Math.min(SECTIONS-1,sectionIdx+(dt>0.3?1:0));
+
+  const speed=(2.2+level*0.15)*dt;
+  let moving=false;
+  if(keyLeft){strokePos=Math.max(0,strokePos-speed);moving=true;}
+  if(keyRight){strokePos=Math.min(100,strokePos+speed);moving=true;}
+  if(dragging)moving=Math.abs(strokePos-dragStartPos)>2||true;
+
+  const atExtreme=strokePos<=2||strokePos>=98;
+  if(moving){
+    coverage[sectionIdx]=Math.min(1,coverage[sectionIdx]+0.012*dt);
+    wear+=0.09*dt*(1+level*0.05);
+    score+=0.03*dt;
+  }
+
+  if(wear>=100){
+    wear=100;
+    const covered=coverage.filter(v=>v>=0.95).length;
+    if(covered<SECTIONS){
+      lives--;
+      SFX.fail();
+      showMsg(I18N.t('stone_worn_msg','Stone wore out before the blade was even!'),100);
+      if(lives<=0){
+        gameOver=true;SFX.lose();
+        if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+      }else{
+        resetStone();
+      }
+    }
+  }
+
+  const allCovered=coverage.every(v=>v>=0.95);
+  if(allCovered&&stoneCompleteTimer<=0){
+    stoneCompleteTimer=50;
+  }
+
+  if(msgTime>0)msgTime-=dt;
+}
+
+function drawBlade(){
+  const bx=40,by=150,bw=680,sh=30;
+  const t=gritIndex/Math.max(1,gritCount-1);
+  for(let i=0;i<SECTIONS;i++){
+    const y=by+i*sh;
+    const prog=coverage[i];
+    const shine=t+prog*0.5;
+    const grey=Math.floor(120+shine*120);
+    ctx.fillStyle=`rgb(${grey},${grey},${Math.min(255,grey+10)})`;
+    ctx.fillRect(bx,y,bw,sh-2);
+    if(i===sectionIdx){
+      ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;
+      ctx.strokeRect(bx,y,bw,sh-2);
+    }
+  }
+  if(gritIndex>=gritCount-1){
+    ctx.save();
+    ctx.globalAlpha=0.5;
+    ctx.strokeStyle='#90caf9';
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    ctx.moveTo(bx,by+SECTIONS*sh*0.4);
+    for(let x=0;x<=bw;x+=20){
+      ctx.lineTo(bx+x,by+SECTIONS*sh*0.4+Math.sin(x*0.05)*10);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+  const py=by+sectionIdx*sh+sh/2-1;
+  const px=bx+(strokePos/100)*bw;
+  ctx.fillStyle='#424242';
+  ctx.fillRect(px-18,py-10,36,20);
+  ctx.strokeStyle='#212121';ctx.strokeRect(px-18,py-10,36,20);
+
+  ctx.fillStyle='#e0d8c0';ctx.font='13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('section_label','Section {i}/{n}').replace('{i}',sectionIdx+1).replace('{n}',SECTIONS),bx,by-10);
+}
+
+function drawWear(){
+  const mx=40,my=380,mw=680,mh=18;
+  ctx.fillStyle='#1a1a1a';ctx.fillRect(mx,my,mw,mh);
+  const ww=(wear/100)*mw;
+  const grad=ctx.createLinearGradient(mx,0,mx+mw,0);
+  grad.addColorStop(0,'#90caf9');grad.addColorStop(1,'#e53935');
+  ctx.fillStyle=grad;ctx.fillRect(mx,my,ww,mh);
+  ctx.strokeStyle='#555';ctx.strokeRect(mx,my,mw,mh);
+  ctx.fillStyle='#e0d8c0';ctx.font='12px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('wear_label','Stone Wear'),mx,my-6);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#111118');bg.addColorStop(1,'#1b1b24');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#e0d8c099';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click/Tap or press a key to start'),W/2,H/2);
+  }else if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click/Tap or press a key to restart'),W/2,H/2+20);
+  }else{
+    const now=performance.now();
+    const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+    lastTime=now;
+    update(dt);
+    drawBlade();
+    drawWear();
+    if(levelCompleteTimer>0){
+      ctx.fillStyle='#4caf50';ctx.font='bold 26px Arial';ctx.textAlign='center';
+      ctx.fillText(I18N.t('level_complete_title','LEVEL COMPLETE!'),W/2,70);
+    }else if(stoneCompleteTimer>0){
+      ctx.fillStyle='#ce93d8';ctx.font='bold 22px Arial';ctx.textAlign='center';
+      ctx.fillText(I18N.t('stone_complete_msg','Stone complete! Advancing grit...'),W/2,70);
+    }
+    if(msgTime>0){
+      ctx.fillStyle='rgba(255,255,255,0.9)';ctx.font='bold 17px Arial';ctx.textAlign='center';
+      ctx.fillText(msg,W/2,105);
+    }
+  }
+  scoreDisp();lvDisp();hiScoreDisp();livesDisp();gritDisp();
+  requestAnimationFrame(loop);
+}
+lastTime=null;
+loop();
+</script></body></html>

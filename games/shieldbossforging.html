@@ -1,0 +1,234 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Shield Boss Forging</title><meta name="description" content="Play Shield Boss Forging free online — Hammer the shrinking ring in rhythm along the spiral from rim to center to raise an even dome before it's riveted to the shield."><link rel="canonical" href="https://games.multiportllc.com/games/shieldbossforging"><meta property="og:title" content="Shield Boss Forging - Multiport Games"><meta property="og:description" content="Play Shield Boss Forging free online — Hammer the shrinking ring in rhythm along the spiral from rim to center to raise an even dome before it's riveted to the shield."><meta property="og:url" content="https://games.multiportllc.com/games/shieldbossforging"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Shield Boss Forging","description":"Play Shield Boss Forging free online instantly. Forge a shield's metal boss by hammering a spiral path of strike points from the outer rim in toward the center stake, timing each hammer blow to the moment a shrinking ring lines up with the spot for a clean, even dome. Rings shrink faster and the timing window tightens with every level. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/shieldbossforging","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a2420;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#e8d9b8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#ffb74d}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Shield Boss Forging</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="760" height="460"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Hammer the spiral:</b> A ring shrinks toward each glowing spot on the disk, working from the rim to the center. Press <b>Space</b>, click, or tap the moment the ring lines up with the spot for a clean, even strike. Miss the timing too often and the dome goes uneven — three lives, and the rings shrink faster with tighter timing every level.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=460;
+const KEY='shieldbossforging_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+const center={x:W/2,y:230};
+const diskMaxR=185,hitR=26;
+let score=0,level=1,lives=3,started=false,gameOver=false;
+let points=[],idx=0,missCount=0,combo=0;
+let indicatorR=0,duration=1.3,tStart=0,awaitingStrike=false,resultFlash=null,resultFlashT=0;
+
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);}
+function hsDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(3-Math.max(0,lives)));}
+
+function buildSpiral(lv){
+  const rings=Math.min(3+Math.floor(lv/2),6);
+  const pts=[];
+  for(let r=0;r<rings;r++){
+    const radius=diskMaxR-r*(diskMaxR-30)/rings;
+    const count=Math.max(3,7-r+Math.floor(lv/3));
+    for(let i=0;i<count;i++){
+      const ang=(i/count)*Math.PI*2+r*0.35;
+      pts.push({x:center.x+radius*Math.cos(ang),y:center.y+radius*Math.sin(ang),ring:r,state:'pending'});
+    }
+  }
+  return pts;
+}
+
+function startPoint(){
+  if(idx>=points.length){ levelClear(); return; }
+  duration=Math.max(0.5,1.25-level*0.045);
+  tStart=performance.now();
+  awaitingStrike=true;
+}
+
+function tolerance(){ return Math.max(4.5,13-level*0.55); }
+
+function levelClear(){
+  SFX.win();
+  score+=80*level;
+  level++;
+  scoreDisp();lvDisp();
+  points=buildSpiral(level);
+  idx=0;missCount=0;combo=0;
+  startPoint();
+}
+
+function loseLife(){
+  lives--;SFX.lose();
+  livesDisp();
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(KEY,hi);}
+    hsDisp();
+  } else {
+    points=buildSpiral(level);
+    idx=0;missCount=0;combo=0;
+    startPoint();
+  }
+}
+
+function strike(){
+  if(gameOver){reset();return;}
+  if(!started){started=true;startPoint();return;}
+  if(!awaitingStrike)return;
+  const t=(performance.now()-tStart)/1000;
+  const startR=78;
+  const r=Math.max(6,startR-(startR-hitR)*Math.min(1,t/duration));
+  const diff=Math.abs(r-hitR);
+  const tol=tolerance();
+  awaitingStrike=false;
+  if(diff<=tol*0.4){
+    points[idx].state='perfect';score+=30*level;combo++;SFX.success();
+    resultFlash=I18N.t('result_perfect','PERFECT!');
+  } else if(diff<=tol){
+    points[idx].state='good';score+=15*level;SFX.hit();
+    resultFlash=I18N.t('result_good','Good');
+  } else {
+    points[idx].state='miss';missCount++;combo=0;SFX.fail();
+    resultFlash=I18N.t('result_miss','Uneven!');
+  }
+  resultFlashT=0.6;
+  scoreDisp();
+  idx++;
+  if(missCount>=3){ loseLife(); return; }
+  setTimeout(()=>{ if(!gameOver) startPoint(); },180);
+}
+
+function reset(){
+  score=0;level=1;lives=3;gameOver=false;started=false;
+  points=buildSpiral(level);idx=0;missCount=0;combo=0;awaitingStrike=false;
+  scoreDisp();lvDisp();hsDisp();livesDisp();
+}
+reset();
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='Enter'){e.preventDefault();strike();}
+});
+c.addEventListener('click',strike);
+c.addEventListener('touchstart',e=>{e.preventDefault();strike();},{passive:false});
+
+function colorFor(state){
+  if(state==='perfect')return '#ffd54f';
+  if(state==='good')return '#b0bec5';
+  if(state==='miss')return '#8d4a3a';
+  return '#5a4a38';
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  lastTime=now;
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#1c1813');bg.addColorStop(1,'#3a2f22');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // disk
+  ctx.save();
+  const diskGrad=ctx.createRadialGradient(center.x-40,center.y-40,20,center.x,center.y,diskMaxR+20);
+  diskGrad.addColorStop(0,'#9a9088');diskGrad.addColorStop(1,'#4a4038');
+  ctx.fillStyle=diskGrad;
+  ctx.beginPath();ctx.arc(center.x,center.y,diskMaxR+20,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap or press Space to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    points.forEach(p=>{ctx.fillStyle=colorFor(p.state);ctx.beginPath();ctx.arc(p.x,p.y,16,0,Math.PI*2);ctx.fill();});
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space/Enter to restart'),W/2,H/2+46);
+    requestAnimationFrame(loop);return;
+  }
+
+  // stake center
+  ctx.fillStyle='#1a1512';ctx.beginPath();ctx.arc(center.x,center.y,12,0,Math.PI*2);ctx.fill();
+
+  // all points
+  points.forEach((p,i)=>{
+    if(p.state!=='pending'){
+      ctx.fillStyle=colorFor(p.state);
+      ctx.beginPath();ctx.arc(p.x,p.y,16,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='#2a2420';ctx.lineWidth=2;ctx.stroke();
+    } else if(i===idx){
+      ctx.fillStyle='#6b5a44';
+      ctx.beginPath();ctx.arc(p.x,p.y,hitR,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;ctx.stroke();
+    } else {
+      ctx.fillStyle='#584c3c';
+      ctx.beginPath();ctx.arc(p.x,p.y,8,0,Math.PI*2);ctx.fill();
+    }
+  });
+
+  // active shrinking ring
+  if(awaitingStrike && idx<points.length){
+    const p=points[idx];
+    const t=(now-tStart)/1000;
+    const startR=78;
+    const r=Math.max(6,startR-(startR-hitR)*Math.min(1,t/duration));
+    ctx.strokeStyle='#ff7043';ctx.lineWidth=4;
+    ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);ctx.stroke();
+    if(t>=duration+0.05){
+      awaitingStrike=false;
+      points[idx].state='miss';missCount++;combo=0;SFX.fail();
+      resultFlash=I18N.t('result_miss','Uneven!');resultFlashT=0.6;
+      scoreDisp();idx++;
+      if(missCount>=3){ loseLife(); }
+      else setTimeout(()=>{ if(!gameOver) startPoint(); },180);
+    }
+  }
+
+  // progress bar
+  ctx.fillStyle='#2a2420';ctx.fillRect(20,20,W-40,10);
+  ctx.fillStyle='#ffb74d';ctx.fillRect(20,20,(W-40)*(idx/Math.max(1,points.length)),10);
+
+  ctx.textAlign='center';
+  if(resultFlashT>0){
+    resultFlashT-=0.016;
+    ctx.fillStyle='#ffd54f';ctx.font='bold 20px Arial';
+    ctx.fillText(resultFlash,W/2,70);
+  }
+  if(combo>2){
+    ctx.fillStyle='#7ec850';ctx.font='bold 15px Arial';
+    ctx.fillText(I18N.t('combo_label','Combo x{c}').replace('{c}',combo),W/2,95);
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

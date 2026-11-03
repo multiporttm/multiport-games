@@ -1,0 +1,313 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Blade Beveling</title><meta name="description" content="Play Blade Beveling free online — Hold the angle and move the blade steadily across the belt grinder to shape a flat, even bevel on both sides without overheating the steel."><link rel="canonical" href="https://games.multiportllc.com/games/bladebeveling"><meta property="og:title" content="Blade Beveling - Multiport Games"><meta property="og:description" content="Play Blade Beveling free online — Hold the angle and move the blade steadily across the belt grinder to shape a flat, even bevel on both sides without overheating the steel."><meta property="og:url" content="https://games.multiportllc.com/games/bladebeveling"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Blade Beveling","description":"Play Blade Beveling free online instantly. Grind a knife blank's cutting edge on a belt grinder: hold a consistent angle, keep even pressure, and sweep the blade steadily from heel to tip to form a flat, symmetrical bevel on both sides without overheating the steel. The angle window narrows and the grinder speeds up with every level. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/bladebeveling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b2b33;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#e0d8c0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+#hud span.heat{color:#ff7043}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Blade Beveling</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+      <span class="heat" id="heatLabel">Heat: 0%</span>
+    </div>
+    <canvas id="c" width="760" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Mouse/Touch:</b> drag up/down to adjust grinding angle, hold and move the blade left-right across the belt to grind. <b>Keyboard:</b> <b>Up/Down Arrows</b> to adjust angle, <b>Left/Right Arrows</b> to sweep the blade, hold <b>Space</b> to press the blade against the belt. Keep the angle inside the green zone while sweeping evenly across the whole edge on both sides. Let go or ease off if the heat meter gets too high, or the steel will overheat and you'll lose a life. Finish both sides fully and evenly to pass the level. Three lives — the angle window narrows and the belt speeds up each level.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const KEY='bladebeveling_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,level=1,lives=3,started=false,gameOver=false;
+let side=0; // 0 = side A, 1 = side B
+let angle=50; // 0-100, target window is the "correct" zone
+let targetMin=40,targetMax=60;
+let beltSpeed=3;
+let heat=0;
+let sweepPos=0; // 0-100 position along blade length
+let coverage=[[],[]]; // coverage arrays per side, length 40 cells each, 0-1 progress
+const CELLS=40;
+for(let i=0;i<CELLS;i++){coverage[0].push(0);coverage[1].push(0);}
+let pressing=false;
+let keyUp=false,keyDown=false,keyLeft=false,keyRight=false;
+let dragStartY=null,dragStartAngle=null;
+let lastTime=null;
+let msg='',msgTime=0;
+let levelCompleteTimer=0;
+
+function hiScoreDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);}
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {d}').replace('{d}','●'.repeat(Math.max(0,lives))+'○'.repeat(Math.max(0,3-lives)));}
+function heatDisp(){document.getElementById('heatLabel').textContent=I18N.t('heat_label','Heat: {h}%').replace('{h}',Math.floor(heat));}
+
+function resetLevel(){
+  side=0;
+  angle=50;
+  sweepPos=50;
+  heat=0;
+  coverage=[[],[]];
+  for(let i=0;i<CELLS;i++){coverage[0].push(0);coverage[1].push(0);}
+  const halfWindow=Math.max(6,16-level);
+  targetMin=50-halfWindow;targetMax=50+halfWindow;
+  beltSpeed=3+level*0.4;
+  levelCompleteTimer=0;
+}
+
+function resetGame(){
+  score=0;level=1;lives=3;gameOver=false;started=false;
+  resetLevel();
+}
+resetGame();
+
+function showMsg(t,dur){msg=t;msgTime=dur||90;}
+
+function startGame(){
+  if(!started){started=true;}
+  if(gameOver){resetGame();return;}
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  if(!started||gameOver){startGame();}
+  if(e.code==='ArrowUp')keyUp=true;
+  if(e.code==='ArrowDown')keyDown=true;
+  if(e.code==='ArrowLeft')keyLeft=true;
+  if(e.code==='ArrowRight')keyRight=true;
+  if(e.code==='Space')pressing=true;
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp')keyUp=false;
+  if(e.code==='ArrowDown')keyDown=false;
+  if(e.code==='ArrowLeft')keyLeft=false;
+  if(e.code==='ArrowRight')keyRight=false;
+  if(e.code==='Space')pressing=false;
+});
+
+function pointerDown(x,y){
+  if(!started||gameOver){startGame();return;}
+  pressing=true;
+  dragStartY=y;dragStartAngle=angle;
+  dragStartXPos=x;dragStartSweep=sweepPos;
+}
+function pointerMove(x,y){
+  if(dragStartY==null)return;
+  const dy=dragStartY-y;
+  angle=Math.max(0,Math.min(100,dragStartAngle+dy*0.4));
+  const dx=x-dragStartXPos;
+  sweepPos=Math.max(0,Math.min(100,dragStartSweep+dx*0.3));
+}
+function pointerUp(){
+  pressing=false;dragStartY=null;
+}
+let dragStartXPos=0,dragStartSweep=0;
+
+c.addEventListener('mousedown',e=>{const r=c.getBoundingClientRect();pointerDown((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));});
+c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();pointerMove((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));});
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();const r=c.getBoundingClientRect();const t=e.touches[0];pointerDown((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();const r=c.getBoundingClientRect();const t=e.touches[0];pointerMove((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerUp();},{passive:false});
+
+function inWindow(){return angle>=targetMin&&angle<=targetMax;}
+
+function update(dt){
+  if(!started||gameOver)return;
+  if(levelCompleteTimer>0){
+    levelCompleteTimer-=dt;
+    if(levelCompleteTimer<=0){
+      level++;score+=100;
+      if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+      resetLevel();
+    }
+    return;
+  }
+  if(keyUp)angle=Math.min(100,angle+1.4*dt);
+  if(keyDown)angle=Math.max(0,angle-1.4*dt);
+  if(keyLeft)sweepPos=Math.max(0,sweepPos-1.2*dt);
+  if(keyRight)sweepPos=Math.min(100,sweepPos+1.2*dt);
+
+  if(pressing){
+    const good=inWindow();
+    if(good){
+      heat=Math.max(0,heat-0.3*dt);
+      const cellIdx=Math.min(CELLS-1,Math.floor(sweepPos/100*CELLS));
+      coverage[side][cellIdx]=Math.min(1,coverage[side][cellIdx]+0.045*dt);
+      score+=0.08*dt;
+    }else{
+      heat+=beltSpeed*0.55*dt;
+    }
+  }else{
+    heat=Math.max(0,heat-0.5*dt);
+  }
+
+  if(heat>=100){
+    heat=100;
+    lives--;
+    SFX.hurt();
+    showMsg(I18N.t('overheat_msg','Overheated! Steel burned.'),90);
+    heat=20;
+    if(lives<=0){
+      gameOver=true;
+      SFX.lose();
+      if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+    }
+  }
+
+  const covered=coverage[side].filter(v=>v>=0.95).length;
+  if(covered>=CELLS){
+    if(side===0){
+      side=1;
+      sweepPos=50;
+      showMsg(I18N.t('side_done_msg','Side done! Flip and grind the other side.'),100);
+      SFX.success();
+    }else{
+      SFX.levelup();
+      showMsg(I18N.t('level_complete_msg','Bevel complete!'),90);
+      levelCompleteTimer=60;
+    }
+  }
+
+  if(msgTime>0)msgTime-=dt;
+}
+
+function drawBlade(){
+  const bx=60,by=200,bw=640,bh=60;
+  ctx.save();
+  ctx.fillStyle='#9aa0a8';
+  ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle='#c7ccd1';
+  ctx.beginPath();
+  ctx.moveTo(bx,by);
+  ctx.lineTo(bx+bw,by+bh/2);
+  ctx.lineTo(bx,by+bh);
+  ctx.closePath();
+  ctx.fill();
+  for(let i=0;i<CELLS;i++){
+    const prog=coverage[0][i];
+    if(prog>0){
+      const cx=bx+(i/CELLS)*bw;
+      const cw=bw/CELLS;
+      ctx.fillStyle=`rgba(255,215,120,${0.15+prog*0.5})`;
+      ctx.fillRect(cx,by,cw+1,bh/2);
+    }
+  }
+  for(let i=0;i<CELLS;i++){
+    const prog=coverage[1][i];
+    if(prog>0){
+      const cx=bx+(i/CELLS)*bw;
+      const cw=bw/CELLS;
+      ctx.fillStyle=`rgba(255,215,120,${0.15+prog*0.5})`;
+      ctx.fillRect(cx,by+bh/2,cw+1,bh/2);
+    }
+  }
+  ctx.strokeStyle='#1a1a1a';ctx.lineWidth=2;
+  ctx.strokeRect(bx,by,bw,bh);
+  ctx.beginPath();ctx.moveTo(bx,by+bh/2);ctx.lineTo(bx+bw,by+bh/2);ctx.stroke();
+  ctx.restore();
+
+  const px=bx+(sweepPos/100)*bw;
+  const py=by+(side===0?bh*0.25:bh*0.75);
+  ctx.save();
+  ctx.fillStyle=pressing?(inWindow()?'#4caf50':'#ff6b6b'):'#ffd54f';
+  ctx.beginPath();ctx.arc(px,py,10,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle='#e0d8c0';ctx.font='14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('side_label','Grinding Side {s}').replace('{s}',side===0?'A':'B'),bx+bw/2,by-14);
+}
+
+function drawAngleMeter(){
+  const mx=60,my=300,mw=640,mh=28;
+  ctx.save();
+  ctx.fillStyle='#1a1a1a';ctx.fillRect(mx,my,mw,mh);
+  const gx=mx+(targetMin/100)*mw;
+  const gw=((targetMax-targetMin)/100)*mw;
+  ctx.fillStyle='#2e7d32';ctx.fillRect(gx,my,gw,mh);
+  const ax=mx+(angle/100)*mw;
+  ctx.fillStyle=inWindow()?'#8bc34a':'#ef5350';
+  ctx.fillRect(ax-3,my-6,6,mh+12);
+  ctx.strokeStyle='#555';ctx.strokeRect(mx,my,mw,mh);
+  ctx.fillStyle='#e0d8c0';ctx.font='13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('angle_label','Grinding Angle'),mx+mw/2,my-12);
+  ctx.restore();
+}
+
+function drawHeatBar(){
+  const mx=60,my=350,mw=640,mh=18;
+  ctx.save();
+  ctx.fillStyle='#1a1a1a';ctx.fillRect(mx,my,mw,mh);
+  const hw=(heat/100)*mw;
+  const grad=ctx.createLinearGradient(mx,0,mx+mw,0);
+  grad.addColorStop(0,'#ffd54f');grad.addColorStop(1,'#ff3d00');
+  ctx.fillStyle=grad;ctx.fillRect(mx,my,hw,mh);
+  ctx.strokeStyle='#555';ctx.strokeRect(mx,my,mw,mh);
+  ctx.restore();
+}
+
+function drawCoverageBars(){
+  const totalA=coverage[0].reduce((a,b)=>a+b,0)/CELLS;
+  const totalB=coverage[1].reduce((a,b)=>a+b,0)/CELLS;
+  ctx.fillStyle='#e0d8c0';ctx.font='13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('progress_label','Side A: {a}%  Side B: {b}%').replace('{a}',Math.floor(totalA*100)).replace('{b}',Math.floor(totalB*100)),60,395);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#1c1c24');bg.addColorStop(1,'#2b2b33');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#e0d8c099';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click/Tap or press a key to start'),W/2,H/2);
+  }else if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click/Tap or press a key to restart'),W/2,H/2+20);
+  }else{
+    const now=performance.now();
+    const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+    lastTime=now;
+    update(dt);
+    drawBlade();
+    drawAngleMeter();
+    drawHeatBar();
+    drawCoverageBars();
+    if(levelCompleteTimer>0){
+      ctx.fillStyle='#4caf50';ctx.font='bold 28px Arial';ctx.textAlign='center';
+      ctx.fillText(I18N.t('level_complete_title','LEVEL COMPLETE!'),W/2,100);
+    }
+    if(msgTime>0){
+      ctx.fillStyle='rgba(255,255,255,0.9)';ctx.font='bold 18px Arial';ctx.textAlign='center';
+      ctx.fillText(msg,W/2,140);
+    }
+  }
+  scoreDisp();lvDisp();hiScoreDisp();livesDisp();heatDisp();
+  requestAnimationFrame(loop);
+}
+lastTime=null;
+loop();
+</script></body></html>

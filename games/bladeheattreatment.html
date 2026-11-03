@@ -1,0 +1,325 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Blade Heat Treatment</title><meta name="description" content="Play Blade Heat Treatment free online — Heat the blade to its non-magnetic critical temperature, quench it, then run a multi-stage tempering cycle to balance hardness and toughness."><link rel="canonical" href="https://games.multiportllc.com/games/bladeheattreatment"><meta property="og:title" content="Blade Heat Treatment - Multiport Games"><meta property="og:description" content="Play Blade Heat Treatment free online — Heat the blade to its non-magnetic critical temperature, quench it, then run a multi-stage tempering cycle to balance hardness and toughness."><meta property="og:url" content="https://games.multiportllc.com/games/bladeheattreatment"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Blade Heat Treatment","description":"Play Blade Heat Treatment free online instantly. Heat-treat a finished knife blade: bring it up to the correct non-magnetic critical temperature, quench it in the right medium, then run it through a multi-stage tempering cycle in the oven to balance hardness and toughness. Temperature windows tighten and more tempering cycles are required each level. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/bladeheattreatment","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1016;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#e0d8c0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+#hud span.phase{color:#ff8a65}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Blade Heat Treatment</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+      <span class="phase" id="phaseLabel">Phase: Heat</span>
+    </div>
+    <canvas id="c" width="760" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Heating:</b> hold <b>Up Arrow</b> or press/hold the forge (click/tap) to heat the blade; release when the temperature needle sits in the non-magnetic critical zone and press <b>Space</b> (or tap Quench) to quench. Quench too early, too late, or in the wrong medium and you lose a life. <b>Tempering:</b> each cycle, press <b>Space</b> (or tap Temper) when the oven needle is in the green zone, repeating for every required cycle. Three lives — the critical-temperature zone narrows and more tempering cycles are needed each level.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const KEY='bladeheattreatment_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,level=1,lives=3,started=false,gameOver=false;
+
+let phase='heat'; // heat | quench | temper
+let temp=20; // 0-100 scale representing room temp to way-overheated
+let heating=false;
+let critMin=55,critMax=70;
+let quenchChoices=[];
+let correctQuench=0;
+let temperCycle=0,temperCyclesNeeded=2;
+let temperNeedle=0,temperDir=1;
+let temperMin=40,temperMax=60;
+let lastTime=null;
+let msg='',msgTime=0;
+let levelCompleteTimer=0;
+let overheatedFail=false;
+
+function hiScoreDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);}
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {d}').replace('{d}','●'.repeat(Math.max(0,lives))+'○'.repeat(Math.max(0,3-lives)));}
+function phaseDisp(){
+  const names={heat:I18N.t('phase_heat','Heat'),quench:I18N.t('phase_quench','Quench'),temper:I18N.t('phase_temper','Temper')};
+  document.getElementById('phaseLabel').textContent=I18N.t('phase_label','Phase: {p}').replace('{p}',names[phase]||phase);
+}
+
+const QUENCH_MEDIA=[
+  {id:'oil',label:'Oil'},
+  {id:'water',label:'Water'},
+  {id:'brine',label:'Brine'},
+  {id:'air',label:'Air'}
+];
+
+function resetLevel(){
+  phase='heat';
+  temp=20;
+  heating=false;
+  const halfWindow=Math.max(5,15-level);
+  critMin=62-halfWindow;critMax=62+halfWindow;
+  correctQuench=Math.floor(Math.random()*QUENCH_MEDIA.length);
+  temperCycle=0;
+  temperCyclesNeeded=Math.min(5,2+level);
+  temperNeedle=0;temperDir=1;
+  const tw=Math.max(8,22-level*1.5);
+  temperMin=50-tw/2;temperMax=50+tw/2;
+  levelCompleteTimer=0;
+  overheatedFail=false;
+}
+
+function resetGame(){
+  score=0;level=1;lives=3;gameOver=false;started=false;
+  resetLevel();
+}
+resetGame();
+
+function showMsg(t,dur){msg=t;msgTime=dur||90;}
+
+function startGame(){
+  if(!started)started=true;
+  if(gameOver){resetGame();return;}
+}
+
+function loseLife(reason){
+  lives--;
+  SFX.error();
+  showMsg(reason,90);
+  if(lives<=0){
+    gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+  }else{
+    resetLevel();
+  }
+}
+
+function inCrit(){return temp>=critMin&&temp<=critMax;}
+
+function doQuench(mediaIdx){
+  if(phase!=='quench')return;
+  if(mediaIdx===correctQuench&&inCrit()){
+    SFX.success();
+    score+=60;
+    phase='temper';
+    showMsg(I18N.t('quench_good_msg','Clean quench! Now temper the blade.'),90);
+  }else if(mediaIdx!==correctQuench){
+    loseLife(I18N.t('quench_wrong_medium_msg','Wrong quenching medium — blade cracked!'));
+  }else{
+    loseLife(I18N.t('quench_wrong_temp_msg','Quenched outside the critical zone!'));
+  }
+}
+
+function doTemperPress(){
+  if(phase!=='temper')return;
+  if(temperNeedle>=temperMin&&temperNeedle<=temperMax){
+    temperCycle++;
+    score+=35;
+    SFX.coin();
+    if(temperCycle>=temperCyclesNeeded){
+      SFX.win();
+      showMsg(I18N.t('temper_done_msg','Tempering complete! Hardness balanced.'),100);
+      levelCompleteTimer=70;
+    }else{
+      showMsg(I18N.t('temper_cycle_msg','Cycle {n}/{t} complete.').replace('{n}',temperCycle).replace('{t}',temperCyclesNeeded),60);
+    }
+  }else{
+    loseLife(I18N.t('temper_miss_msg','Missed the tempering window!'));
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','Space','Digit1','Digit2','Digit3','Digit4'].includes(e.code))e.preventDefault();
+  if(!started||gameOver){startGame();return;}
+  if(phase==='heat'){
+    if(e.code==='ArrowUp')heating=true;
+    if(e.code==='Space'){
+      if(inCrit()){phase='quench';heating=false;SFX.tick();}
+      else{loseLife(I18N.t('heat_wrong_msg','Quenched before reaching critical temperature!'));}
+    }
+  }else if(phase==='quench'){
+    const map={Digit1:0,Digit2:1,Digit3:2,Digit4:3};
+    if(map[e.code]!=null)doQuench(map[e.code]);
+  }else if(phase==='temper'){
+    if(e.code==='Space')doTemperPress();
+  }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp')heating=false;
+});
+
+function handleClick(x,y){
+  if(!started||gameOver){startGame();return;}
+  if(phase==='heat'){
+    if(y>250&&y<350&&x>280&&x<480){
+      if(inCrit()){phase='quench';heating=false;SFX.tick();}
+      else loseLife(I18N.t('heat_wrong_msg','Quenched before reaching critical temperature!'));
+    }
+  }else if(phase==='quench'){
+    QUENCH_MEDIA.forEach((m,i)=>{
+      const bx=100+i*150;
+      if(x>bx&&x<bx+120&&y>330&&y<380)doQuench(i);
+    });
+  }else if(phase==='temper'){
+    doTemperPress();
+  }
+}
+
+let holdForge=false;
+c.addEventListener('mousedown',e=>{
+  const r=c.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width),y=(e.clientY-r.top)*(H/r.height);
+  if(phase==='heat'&&y>250&&y<350&&x>280&&x<480){holdForge=true;heating=true;}
+  else handleClick(x,y);
+});
+window.addEventListener('mouseup',()=>{holdForge=false;heating=false;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const r=c.getBoundingClientRect();const t=e.touches[0];
+  const x=(t.clientX-r.left)*(W/r.width),y=(t.clientY-r.top)*(H/r.height);
+  if(phase==='heat'&&y>250&&y<350&&x>280&&x<480){holdForge=true;heating=true;}
+  else handleClick(x,y);
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();holdForge=false;heating=false;},{passive:false});
+
+function update(dt){
+  if(!started||gameOver)return;
+  if(levelCompleteTimer>0){
+    levelCompleteTimer-=dt;
+    if(levelCompleteTimer<=0){
+      level++;score+=120;
+      if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+      resetLevel();
+    }
+    return;
+  }
+  if(phase==='heat'){
+    if(heating){
+      temp=Math.min(100,temp+0.55*dt);
+    }else{
+      temp=Math.max(20,temp-0.25*dt);
+    }
+    if(temp>=100&&!overheatedFail){
+      overheatedFail=true;
+      loseLife(I18N.t('overheat_msg','Blade overheated and burned!'));
+    }
+  }else if(phase==='temper'){
+    temperNeedle+=temperDir*1.6*dt;
+    if(temperNeedle>=100){temperNeedle=100;temperDir=-1;}
+    if(temperNeedle<=0){temperNeedle=0;temperDir=1;}
+  }
+  if(msgTime>0)msgTime-=dt;
+}
+
+function drawHeatPhase(){
+  const bx=280,by=250,bw=200,bh=100;
+  ctx.fillStyle='#3a2a2a';ctx.fillRect(bx,by,bw,bh);
+  ctx.strokeStyle='#111';ctx.strokeRect(bx,by,bw,bh);
+  const heatFrac=temp/100;
+  const r=Math.floor(80+heatFrac*175),g=Math.floor(30+heatFrac*60);
+  ctx.fillStyle=`rgb(${r},${g},40)`;
+  ctx.fillRect(bx+20,by+20,bw-40,bh-40);
+  ctx.fillStyle='#e0d8c0';ctx.font='14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('forge_label','Forge — hold to heat'),bx+bw/2,by-10);
+
+  const mx=100,my=150,mw=560,mh=24;
+  ctx.fillStyle='#1a1a1a';ctx.fillRect(mx,my,mw,mh);
+  const gx=mx+(critMin/100)*mw;
+  const gw=((critMax-critMin)/100)*mw;
+  ctx.fillStyle='#2e7d32';ctx.fillRect(gx,my,gw,mh);
+  const tx=mx+(temp/100)*mw;
+  ctx.fillStyle=inCrit()?'#8bc34a':'#ff7043';
+  ctx.fillRect(tx-3,my-6,6,mh+12);
+  ctx.strokeStyle='#555';ctx.strokeRect(mx,my,mw,mh);
+  ctx.fillStyle='#e0d8c0';ctx.font='13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('temp_label','Temperature (watch for non-magnetic critical zone)'),mx+mw/2,my-12);
+  ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('heat_hint','Hold Up Arrow / Press Forge. Space / tap Forge again to quench in zone.'),mx+mw/2,my+mh+26);
+}
+
+function drawQuenchPhase(){
+  ctx.fillStyle='#e0d8c0';ctx.font='bold 18px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('quench_hint','Pick the correct quenching medium (1-4 or tap):'),W/2,250);
+  QUENCH_MEDIA.forEach((m,i)=>{
+    const bx=100+i*150;
+    ctx.fillStyle=i===correctQuench?'#4fc3f7':'#607d8b';
+    ctx.fillRect(bx,330,120,50);
+    ctx.strokeStyle='#263238';ctx.strokeRect(bx,330,120,50);
+    ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('medium_'+m.id,m.label),bx+60,360);
+  });
+}
+
+function drawTemperPhase(){
+  const mx=100,my=220,mw=560,mh=24;
+  ctx.fillStyle='#1a1a1a';ctx.fillRect(mx,my,mw,mh);
+  const gx=mx+(temperMin/100)*mw;
+  const gw=((temperMax-temperMin)/100)*mw;
+  ctx.fillStyle='#2e7d32';ctx.fillRect(gx,my,gw,mh);
+  const nx=mx+(temperNeedle/100)*mw;
+  ctx.fillStyle='#ff8a65';
+  ctx.fillRect(nx-3,my-6,6,mh+12);
+  ctx.strokeStyle='#555';ctx.strokeRect(mx,my,mw,mh);
+  ctx.fillStyle='#e0d8c0';ctx.font='13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('oven_label','Oven Temper Cycle'),mx+mw/2,my-12);
+  ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('temper_hint','Press Space / Tap when needle is in the green zone'),mx+mw/2,my+mh+26);
+  ctx.font='14px Arial';
+  ctx.fillText(I18N.t('cycle_progress_label','Cycle {n} of {t}').replace('{n}',temperCycle).replace('{t}',temperCyclesNeeded),mx+mw/2,my+mh+50);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#120a0e');bg.addColorStop(1,'#1a1016');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#e0d8c099';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click/Tap or press a key to start'),W/2,H/2);
+  }else if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click/Tap or press a key to restart'),W/2,H/2+20);
+  }else{
+    const now=performance.now();
+    const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+    lastTime=now;
+    update(dt);
+    if(phase==='heat')drawHeatPhase();
+    else if(phase==='quench')drawQuenchPhase();
+    else if(phase==='temper')drawTemperPhase();
+    if(levelCompleteTimer>0){
+      ctx.fillStyle='#4caf50';ctx.font='bold 26px Arial';ctx.textAlign='center';
+      ctx.fillText(I18N.t('level_complete_title','LEVEL COMPLETE!'),W/2,70);
+    }
+    if(msgTime>0){
+      ctx.fillStyle='rgba(255,255,255,0.9)';ctx.font='bold 17px Arial';ctx.textAlign='center';
+      ctx.fillText(msg,W/2,110);
+    }
+  }
+  scoreDisp();lvDisp();hiScoreDisp();livesDisp();phaseDisp();
+  requestAnimationFrame(loop);
+}
+lastTime=null;
+loop();
+</script></body></html>
