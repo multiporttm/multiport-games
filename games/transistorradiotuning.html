@@ -1,0 +1,286 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Transistor Radio Tuning</title><meta name="description" content="Play Transistor Radio Tuning free online — Tune the dial through the static to lock onto each station's exact frequency before the signal drifts away."><link rel="canonical" href="https://games.multiportllc.com/games/transistorradiotuning"><meta property="og:title" content="Transistor Radio Tuning - Multiport Games"><meta property="og:description" content="Play Transistor Radio Tuning free online — Tune the dial through the static to lock onto each station's exact frequency before the signal drifts away."><meta property="og:url" content="https://games.multiportllc.com/games/transistorradiotuning"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Transistor Radio Tuning","description":"Play Transistor Radio Tuning free online instantly. Turn the dial of a portable transistor radio slowly through hissing static to find each station's exact frequency peak before it drifts off. Work through a growing list of stations as the signal windows get narrower and drift faster each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/transistorradiotuning","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b1f14;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#e8d8b8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Transistor Radio Tuning</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Station: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="760" height="360"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    Use <b>Left/Right Arrow</b> or <b>A/D</b> (hold <b>Shift</b> to fine-tune slowly), or drag the dial with mouse/touch, to sweep the needle through the static. The signal meter rises as you approach the target frequency (shown as a bright peak) — hold the needle inside the green lock zone until it locks to clear the station and score. The peak drifts a little over time, and each station narrows the lock zone and speeds the drift. Lose a life if you run out of time on a station. Three lives.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=360;
+const KEY='transistorradiotuning_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,station=1,lives=3,started=false,gameOver=false;
+const DIAL_MIN=880,DIAL_MAX=1080; // kHz-ish display range
+let freq=(DIAL_MIN+DIAL_MAX)/2;
+let target=0,lockWidth=6,lockProgress=0,lockNeeded=70,driftSpeed=0,driftDir=1;
+let timeLeft=0,timeMax=0;
+let staticNoise=[];
+let msg='',msgTime=0;
+let dragging=false,lastDragX=0;
+let lastTime=null;
+
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('station_label','Station: {l}').replace('{l}',station);}
+function hsDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(Math.max(0,3-lives)));}
+
+function setMsg(t){msg=t;msgTime=performance.now();}
+
+function newStation(){
+  target=DIAL_MIN+30+Math.random()*(DIAL_MAX-DIAL_MIN-60);
+  lockWidth=Math.max(2.5,7-station*0.3);
+  lockNeeded=Math.min(130,60+station*5);
+  driftSpeed=Math.min(0.55,0.03+station*0.035);
+  driftDir=Math.random()<0.5?-1:1;
+  lockProgress=0;
+  timeMax=Math.max(9,18-station*0.5);
+  timeLeft=timeMax;
+  freq=DIAL_MIN+Math.random()*(DIAL_MAX-DIAL_MIN);
+}
+
+for(let i=0;i<120;i++)staticNoise.push(Math.random());
+
+function signalStrength(){
+  const d=Math.abs(freq-target);
+  if(d<=lockWidth)return 1;
+  const falloff=Math.max(0,1-(d-lockWidth)/14);
+  return falloff;
+}
+
+function moveFreq(delta){
+  freq=Math.max(DIAL_MIN,Math.min(DIAL_MAX,freq+delta));
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){reset();return;}
+  if(!started){started=true;return;}
+  const fine=e.shiftKey?0.25:1.1;
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){e.preventDefault();moveFreq(-fine);}
+  else if(e.code==='ArrowRight'||e.code==='KeyD'){e.preventDefault();moveFreq(fine);}
+});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  return cx*(W/rect.width);
+}
+c.addEventListener('mousedown',e=>{
+  if(gameOver){reset();return;}
+  if(!started){started=true;return;}
+  dragging=true;lastDragX=pointerPos(e);
+});
+window.addEventListener('mousemove',e=>{
+  if(!dragging)return;
+  const x=pointerPos(e);
+  moveFreq((x-lastDragX)*0.35);
+  lastDragX=x;
+});
+window.addEventListener('mouseup',()=>dragging=false);
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){reset();return;}
+  if(!started){started=true;return;}
+  dragging=true;lastDragX=pointerPos(e);
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(!dragging)return;
+  const x=pointerPos(e);
+  moveFreq((x-lastDragX)*0.35);
+  lastDragX=x;
+},{passive:false});
+window.addEventListener('touchend',()=>dragging=false);
+
+function clearStation(){
+  const bonus=Math.round(100+station*15+timeLeft*5);
+  score+=bonus;scoreDisp();
+  SFX.success();
+  setMsg(I18N.t('msg_locked','Locked! +{b}').replace('{b}',bonus));
+  if(score>hi){hi=score;localStorage.setItem(KEY,hi);hsDisp();}
+  station++;lvDisp();
+  setTimeout(()=>{ if(!gameOver) newStation(); },700);
+  timeLeft=999999; // pause countdown during transition
+}
+
+function failStation(){
+  lives--;livesDisp();
+  SFX.fail();
+  setMsg(I18N.t('msg_drifted','Station drifted away!'));
+  if(lives<=0){endGame();}
+  else setTimeout(()=>{ if(!gameOver) newStation(); },700);
+  timeLeft=999999;
+}
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem(KEY,hi);hsDisp();}
+  SFX.lose();
+}
+
+function reset(){
+  score=0;station=1;lives=3;started=false;gameOver=false;
+  scoreDisp();lvDisp();hsDisp();livesDisp();
+  newStation();
+  lastTime=null;
+}
+
+function freqToX(f){return 40+(f-DIAL_MIN)/(DIAL_MAX-DIAL_MIN)*(W-80);}
+
+function drawDial(){
+  ctx.fillStyle='#1c140c';
+  ctx.fillRect(20,50,W-40,50);
+  ctx.strokeStyle='#5a4a38';ctx.lineWidth=2;ctx.strokeRect(20,50,W-40,50);
+  // tick marks
+  ctx.strokeStyle='#7a6a50';ctx.lineWidth=1;
+  for(let f=DIAL_MIN;f<=DIAL_MAX;f+=10){
+    const x=freqToX(f);
+    ctx.beginPath();ctx.moveTo(x,55);ctx.lineTo(x,f%50===0?95:80);ctx.stroke();
+    if(f%50===0){ctx.fillStyle='#b8a888';ctx.font='10px monospace';ctx.textAlign='center';ctx.fillText(f,x,45);}
+  }
+  // lock zone
+  const lx=freqToX(target-lockWidth),rx=freqToX(target+lockWidth);
+  ctx.fillStyle='rgba(126,200,80,0.35)';
+  ctx.fillRect(lx,50,rx-lx,50);
+  // needle
+  const nx=freqToX(freq);
+  ctx.strokeStyle='#ff5252';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(nx,45);ctx.lineTo(nx,105);ctx.stroke();
+}
+
+function drawMeter(){
+  const s=signalStrength();
+  const mx=40,my=130,mw=W-80,mh=24;
+  ctx.fillStyle='#1c140c';ctx.fillRect(mx,my,mw,mh);
+  ctx.strokeStyle='#5a4a38';ctx.strokeRect(mx,my,mw,mh);
+  const grad=ctx.createLinearGradient(mx,0,mx+mw,0);
+  grad.addColorStop(0,'#ff5252');grad.addColorStop(0.6,'#ffd54f');grad.addColorStop(1,'#7ec850');
+  ctx.fillStyle=grad;
+  ctx.fillRect(mx+2,my+2,(mw-4)*s,mh-4);
+  ctx.fillStyle='#e8d8b8';ctx.font='bold 12px monospace';ctx.textAlign='left';
+  ctx.fillText(I18N.t('signal_label','SIGNAL'),mx,my-6);
+
+  // lock progress bar
+  const ly=my+40;
+  ctx.fillStyle='#1c140c';ctx.fillRect(mx,ly,mw,16);
+  ctx.strokeStyle='#5a4a38';ctx.strokeRect(mx,ly,mw,16);
+  ctx.fillStyle='#80deea';
+  ctx.fillRect(mx+2,ly+2,(mw-4)*Math.min(1,lockProgress/lockNeeded),12);
+  ctx.fillStyle='#e8d8b8';ctx.font='bold 11px monospace';
+  ctx.fillText(I18N.t('lock_label','LOCK PROGRESS'),mx,ly-4);
+}
+
+function drawStaticViz(){
+  const s=signalStrength();
+  ctx.save();
+  ctx.translate(40,220);
+  const w=W-80,h=90;
+  ctx.fillStyle='#1c140c';ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle='#5a4a38';ctx.strokeRect(0,0,w,h);
+  ctx.beginPath();
+  ctx.strokeStyle=s>0.9?'#7ec850':'#80deea';
+  ctx.lineWidth=2;
+  for(let i=0;i<staticNoise.length;i++){
+    const x=i/(staticNoise.length-1)*w;
+    const noiseAmt=(1-s)*0.9;
+    const wave=Math.sin(i*0.6+performance.now()/80)*s*(h*0.3);
+    const jitter=(staticNoise[i]-0.5)*h*noiseAmt;
+    const y=h/2+wave+jitter;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#2b1f14';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#4a3a28';ctx.lineWidth=6;ctx.strokeRect(3,3,W-6,H-6);
+
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  for(let i=0;i<staticNoise.length;i++)if(Math.random()<0.3)staticNoise[i]=Math.random();
+
+  if(started&&!gameOver){
+    target+=driftDir*driftSpeed*dt*10;
+    if(target<DIAL_MIN+20||target>DIAL_MAX-20)driftDir*=-1;
+
+    const s=signalStrength();
+    if(s>=0.98){lockProgress+=dt*60;}
+    else{lockProgress=Math.max(0,lockProgress-dt*40);}
+    if(lockProgress>=lockNeeded){clearStation();}
+
+    if(timeLeft<9999){
+      timeLeft-=dt;
+      if(timeLeft<=0){failStation();}
+    }
+  }
+
+  drawDial();
+  drawMeter();
+  drawStaticViz();
+
+  // time bar
+  if(timeLeft<9999){
+    const tw=(W-80)*Math.max(0,timeLeft/timeMax);
+    ctx.fillStyle=timeLeft<3?'#ff5252':'#ffd54f';
+    ctx.fillRect(40,320,tw,8);
+    ctx.strokeStyle='#5a4a38';ctx.strokeRect(40,320,W-80,8);
+  }
+
+  if(msg&&now-msgTime<1600){
+    ctx.fillStyle='#ffd54f';ctx.font='bold 16px monospace';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,340);
+  }
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 24px monospace';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap, drag, or press a key to start'),W/2,H/2);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff5252';ctx.font='bold 32px monospace';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','SIGNAL LOST'),W/2,H/2-20);
+    ctx.fillStyle='#fff';ctx.font='18px monospace';
+    ctx.fillText(I18N.t('final_score_label','Score: {s}  Hi: {h}').replace('{s}',score).replace('{h}',hi),W/2,H/2+14);
+    ctx.font='15px monospace';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+44);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>

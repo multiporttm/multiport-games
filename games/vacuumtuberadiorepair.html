@@ -1,0 +1,312 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Vacuum Tube Radio Repair</title><meta name="description" content="Play Vacuum Tube Radio Repair free online — Test each tube, swap the weak or dead ones for the correct replacement from the parts drawer, then power on for a clear signal."><link rel="canonical" href="https://games.multiportllc.com/games/vacuumtuberadiorepair"><meta property="og:title" content="Vacuum Tube Radio Repair - Multiport Games"><meta property="og:description" content="Play Vacuum Tube Radio Repair free online — Test each tube, swap the weak or dead ones for the correct replacement from the parts drawer, then power on for a clear signal."><meta property="og:url" content="https://games.multiportllc.com/games/vacuumtuberadiorepair"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Vacuum Tube Radio Repair","description":"Play Vacuum Tube Radio Repair free online instantly. Use the tube tester to check every socket in an old radio chassis, then pull any weak or dead tube and fit the correct replacement type from the parts drawer. Power the set back on to listen for a clear signal — more sockets and trickier replacement types arrive each level. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/vacuumtuberadiorepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a211a;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#e8d8b8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Vacuum Tube Radio Repair</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="760" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Test:</b> Click/tap a tube socket (or use arrow keys + Enter) to plug it into the tester and see its reading. A weak or dead tube glows red/orange. <b>Swap:</b> click a bad socket, then click the correct replacement tube in the parts drawer below (match the type code) — or press a number key to pick the drawer tube. <b>Power On:</b> once every bad tube is replaced correctly, press <b>Space</b> or tap <b>Power On</b> to check for a clear signal. A wrong replacement costs a life. Three lives — more sockets and tube types appear each level.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=440;
+const KEY='vacuumtuberadiorepair_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,level=1,lives=3,started=false,gameOver=false;
+const TYPE_CODES=['6V6','6SN7','12AX7','5Y3','6L6','EL34','6SL7','807'];
+let sockets=[],drawer=[],selectedSocket=-1,selectedDrawer=-1,socketCursor=0;
+let testerSocket=-1,testerFlashTime=0;
+let msg='',msgTime=0;
+let powerFlash=0,winFlash=0;
+
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);}
+function hsDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(Math.max(0,3-lives)));}
+
+function pick(arr){return arr[Math.floor(Math.random()*arr.length)];}
+
+function buildLevel(){
+  const n=Math.min(4+level,9);
+  const typesInPlay=TYPE_CODES.slice(0,Math.min(3+level,TYPE_CODES.length));
+  sockets=[];
+  const badCount=Math.min(2+Math.floor(level/2),n-1);
+  const badIdx=new Set();
+  while(badIdx.size<badCount)badIdx.add(Math.floor(Math.random()*n));
+  for(let i=0;i<n;i++){
+    const type=pick(typesInPlay);
+    sockets.push({type,bad:badIdx.has(i),fixed:!badIdx.has(i),tested:false});
+  }
+  // drawer: correct replacements for each bad socket, plus some decoys
+  drawer=[];
+  sockets.forEach(s=>{ if(s.bad) drawer.push({type:s.type,used:false}); });
+  const decoyCount=Math.min(3,typesInPlay.length);
+  for(let i=0;i<decoyCount;i++) drawer.push({type:pick(typesInPlay),used:false});
+  // shuffle drawer
+  for(let i=drawer.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[drawer[i],drawer[j]]=[drawer[j],drawer[i]];}
+  selectedSocket=-1;selectedDrawer=-1;socketCursor=0;testerSocket=-1;testerFlashTime=0;
+}
+
+function remainingBad(){return sockets.filter(s=>s.bad&&!s.fixed).length;}
+
+function setMsg(t){msg=t;msgTime=performance.now();}
+
+function testSocket(i){
+  testerSocket=i;testerFlashTime=performance.now();
+  sockets[i].tested=true;
+  SFX.click();
+}
+
+function trySwap(socketIdx,drawerIdx){
+  const s=sockets[socketIdx],d=drawer[drawerIdx];
+  if(!s.bad||s.fixed){setMsg(I18N.t('msg_not_bad','That socket is fine — test a different one.'));SFX.error();return;}
+  if(d.used){return;}
+  if(d.type===s.type){
+    s.fixed=true;d.used=true;
+    setMsg(I18N.t('msg_fixed','Tube replaced correctly!'));
+    SFX.success();
+    score+=20;scoreDisp();
+  } else {
+    d.used=true;
+    lives--;livesDisp();
+    setMsg(I18N.t('msg_wrong','Wrong tube type — that one is scrapped.'));
+    SFX.fail();
+    if(lives<=0){endGame(false);}
+  }
+  selectedSocket=-1;selectedDrawer=-1;
+}
+
+function powerOn(){
+  if(gameOver)return;
+  if(!started){started=true;return;}
+  if(remainingBad()>0){
+    setMsg(I18N.t('msg_still_bad','Signal is still noisy — a tube is still weak.'));
+    SFX.error();
+    lives--;livesDisp();
+    if(lives<=0)endGame(false);
+    return;
+  }
+  SFX.win();
+  winFlash=performance.now();
+  score+=50*level;scoreDisp();
+  if(score>hi){hi=score;localStorage.setItem(KEY,hi);hsDisp();}
+  level++;lvDisp();
+  setTimeout(()=>{ if(!gameOver) buildLevel(); },1200);
+}
+
+function endGame(won){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem(KEY,hi);hsDisp();}
+  SFX.lose();
+}
+
+function reset(){
+  score=0;level=1;lives=3;started=false;gameOver=false;
+  scoreDisp();lvDisp();hsDisp();livesDisp();
+  buildLevel();
+}
+
+// ---- layout ----
+function socketRect(i){
+  const cols=5;
+  const col=i%cols,row=Math.floor(i/cols);
+  const x=60+col*130,y=70+row*110;
+  return {x,y,w:90,h:80};
+}
+function drawerRect(i){
+  const x=40+i*90,y=360;
+  return {x,y,w:70,h:60};
+}
+
+function hitTest(mx,my){
+  for(let i=0;i<sockets.length;i++){
+    const r=socketRect(i);
+    if(mx>=r.x&&mx<=r.x+r.w&&my>=r.y&&my<=r.y+r.h)return{kind:'socket',i};
+  }
+  for(let i=0;i<drawer.length;i++){
+    const r=drawerRect(i);
+    if(mx>=r.x&&mx<=r.x+r.w&&my>=r.y&&my<=r.y+r.h)return{kind:'drawer',i};
+  }
+  const pb={x:W/2-70,y:H-30,w:140,h:0};
+  if(mx>=300&&mx<=460&&my>=H-24&&my<=H-2)return{kind:'power'};
+  return null;
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+
+function handleTap(x,y){
+  if(gameOver){reset();return;}
+  if(!started){started=true;return;}
+  const hit=hitTest(x,y);
+  if(!hit)return;
+  if(hit.kind==='power'){powerOn();return;}
+  if(hit.kind==='socket'){
+    if(!sockets[hit.i].tested){testSocket(hit.i);return;}
+    if(sockets[hit.i].bad&&!sockets[hit.i].fixed){selectedSocket=hit.i;socketCursor=hit.i;}
+    else{selectedSocket=-1;testSocket(hit.i);}
+    return;
+  }
+  if(hit.kind==='drawer'){
+    if(drawer[hit.i].used)return;
+    selectedDrawer=hit.i;
+    if(selectedSocket>=0)trySwap(selectedSocket,selectedDrawer);
+    return;
+  }
+}
+
+c.addEventListener('mousedown',e=>{const p=pointerPos(e);handleTap(p.x,p.y);});
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=pointerPos(e);handleTap(p.x,p.y);},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&e.code==='Space'){e.preventDefault();reset();return;}
+  if(!started){started=true;return;}
+  if(e.code==='Space'){e.preventDefault();powerOn();return;}
+  if(e.code==='ArrowRight'){socketCursor=(socketCursor+1)%sockets.length;}
+  else if(e.code==='ArrowLeft'){socketCursor=(socketCursor-1+sockets.length)%sockets.length;}
+  else if(e.code==='ArrowDown'){socketCursor=Math.min(sockets.length-1,socketCursor+5);}
+  else if(e.code==='ArrowUp'){socketCursor=Math.max(0,socketCursor-5);}
+  else if(e.code==='Enter'){
+    if(!sockets[socketCursor].tested)testSocket(socketCursor);
+    else if(sockets[socketCursor].bad&&!sockets[socketCursor].fixed)selectedSocket=socketCursor;
+  } else if(/^Digit[1-9]$/.test(e.code)){
+    const idx=parseInt(e.code.slice(5),10)-1;
+    if(idx<drawer.length&&!drawer[idx].used){
+      selectedDrawer=idx;
+      if(selectedSocket>=0)trySwap(selectedSocket,selectedDrawer);
+    }
+  }
+});
+
+function drawTube(x,y,w,h,glow){
+  ctx.save();
+  ctx.translate(x,y);
+  const grad=ctx.createLinearGradient(0,0,0,h);
+  grad.addColorStop(0,'#3a3a40');grad.addColorStop(1,'#1a1a1e');
+  ctx.fillStyle=grad;
+  ctx.beginPath();
+  ctx.ellipse(w/2,h*0.22,w/2,h*0.22,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillRect(0,h*0.15,w,h*0.6);
+  ctx.beginPath();
+  ctx.ellipse(w/2,h*0.75,w/2,h*0.22,0,0,Math.PI*2);
+  ctx.fill();
+  if(glow){
+    ctx.globalAlpha=0.5+0.3*Math.sin(performance.now()/120);
+    ctx.fillStyle=glow;
+    ctx.beginPath();ctx.ellipse(w/2,h*0.45,w*0.3,h*0.3,0,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#2a211a';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='#4a3a28';ctx.lineWidth=6;ctx.strokeRect(3,3,W-6,H-6);
+
+  ctx.fillStyle='#d8c8a0';ctx.font='bold 16px monospace';ctx.textAlign='left';
+  ctx.fillText(I18N.t('chassis_label','CHASSIS — click a socket to test'),20,35);
+
+  sockets.forEach((s,i)=>{
+    const r=socketRect(i);
+    ctx.fillStyle='#1c1510';ctx.fillRect(r.x,r.y,r.w,r.h);
+    ctx.strokeStyle=(i===socketCursor&&!gameOver)?'#ffd54f':'#5a4a38';
+    ctx.lineWidth=(i===socketCursor&&!gameOver)?3:2;
+    ctx.strokeRect(r.x,r.y,r.w,r.h);
+    let glow=null;
+    if(s.tested){
+      if(s.bad&&!s.fixed)glow='#ff5252';
+      else if(s.fixed&&s.bad)glow='#7ec850';
+    }
+    drawTube(r.x+15,r.y+5,r.w-30,r.h-20,glow);
+    ctx.fillStyle='#e8d8b8';ctx.font='11px monospace';ctx.textAlign='center';
+    ctx.fillText(s.type,r.x+r.w/2,r.y+r.h+14);
+    if(selectedSocket===i){
+      ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;ctx.strokeRect(r.x-3,r.y-3,r.w+6,r.h+6);
+    }
+    if(s.tested&&s.bad&&!s.fixed){
+      ctx.fillStyle='#ff8a80';ctx.font='bold 10px monospace';
+      ctx.fillText(I18N.t('weak_label','WEAK'),r.x+r.w/2,r.y-6);
+    }
+  });
+
+  ctx.fillStyle='#d8c8a0';ctx.font='bold 14px monospace';ctx.textAlign='left';
+  ctx.fillText(I18N.t('drawer_label','PARTS DRAWER — click to select replacement'),20,345);
+  drawer.forEach((d,i)=>{
+    const r=drawerRect(i);
+    ctx.fillStyle=d.used?'#1a1a1a':'#2e2416';
+    ctx.fillRect(r.x,r.y,r.w,r.h);
+    ctx.strokeStyle=selectedDrawer===i?'#ffd54f':'#5a4a38';
+    ctx.lineWidth=selectedDrawer===i?3:2;
+    ctx.strokeRect(r.x,r.y,r.w,r.h);
+    if(!d.used)drawTube(r.x+10,r.y+2,r.w-20,r.h-14,null);
+    ctx.fillStyle=d.used?'#665':'#e8d8b8';ctx.font='10px monospace';ctx.textAlign='center';
+    ctx.fillText(d.type,r.x+r.w/2,r.y+r.h+12);
+    ctx.font='9px monospace';ctx.fillStyle='#998';
+    ctx.fillText(i+1,r.x+8,r.y+12);
+  });
+
+  // power button
+  const flashing=performance.now()-powerFlash<250;
+  ctx.fillStyle=flashing?'#ffd54f':'#8a6a3a';
+  ctx.fillRect(300,H-24,160,22);
+  ctx.fillStyle='#1a1410';ctx.font='bold 13px monospace';ctx.textAlign='center';
+  ctx.fillText(I18N.t('power_on_btn','⚡ POWER ON (Space)'),380,H-8);
+
+  if(msg&&performance.now()-msgTime<2200){
+    ctx.fillStyle='#ffd54f';ctx.font='bold 13px monospace';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,H-45);
+  }
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px monospace';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap or press any key to start'),W/2,H/2);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.7)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff5252';ctx.font='bold 34px monospace';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','RADIO DEAD'),W/2,H/2-20);
+    ctx.fillStyle='#fff';ctx.font='18px monospace';
+    ctx.fillText(I18N.t('final_score_label','Score: {s}  Hi: {h}').replace('{s}',score).replace('{h}',hi),W/2,H/2+16);
+    ctx.font='15px monospace';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+46);
+  }
+
+  requestAnimationFrame(draw);
+}
+
+reset();
+draw();
+</script></body></html>
