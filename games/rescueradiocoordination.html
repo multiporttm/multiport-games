@@ -1,0 +1,228 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rescue Radio Coordination</title><meta name="description" content="Play Rescue Radio Coordination free online — Click or press the number key of the most urgent incoming radio message before its timer runs out. Triage wrong and lives are lost."><link rel="canonical" href="https://games.multiportllc.com/games/rescueradiocoordination"><meta property="og:title" content="Rescue Radio Coordination - Multiport Games"><meta property="og:description" content="Play Rescue Radio Coordination free online — Click or press the number key of the most urgent incoming radio message before its timer runs out."><meta property="og:url" content="https://games.multiportllc.com/games/rescueradiocoordination"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rescue Radio Coordination","description":"Play Rescue Radio Coordination free online instantly. Coordinate a multi-team wilderness rescue operation over radio, prioritizing which incoming message needs an immediate response. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/rescueradiocoordination","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#16213e;border-radius:14px;padding:18px;text-align:center;max-width:620px;margin:0 auto}
+#status{color:#fff;font-size:1.0rem;font-weight:800;margin:6px 0;min-height:1.6em}
+#hud{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;color:#eaf6ff;font-weight:700;margin-bottom:8px}
+#hud b{color:#ffd54f}
+#queue{display:flex;flex-direction:column;gap:8px;margin:12px auto;max-width:560px;min-height:320px}
+.msg{position:relative;border-radius:10px;padding:10px 12px;text-align:left;cursor:pointer;color:#111;font-weight:700;overflow:hidden;transition:transform .1s}
+.msg .num{display:inline-block;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.25);color:#fff;text-align:center;line-height:22px;font-size:.8rem;margin-right:8px}
+.msg .tag{font-size:.7rem;text-transform:uppercase;font-weight:900;letter-spacing:.5px;display:block;margin-top:2px}
+.msg .bar{position:absolute;left:0;bottom:0;height:4px;background:rgba(0,0,0,.35)}
+.msg.critical{background:#e94560;color:#fff}
+.msg.high{background:#ff9f45;color:#2a1800}
+.msg.normal{background:#7ec850;color:#0b1a0b}
+.msg.wrong{outline:3px solid #fff}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rescue Radio Coordination</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="hud">
+        <span id="hearts">❤❤❤</span>
+        <span>Score: <b id="scoreVal">0</b></span>
+        <span>Hi: <b id="hiVal">0</b></span>
+        <span>Level: <b id="levelVal">1</b></span>
+      </div>
+      <div id="status">Respond to the most urgent message first!</div>
+      <div id="queue"></div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    Radio messages stack up, each tagged <b>CRITICAL</b>, <b>HIGH</b>, or <b>NORMAL</b>. Always respond to the <b>single most urgent</b> message first — click it or press its <b>number key</b>. Responding to the wrong one, or letting a top-priority message's timer bar run out, costs a life. Keep the operation organized!
+  </div>
+</div>
+<script>
+const HI_KEY='rescueradiocoordination_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+
+const URGENCY={critical:0,high:1,normal:2};
+const TEXTS={
+  critical:['Climber injured, needs immediate extraction','Team C lost radio contact mid-cliff','Flash flood warning — team in ravine now'],
+  high:['Team B requests extraction coordinates','Weather turning — need shelter guidance','Low on rope, requesting resupply drop'],
+  normal:['Team A checking in, all clear','Position report: north ridge, on schedule','Routine supply status update'],
+};
+
+let score=0,lives=3,level=1,gameOver=false,started=false;
+let queue=[],nextId=1,spawnHandle=null,tickHandle=null;
+let combo=0;
+
+function spawnIntervalFor(lv){ return Math.max(900,3000-lv*260); }
+function lifespanFor(lv){ return Math.max(3800,7200-lv*450); }
+function maxQueueFor(){ return 5; }
+
+function weightedUrgency(lv){
+  const r=Math.random();
+  const critChance=Math.min(0.45,0.12+lv*0.06);
+  const highChance=Math.min(0.5,0.3+lv*0.03);
+  if(r<critChance)return 'critical';
+  if(r<critChance+highChance)return 'high';
+  return 'normal';
+}
+
+function setStatus(t){ document.getElementById('status').textContent=t; }
+
+function spawnMessage(){
+  if(!started||gameOver)return;
+  if(queue.length>=maxQueueFor())return;
+  const u=weightedUrgency(level);
+  const pool=TEXTS[u];
+  const text=pool[Math.floor(Math.random()*pool.length)];
+  const life=lifespanFor(level);
+  queue.push({id:nextId++,urgency:u,text,born:performance.now(),life});
+  render();
+}
+
+function topPriority(){
+  if(queue.length===0)return null;
+  let best=queue[0];
+  for(const m of queue){
+    if(URGENCY[m.urgency]<URGENCY[best.urgency]) best=m;
+    else if(URGENCY[m.urgency]===URGENCY[best.urgency]&&m.born<best.born) best=m;
+  }
+  return best;
+}
+
+function render(){
+  const q=document.getElementById('queue');
+  q.innerHTML='';
+  queue.forEach((m,i)=>{
+    const el=document.createElement('div');
+    el.className='msg '+m.urgency;
+    const pct=Math.max(0,1-((performance.now()-m.born)/m.life));
+    const num=document.createElement('span');num.className='num';num.textContent=(i+1);
+    el.appendChild(num);
+    const span=document.createElement('span');
+    span.textContent=m.text;
+    el.appendChild(span);
+    const tag=document.createElement('span');
+    tag.className='tag';
+    tag.textContent=m.urgency.toUpperCase();
+    el.appendChild(tag);
+    const bar=document.createElement('div');
+    bar.className='bar';
+    bar.style.width=(pct*100)+'%';
+    el.appendChild(bar);
+    el.onclick=()=>{ if(!started||gameOver){beginGame();return;} respond(i); };
+    q.appendChild(el);
+  });
+  document.getElementById('scoreVal').textContent=Math.floor(score);
+  document.getElementById('hiVal').textContent=hi;
+  document.getElementById('levelVal').textContent=level;
+  document.getElementById('hearts').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+}
+
+function respond(i){
+  if(!started||gameOver)return;
+  const m=queue[i];
+  if(!m)return;
+  const top=topPriority();
+  if(top&&m.id===top.id){
+    queue.splice(i,1);
+    combo++;
+    score+=30+level*5+combo*3;
+    SFX.success();
+    if(combo>0&&combo%6===0)SFX.levelup();
+    setStatus(I18N.t('correct_msg','Handled correctly — operation stays organized.'));
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+    level=1+Math.floor(score/180);
+  } else {
+    combo=0;
+    loseLife(I18N.t('wrong_msg','Wrong call — a more urgent team needed you first!'));
+  }
+  render();
+}
+
+function loseLife(msg){
+  lives--;
+  SFX.error();
+  setStatus(msg);
+  if(lives<=0) endGame();
+}
+
+function tick(){
+  if(!started||gameOver)return;
+  const now=performance.now();
+  for(let i=queue.length-1;i>=0;i--){
+    const m=queue[i];
+    if(now-m.born>=m.life){
+      const top=topPriority();
+      const wasTop = top && top.id===m.id;
+      queue.splice(i,1);
+      if(wasTop){
+        combo=0;
+        loseLife(I18N.t('missed_msg','Missed it! That call went unanswered.'));
+      }
+    }
+  }
+  render();
+}
+
+function endGame(){
+  gameOver=true;
+  clearIntervals();
+  SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+  setStatus(I18N.t('game_over_msg','GAME OVER — the operation broke down. Tap/press a key to retry.'));
+  render();
+}
+
+function clearIntervals(){
+  if(spawnHandle){clearTimeout(spawnHandle);spawnHandle=null;}
+  if(tickHandle){clearInterval(tickHandle);tickHandle=null;}
+}
+
+function scheduleSpawn(){
+  spawnHandle=setTimeout(()=>{
+    if(!started||gameOver)return;
+    spawnMessage();
+    scheduleSpawn();
+  },spawnIntervalFor(level));
+}
+
+function startIntervals(){
+  clearIntervals();
+  scheduleSpawn();
+  tickHandle=setInterval(tick,100);
+}
+
+function beginGame(){
+  if(gameOver){
+    score=0;lives=3;level=1;gameOver=false;combo=0;queue=[];
+    render();
+    setStatus(I18N.t('start_hint2','New shift started — stay sharp!'));
+    startIntervals();
+    return;
+  }
+  if(!started){
+    started=true;
+    setStatus(I18N.t('start_hint2','New shift started — stay sharp!'));
+    startIntervals();
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(!started||gameOver){
+    if(e.code==='Space'||e.code==='Enter'||/^[1-9]$/.test(e.key)){
+      e.preventDefault();beginGame();
+    }
+    return;
+  }
+  const m=e.key.match(/^[1-9]$/);
+  if(m){ e.preventDefault(); const idx=parseInt(m[0],10)-1; if(idx<queue.length) respond(idx); }
+});
+
+document.getElementById('table').addEventListener('click',(e)=>{ if(!started&&!gameOver && !e.target.closest('.msg')) beginGame(); });
+
+render();
+setStatus(I18N.t('start_hint','Click, or press a number key / Enter to begin your shift'));
+</script></body></html>

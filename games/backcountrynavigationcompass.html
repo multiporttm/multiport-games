@@ -1,0 +1,244 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Backcountry Navigation Compass</title><meta name="description" content="Play Backcountry Navigation Compass free online — Take a bearing to a landmark, account for magnetic declination, and follow it through the terrain to reach checkpoints before dark."><link rel="canonical" href="https://games.multiportllc.com/games/backcountrynavigationcompass"><meta property="og:title" content="Backcountry Navigation Compass - Multiport Games"><meta property="og:description" content="Play Backcountry Navigation Compass free online — Take a bearing to a landmark, account for magnetic declination, and follow it through the terrain to reach checkpoints before dark."><meta property="og:url" content="https://games.multiportllc.com/games/backcountrynavigationcompass"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Backcountry Navigation Compass","description":"Play Backcountry Navigation Compass free online instantly. Take a bearing to a landmark, account for magnetic declination, and follow it through the terrain to reach checkpoints before dark. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/backcountrynavigationcompass","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1f2e1f;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#c9d6a8;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#bearingPanel{display:flex;justify-content:center;align-items:center;gap:14px;margin-top:10px;flex-wrap:wrap}
+#bearingPanel .box{background:#16213e;border-radius:10px;padding:8px 16px;color:#fff;text-align:center;min-width:120px}
+#bearingPanel .box b{display:block;font-size:1.3rem;color:#ffd54f}
+#bearingPanel input[type=range]{width:180px}
+#bearingPanel button{padding:9px 22px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Backcountry Navigation Compass</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="380"></canvas>
+    <div id="bearingPanel">
+      <div class="box">Declination<b id="declDisp">+0°</b></div>
+      <div class="box">Set Bearing<b id="bearingDisp">0°</b></div>
+      <input type="range" id="bearingSlider" min="0" max="359" value="0">
+      <button id="goBtn">Set Off</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Find the target landmark on the map, work out the true bearing to it, then <b>adjust for magnetic declination</b> shown above to get your compass bearing. Drag the slider (or use <b>Left/Right Arrow</b> keys) to set your compass bearing, then click <b>Set Off</b> or press <b>Enter</b> to walk that heading through the terrain. Reach the checkpoint before your <b>daylight meter</b> runs out. <b>3 lives</b> — a bad bearing that misses the checkpoint costs one.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const KEY='bnc_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,lives=3,level=1,gameOver=false,walking=false;
+let playerPos,targetPos,declination,trueBearingNeeded,walkProgress,walkPath,daylight,daylightMax,trees;
+
+const bearingSlider=document.getElementById('bearingSlider');
+const bearingDisp=document.getElementById('bearingDisp');
+const declDisp=document.getElementById('declDisp');
+const goBtn=document.getElementById('goBtn');
+
+function angleTo(from,to){
+  // 0deg = up/north, clockwise
+  const dx=to.x-from.x, dy=to.y-from.y;
+  let deg=Math.atan2(dx,-dy)*180/Math.PI;
+  if(deg<0)deg+=360;
+  return deg;
+}
+
+function newLeg(){
+  walking=false;
+  declination=(Math.random()<0.5?-1:1)*(2+Math.floor(Math.random()*13));
+  declDisp.textContent=(declination>=0?'+':'')+declination+'°';
+  playerPos={x:400,y:330};
+  const angle=Math.random()*Math.PI*2;
+  const dist=160+level*8;
+  targetPos={x:400+Math.sin(angle)*dist, y:200-Math.cos(angle)*dist*0.55-20};
+  targetPos.x=Math.max(60,Math.min(740,targetPos.x));
+  targetPos.y=Math.max(40,Math.min(190,targetPos.y));
+  trueBearingNeeded=Math.round(angleTo(playerPos,targetPos));
+  trees=[];
+  for(let i=0;i<14+level;i++){
+    trees.push({x:40+Math.random()*720,y:60+Math.random()*230,r:6+Math.random()*6});
+  }
+  daylightMax=600-level*15;
+  daylight=daylightMax;
+  bearingSlider.value=0;
+  bearingDisp.textContent='0°';
+  walkProgress=0;
+  walkPath=null;
+  updateDisplay();
+}
+
+bearingSlider.addEventListener('input',()=>{
+  bearingDisp.textContent=bearingSlider.value+'°';
+  SFX.tick();
+});
+
+function compassBearingCorrect(magBearing){
+  // compass (magnetic) bearing = true bearing - declination (east positive convention)
+  // so true bearing = magnetic bearing + declination
+  return ((magBearing+declination)%360+360)%360;
+}
+
+function setOff(){
+  if(gameOver||walking)return;
+  walking=true;
+  const magBearing=parseInt(bearingSlider.value,10);
+  const trueBearing=compassBearingCorrect(magBearing);
+  const diff=Math.min(Math.abs(trueBearing-trueBearingNeeded),360-Math.abs(trueBearing-trueBearingNeeded));
+  const rad=trueBearing*Math.PI/180;
+  const walkDist=320;
+  const endX=playerPos.x+Math.sin(rad)*walkDist;
+  const endY=playerPos.y-Math.cos(rad)*walkDist;
+  walkPath={x0:playerPos.x,y0:playerPos.y,x1:endX,y1:endY,t:0};
+  SFX.swoosh();
+  setTimeout(()=>{
+    resolveWalk(diff);
+  },1200);
+}
+
+function resolveWalk(diff){
+  walking=false;
+  const hitRadius=45;
+  const dx=walkPath.x1-targetPos.x, dy=walkPath.y1-targetPos.y;
+  const distToTarget=Math.sqrt(dx*dx+dy*dy);
+  if(diff<=6 && distToTarget<=hitRadius+20){
+    const bonus=Math.max(10,80-Math.round(diff*5));
+    score+=bonus;
+    if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+    SFX.success();
+    level++;
+    updateDisplay();
+    setTimeout(()=>{ if(!gameOver)newLeg(); },900);
+  } else {
+    lives--;
+    SFX.error();
+    updateDisplay();
+    if(lives<=0){
+      endGame();
+    } else {
+      playerPos={x:Math.max(40,Math.min(760,walkPath.x1)),y:Math.max(30,Math.min(345,walkPath.y1))};
+      trueBearingNeeded=Math.round(angleTo(playerPos,targetPos));
+      bearingSlider.value=0;bearingDisp.textContent='0°';
+      walkPath=null;
+    }
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+}
+
+function restart(){
+  score=0;lives=3;level=1;gameOver=false;
+  newLeg();
+}
+
+function updateDisplay(){
+  document.getElementById('score-display').textContent=I18N.t('nav_score_label','Score: {s} | Checkpoint: {c} | Lives: {l} | Hi: {h}')
+    .replace('{s}',score).replace('{c}',level).replace('{l}',lives).replace('{h}',hi);
+}
+
+goBtn.addEventListener('click',setOff);
+document.addEventListener('keydown',e=>{
+  if(gameOver){ if(e.code==='Enter'||e.code==='Space')restart(); return; }
+  if(e.code==='ArrowLeft'){e.preventDefault();bearingSlider.value=(parseInt(bearingSlider.value,10)+359)%360;bearingDisp.textContent=bearingSlider.value+'°';SFX.tick();}
+  if(e.code==='ArrowRight'){e.preventDefault();bearingSlider.value=(parseInt(bearingSlider.value,10)+1)%360;bearingDisp.textContent=bearingSlider.value+'°';SFX.tick();}
+  if(e.code==='Enter'||e.code==='Space'){e.preventDefault();setOff();}
+});
+c.addEventListener('click',()=>{ if(gameOver)restart(); });
+c.addEventListener('touchstart',e=>{ if(gameOver){e.preventDefault();restart();} },{passive:false});
+
+function drawCompassRose(x,y,r){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.strokeStyle='rgba(255,255,255,0.4)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText('N',0,-r-4);
+  ctx.restore();
+}
+
+let frame=0;
+function draw(){
+  frame++;
+  ctx.fillStyle='#1f2e1f';ctx.fillRect(0,0,800,380);
+  // terrain texture
+  ctx.fillStyle='#24351f';
+  for(let i=0;i<6;i++)ctx.fillRect(0,i*63,800,2);
+  // trees
+  trees.forEach(t=>{
+    ctx.fillStyle='#2d5a27';
+    ctx.beginPath();ctx.arc(t.x,t.y,t.r,0,Math.PI*2);ctx.fill();
+  });
+  // target landmark
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.moveTo(targetPos.x,targetPos.y-14);ctx.lineTo(targetPos.x-10,targetPos.y+8);ctx.lineTo(targetPos.x+10,targetPos.y+8);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#222';ctx.font='10px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('checkpoint_label','CHECKPOINT'),targetPos.x,targetPos.y-18);
+
+  // player / path
+  let px=playerPos.x,py=playerPos.y;
+  if(walking&&walkPath){
+    const dur=1200;
+    walkPath.t=Math.min(1,walkPath.t+16/dur);
+    px=walkPath.x0+(walkPath.x1-walkPath.x0)*walkPath.t;
+    py=walkPath.y0+(walkPath.y1-walkPath.y0)*walkPath.t;
+    ctx.strokeStyle='rgba(255,213,79,0.6)';ctx.lineWidth=2;ctx.setLineDash([5,5]);
+    ctx.beginPath();ctx.moveTo(walkPath.x0,walkPath.y0);ctx.lineTo(px,py);ctx.stroke();ctx.setLineDash([]);
+  }
+  ctx.fillStyle='#7ecbf0';
+  ctx.beginPath();ctx.arc(px,py,10,0,Math.PI*2);ctx.fill();
+  drawCompassRose(px,py,22);
+
+  // facing indicator (based on slider while not walking)
+  if(!walking){
+    const magBearing=parseInt(bearingSlider.value,10);
+    const trueBearing=compassBearingCorrect(magBearing);
+    const rad=trueBearing*Math.PI/180;
+    ctx.strokeStyle='#ff6b35';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px+Math.sin(rad)*40,py-Math.cos(rad)*40);ctx.stroke();
+  }
+
+  // daylight meter
+  if(!gameOver){
+    daylight-=1;
+    if(daylight<=0){
+      lives--;
+      SFX.error();
+      updateDisplay();
+      if(lives<=0){endGame();}
+      else{daylight=daylightMax;}
+    }
+  }
+  ctx.fillStyle='#223';ctx.fillRect(600,12,180,14);
+  ctx.fillStyle='#f0b84a';ctx.fillRect(600,12,180*Math.max(0,daylight/daylightMax),14);
+  ctx.strokeStyle='#fff';ctx.strokeRect(600,12,180,14);
+  ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='right';
+  ctx.fillText(I18N.t('daylight_label','Daylight'),594,23);
+
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('checkpoint_num_label','Checkpoint {n}').replace('{n}',level),400,26);
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,800,380);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','NIGHTFALL'),400,170);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap / Space / Enter to restart'),400,205);
+  }
+
+  requestAnimationFrame(draw);
+}
+
+updateDisplay();
+newLeg();
+draw();
+</script></body></html>

@@ -1,0 +1,286 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Glacier Route Plotting</title><meta name="description" content="Play Glacier Route Plotting free online — Probe the ice, read the hints, and guide your roped team across the glacier without stepping into a hidden crevasse."><link rel="canonical" href="https://games.multiportllc.com/games/glacierrouteplotting"><meta property="og:title" content="Glacier Route Plotting - Multiport Games"><meta property="og:description" content="Play Glacier Route Plotting free online — Probe the ice, read the hints, and guide your roped team across the glacier without stepping into a hidden crevasse."><meta property="og:url" content="https://games.multiportllc.com/games/glacierrouteplotting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Glacier Route Plotting","description":"Play Glacier Route Plotting free online instantly. Plot a safe route across a crevasse-riddled glacier using probe readings — mark a path that avoids hidden crevasses and seracs, and guide your roped team safely to the other side before the weather closes in. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/glacierrouteplotting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d2436;display:block;border-radius:8px;touch-action:none}
+#hud{color:#80d8ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lv{color:#ffd54f}
+#hud span.hs{color:#7ec850}
+#dpad{display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 10px}
+#dpad .row{display:flex;gap:6px}
+#dpad button{width:56px;height:44px;border:none;border-radius:10px;font-weight:900;cursor:pointer;font-size:1.1rem;color:#0d2436;background:#b3e5fc}
+#dpad button:active{transform:scale(0.92)}
+#probeBtn{margin-top:6px;padding:10px 24px;border:none;border-radius:16px;font-weight:900;cursor:pointer;font-size:1rem;color:#0d2436;background:#ffd54f}
+#probeBtn.active{background:#ff8a65;color:#fff}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Glacier Route Plotting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0</span>
+      <span class="lv" id="levelDisp">Round: 1</span>
+      <span id="livesDisp">Lives: ❤❤❤</span>
+      <span class="hs" id="hsDisp">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="400"></canvas>
+    <div id="dpad">
+      <div class="row"><button id="upBtn">↑</button></div>
+      <div class="row"><button id="leftBtn">←</button><button id="downBtn">↓</button><button id="rightBtn">→</button></div>
+    </div>
+    <button id="probeBtn">🔍 Probe Mode: OFF</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> (or the on-screen D-pad) to step across the glacier toward the top — stepping onto a hidden crevasse costs a life. Press <b>P</b> or tap <b>Probe Mode</b> to toggle probing: it reveals an adjacent cell's danger count without moving or risking a fall, but costs a few seconds off the storm clock.</div>
+</div>
+<script>
+(function(){
+const HS_KEY='glacierrouteplotting_hs';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+
+let gridN=6,crevasseRate=0.14;
+let grid=[]; // grid[row][col] = {crevasse,revealed,hint}
+let px=0,py=0; // player col,row (row0 = bottom/start)
+let probeMode=false;
+let score=0,lives=3,level=1,hi=0,gameOver=false,started=false;
+let timeLeft=0,timeLimit=0;
+let msgTimer=0,msgKey='',msgFallback='',msgOk=true;
+
+function loadHi(){ try{ hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0; }catch(e){ hi=0; } }
+function saveHi(){ try{ localStorage.setItem(HS_KEY,String(hi)); }catch(e){} }
+loadHi();
+
+function inBounds(cx,cy){ return cx>=0&&cx<gridN&&cy>=0&&cy<gridN; }
+
+function neighborCount(cx,cy,pred){
+  let n=0;
+  for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++){
+    if(dx===0&&dy===0)continue;
+    const nx=cx+dx,ny=cy+dy;
+    if(inBounds(nx,ny)&&pred(nx,ny))n++;
+  }
+  return n;
+}
+
+function buildGrid(){
+  gridN=Math.min(9,6+Math.floor((level-1)/2));
+  crevasseRate=Math.min(0.32,0.12+level*0.018);
+  grid=[];
+  for(let r=0;r<gridN;r++){
+    const row=[];
+    for(let col=0;col<gridN;col++){
+      const isStart=(r===0);
+      const isGoalRow=(r===gridN-1);
+      row.push({crevasse:(!isStart&&Math.random()<crevasseRate),revealed:isStart,hint:0});
+    }
+    grid.push(row);
+  }
+  px=Math.floor(gridN/2);py=0;
+  grid[py][px].revealed=true;grid[py][px].crevasse=false;
+  computeHint(px,py);
+}
+
+function computeHint(cx,cy){
+  grid[cy][cx].hint=neighborCount(cx,cy,(nx,ny)=>grid[ny][nx].crevasse);
+}
+
+function newRound(){
+  timeLimit=Math.max(260,520-level*18);
+  timeLeft=timeLimit;
+  buildGrid();
+}
+
+function reset(){ score=0;lives=3;level=1;gameOver=false;started=false;newRound(); }
+reset();
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelDisp').textContent=I18N.t('round_label','Round: {l}').replace('{l}',level);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {h}').replace('{h}','❤'.repeat(Math.max(0,lives)));
+  document.getElementById('hsDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+}
+
+function levelUp(){ level++; SFX.levelup(); newRound(); }
+
+function showMsg(key,fallback,ok){ msgKey=key;msgFallback=fallback;msgOk=ok;msgTimer=50; }
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;saveHi();}
+  SFX.lose();
+}
+
+function loseLife(){
+  lives--;SFX.hurt();
+  if(lives<=0){ endGame(); return; }
+}
+
+function reachGoal(){
+  score+=80+level*20;
+  SFX.win();
+  showMsg('goal_reached','Team is across safely!',true);
+  if(score>=level*180){ levelUp(); } else { newRound(); }
+}
+
+function tryMove(dx,dy){
+  if(!started||gameOver)return;
+  const nx=px+dx,ny=py+dy;
+  if(!inBounds(nx,ny))return;
+  const cell=grid[ny][nx];
+  timeLeft-=4;
+  if(!cell.revealed){
+    if(cell.crevasse){
+      cell.revealed=true;
+      loseLife();
+      showMsg('fell_in','Crevasse! Watch that spot.',false);
+      return;
+    } else {
+      cell.revealed=true;
+      computeHint(nx,ny);
+      SFX.land();
+    }
+  } else {
+    SFX.click();
+  }
+  px=nx;py=ny;
+  if(py===gridN-1){ reachGoal(); }
+}
+
+function tryProbe(dx,dy){
+  if(!started||gameOver)return;
+  const nx=px+dx,ny=py+dy;
+  if(!inBounds(nx,ny))return;
+  const cell=grid[ny][nx];
+  if(!cell.revealed){
+    cell.revealed=true;
+    computeHint(nx,ny);
+    timeLeft-=10;
+    SFX.tick();
+    showMsg(cell.crevasse?'probe_danger':'probe_safe',cell.crevasse?'Probe found a crevasse!':'Probe reads clear',true);
+  }
+}
+
+function onDir(dx,dy){
+  if(!started||gameOver){startGame();return;}
+  if(probeMode){ tryProbe(dx,dy); } else { tryMove(dx,dy); }
+}
+
+function toggleProbe(){
+  probeMode=!probeMode;
+  SFX.select();
+  const btn=document.getElementById('probeBtn');
+  btn.classList.toggle('active',probeMode);
+  btn.textContent='🔍 '+I18N.t('probe_label','Probe Mode: {s}').replace('{s}',probeMode?I18N.t('on_label','ON'):I18N.t('off_label','OFF'));
+}
+
+function startGame(){ if(!started){started=true;} else if(gameOver){reset();started=true;} }
+
+document.getElementById('upBtn').addEventListener('pointerdown',e=>{e.stopPropagation(); onDir(0,1);});
+document.getElementById('downBtn').addEventListener('pointerdown',e=>{e.stopPropagation(); onDir(0,-1);});
+document.getElementById('leftBtn').addEventListener('pointerdown',e=>{e.stopPropagation(); onDir(-1,0);});
+document.getElementById('rightBtn').addEventListener('pointerdown',e=>{e.stopPropagation(); onDir(1,0);});
+document.getElementById('probeBtn').addEventListener('pointerdown',e=>{e.stopPropagation(); toggleProbe();});
+
+c.addEventListener('pointerdown',()=>{ if(!started||gameOver)startGame(); });
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Enter'){ e.preventDefault(); if(!started||gameOver)startGame(); return; }
+  if(e.code==='KeyP'){ e.preventDefault(); toggleProbe(); return; }
+  if(!started||gameOver)return;
+  if(e.code==='ArrowUp'||e.code==='KeyW'){ e.preventDefault(); onDir(0,1); }
+  else if(e.code==='ArrowDown'||e.code==='KeyS'){ e.preventDefault(); onDir(0,-1); }
+  else if(e.code==='ArrowLeft'||e.code==='KeyA'){ e.preventDefault(); onDir(-1,0); }
+  else if(e.code==='ArrowRight'||e.code==='KeyD'){ e.preventDefault(); onDir(1,0); }
+});
+
+function drawGrid(){
+  const top=26,bottom=H-10,left=40,right=W-40;
+  const cellW=(right-left)/gridN,cellH=(bottom-top)/gridN;
+  for(let r=0;r<gridN;r++){
+    for(let col=0;col<gridN;col++){
+      const cell=grid[r][col];
+      const cx=left+col*cellW,cy=bottom-(r+1)*cellH;
+      ctx.fillStyle=cell.revealed?(cell.crevasse?'#1a0f0f':'#d6f1ff'):'#8ec8e6';
+      ctx.fillRect(cx+1,cy+1,cellW-2,cellH-2);
+      ctx.strokeStyle='#0d2436';ctx.lineWidth=1;
+      ctx.strokeRect(cx+1,cy+1,cellW-2,cellH-2);
+      if(cell.revealed){
+        if(cell.crevasse){
+          ctx.fillStyle='#ff5252';ctx.font='bold '+Math.floor(cellH*0.5)+'px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+          ctx.fillText('✕',cx+cellW/2,cy+cellH/2);
+        } else if(cell.hint>0){
+          ctx.fillStyle='#01579b';ctx.font='bold '+Math.floor(cellH*0.45)+'px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+          ctx.fillText(String(cell.hint),cx+cellW/2,cy+cellH/2);
+        }
+      }
+      if(r===gridN-1){
+        ctx.fillStyle='#aed581';ctx.font='bold 11px Arial';ctx.textAlign='center';ctx.textBaseline='alphabetic';
+        ctx.fillText(I18N.t('goal_label','GOAL'),cx+cellW/2,cy-4);
+      }
+    }
+  }
+  // player
+  const pcx=left+px*cellW+cellW/2,pcy=bottom-(py+1)*cellH+cellH/2;
+  ctx.fillStyle='#ffca28';
+  ctx.beginPath();ctx.arc(pcx,pcy,Math.min(cellW,cellH)*0.28,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#5d4037';ctx.lineWidth=2;ctx.stroke();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#17405c');bg.addColorStop(1,'#0d2436');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#80d8ff';ctx.font='bold 24px Arial';ctx.textAlign='center';ctx.textBaseline='alphabetic';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to start'),W/2,H/2);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawGrid();
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';ctx.textBaseline='alphabetic';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Score: {s} — Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi)),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+48);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  timeLeft--;
+  if(timeLeft<=0){ endGame(); }
+
+  if(msgTimer>0)msgTimer--;
+
+  const barW=420,barH=10,barX=W/2-barW/2,barY=10;
+  ctx.fillStyle='#222';ctx.fillRect(barX,barY,barW,barH);
+  const frac=Math.max(0,timeLeft/timeLimit);
+  ctx.fillStyle=frac>0.4?'#2ecc71':(frac>0.18?'#ffd54f':'#e74c3c');
+  ctx.fillRect(barX,barY,barW*frac,barH);
+
+  drawGrid();
+
+  if(msgTimer>0){
+    ctx.fillStyle=msgOk?'#2ecc71':'#e74c3c';
+    ctx.font='bold 18px Arial';ctx.textAlign='center';ctx.textBaseline='alphabetic';
+    ctx.fillText(I18N.t(msgKey,msgFallback),W/2,H-6);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script></body></html>

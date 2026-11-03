@@ -1,0 +1,251 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Helicopter Hoist Rescue</title><meta name="description" content="Play Helicopter Hoist Rescue free online — Move with Left/Right or A/D, lower the hoist with Down/S and raise it with Up/W, or drag on screen, to pick up the hiker and winch them to safety."><link rel="canonical" href="https://games.multiportllc.com/games/helicopterhoistrescue"><meta property="og:title" content="Helicopter Hoist Rescue - Multiport Games"><meta property="og:description" content="Play Helicopter Hoist Rescue free online — Move with Left/Right or A/D, lower the hoist with Down/S and raise it with Up/W, or drag on screen, to pick up the hiker and winch them to safety."><meta property="og:url" content="https://games.multiportllc.com/games/helicopterhoistrescue"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Helicopter Hoist Rescue","description":"Play Helicopter Hoist Rescue free online instantly. Operate a rescue helicopter's hoist, lowering a rescue basket precisely onto a stranded hiker on a cliff ledge while compensating for wind drift and rotor wash, then winch them up smoothly without swinging into the rock face. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/helicopterhoistrescue","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3b6ea5;display:block;border-radius:8px;touch-action:none}
+#hud{color:#dce8f0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#controls2{display:flex;justify-content:center;gap:10px;margin:10px 0;flex-wrap:wrap}
+#controls2 button{padding:11px 20px;background:#2b4a66;border:none;border-radius:16px;color:#fff;cursor:pointer;font-size:.95rem;font-weight:700}
+#controls2 button:active{transform:scale(.95)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Helicopter Hoist Rescue</div>
+  <div class="game-frame">
+    <div id="hud"><span id="scoreDisp">Score: 0 | Hi: 0</span><span id="levelDisp">Level 1</span><span id="livesDisp">♥ ♥ ♥</span><span id="timeDisp">Time: 0</span></div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <div id="controls2">
+      <button id="btnDown">⬇ Lower Hoist</button>
+      <button id="btnUp">⬆ Raise Hoist</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move the helicopter with <b>Left/Right</b> or <b>A/D</b>, lower the hoist with <b>Down/S</b> and raise it with <b>Up/W</b> (or drag/tap the canvas, and use the Lower/Raise buttons). Line the rescue basket up on the stranded hiker, fight the wind drift, then winch them up without swinging into the cliff face.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisp=document.getElementById('scoreDisp'),levelDisp=document.getElementById('levelDisp'),livesDisp=document.getElementById('livesDisp'),timeDisp=document.getElementById('timeDisp');
+const W=800,H=420;
+let score=0,hi=parseInt(localStorage.getItem('helicopterhoistrescue_hi')||'0',10);
+let level=1,lives=3,gameOver=false,started=false;
+let heli={x:400,vx:0},cableLen=20,basket={x:400,y:0,vx:0},hiker=null,cliffX=0,ledgeY=0;
+let state='seek', // seek -> lowering/positioning, carrying -> raising with hiker
+    wind=0,windTarget=0,windTimer=0,timeLeft=0,maxTime=0,lastTime=null;
+let msg='',msgTimer=0,shakeTimer=0;
+const keys={};
+const MIN_CABLE=20,MAX_CABLE=330,HELI_Y=60;
+
+function windStrengthFor(lv){ return 0.55+lv*0.18; }
+function timeFor(lv){ return Math.max(22,48-lv*2); }
+
+function newLevel(){
+  cliffX=Math.random()<0.5?rand(40,160):rand(W-200,W-60);
+  ledgeY=rand(260,330);
+  const side=cliffX<W/2?1:-1;
+  hiker={x:cliffX+side*60,y:ledgeY,picked:false};
+  heli.x=400;heli.vx=0;
+  cableLen=20;basket.x=heli.x;basket.y=HELI_Y+cableLen;basket.vx=0;
+  state='seek';
+  wind=0;windTarget=0;windTimer=0;
+  maxTime=timeFor(level);timeLeft=maxTime;
+}
+function rand(lo,hi){ return lo+Math.random()*(hi-lo); }
+
+function resetGame(){ score=0;level=1;lives=3;gameOver=false;started=false;newLevel(); }
+resetGame();
+
+function flash(t){ msg=t;msgTimer=90; }
+
+function crash(){
+  lives--;SFX.hit();shakeTimer=30;
+  flash(I18N.t('hit_cliff','Basket struck the cliff face!'));
+  if(lives<=0) endGame(); else newLevel();
+}
+function timeout(){
+  lives--;SFX.hurt();
+  flash(I18N.t('too_slow','Too slow — conditions worsened!'));
+  if(lives<=0) endGame(); else newLevel();
+}
+function endGame(){ gameOver=true;SFX.lose(); if(score>hi){hi=score;localStorage.setItem('helicopterhoistrescue_hi',String(hi));} }
+
+function winchComplete(){
+  score+=180+level*30+Math.floor(timeLeft*4);
+  SFX.success();SFX.levelup();
+  flash(I18N.t('rescued','Hiker winched to safety!'));
+  level++;
+  setTimeout(()=>{ if(!gameOver) newLevel(); },800);
+}
+
+function restart(){ if(gameOver) resetGame(); }
+function startIfNeeded(){ if(!started&&!gameOver) started=true; }
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'&&gameOver) restart(); else startIfNeeded();
+});
+document.addEventListener('keyup',e=>{ keys[e.code]=false; });
+
+let dragTarget=null;
+c.addEventListener('pointerdown',e=>{
+  if(gameOver){restart();return;}
+  startIfNeeded();
+  const rect=c.getBoundingClientRect();
+  dragTarget=(e.clientX-rect.left)*(W/rect.width);
+});
+c.addEventListener('pointermove',e=>{
+  if(dragTarget===null)return;
+  const rect=c.getBoundingClientRect();
+  dragTarget=(e.clientX-rect.left)*(W/rect.width);
+});
+window.addEventListener('pointerup',()=>{ dragTarget=null; });
+
+let holdUp=false,holdDown=false;
+document.getElementById('btnUp').addEventListener('pointerdown',()=>{ startIfNeeded(); if(gameOver)restart(); else holdUp=true; });
+document.getElementById('btnDown').addEventListener('pointerdown',()=>{ startIfNeeded(); if(gameOver)restart(); else holdDown=true; });
+window.addEventListener('pointerup',()=>{ holdUp=false;holdDown=false; });
+
+function rectsOverlapCircleCliff(bx,by){
+  // cliff is a vertical band; collision if basket x within band AND below a certain y (near ledge wall) while not at the hiker pickup point
+  const bandHalf=34;
+  if(Math.abs(bx-cliffX)<bandHalf && by>ledgeY-70 && by<H-10){
+    return true;
+  }
+  return false;
+}
+
+function drawCliff(){
+  ctx.fillStyle='#5c5347';
+  if(cliffX<W/2) ctx.fillRect(0,ledgeY-70,cliffX+40,H-(ledgeY-70));
+  else ctx.fillRect(cliffX-40,ledgeY-70,W-(cliffX-40),H-(ledgeY-70));
+  ctx.fillStyle='#43392f';
+  ctx.fillRect(0,ledgeY-10,W,14);
+  if(cliffX>=W/2){ ctx.fillStyle='#43392f'; }
+  // ledge platform
+  ctx.fillStyle='#766a58';
+  const ledgeW=120;
+  ctx.fillRect(cliffX-ledgeW/2,ledgeY-6,ledgeW,16);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const shakeX=shakeTimer>0?(Math.random()-0.5)*10:0;
+  ctx.save();ctx.translate(shakeX,0);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#8fc1e8');sky.addColorStop(1,'#3b6ea5');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  drawCliff();
+
+  // hiker
+  if(hiker&&!hiker.picked){
+    ctx.fillStyle='#e94560';
+    ctx.beginPath();ctx.arc(hiker.x,hiker.y-14,9,0,Math.PI*2);ctx.fill();
+    ctx.fillRect(hiker.x-6,hiker.y-6,12,20);
+  }
+
+  // helicopter body
+  ctx.fillStyle='#2b2b2b';
+  ctx.fillRect(heli.x-36,HELI_Y-14,72,24);
+  ctx.beginPath();ctx.ellipse(heli.x+30,HELI_Y-2,14,10,0,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#777';ctx.lineWidth=3;
+  const rotorPhase=(performance.now()/40)%Math.PI;
+  ctx.save();ctx.translate(heli.x,HELI_Y-16);ctx.rotate(rotorPhase);
+  ctx.beginPath();ctx.moveTo(-50,0);ctx.lineTo(50,0);ctx.stroke();
+  ctx.restore();
+
+  // cable + basket
+  ctx.strokeStyle='#ddd';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(heli.x,HELI_Y);ctx.lineTo(basket.x,basket.y);ctx.stroke();
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(basket.x-13,basket.y-8,26,16);
+  if(hiker&&hiker.picked){
+    ctx.fillStyle='#e94560';
+    ctx.beginPath();ctx.arc(basket.x,basket.y-14,8,0,Math.PI*2);ctx.fill();
+  }
+
+  // wind indicator
+  ctx.fillStyle='rgba(255,255,255,0.85)';ctx.font='bold 14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('wind_label','WIND'),20,24);
+  ctx.save();ctx.translate(80,18);ctx.rotate(wind>0?0:Math.PI);
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.moveTo(0,-6);ctx.lineTo(Math.min(60,Math.abs(wind)*18)+10,0);ctx.lineTo(0,6);ctx.closePath();ctx.fill();
+  ctx.restore();
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='rgba(22,33,62,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint3','Press a key or drag to start'),W/2,H/2);
+  }
+
+  if(msgTimer>0){ msgTimer--; ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';ctx.fillText(msg,W/2,H-16); }
+  if(shakeTimer>0)shakeTimer--;
+
+  if(started&&!gameOver){
+    const now=performance.now();
+    const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+    lastTime=now;
+
+    windTimer-=dt;
+    if(windTimer<=0){ windTimer=90+Math.random()*60; windTarget=(Math.random()*2-1)*windStrengthFor(level); }
+    wind+=(windTarget-wind)*0.02*dt;
+
+    let hInput=0;
+    if(keys['ArrowLeft']||keys['KeyA'])hInput-=1;
+    if(keys['ArrowRight']||keys['KeyD'])hInput+=1;
+    if(dragTarget!==null){ const d=dragTarget-heli.x; hInput=Math.max(-1,Math.min(1,d/60)); }
+    heli.vx+=hInput*0.6*dt;
+    heli.vx*=0.9;
+    heli.x+=heli.vx*dt;
+    heli.x=Math.max(50,Math.min(W-50,heli.x));
+
+    let cInput=0;
+    if(keys['ArrowDown']||keys['KeyS']||holdDown)cInput+=1;
+    if(keys['ArrowUp']||keys['KeyW']||holdUp)cInput-=1;
+    cableLen+=cInput*2.6*dt;
+    cableLen=Math.max(MIN_CABLE,Math.min(MAX_CABLE,cableLen));
+
+    basket.vx+=((heli.x-basket.x)*0.02+wind*0.5)*dt;
+    basket.vx*=0.9;
+    basket.x+=basket.vx*dt;
+    basket.y=HELI_Y+cableLen;
+
+    if(rectsOverlapCircleCliff(basket.x,basket.y)&&!gameOver){ crash(); }
+
+    if(hiker&&!hiker.picked&&state==='seek'){
+      const d=Math.hypot(basket.x-hiker.x,basket.y-(hiker.y-10));
+      if(d<24){ hiker.picked=true;state='carrying';SFX.catch();flash(I18N.t('picked_up','Hiker aboard! Raise the hoist!')); }
+    }
+    if(hiker&&hiker.picked){
+      hiker.x=basket.x;hiker.y=basket.y+10;
+      if(cableLen<=MIN_CABLE+2){ winchComplete(); }
+    }
+
+    timeLeft-=dt/60;
+    if(timeLeft<=0){ timeLeft=0; timeout(); }
+  } else lastTime=null;
+
+  ctx.restore();
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-30);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),W/2,H/2+6);
+    ctx.fillText(I18N.t('restart_hint2','Tap or press Space to restart'),W/2,H/2+36);
+  }
+
+  scoreDisp.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  levelDisp.textContent=I18N.t('level_label','Level {l}').replace('{l}',level);
+  livesDisp.textContent='♥ '.repeat(Math.max(0,lives)).trim()||'—';
+  timeDisp.textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

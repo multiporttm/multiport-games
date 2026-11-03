@@ -1,0 +1,239 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>River Fording Crossing</title><meta name="description" content="Play River Fording Crossing free online — Pick the safest line across submerged rocks, read the current, and brace with your trekking pole to reach the far bank."><link rel="canonical" href="https://games.multiportllc.com/games/riverfordingcrossing"><meta property="og:title" content="River Fording Crossing - Multiport Games"><meta property="og:description" content="Play River Fording Crossing free online — Pick the safest line across submerged rocks, read the current, and brace with your trekking pole to reach the far bank."><meta property="og:url" content="https://games.multiportllc.com/games/riverfordingcrossing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"River Fording Crossing","description":"Play River Fording Crossing free online instantly. Pick the safest line across submerged rocks, read the current, and brace with your trekking pole to reach the far bank. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/riverfordingcrossing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a3d52;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#7ecbf0;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#touchControls{display:flex;justify-content:center;gap:10px;margin-top:10px}
+#touchControls button{width:64px;height:54px;font-size:1.4rem;background:#16213e;border:2px solid #7ecbf0;border-radius:10px;color:#fff;cursor:pointer}
+#touchControls button:active{background:#7ecbf0}
+@media(min-width:700px){#touchControls{display:none}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">River Fording Crossing</div>
+  <div class="game-frame">
+    <div id="score-display">Crossing: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="400"></canvas>
+    <div id="touchControls">
+      <button id="btnLeft">◀</button>
+      <button id="btnUp">▲</button>
+      <button id="btnDown">▼</button>
+      <button id="btnRight">▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or the on-screen buttons to move. Step on visible rocks and shallow water to cross safely — avoid the fast, deep current (dark blue) which can sweep you off balance. Reach the far bank (top) to complete the crossing, before your <b>3 lives</b> run out. Each crossing gets faster and trickier.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const KEY='rfc_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+const COLS=10,ROWS=10,CELL=80;
+let player,lives,crossing,gameOver,won,river,currentSpeed,frame,sweepTimer,flashTimer,score_=0,deepStreak=0;
+
+function genRiver(level){
+  // river tile types: 'bank' (safe, row0/row9), 'rock'(safe), 'shallow'(mostly safe), 'deep'(dangerous)
+  const grid=[];
+  for(let r=0;r<ROWS;r++){
+    const row=[];
+    for(let col=0;col<COLS;col++){
+      if(r===0||r===ROWS-1){row.push('bank');continue;}
+      const rand=Math.random();
+      const deepChance=0.32+level*0.03;
+      if(rand<0.18)row.push('rock');
+      else if(rand<deepChance+0.18)row.push('deep');
+      else row.push('shallow');
+    }
+    grid.push(row);
+  }
+  // ensure at least one plausible rock path exists roughly by sprinkling extra rocks near center columns
+  return grid;
+}
+
+function reset(){
+  lives=3;crossing=1;gameOver=false;won=false;frame=0;sweepTimer=0;flashTimer=0;
+  currentSpeed=0.015;
+  river=genRiver(crossing);
+  player={col:Math.floor(COLS/2),row:ROWS-1,px:0,py:0,moving:false,sweepOffset:0};
+  player.px=player.col*CELL+CELL/2;
+  player.py=player.row*CELL*0 + (ROWS-1)*40; // placeholder, recalculated in layout
+  layoutPlayer();
+  updateDisplay();
+}
+
+function layoutPlayer(){
+  const cellH=360/ROWS;
+  player.px=player.col*(800/COLS)+ (800/COLS)/2;
+  player.py=20+player.row*cellH+cellH/2;
+}
+
+function cellSize(){return {w:800/COLS,h:360/ROWS};}
+
+function tryMove(dc,dr){
+  if(gameOver||won)return;
+  const nc=player.col+dc,nr=player.row+dr;
+  if(nc<0||nc>=COLS||nr<0||nr>=ROWS)return;
+  player.col=nc;player.row=nr;
+  layoutPlayer();
+  SFX.click();
+  const tile=river[player.row][player.col];
+  if(tile==='deep'){
+    deepStreak++;
+    flashTimer=12;
+    // Risk of being swept rises with current strength (crossing level) and consecutive deep steps.
+    const risk=Math.min(0.75,currentSpeed*18+deepStreak*0.12);
+    if(Math.random()<risk){
+      hitLose();
+      deepStreak=0;
+      return;
+    }
+  } else {
+    deepStreak=0;
+    addScore(1);
+  }
+  if(!gameOver&&player.row===0){
+    win();
+  }
+}
+
+function hitLose(){
+  lives--;
+  flashTimer=25;
+  SFX.hit();
+  updateDisplay();
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+  } else {
+    // bump back downstream a bit
+    player.row=Math.min(ROWS-1,player.row+2);
+    layoutPlayer();
+  }
+}
+
+function win(){
+  won=true;
+  SFX.win();
+  const bonus=Math.max(0,100-crossing*5);
+  addScore(50+bonus);
+  if(score_>hi){hi=score_;localStorage.setItem(KEY,String(hi));}
+}
+
+function addScore(v){score_+=v;updateDisplay();}
+
+function updateDisplay(){
+  document.getElementById('score-display').textContent=I18N.t('crossing_hi_label','Score: {s} | Crossing: {c} | Lives: {l} | Hi: {h}')
+    .replace('{s}',score_).replace('{c}',crossing).replace('{l}',lives).replace('{h}',hi);
+}
+
+function nextCrossing(){
+  crossing++;
+  currentSpeed+=0.004;
+  won=false;
+  river=genRiver(crossing);
+  player.col=Math.floor(COLS/2);player.row=ROWS-1;
+  layoutPlayer();
+  updateDisplay();
+}
+
+function restart(){
+  score_=0;
+  reset();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD','Space','Enter'].includes(e.code))e.preventDefault();
+  if(gameOver){ if(e.code==='Space'||e.code==='Enter')restart(); return; }
+  if(won){ if(e.code==='Space'||e.code==='Enter')nextCrossing(); return; }
+  if(e.code==='ArrowUp'||e.code==='KeyW')tryMove(0,-1);
+  if(e.code==='ArrowDown'||e.code==='KeyS')tryMove(0,1);
+  if(e.code==='ArrowLeft'||e.code==='KeyA')tryMove(-1,0);
+  if(e.code==='ArrowRight'||e.code==='KeyD')tryMove(1,0);
+});
+
+function bindBtn(id,dc,dr){
+  const el=document.getElementById(id);
+  const fn=(ev)=>{ev.preventDefault(); if(gameOver){restart();return;} if(won){nextCrossing();return;} tryMove(dc,dr);};
+  el.addEventListener('touchstart',fn,{passive:false});
+  el.addEventListener('click',fn);
+}
+bindBtn('btnUp',0,-1);bindBtn('btnDown',0,1);bindBtn('btnLeft',-1,0);bindBtn('btnRight',1,0);
+
+c.addEventListener('click',()=>{ if(gameOver)restart(); else if(won)nextCrossing(); });
+
+function tileColor(t){
+  if(t==='bank')return '#4a7a3a';
+  if(t==='rock')return '#8a8378';
+  if(t==='shallow')return '#5a92b5';
+  return '#1c3a52';
+}
+
+function draw(){
+  ctx.clearRect(0,0,800,400);
+  const {w,h}=cellSize();
+  for(let r=0;r<ROWS;r++){
+    for(let col=0;col<COLS;col++){
+      const t=river[r][col];
+      ctx.fillStyle=tileColor(t);
+      ctx.fillRect(col*w,20+r*h,w-2,h-2);
+      if(t==='deep'){
+        const shimmer=Math.sin(frame*0.1+col+r)*4;
+        ctx.fillStyle='rgba(255,255,255,0.08)';
+        ctx.fillRect(col*w,20+r*h+shimmer,w-2,h-2);
+      }
+      if(t==='rock'){
+        ctx.fillStyle='#6b6458';
+        ctx.beginPath();ctx.arc(col*w+w/2,20+r*h+h/2,Math.min(w,h)/3,0,Math.PI*2);ctx.fill();
+      }
+    }
+  }
+  // current arrows on deep tiles
+  ctx.strokeStyle='rgba(255,255,255,0.25)';ctx.lineWidth=2;
+  for(let r=0;r<ROWS;r++)for(let col=0;col<COLS;col++){
+    if(river[r][col]==='deep'){
+      const cx=col*w+w/2,cy=20+r*h+h/2;
+      const off=(frame*2)%20-10;
+      ctx.beginPath();ctx.moveTo(cx-10,cy+off);ctx.lineTo(cx+10,cy+off+6);ctx.stroke();
+    }
+  }
+  // player
+  ctx.save();
+  if(flashTimer>0){ctx.globalAlpha=flashTimer%10<5?0.4:1;}
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(player.px,player.py,16,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#8a5a2a';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(player.px+10,player.py-6);ctx.lineTo(player.px+26,player.py-24);ctx.stroke();
+  ctx.restore();
+
+  ctx.fillStyle='rgba(255,255,255,0.85)';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('far_bank_label','FAR BANK'),400,14);
+
+  if(flashTimer>0)flashTimer--;
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,800,400);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','SWEPT AWAY'),400,190);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap / Space / Enter to restart'),400,225);
+  } else if(won){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,800,400);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('crossing_complete','CROSSING COMPLETE!'),400,190);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('next_hint','Tap / Space / Enter for next crossing'),400,225);
+  }
+
+  frame++;
+  requestAnimationFrame(draw);
+}
+
+reset();
+draw();
+</script></body></html>
