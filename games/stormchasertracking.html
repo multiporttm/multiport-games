@@ -1,0 +1,240 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Storm Chaser Tracking</title><meta name="description" content="Play Storm Chaser Tracking free online — Steer your chase vehicle down back roads, dodge the hail core and debris, and reach each safe filming spot before the supercell's structure changes."><link rel="canonical" href="https://games.multiportllc.com/games/stormchasertracking"><meta property="og:title" content="Storm Chaser Tracking - Multiport Games"><meta property="og:description" content="Play Storm Chaser Tracking free online — Steer your chase vehicle down back roads, dodge the hail core and debris, and reach each safe filming spot before the supercell's structure changes."><meta property="og:url" content="https://games.multiportllc.com/games/stormchasertracking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Storm Chaser Tracking","description":"Play Storm Chaser Tracking free online instantly. Drive your storm-chasing vehicle along back roads toward a tracked supercell's projected path, dodging its most dangerous hail core, falling debris, and lightning strikes while grabbing safe filming spots for bonus points. The core widens and the road gets faster with every level. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/stormchasertracking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1b2a1e;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%;margin:0 auto}
+#hud{color:#aed581;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Storm Chaser Tracking</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span>Score: <span id="scoreVal">0</span></span>
+      <span class="lv">Level: <span id="levelVal">1</span></span>
+      <span class="lives">Lives: <span id="livesVal">3</span></span>
+      <span class="hs">Hi: <span id="hiVal">0</span></span>
+    </div>
+    <canvas id="c" width="420" height="600"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Steer your chase truck with the <b>Left/Right Arrow</b> keys (or <b>A/D</b>), or drag/tap left and right of the truck on touch screens. Dodge the dark red <b>hail core</b>, flying <b>debris</b>, and lightning strikes while grabbing yellow <b>camera</b> spots for bonus points. Hitting a hazard costs a life — lose all three and the chase ends. The road speeds up and the core widens every level.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=420,H=600,ROAD_L=60,ROAD_R=360;
+let score=0,lives=3,level=1,hi=0,gameOver=false,started=false;
+let truck={x:210,w:34,h:52,targetX:210};
+let hazards=[],pickups=[],particles=[];
+let spd=4,frame=0,spawnTimer=0,pickupTimer=0,lastTime=null,coreTimer=0;
+let keys={left:false,right:false};
+let dashOffset=0;
+
+hi=parseInt(localStorage.getItem('stormchasertracking_hi')||'0',10);
+
+function updateHud(){
+  document.getElementById('scoreVal').textContent=Math.floor(score);
+  document.getElementById('levelVal').textContent=level;
+  document.getElementById('livesVal').textContent=Math.max(0,lives);
+  document.getElementById('hiVal').textContent=Math.floor(hi);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;
+  truck.x=210;truck.targetX=210;
+  hazards=[];pickups=[];particles=[];
+  spd=4;frame=0;spawnTimer=0;pickupTimer=0;lastTime=null;coreTimer=0;
+  updateHud();
+}
+
+function start(){
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){keys.left=true;e.preventDefault();start();}
+  if(e.code==='ArrowRight'||e.code==='KeyD'){keys.right=true;e.preventDefault();start();}
+  if(e.code==='Space'){e.preventDefault();start();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keys.left=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keys.right=false;
+});
+
+function pointerToLane(clientX){
+  const r=c.getBoundingClientRect();
+  const relX=(clientX-r.left)/r.width*W;
+  truck.targetX=Math.max(ROAD_L+20,Math.min(ROAD_R-20,relX));
+}
+c.addEventListener('mousedown',e=>{start();pointerToLane(e.clientX);});
+c.addEventListener('mousemove',e=>{if(e.buttons===1)pointerToLane(e.clientX);});
+c.addEventListener('touchstart',e=>{e.preventDefault();start();pointerToLane(e.touches[0].clientX);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();pointerToLane(e.touches[0].clientX);},{passive:false});
+
+function spawnHazard(){
+  const roll=Math.random();
+  const laneW=ROAD_R-ROAD_L;
+  if(roll<0.35+level*0.02){
+    // hail core: wide dangerous zone
+    const w=Math.min(laneW*0.6,100+level*8);
+    const x=ROAD_L+Math.random()*(laneW-w);
+    hazards.push({type:'core',x,y:-140,w,h:120,vy:spd*0.9});
+  }else{
+    const w=28;
+    const x=ROAD_L+Math.random()*(laneW-w);
+    hazards.push({type:Math.random()<0.5?'debris':'bolt',x,y:-40,w,h:34,vy:spd*1.1});
+  }
+}
+function spawnPickup(){
+  const laneW=ROAD_R-ROAD_L;
+  const x=ROAD_L+20+Math.random()*(laneW-40);
+  pickups.push({x,y:-30,w:26,h:26,vy:spd});
+}
+
+function rectHit(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function loseLife(){
+  lives--;SFX.hit();updateHud();
+  for(let i=0;i<10;i++)particles.push({x:truck.x,y:H-90,vx:(Math.random()-0.5)*4,vy:-Math.random()*4,life:30});
+  if(lives<=0)endGame();
+}
+function endGame(){gameOver=true;SFX.lose();}
+
+function drawRoad(){
+  ctx.fillStyle='#1b2a1e';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#2e2e38';ctx.fillRect(ROAD_L,0,ROAD_R-ROAD_L,H);
+  ctx.strokeStyle='#ffe082';ctx.lineWidth=5;ctx.setLineDash([24,20]);ctx.lineDashOffset=-dashOffset;
+  ctx.beginPath();ctx.moveTo((ROAD_L+ROAD_R)/2,0);ctx.lineTo((ROAD_L+ROAD_R)/2,H);ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#355e3b';ctx.fillRect(0,0,ROAD_L,H);ctx.fillRect(ROAD_R,0,W-ROAD_R,H);
+}
+
+function drawTruck(){
+  ctx.save();
+  ctx.translate(truck.x,H-90);
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(-truck.w/2,-truck.h/2,truck.w,truck.h);
+  ctx.fillStyle='#fff';
+  ctx.fillRect(-truck.w/2+4,-truck.h/2+6,truck.w-8,14);
+  ctx.fillStyle='#222';
+  ctx.fillRect(-truck.w/2-4,-truck.h/2+4,4,12);
+  ctx.fillRect(truck.w/2,-truck.h/2+4,4,12);
+  ctx.fillRect(-truck.w/2-4,truck.h/2-16,4,12);
+  ctx.fillRect(truck.w/2,truck.h/2-16,4,12);
+  ctx.restore();
+}
+
+function drawHazard(h){
+  if(h.type==='core'){
+    const grad=ctx.createRadialGradient(h.x+h.w/2,h.y+h.h/2,4,h.x+h.w/2,h.y+h.h/2,h.w/1.4);
+    grad.addColorStop(0,'rgba(198,40,40,.85)');
+    grad.addColorStop(1,'rgba(198,40,40,0)');
+    ctx.fillStyle=grad;
+    ctx.fillRect(h.x,h.y,h.w,h.h);
+  }else if(h.type==='debris'){
+    ctx.fillStyle='#8d6e63';
+    ctx.save();ctx.translate(h.x+h.w/2,h.y+h.h/2);ctx.rotate(frame*0.1);
+    ctx.fillRect(-h.w/2,-h.h/2,h.w,h.h);
+    ctx.restore();
+  }else{
+    ctx.fillStyle='#ffeb3b';
+    ctx.font='28px Arial';ctx.textAlign='center';ctx.fillText('⚡',h.x+h.w/2,h.y+h.h);
+  }
+}
+
+function drawPickup(p){
+  ctx.font='24px Arial';ctx.textAlign='center';ctx.fillText('📷',p.x+p.w/2,p.y+p.h);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawRoad();
+
+  if(gameOver){
+    drawTruck();
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-30);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score)),W/2,H/2);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+28);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(!started){
+    drawTruck();
+    ctx.fillStyle='#ffffffcc';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Arrow / Tap to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  frame+=dt;
+  dashOffset+=spd*dt;
+
+  score+=0.08*dt*(1+level*0.05);
+  if(score>hi)hi=score;
+  spd=4+level*0.5+score/400;
+  level=1+Math.floor(score/150);
+
+  if(keys.left)truck.targetX-=5*dt;
+  if(keys.right)truck.targetX+=5*dt;
+  truck.targetX=Math.max(ROAD_L+20,Math.min(ROAD_R-20,truck.targetX));
+  truck.x+=(truck.targetX-truck.x)*0.25*dt;
+
+  spawnTimer+=dt;
+  const spawnInterval=Math.max(26,60-level*2.5);
+  if(spawnTimer>=spawnInterval){spawnTimer-=spawnInterval;spawnHazard();}
+  pickupTimer+=dt;
+  if(pickupTimer>=90){pickupTimer-=90;spawnPickup();}
+
+  const truckHit={x:truck.x-truck.w/2+4,y:H-90-truck.h/2+4,w:truck.w-8,h:truck.h-8};
+
+  hazards=hazards.filter(h=>h.y<H+150);
+  hazards.forEach(h=>{
+    h.y+=h.vy*dt;
+    drawHazard(h);
+    if(rectHit(truckHit,h)){
+      h.y=H+200;
+      loseLife();
+    }
+  });
+
+  pickups=pickups.filter(p=>p.y<H+40);
+  pickups.forEach(p=>{
+    p.y+=p.vy*dt;
+    drawPickup(p);
+    if(rectHit(truckHit,p)){
+      p.y=H+100;
+      score+=25;SFX.coin();
+    }
+  });
+
+  particles=particles.filter(pt=>pt.life>0);
+  particles.forEach(pt=>{
+    pt.x+=pt.vx*dt;pt.y+=pt.vy*dt;pt.vy+=0.3*dt;pt.life-=dt;
+    ctx.fillStyle='rgba(255,180,100,'+Math.max(0,pt.life/30)+')';
+    ctx.fillRect(pt.x,pt.y,4,4);
+  });
+
+  drawTruck();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>

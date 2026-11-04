@@ -1,0 +1,327 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>News Anchor Teleprompter Reading</title><meta name="description" content="Play News Anchor Teleprompter Reading free online — Read the scrolling script aloud by keeping your pace marker on the moving line and hitting the glowing emphasis words before the segment timer runs out."><link rel="canonical" href="https://games.multiportllc.com/games/newsanchorteleprompterreading"><meta property="og:title" content="News Anchor Teleprompter Reading - Multiport Games"><meta property="og:description" content="Play News Anchor Teleprompter Reading free online — Read the scrolling script aloud by keeping your pace marker on the moving line and hitting the glowing emphasis words before the segment timer runs out."><meta property="og:url" content="https://games.multiportllc.com/games/newsanchorteleprompterreading"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"News Anchor Teleprompter Reading","description":"Play News Anchor Teleprompter Reading free online instantly. Keep your reading pace locked to the auto-scrolling news script, tap the glowing emphasis words right as they cross the read line, and finish every segment before time runs out. Scroll speed increases and emphasis windows tighten with every segment. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/newsanchorteleprompterreading","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0c0c14;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#e0e0e0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">News Anchor Teleprompter Reading</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Segment: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="760" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Pacing:</b> The script auto-scrolls past the read line. Hold <b>Space</b>/<b>Up Arrow</b> (or press-and-hold on the canvas) to read faster and nudge your pace marker up toward the scroll line; release to slow down. Keep the marker inside the green pace band — drift too far behind or ahead and you lose a life. <b>Emphasis:</b> when a highlighted word glows as it crosses the read line, press <b>Enter</b>/<b>Down Arrow</b> (or tap) right then to nail the emphasis cue. Finish each segment's script before the timer hits zero. Three lives — speed and emphasis timing both get tighter each segment.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const KEY='newsanchorteleprompterreading_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,segment=1,lives=3,started=false,gameOver=false;
+
+const LINE_Y=180;
+const LINE_H=34;
+
+const SEGMENTS_TEXT=[
+  "Good evening, I'm here with your top story tonight.",
+  "Crews are responding to a major incident downtown.",
+  "Officials say the situation is now fully under control.",
+  "Weather teams are tracking a storm system moving east.",
+  "Markets closed higher after a volatile trading session.",
+  "A local hero is being honored for his quick thinking.",
+  "City council votes tonight on the new budget proposal.",
+  "Coming up, more on tonight's breaking developments."
+];
+
+let words=[],scrollY=0,pace=0,targetPaceTop=0,targetPaceBottom=0;
+let emphIdx=[],hitEmph=new Set();
+let timer=0,timerMax=0;
+let scrollSpeed=40;
+let msg='',msgTime=0;
+let flashBad=0;
+let holding=false;
+
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('segment_label','Segment: {l}').replace('{l}',segment);}
+function hsDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(3-Math.max(0,lives)));}
+
+function buildWords(text){
+  const raw=text.split(' ');
+  const out=[];
+  raw.forEach((w,i)=>{out.push({text:w,emphasis:false});});
+  // choose 1-2 emphasis words (not first/last)
+  const n=raw.length>5?2:1;
+  const pool=[];
+  for(let i=1;i<raw.length-1;i++)pool.push(i);
+  for(let k=0;k<n&&pool.length;k++){
+    const pi=Math.floor(Math.random()*pool.length);
+    out[pool[pi]].emphasis=true;
+    pool.splice(pi,1);
+  }
+  return out;
+}
+
+function setupSegment(){
+  const text=SEGMENTS_TEXT[(segment-1)%SEGMENTS_TEXT.length];
+  words=buildWords(text);
+  scrollY=0;
+  pace=0;
+  hitEmph=new Set();
+  scrollSpeed=40+segment*7;
+  const band=Math.max(16,42-segment*2.5);
+  targetPaceTop=-band;targetPaceBottom=band;
+  timerMax=Math.max(8,10+words.length*0.9-segment*0.3);
+  timer=timerMax;
+}
+
+function reset(){
+  score=0;segment=1;lives=3;gameOver=false;started=false;
+  setupSegment();
+}
+reset();
+scoreDisp();lvDisp();hsDisp();livesDisp();
+
+function loseLife(m){
+  lives--;SFX.fail();
+  msg=m||'';msgTime=1.2;
+  flashBad=0.4;
+  livesDisp();
+  if(lives<=0){
+    gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(KEY,hi);}
+    hsDisp();
+  } else {
+    setupSegment();
+  }
+}
+
+function completeSegment(){
+  score+=40+segment*10;
+  SFX.win();
+  segment++;
+  scoreDisp();lvDisp();
+  setupSegment();
+}
+
+function totalScriptHeight(){
+  // approximate: each word row wraps at ~5 words per line for canvas layout
+  return layoutLines().length*LINE_H;
+}
+
+function layoutLines(){
+  // word-wrap into lines of max width
+  const lines=[];
+  let cur=[];
+  let curW=0;
+  const maxW=W-80;
+  ctx.font='28px Georgia';
+  words.forEach((w,i)=>{
+    const ww=ctx.measureText(w.text+' ').width;
+    if(curW+ww>maxW&&cur.length){lines.push(cur);cur=[];curW=0;}
+    cur.push({w,i});curW+=ww;
+  });
+  if(cur.length)lines.push(cur);
+  return lines;
+}
+
+function pointerActivate(down){
+  if(gameOver){reset();scoreDisp();lvDisp();hsDisp();livesDisp();started=false;return;}
+  if(!started){started=true;return;}
+  holding=down;
+}
+
+function emphasisTap(){
+  if(gameOver||!started)return;
+  // find word currently nearest the read line that is emphasis and unhit
+  const lines=layoutLines();
+  let best=null,bestDist=9999;
+  lines.forEach((ln,li)=>{
+    const y=li*LINE_H-scrollY+LINE_Y;
+    const dist=Math.abs(y-LINE_Y);
+    ln.forEach(({w,i})=>{
+      if(w.emphasis&&!hitEmph.has(i)&&dist<LINE_H*1.1&&dist<bestDist){
+        best={i,dist};bestDist=dist;
+      }
+    });
+  });
+  if(best){
+    hitEmph.add(best.i);
+    score+=15;
+    SFX.success();
+    scoreDisp();
+  } else {
+    SFX.error();
+    loseLife(I18N.t('missed_emphasis','Missed the emphasis cue!'));
+  }
+}
+
+c.addEventListener('mousedown',e=>pointerActivate(true));
+c.addEventListener('mouseup',e=>pointerActivate(false));
+c.addEventListener('touchstart',e=>{e.preventDefault();pointerActivate(true);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerActivate(false);emphasisTap();},{passive:false});
+c.addEventListener('dblclick',e=>{});
+c.addEventListener('contextmenu',e=>e.preventDefault());
+c.addEventListener('click',e=>{ if(gameOver||!started){pointerActivate(true);} });
+c.addEventListener('auxclick',e=>e.preventDefault());
+
+// Secondary tap-to-emphasize for mouse: right-click free, use double behavior via keyboard mainly;
+// also allow a quick tap (touchend without much hold) to count as emphasis attempt on mobile already handled above.
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){
+    e.preventDefault();
+    if(gameOver){reset();scoreDisp();lvDisp();hsDisp();livesDisp();started=false;return;}
+    if(!started){started=true;return;}
+    holding=true;
+  } else if(e.code==='Enter'||e.code==='ArrowDown'){
+    e.preventDefault();
+    emphasisTap();
+  }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp')holding=false;
+});
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#141420');sky.addColorStop(1,'#1f1f30');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  if(flashBad>0){flashBad-=dt;ctx.fillStyle=`rgba(255,0,0,${Math.max(0,flashBad)*0.3})`;ctx.fillRect(0,0,W,H);}
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap or press Space to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space/Enter to restart'),W/2,H/2+46);
+    requestAnimationFrame(loop);return;
+  }
+
+  // timer
+  timer-=dt;
+  if(timer<=0){
+    loseLife(I18N.t('ran_out_time','Segment ran out of time!'));
+    timer=timerMax;
+  }
+
+  // scroll advances always
+  scrollY+=scrollSpeed*dt;
+  // pace marker chases scroll when holding, decays otherwise
+  const paceTarget=holding?(targetPaceBottom):(targetPaceTop-4);
+  pace+=(paceTarget-pace)*Math.min(1,dt*3);
+
+  const effectiveScroll=scrollY+pace*0.0; // scroll itself is the "true" position
+  const lines=layoutLines();
+  const totalH=lines.length*LINE_H;
+
+  if(scrollY>totalH+LINE_H*2){
+    const allHit=words.every((w,i)=>!w.emphasis||hitEmph.has(i));
+    if(allHit)completeSegment();
+    else loseLife(I18N.t('missed_emphasis','Missed an emphasis cue before the script ended!'));
+    requestAnimationFrame(loop);return;
+  }
+
+  // pace deviation check: if holding too long while already caught up, or not holding while behind
+  const deviation=holding? (pace-targetPaceBottom) : (targetPaceTop-pace);
+  // drift check: compare how far "pace" (reading effort) is from needed scroll — simplified model:
+  // if not holding for too long, you fall behind -> pace goes very negative
+  if(pace<targetPaceTop-30||pace>targetPaceBottom+30){
+    loseLife(I18N.t('pace_lost','You lost your pace with the prompter!'));
+  }
+
+  // timer bar
+  const tpct=Math.max(0,timer/timerMax);
+  ctx.fillStyle='#222';ctx.fillRect(20,16,W-40,8);
+  ctx.fillStyle=tpct>0.3?'#7ec850':'#ff6b6b';
+  ctx.fillRect(20,16,(W-40)*tpct,8);
+
+  // read line
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;
+  ctx.setLineDash([6,6]);
+  ctx.beginPath();ctx.moveTo(20,LINE_Y);ctx.lineTo(W-20,LINE_Y);ctx.stroke();
+  ctx.setLineDash([]);
+
+  // script text, clipped
+  ctx.save();
+  ctx.beginPath();ctx.rect(20,50,W-40,H-130);ctx.clip();
+  ctx.font='28px Georgia';ctx.textAlign='left';
+  lines.forEach((ln,li)=>{
+    const y=li*LINE_H-scrollY+LINE_Y;
+    if(y<-LINE_H||y>H)return;
+    let x=40;
+    ln.forEach(({w,i})=>{
+      const isEmph=w.emphasis;
+      const done=hitEmph.has(i);
+      if(isEmph&&!done){
+        const pulse=0.5+0.5*Math.sin(now/150);
+        ctx.fillStyle=`rgba(255,213,79,${0.6+pulse*0.4})`;
+      } else if(isEmph&&done){
+        ctx.fillStyle='#7ec850';
+      } else {
+        ctx.fillStyle='#e8e8e8';
+      }
+      ctx.fillText(w.text,x,y);
+      x+=ctx.measureText(w.text+' ').width;
+    });
+  });
+  ctx.restore();
+
+  // pace meter (vertical) on right edge
+  const meterX=W-40,meterTop=60,meterH=H-140;
+  ctx.fillStyle='#222';ctx.fillRect(meterX-10,meterTop,20,meterH);
+  const bandTopPx=meterTop+meterH/2-((targetPaceBottom)/60)*meterH/2;
+  const bandBotPx=meterTop+meterH/2-((targetPaceTop)/60)*meterH/2;
+  ctx.fillStyle='rgba(76,175,80,0.4)';
+  ctx.fillRect(meterX-10,Math.min(bandTopPx,bandBotPx),20,Math.abs(bandBotPx-bandTopPx));
+  const paceY=meterTop+meterH/2-(pace/60)*meterH/2;
+  ctx.fillStyle=Math.abs(deviation)>20?'#ff6b6b':'#4fc3f7';
+  ctx.beginPath();ctx.arc(meterX,Math.max(meterTop,Math.min(meterTop+meterH,paceY)),9,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#aaa';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('pace_label','PACE'),meterX,meterTop-8);
+
+  ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(holding?I18N.t('reading_now','Reading…'):I18N.t('hold_to_read','Hold Space / Press to read'),W/2,H-26);
+
+  if(msgTime>0){
+    msgTime-=dt;
+    ctx.fillStyle='#ffd54f';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,H-50);
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

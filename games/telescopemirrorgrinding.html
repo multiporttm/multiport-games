@@ -1,0 +1,235 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Telescope Mirror Grinding</title><meta name="description" content="Play Telescope Mirror Grinding free online — Drag or use Arrow Keys to move the grinding tool in overlapping strokes across the mirror blank, wear down the high spots through each grit, and test the curve before polishing to a perfect figure."><link rel="canonical" href="https://games.multiportllc.com/games/telescopemirrorgrinding"><meta property="og:title" content="Telescope Mirror Grinding - Multiport Games"><meta property="og:description" content="Play Telescope Mirror Grinding free online — Drag or use Arrow Keys to move the grinding tool in overlapping strokes across the mirror blank, wear down the high spots through each grit, and test the curve before polishing to a perfect figure."><meta property="og:url" content="https://games.multiportllc.com/games/telescopemirrorgrinding"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Telescope Mirror Grinding","description":"Play Telescope Mirror Grinding free online instantly. Hand-grind a telescope's primary mirror blank in overlapping strokes against an abrasive tool, working through progressively finer grits while testing the curve against a spherometer, until the mirror is ground to an optically perfect figure. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/telescopemirrorgrinding","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1a2e;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#dfe6ff;font-size:1rem;font-weight:700;text-align:center;padding:6px;display:flex;flex-wrap:wrap;gap:14px;justify-content:center}
+#hud span{color:#8ecbff}
+#msg{color:#ffd54f;font-size:.95rem;text-align:center;min-height:1.4em;padding-bottom:4px}
+#testBtn{display:block;margin:6px auto 0;padding:8px 20px;background:#4a6fff;border:none;border-radius:20px;color:#fff;font-weight:700;cursor:pointer;font-size:.95rem}
+#testBtn:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Telescope Mirror Grinding</div>
+  <div class="game-frame">
+    <div id="hud">Score: <span id="score">0</span> | Hi: <span id="hi">0</span> | Lives: <span id="lives">3</span> | Mirror #<span id="level">1</span> | Grit: <span id="grit">Coarse</span></div>
+    <div id="msg"></div>
+    <canvas id="c" width="500" height="500"></canvas>
+    <button id="testBtn" onclick="testCurve()">Test Curve (Spherometer)</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the grinding tool (or use <b>Arrow Keys</b>) in overlapping strokes across the mirror to wear down the red high spots toward green. Don't dig blue low spots too deep! Click <b>Test Curve</b> to check your progress, and advance through Coarse → Medium → Fine grit before polishing each mirror to perfection.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const N=22, CELL=500/N;
+let heights=[], lives=3, score=0, hi=parseInt(localStorage.getItem('tmg_hi')||'0'), level=1, gritIdx=0;
+const GRITS=[{name:'Coarse',tol:3.2,brush:2.4,remove:0.22},{name:'Medium',tol:1.6,brush:1.7,remove:0.12},{name:'Fine',tol:0.5,brush:1.1,remove:0.05}];
+let timeLeft=60, lastTime=null, running=true, testCooldown=0, defects=0;
+let tool={gx:N/2,gy:N/2};
+let pointerDown=false, lastPX=null, lastPY=null;
+
+function initMirror(){
+  heights=[];
+  const bumps=3+level;
+  for(let y=0;y<N;y++){const row=[];for(let x=0;x<N;x++)row.push(0);heights.push(row);}
+  for(let b=0;b<bumps;b++){
+    const cx=2+Math.random()*(N-4), cy=2+Math.random()*(N-4), r=2+Math.random()*3, amp=4+Math.random()*4;
+    for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+      const d=Math.hypot(x-cx,y-cy);
+      if(d<r)heights[y][x]+=amp*(1-d/r);
+    }
+  }
+}
+
+function avgErr(){
+  let s=0,c=0;
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){s+=Math.abs(heights[y][x]);c++;}
+  return s/c;
+}
+function maxErr(){
+  let m=0;
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++)m=Math.max(m,Math.abs(heights[y][x]));
+  return m;
+}
+
+function grindAt(gx,gy,amt){
+  const grit=GRITS[gritIdx];
+  const r=grit.brush;
+  for(let y=Math.max(0,Math.floor(gy-r));y<=Math.min(N-1,Math.ceil(gy+r));y++){
+    for(let x=Math.max(0,Math.floor(gx-r));x<=Math.min(N-1,Math.ceil(gx+r));x++){
+      const d=Math.hypot(x-gx,y-gy);
+      if(d<=r){
+        const falloff=1-d/r;
+        if(heights[y][x]>0){
+          heights[y][x]-=amt*falloff;
+          if(heights[y][x]<-3.5&&heights[y][x]+amt*falloff>=-3.5){defects++;}
+        } else {
+          heights[y][x]-=amt*falloff*0.4;
+        }
+      }
+    }
+  }
+}
+
+function colorFor(v){
+  const grit=GRITS[gritIdx];
+  if(v>grit.tol){const t=Math.min(1,(v-grit.tol)/6);return `rgb(${255},${Math.floor(80-40*t)},${Math.floor(60-30*t)})`;}
+  if(v<-grit.tol){const t=Math.min(1,(-v-grit.tol)/4);return `rgb(${Math.floor(60-30*t)},${Math.floor(90-30*t)},255)`;}
+  return `rgb(90,220,120)`;
+}
+
+function draw(){
+  ctx.clearRect(0,0,500,500);
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    ctx.fillStyle=colorFor(heights[y][x]);
+    ctx.fillRect(x*CELL,y*CELL,CELL-1,CELL-1);
+  }
+  // tool
+  ctx.save();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc((tool.gx+0.5)*CELL,(tool.gy+0.5)*CELL,GRITS[gritIdx].brush*CELL,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,0.25)';ctx.fill();
+  ctx.restore();
+
+  if(!running){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,500,500);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),250,230);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space to restart'),250,266);
+  }
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+function updateHud(){
+  document.getElementById('score').textContent=Math.floor(score);
+  document.getElementById('hi').textContent=Math.floor(hi);
+  document.getElementById('lives').textContent=lives;
+  document.getElementById('level').textContent=level;
+  document.getElementById('grit').textContent=I18N.t('grit_'+GRITS[gritIdx].name.toLowerCase(),GRITS[gritIdx].name);
+}
+
+function testCurve(){
+  if(!running||testCooldown>0)return;
+  testCooldown=90;
+  document.getElementById('testBtn').disabled=true;
+  setTimeout(()=>{document.getElementById('testBtn').disabled=false;},1500);
+  SFX.click();
+  const err=avgErr(), mx=maxErr();
+  setMsg(I18N.t('spherometer_reading','Spherometer: avg error {a}, max {m}').replace('{a}',err.toFixed(2)).replace('{m}',mx.toFixed(2)));
+  if(err<=GRITS[gritIdx].tol&&mx<=GRITS[gritIdx].tol*1.8){
+    advanceGrit();
+  }
+}
+
+function advanceGrit(){
+  SFX.success();
+  if(gritIdx<GRITS.length-1){
+    gritIdx++;
+    score+=40;
+    setMsg(I18N.t('grit_advance','Curve within tolerance! Moving to {g} grit.').replace('{g}',GRITS[gritIdx].name));
+  } else {
+    finishMirror();
+  }
+}
+
+function finishMirror(){
+  SFX.levelup();
+  score+=120+Math.floor(timeLeft*2);
+  if(score>hi){hi=score;localStorage.setItem('tmg_hi',String(hi));}
+  level++;
+  gritIdx=0;
+  defects=0;
+  timeLeft=Math.max(30,60-level*2);
+  initMirror();
+  setMsg(I18N.t('mirror_complete','Mirror #{n} polished to perfection! Next blank mounted.').replace('{n}',String(level-1)));
+}
+
+function loseLife(reason){
+  lives--;
+  SFX.hurt();
+  defects=0;
+  if(lives<=0){
+    running=false;
+    SFX.lose();
+    setMsg(I18N.t('game_over_msg','No grit blanks left. Game over.'));
+  } else {
+    gritIdx=0;
+    initMirror();
+    setMsg(reason+' '+I18N.t('lives_left','Lives left: {l}').replace('{l}',lives));
+  }
+}
+
+function restart(){
+  lives=3;score=0;level=1;gritIdx=0;defects=0;timeLeft=60;running=true;lastTime=null;
+  initMirror();
+  setMsg('');
+}
+
+document.addEventListener('keydown',e=>{
+  if(!running){if(e.code==='Space'){restart();}return;}
+  const step=0.6;
+  if(e.code==='ArrowLeft'){tool.gx=Math.max(0,tool.gx-step);grindAt(tool.gx,tool.gy,GRITS[gritIdx].remove*0.5);}
+  if(e.code==='ArrowRight'){tool.gx=Math.min(N-1,tool.gx+step);grindAt(tool.gx,tool.gy,GRITS[gritIdx].remove*0.5);}
+  if(e.code==='ArrowUp'){tool.gy=Math.max(0,tool.gy-step);grindAt(tool.gx,tool.gy,GRITS[gritIdx].remove*0.5);}
+  if(e.code==='ArrowDown'){tool.gy=Math.min(N-1,tool.gy+step);grindAt(tool.gx,tool.gy,GRITS[gritIdx].remove*0.5);}
+});
+
+function posFromEvent(e){
+  const rect=c.getBoundingClientRect();
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  const px=(clientX-rect.left)/rect.width*500;
+  const py=(clientY-rect.top)/rect.height*500;
+  return {gx:px/CELL,gy:py/CELL};
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(!running){restart();return;}
+  pointerDown=true;
+  const p=posFromEvent(e);
+  tool.gx=p.gx;tool.gy=p.gy;lastPX=p.gx;lastPY=p.gy;
+});
+window.addEventListener('pointermove',e=>{
+  if(!pointerDown||!running)return;
+  const p=posFromEvent(e);
+  tool.gx=Math.max(0,Math.min(N-1,p.gx));tool.gy=Math.max(0,Math.min(N-1,p.gy));
+  const dist=Math.hypot(tool.gx-lastPX,tool.gy-lastPY);
+  if(dist>0.08){
+    grindAt(tool.gx,tool.gy,GRITS[gritIdx].remove*Math.min(dist,1.5));
+    lastPX=tool.gx;lastPY=tool.gy;
+  }
+});
+window.addEventListener('pointerup',()=>{pointerDown=false;});
+c.addEventListener('touchmove',e=>{e.preventDefault();},{passive:false});
+
+function loop(ts){
+  if(testCooldown>0)testCooldown--;
+  if(running){
+    if(lastTime===null)lastTime=ts;
+    const dt=Math.min((ts-lastTime)/1000,0.1);
+    lastTime=ts;
+    timeLeft-=dt;
+    score+=dt*2;
+    if(defects>=6){loseLife(I18N.t('overground_msg','Overground too many spots!'));}
+    if(timeLeft<=0){loseLife(I18N.t('time_up_msg','Ran out of grinding time!'));}
+  } else {
+    lastTime=null;
+  }
+  draw();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+initMirror();
+requestAnimationFrame(loop);
+</script></body></html>

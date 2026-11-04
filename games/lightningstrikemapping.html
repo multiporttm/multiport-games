@@ -1,0 +1,294 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Lightning Strike Mapping</title><meta name="description" content="Play Lightning Strike Mapping free online — Watch live strike data hit the regional map, find the storm cell striking hardest, and issue the right safety alert in time."><link rel="canonical" href="https://games.multiportllc.com/games/lightningstrikemapping"><meta property="og:title" content="Lightning Strike Mapping - Multiport Games"><meta property="og:description" content="Play Lightning Strike Mapping free online — Watch live strike data hit the regional map, find the storm cell striking hardest, and issue the right safety alert in time."><meta property="og:url" content="https://games.multiportllc.com/games/lightningstrikemapping"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Lightning Strike Mapping","description":"Play Lightning Strike Mapping free online instantly. Map incoming real-time lightning strike data onto a regional map, identify which storm cell is producing the most strikes, and issue the correct lightning safety alert for the areas most at risk. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/lightningstrikemapping","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#070812;display:block;border-radius:8px}
+#score-display{color:#ffe066;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#prompt-display{color:#ffd54f;font-size:1.1rem;font-weight:800;text-align:center;min-height:1.6em;padding:0 10px}
+#alertRow{display:flex;justify-content:center;gap:8px;margin:8px 0}
+#alertRow button{padding:8px 16px;border:2px solid #444;border-radius:10px;font-weight:800;cursor:pointer;font-size:0.95rem}
+#alertRow button[data-a="low"]{background:#2e5c2e;color:#dfffdf;border-color:#4caf50}
+#alertRow button[data-a="moderate"]{background:#6b5a1e;color:#fff4cc;border-color:#ffc107}
+#alertRow button[data-a="severe"]{background:#6b1e1e;color:#ffdede;border-color:#ff5252}
+#alertRow button.active{outline:3px solid #fff}
+#alertRow button:disabled{opacity:.35;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Lightning Strike Mapping</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Lv: 1 | Lives: 3 | Hi: 0</div>
+    <div id="prompt-display">&nbsp;</div>
+    <canvas id="c" width="800" height="420" tabindex="0"></canvas>
+    <div id="alertRow">
+      <button data-a="low" id="alert-low">1. Low</button>
+      <button data-a="moderate" id="alert-moderate">2. Moderate</button>
+      <button data-a="severe" id="alert-severe">3. Severe</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch strikes flash on the map, then <b>click/tap</b> (or <b>Arrow Keys + Enter</b>) the storm cell hitting hardest, and pick the correct alert level — <b>Low</b>, <b>Moderate</b>, or <b>Severe</b> — with the buttons or keys <b>1-3</b> before time runs out.</div>
+</div>
+<script>
+const HI_KEY='mp_hi_lightningstrikemapping';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const ALERTS=['low','moderate','severe'];
+
+let score=0,lives=3,level=1,hi=0,gameOver=false,started=false;
+let cells=[],flashes=[],focusIdx=0,selectedCell=null,chosenAlert=null;
+let timeLeft=0,timeMax=0,roundActive=false,phase='watch',msgTimer=0,msgText='',flashGood=null;
+let strikeTimer=0;
+
+function loadHi(){hi=parseInt(localStorage.getItem(HI_KEY)||'0');}
+function saveHi(){if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}}
+loadHi();
+
+function rand(a,b){return a+Math.random()*(b-a);}
+function dist(x1,y1,x2,y2){return Math.hypot(x1-x2,y1-y2);}
+
+function alertForCount(n){
+  if(n>=10)return 'severe';
+  if(n>=5)return 'moderate';
+  return 'low';
+}
+
+function buildRound(){
+  const count=Math.min(3+Math.floor(level/2),5);
+  cells=[];
+  for(let i=0;i<count;i++){
+    let x,y,tries=0;
+    do{x=rand(90,W-90);y=rand(90,H-110);tries++;}
+    while(cells.some(cl=>dist(cl.x,cl.y,x,y)<150)&&tries<40);
+    cells.push({x,y,r:55,strikes:0,rate:rand(0.4,2.2)});
+  }
+  flashes=[];
+  focusIdx=0;selectedCell=null;chosenAlert=null;
+  document.querySelectorAll('#alertRow button').forEach(b=>b.classList.remove('active'));
+  const watchTime=Math.max(3,6-level*0.2);
+  const decideTime=Math.max(5,10-level*0.4);
+  timeMax=watchTime;timeLeft=watchTime;
+  phase='watch';
+  roundActive=true;
+  strikeTimer=0;
+  document.getElementById('prompt-display').textContent=I18N.t('watch_prompt','Watching live strikes...');
+  cells.maxRef={decideTime};
+}
+
+function spawnStrike(dt){
+  strikeTimer+=dt;
+  cells.forEach(cell=>{
+    if(Math.random()<cell.rate*dt){
+      cell.strikes++;
+      const ang=rand(0,Math.PI*2),rr=rand(0,cell.r*0.85);
+      flashes.push({x:cell.x+Math.cos(ang)*rr,y:cell.y+Math.sin(ang)*rr,life:0.25});
+    }
+  });
+}
+
+function hottestCell(){
+  let best=cells[0];
+  cells.forEach(cl=>{if(cl.strikes>best.strikes)best=cl;});
+  return best;
+}
+
+function cellHit(cl,x,y){return dist(cl.x,cl.y,x,y)<cl.r;}
+
+function pointerToCanvas(e){
+  const rect=c.getBoundingClientRect();
+  return [(e.clientX-rect.left)*(W/rect.width),(e.clientY-rect.top)*(H/rect.height)];
+}
+
+function selectCellByClick(x,y){
+  if(phase!=='decide')return;
+  const cl=cells.find(cl=>cellHit(cl,x,y));
+  if(cl)chooseCellAndMaybeFinish(cl);
+}
+
+function chooseCellAndMaybeFinish(cl){
+  selectedCell=cl;
+  SFX.select();
+  tryFinish();
+}
+
+function chooseAlert(a){
+  if(phase!=='decide')return;
+  chosenAlert=a;
+  document.querySelectorAll('#alertRow button').forEach(b=>b.classList.toggle('active',b.dataset.a===a));
+  SFX.select();
+  tryFinish();
+}
+
+function tryFinish(){
+  if(selectedCell&&chosenAlert)finishRound();
+}
+
+function finishRound(){
+  roundActive=false;
+  const best=hottestCell();
+  const correctAlert=alertForCount(best.strikes);
+  const cellOk=selectedCell===best;
+  const alertOk=chosenAlert===correctAlert;
+  if(cellOk&&alertOk){
+    score+=12*level;
+    msgText=I18N.t('alert_issued_msg','Correct alert issued!');
+    flashGood=true;SFX.success();
+    level=1+Math.floor(score/70);
+    if(score%70<12*level)SFX.levelup();
+  }else{
+    lives--;
+    msgText=I18N.t('wrong_alert_msg','Wrong call!');
+    flashGood=false;SFX.error();
+  }
+  msgTimer=1.2;
+  saveHi();
+  if(lives<=0){gameOver=true;SFX.lose();}
+}
+
+function handleStart(){
+  if(gameOver){reset();return;}
+  if(!started){started=true;buildRound();}
+}
+
+c.addEventListener('click',e=>{
+  if(!started||gameOver){handleStart();return;}
+  if(!roundActive)return;
+  const [x,y]=pointerToCanvas(e);
+  selectCellByClick(x,y);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started||gameOver){handleStart();return;}
+  if(!roundActive)return;
+  const t=e.touches[0];
+  const [x,y]=pointerToCanvas(t);
+  selectCellByClick(x,y);
+},{passive:false});
+
+document.querySelectorAll('#alertRow button').forEach(btn=>{
+  btn.addEventListener('click',()=>chooseAlert(btn.dataset.a));
+});
+
+document.addEventListener('keydown',e=>{
+  if(['1','2','3','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter',' '].includes(e.key))e.preventDefault();
+  if(!started||gameOver){
+    if(e.key==='Enter'||e.key===' ')handleStart();
+    return;
+  }
+  if(!roundActive||phase!=='decide')return;
+  if(e.key==='1')chooseAlert('low');
+  else if(e.key==='2')chooseAlert('moderate');
+  else if(e.key==='3')chooseAlert('severe');
+  else if(e.key==='ArrowRight'||e.key==='ArrowDown'){focusIdx=(focusIdx+1)%cells.length;SFX.tick();}
+  else if(e.key==='ArrowLeft'||e.key==='ArrowUp'){focusIdx=(focusIdx-1+cells.length)%cells.length;SFX.tick();}
+  else if(e.key==='Enter'||e.key===' '){chooseCellAndMaybeFinish(cells[focusIdx]);}
+});
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;roundActive=false;cells=[];flashes=[];selectedCell=null;chosenAlert=null;msgText='';msgTimer=0;
+  document.getElementById('prompt-display').textContent='';
+}
+
+function updateHud(){
+  document.getElementById('score-display').textContent=
+    I18N.t('hud_label','Score: {s} | Lv: {l} | Lives: {v} | Hi: {h}')
+      .replace('{s}',score).replace('{l}',level).replace('{v}',lives).replace('{h}',hi);
+}
+
+function drawCell(cl,i){
+  const isFocus=i===focusIdx&&phase==='decide';
+  const isSel=cl===selectedCell;
+  ctx.save();
+  ctx.fillStyle='rgba(80,90,120,0.25)';
+  ctx.beginPath();ctx.arc(cl.x,cl.y,cl.r,0,7);ctx.fill();
+  ctx.strokeStyle=isSel?'#ffe066':isFocus?'#4fa3ff':'rgba(150,160,200,0.6)';
+  ctx.lineWidth=isSel||isFocus?4:2;
+  ctx.stroke();
+  if(phase==='decide'){
+    ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(cl.strikes+' '+I18N.t('strikes_label','strikes'),cl.x,cl.y+cl.r+16);
+  }
+  ctx.restore();
+}
+
+let lastTime=null;
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#05050d');sky.addColorStop(1,'#101127');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#ffe066';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Enter to start'),W/2,H/2);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','NETWORK DOWN'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),W/2,H/2+14);
+    ctx.fillText(I18N.t('restart_hint','Click / Tap / Enter to try again'),W/2,H/2+44);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  cells.forEach((cl,i)=>drawCell(cl,i));
+
+  if(roundActive){
+    spawnStrike(dt);
+    flashes=flashes.filter(f=>f.life>0);
+    flashes.forEach(f=>{
+      f.life-=dt;
+      ctx.fillStyle=`rgba(255,255,220,${Math.max(0,f.life/0.25)})`;
+      ctx.beginPath();ctx.arc(f.x,f.y,4,0,7);ctx.fill();
+    });
+    timeLeft-=dt;
+    const pct=Math.max(0,timeLeft/timeMax);
+    ctx.fillStyle='#1b1b33';ctx.fillRect(20,H-28,W-40,10);
+    ctx.fillStyle=pct<0.3?'#ff6b6b':'#ffe066';
+    ctx.fillRect(20,H-28,(W-40)*pct,10);
+    if(timeLeft<=0){
+      if(phase==='watch'){
+        phase='decide';
+        timeMax=cells.maxRef?cells.maxRef.decideTime:8;
+        timeLeft=timeMax;
+        document.getElementById('prompt-display').textContent=
+          I18N.t('decide_prompt','Pick the hottest cell and issue the alert!');
+      }else{
+        lives--;
+        msgText=I18N.t('too_slow_msg','Too slow!');
+        flashGood=false;SFX.error();
+        msgTimer=1.0;
+        roundActive=false;
+        saveHi();
+        if(lives<=0){gameOver=true;SFX.lose();}
+      }
+    }
+  }else if(msgTimer>0){
+    msgTimer-=dt;
+    ctx.fillStyle=flashGood?'#7ec850':'#ff6b6b';
+    ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(msgText,W/2,H/2);
+    if(msgTimer<=0&&!gameOver)buildRound();
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

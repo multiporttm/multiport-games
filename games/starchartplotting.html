@@ -1,0 +1,241 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Star Chart Plotting</title><meta name="description" content="Play Star Chart Plotting free online — Move the cursor with Arrow Keys (or tap/drag) to the given right ascension and declination, then press Enter or tap Plot to mark each object on the chart before it's due."><link rel="canonical" href="https://games.multiportllc.com/games/starchartplotting"><meta property="og:title" content="Star Chart Plotting - Multiport Games"><meta property="og:description" content="Play Star Chart Plotting free online — Move the cursor with Arrow Keys (or tap/drag) to the given right ascension and declination, then press Enter or tap Plot to mark each object on the chart before it's due."><meta property="og:url" content="https://games.multiportllc.com/games/starchartplotting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Star Chart Plotting","description":"Play Star Chart Plotting free online instantly. Plot stars and deep-sky objects onto a star chart using right ascension and declination coordinates, placing each object relative to reference stars to match a given sky survey listing before the chart is due. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/starchartplotting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#070a16;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#dfe6ff;font-size:1rem;font-weight:700;text-align:center;padding:6px;display:flex;flex-wrap:wrap;gap:14px;justify-content:center}
+#hud span{color:#8ecbff}
+#msg{color:#ffd54f;font-size:.95rem;text-align:center;min-height:1.4em;padding-bottom:4px}
+#plotBtn{display:block;margin:6px auto 0;padding:8px 20px;background:#4a6fff;border:none;border-radius:20px;color:#fff;font-weight:700;cursor:pointer;font-size:.95rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Star Chart Plotting</div>
+  <div class="game-frame">
+    <div id="hud">Score: <span id="score">0</span> | Hi: <span id="hi">0</span> | Lives: <span id="lives">3</span> | Round: <span id="level">1</span></div>
+    <div id="msg">Plot: —</div>
+    <canvas id="c" width="500" height="500"></canvas>
+    <button id="plotBtn" onclick="plot()">Plot Object (Enter)</button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move the cursor with <b>Arrow Keys</b>, or tap/drag directly on the chart, to the object's listed <b>RA/Dec</b> coordinates relative to the reference stars, then press <b>Enter</b> or tap <b>Plot Object</b> to mark it. Plot every object on the survey listing before the chart's deadline runs out.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const MARGIN=40, SIZE=420;
+const RA_MIN=0, RA_MAX=24, DEC_MIN=-40, DEC_MAX=40;
+let refStars=[], targets=[], queueIdx=0, cursor={ra:12,dec:0};
+let lives=3, score=0, hi=parseInt(localStorage.getItem('scp_hi')||'0'), level=1;
+let timeLeft=40, totalTime=40, running=true, lastTime=null, tolerance=1.6;
+let dragging=false;
+
+function raToX(ra){return MARGIN+(ra-RA_MIN)/(RA_MAX-RA_MIN)*SIZE;}
+function decToY(dec){return MARGIN+(1-(dec-DEC_MIN)/(DEC_MAX-DEC_MIN))*SIZE;}
+function xToRa(x){return RA_MIN+((x-MARGIN)/SIZE)*(RA_MAX-RA_MIN);}
+function yToDec(y){return DEC_MIN+(1-((y-MARGIN)/SIZE))*(DEC_MAX-DEC_MIN);}
+
+const NAMES=['M31','M13','M42','NGC 6946','M51','NGC 2237','M81','M101','NGC 7000','M57','M27','NGC 253','M33','NGC 891','M64'];
+
+function genRound(){
+  refStars=[];
+  for(let i=0;i<6;i++){
+    refStars.push({ra:1+Math.random()*22,dec:DEC_MIN+10+Math.random()*(DEC_MAX-DEC_MIN-20),name:String.fromCharCode(65+i)});
+  }
+  targets=[];
+  const n=Math.min(2+Math.floor(level/2),7);
+  for(let i=0;i<n;i++){
+    targets.push({name:NAMES[(level*3+i)%NAMES.length]+' #'+(i+1),ra:1+Math.random()*22,dec:DEC_MIN+6+Math.random()*(DEC_MAX-DEC_MIN-12),done:false});
+  }
+  queueIdx=0;
+  tolerance=Math.max(0.6,1.8-level*0.1);
+  totalTime=Math.max(18,42-level*2);
+  timeLeft=totalTime;
+  cursor={ra:12,dec:0};
+  setMsg('');
+  updatePlotLabel();
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+function updatePlotLabel(){
+  const el=document.getElementById('msg');
+  if(queueIdx<targets.length){
+    const t=targets[queueIdx];
+    const raH=t.ra.toFixed(1), decS=(t.dec>=0?'+':'')+t.dec.toFixed(1);
+    el.textContent=I18N.t('plot_prompt','Plot: {n} — RA {r}h, Dec {d}°').replace('{n}',t.name).replace('{r}',raH).replace('{d}',decS);
+  }
+}
+function updateHud(){
+  document.getElementById('score').textContent=Math.floor(score);
+  document.getElementById('hi').textContent=Math.floor(hi);
+  document.getElementById('lives').textContent=lives;
+  document.getElementById('level').textContent=level;
+}
+
+function draw(){
+  ctx.clearRect(0,0,500,500);
+  ctx.fillStyle='#0a0e1e';ctx.fillRect(0,0,500,500);
+  // grid
+  ctx.strokeStyle='#1c2440';ctx.lineWidth=1;
+  for(let ra=0;ra<=24;ra+=4){
+    const x=raToX(ra);
+    ctx.beginPath();ctx.moveTo(x,MARGIN);ctx.lineTo(x,MARGIN+SIZE);ctx.stroke();
+    ctx.fillStyle='#5a6a99';ctx.font='11px Arial';ctx.textAlign='center';ctx.fillText(ra+'h',x,MARGIN-8);
+  }
+  for(let dec=DEC_MIN;dec<=DEC_MAX;dec+=20){
+    const y=decToY(dec);
+    ctx.beginPath();ctx.moveTo(MARGIN,y);ctx.lineTo(MARGIN+SIZE,y);ctx.stroke();
+    ctx.fillStyle='#5a6a99';ctx.font='11px Arial';ctx.textAlign='right';ctx.fillText(dec+'°',MARGIN-6,y+4);
+  }
+  ctx.strokeStyle='#3a4a7a';ctx.strokeRect(MARGIN,MARGIN,SIZE,SIZE);
+
+  // reference stars
+  refStars.forEach(s=>{
+    const x=raToX(s.ra), y=decToY(s.dec);
+    ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fillStyle='#ffe9a8';ctx.fill();
+    ctx.fillStyle='#ffe9a8';ctx.font='11px Arial';ctx.textAlign='left';ctx.fillText(s.name,x+6,y-4);
+  });
+
+  // completed/placed targets
+  targets.forEach((t,i)=>{
+    if(t.done){
+      const x=raToX(t.ra), y=decToY(t.dec);
+      ctx.beginPath();ctx.arc(x,y,6,0,Math.PI*2);ctx.strokeStyle='#4caf50';ctx.lineWidth=2;ctx.stroke();
+      ctx.fillStyle='#4caf50';ctx.font='10px Arial';ctx.fillText(t.name,x+8,y+4);
+    }
+  });
+
+  // cursor
+  const cx=raToX(cursor.ra), cy=decToY(cursor.dec);
+  ctx.beginPath();ctx.arc(cx,cy,9,0,Math.PI*2);ctx.strokeStyle='#ff6b6b';ctx.lineWidth=2;ctx.stroke();
+  ctx.beginPath();ctx.moveTo(cx-14,cy);ctx.lineTo(cx+14,cy);ctx.moveTo(cx,cy-14);ctx.lineTo(cx,cy+14);ctx.strokeStyle='#ff6b6baa';ctx.lineWidth=1;ctx.stroke();
+
+  // progress + time bar
+  ctx.fillStyle='#dfe6ff';ctx.font='13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('objects_progress','Objects: {d}/{t}').replace('{d}',targets.filter(t=>t.done).length).replace('{t}',targets.length),MARGIN,30);
+  ctx.fillStyle='#222c4a';ctx.fillRect(MARGIN,470,SIZE,8);
+  ctx.fillStyle=timeLeft<6?'#ff6b6b':'#8ecbff';
+  ctx.fillRect(MARGIN,470,SIZE*Math.max(0,timeLeft/totalTime),8);
+
+  if(!running){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,500,500);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),250,230);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space to restart'),250,266);
+  }
+}
+
+function plot(){
+  if(!running){restart();return;}
+  if(queueIdx>=targets.length)return;
+  const t=targets[queueIdx];
+  const dRa=(cursor.ra-t.ra), dDec=(cursor.dec-t.dec);
+  const dist=Math.hypot(dRa,dDec);
+  if(dist<=tolerance){
+    t.done=true;
+    SFX.point();
+    score+=30+Math.floor((tolerance-dist)*20);
+    queueIdx++;
+    if(queueIdx>=targets.length){
+      roundWin();
+    } else {
+      updatePlotLabel();
+    }
+  } else {
+    SFX.error();
+    loseLife(I18N.t('miss_msg','Off target — check the coordinates!'));
+  }
+}
+
+function roundWin(){
+  SFX.win();
+  score+=50+Math.floor(timeLeft*3);
+  if(score>hi){hi=score;localStorage.setItem('scp_hi',String(hi));}
+  level++;
+  genRound();
+  setMsg(I18N.t('chart_complete','Chart complete! New survey listing issued.'));
+}
+
+function loseLife(reason){
+  lives--;
+  SFX.hurt();
+  if(lives<=0){
+    running=false;SFX.lose();
+    setMsg(I18N.t('game_over_msg','Too many chart errors. Game over.'));
+  } else {
+    setMsg(reason+' '+I18N.t('lives_left','Lives left: {l}').replace('{l}',lives));
+    updatePlotLabel();
+  }
+}
+
+function restart(){
+  lives=3;score=0;level=1;running=true;lastTime=null;
+  genRound();
+}
+
+document.addEventListener('keydown',e=>{
+  if(!running){if(e.code==='Space')restart();return;}
+  const step=0.4;
+  if(e.code==='ArrowLeft'){cursor.ra=Math.max(RA_MIN,cursor.ra-step);e.preventDefault();}
+  if(e.code==='ArrowRight'){cursor.ra=Math.min(RA_MAX,cursor.ra+step);e.preventDefault();}
+  if(e.code==='ArrowUp'){cursor.dec=Math.min(DEC_MAX,cursor.dec+step);e.preventDefault();}
+  if(e.code==='ArrowDown'){cursor.dec=Math.max(DEC_MIN,cursor.dec-step);e.preventDefault();}
+  if(e.code==='Enter'){e.preventDefault();plot();}
+});
+
+function posFromEvent(e){
+  const rect=c.getBoundingClientRect();
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  const px=(clientX-rect.left)/rect.width*500;
+  const py=(clientY-rect.top)/rect.height*500;
+  return {ra:xToRa(px),dec:yToDec(py)};
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(!running){restart();return;}
+  dragging=true;
+  const p=posFromEvent(e);
+  cursor.ra=Math.max(RA_MIN,Math.min(RA_MAX,p.ra));
+  cursor.dec=Math.max(DEC_MIN,Math.min(DEC_MAX,p.dec));
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging||!running)return;
+  const p=posFromEvent(e);
+  cursor.ra=Math.max(RA_MIN,Math.min(RA_MAX,p.ra));
+  cursor.dec=Math.max(DEC_MIN,Math.min(DEC_MAX,p.dec));
+});
+window.addEventListener('pointerup',e=>{
+  if(dragging&&running){plot();}
+  dragging=false;
+});
+c.addEventListener('touchmove',e=>{e.preventDefault();},{passive:false});
+
+function loop(ts){
+  if(running){
+    if(lastTime===null)lastTime=ts;
+    const dt=Math.min((ts-lastTime)/1000,0.1);
+    lastTime=ts;
+    timeLeft-=dt;
+    if(timeLeft<=0){
+      loseLife(I18N.t('time_up_msg','Chart deadline passed!'));
+      if(running)genRound();
+    }
+  } else {
+    lastTime=null;
+  }
+  draw();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+genRound();
+requestAnimationFrame(loop);
+</script></body></html>

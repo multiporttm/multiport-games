@@ -1,0 +1,243 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Planetarium Projector Calibration</title><meta name="description" content="Play Planetarium Projector Calibration free online — Drag the star field into position, tune rotation speed, and dial in brightness to match the target constellation before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/planetariumprojectorcalibration"><meta property="og:title" content="Planetarium Projector Calibration - Multiport Games"><meta property="og:description" content="Play Planetarium Projector Calibration free online — Drag the star field into position, tune rotation speed, and dial in brightness to match the target constellation before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/planetariumprojectorcalibration"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Planetarium Projector Calibration","description":"Play Planetarium Projector Calibration free online instantly. Align the star projector's field position, rotation speed, and brightness against known constellation positions on the dome so the simulated night sky matches real astronomical positions before the next show starts. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/planetariumprojectorcalibration","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#070a1a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#bcd4ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#ffd54f}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff6b6b}
+#controls{display:flex;justify-content:center;gap:10px;margin:6px 0 2px;flex-wrap:wrap}
+#controls button{padding:8px 14px;background:#2d3a66;border:none;border-radius:16px;color:#fff;cursor:pointer;font-size:.95rem}
+#controls button:active{background:#3f52a3}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Planetarium Projector Calibration</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="hud">
+      <span id="roundDisp">Round 1</span>
+      <span class="lives" id="livesDisp">Lives: 3</span>
+      <span class="hs" id="hiDisp">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <div id="controls">
+      <button id="lockBtn">Lock Calibration</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Drag the star field (or use Arrow Keys) to align it with the target constellation outline, use <b>A / D</b> (or the on-screen knobs) to tune rotation speed, and <b>W / S</b> to adjust brightness until the readout turns green. Click/tap <b>Lock Calibration</b> or press <b>Enter</b> when aligned. You have 3 lives — a bad lock costs one.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const HS_KEY='hs_planetariumprojectorcalibration';
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+let round=1,lives=3,score=0,gameOver=false,won=false,locked=false,lockMsg='',lockTimer=0;
+
+// Target values the player must match
+let target={x:0,y:0,rot:0,bright:0};
+let cur={x:0,y:0,rot:0,bright:50};
+let tolerance=0;
+
+const stars=[];
+function makeStars(){
+  stars.length=0;
+  for(let i=0;i<120;i++){
+    stars.push({ox:Math.random()*W,oy:Math.random()*H,r:Math.random()*1.6+0.4});
+  }
+}
+makeStars();
+
+// Target constellation: a simple fixed pattern of points (like Big Dipper-ish), scaled from W/H center
+const constellation=[[-80,-40],[-40,-55],[0,-45],[30,-20],[60,-30],[85,-5],[40,20]];
+
+function newRound(){
+  const diffScale=Math.max(0.35,1-round*0.07);
+  tolerance=Math.max(10,40*diffScale);
+  target.x=120+Math.random()*(W-240);
+  target.y=120+Math.random()*(H-240);
+  target.rot=Math.random()*Math.PI*2;
+  target.bright=30+Math.random()*60;
+  cur.x=W/2;cur.y=H/2;cur.rot=0;cur.bright=50;
+  locked=false;lockMsg='';lockTimer=0;
+}
+newRound();
+
+function diffScore(){
+  const dx=cur.x-target.x,dy=cur.y-target.y;
+  const posErr=Math.hypot(dx,dy);
+  let rotErr=Math.abs(cur.rot-target.rot)%(Math.PI*2);
+  if(rotErr>Math.PI)rotErr=Math.PI*2-rotErr;
+  rotErr=rotErr*60; // scale to similar magnitude as pixels
+  const brightErr=Math.abs(cur.bright-target.bright);
+  return posErr+rotErr+brightErr;
+}
+
+function reset(){
+  round=1;lives=3;score=0;gameOver=false;won=false;
+  newRound();
+}
+
+let drag=null;
+function canvasPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+c.addEventListener('pointerdown',e=>{
+  if(gameOver){reset();return;}
+  drag={startX:e.clientX,startY:e.clientY,ox:cur.x,oy:cur.y};
+});
+c.addEventListener('pointermove',e=>{
+  if(!drag||gameOver)return;
+  const r=c.getBoundingClientRect();
+  const dx=(e.clientX-drag.startX)*(W/r.width);
+  const dy=(e.clientY-drag.startY)*(H/r.height);
+  cur.x=Math.max(60,Math.min(W-60,drag.ox+dx));
+  cur.y=Math.max(60,Math.min(H-60,drag.oy+dy));
+});
+window.addEventListener('pointerup',()=>{drag=null;});
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Enter'){attemptLock();}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+document.getElementById('lockBtn').addEventListener('click',()=>{
+  if(gameOver){reset();return;}
+  attemptLock();
+});
+
+function attemptLock(){
+  if(gameOver||locked)return;
+  const err=diffScore();
+  locked=true;lockTimer=90;
+  if(err<=tolerance){
+    const pts=Math.max(10,Math.round(200-err*2))+round*10;
+    score+=pts;
+    lockMsg=I18N.t('calibration_locked','Calibration locked! +'+pts);
+    SFX.success();
+    round++;
+    setTimeout(()=>{ if(!gameOver){newRound();} },1100);
+  } else {
+    lives--;
+    lockMsg=I18N.t('calibration_off','Off target! Lost a life');
+    SFX.fail();
+    if(lives<=0){
+      gameOver=true;
+      if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+      SFX.lose();
+    } else {
+      setTimeout(()=>{ if(!gameOver){newRound();} },1100);
+    }
+  }
+}
+
+function update(dt){
+  if(gameOver)return;
+  const speed=220*dt;
+  if(keys['ArrowLeft'])cur.x-=speed;
+  if(keys['ArrowRight'])cur.x+=speed;
+  if(keys['ArrowUp'])cur.y-=speed;
+  if(keys['ArrowDown'])cur.y+=speed;
+  cur.x=Math.max(60,Math.min(W-60,cur.x));
+  cur.y=Math.max(60,Math.min(H-60,cur.y));
+  if(keys['KeyA'])cur.rot-=2*dt;
+  if(keys['KeyD'])cur.rot+=2*dt;
+  if(keys['KeyW'])cur.bright=Math.min(100,cur.bright+40*dt);
+  if(keys['KeyS'])cur.bright=Math.max(0,cur.bright-40*dt);
+  if(lockTimer>0)lockTimer-=1;
+}
+
+function drawConstellation(cx,cy,rot,color,alpha){
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.rotate(rot);
+  ctx.strokeStyle=color;
+  ctx.globalAlpha=alpha;
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  constellation.forEach((p,i)=>{ if(i===0)ctx.moveTo(p[0],p[1]); else ctx.lineTo(p[0],p[1]); });
+  ctx.stroke();
+  ctx.fillStyle=color;
+  constellation.forEach(p=>{ ctx.beginPath();ctx.arc(p[0],p[1],4,0,Math.PI*2);ctx.fill(); });
+  ctx.restore();
+  ctx.globalAlpha=1;
+}
+
+let lastTime=null;
+function loop(now){
+  if(lastTime==null)lastTime=now;
+  const dt=Math.min((now-lastTime)/1000,0.05);
+  lastTime=now;
+  update(dt);
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#05060f');sky.addColorStop(1,'#0c1130');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  // background stars (dimmed by brightness control for atmosphere)
+  const b=cur.bright/100;
+  ctx.save();
+  stars.forEach(s=>{
+    ctx.globalAlpha=0.3+b*0.5;
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(s.ox,s.oy,s.r,0,Math.PI*2);ctx.fill();
+  });
+  ctx.restore();
+
+  // target constellation (dim reference)
+  drawConstellation(target.x,target.y,target.rot,'#ffd54f',0.55);
+
+  // player's projected constellation
+  const err=diffScore();
+  const ok=err<=tolerance;
+  drawConstellation(cur.x,cur.y,cur.rot,ok?'#7ec850':'#5aa7ff',Math.max(0.3,b));
+
+  // readout
+  ctx.textAlign='center';
+  ctx.font='bold 18px Arial';
+  ctx.fillStyle=ok?'#7ec850':'#ff8a8a';
+  ctx.fillText(I18N.t('signal_readout','Alignment error: {e}').replace('{e}',Math.round(err)),W/2,30);
+  ctx.font='14px Arial';
+  ctx.fillStyle='#8aa0d0';
+  ctx.fillText(I18N.t('brightness_label','Brightness: {b}%').replace('{b}',Math.round(cur.bright)),W/2,52);
+
+  if(locked&&lockMsg){
+    ctx.font='bold 26px Arial';
+    ctx.fillStyle=lockMsg.indexOf('locked')>=0?'#7ec850':'#ff6b6b';
+    ctx.fillText(lockMsg,W/2,H/2);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-30);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Score: {s}').replace('{s}',score),W/2,H/2+6);
+    ctx.fillText(I18N.t('restart_hint','Tap or Click to restart'),W/2,H/2+36);
+  }
+
+  document.getElementById('roundDisp').textContent=I18N.t('round_label','Round {r}').replace('{r}',round);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}',lives);
+  document.getElementById('hiDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.max(hi,score));
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>
