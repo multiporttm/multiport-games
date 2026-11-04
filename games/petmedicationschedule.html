@@ -1,0 +1,277 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Pet Medication Schedule</title><meta name="description" content="Play Pet Medication Schedule free online — Match each boarding pet to its correct medication and dose before the next dose window arrives."><link rel="canonical" href="https://games.multiportllc.com/games/petmedicationschedule"><meta property="og:title" content="Pet Medication Schedule - Multiport Games"><meta property="og:description" content="Play Pet Medication Schedule free online — Match each boarding pet to its correct medication and dose before the next dose window arrives."><meta property="og:url" content="https://games.multiportllc.com/games/petmedicationschedule"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Pet Medication Schedule","description":"Play Pet Medication Schedule free online instantly. Correctly match each boarding pet to its medication, dose, and timing from the owner's instructions, working through the full round of pets before the next dose window. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/petmedicationschedule","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1f2e3d;display:block;border-radius:8px}
+#score-display{color:#a8d8f0;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Pet Medication Schedule</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Lives: 3 | Level: 1 | Hi: 0</div>
+    <canvas id="c" width="800" height="450"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Each pet shows its required medication <b>color</b> and <b>dose</b>. Click/tap a pet (or press <b>1</b>–<b>6</b>) to select it, then click/tap the matching medication in the tray (or press <b>A</b>–<b>F</b>) before the dose window timer runs out. Clear the whole round to advance!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisp=document.getElementById('score-display');
+const HS_KEY='hs_petmedicationschedule';
+let score=0,lives=3,level=1,hi=0;
+let gameOver=false,started=false,lastTime=null;
+let pets=[],tray=[],selectedPet=null,timeLeft=0,timeMax=0,feedback=null,feedbackTimer=0;
+
+try{hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0;}catch(e){hi=0;}
+
+const COLORS=[['red','#e05858'],['blue','#5890e0'],['green','#5ad06a'],['purple','#a06ae0'],['orange','#e0a048']];
+const PET_EMOJI=['🐶','🐱','🐰','🐹','🐦','🐢'];
+
+function rand(n){return Math.floor(Math.random()*n);}
+function shuffle(arr){for(let i=arr.length-1;i>0;i--){const j=rand(i+1);[arr[i],arr[j]]=[arr[j],arr[i]];}return arr;}
+
+function colorName(key){ return I18N.t('color_'+key,key.charAt(0).toUpperCase()+key.slice(1)); }
+
+function buildRound(){
+  const petCount=Math.min(3+Math.floor((level-1)/2),6);
+  const colorPool=shuffle(COLORS.slice()).slice(0,Math.min(3+Math.floor(level/2),COLORS.length));
+  pets=[];
+  for(let i=0;i<petCount;i++){
+    const col=colorPool[rand(colorPool.length)];
+    pets.push({
+      emoji:PET_EMOJI[i%PET_EMOJI.length],
+      colorKey:col[0],colorHex:col[1],
+      dose:1+rand(3),
+      done:false
+    });
+  }
+  // Build tray: one correct med per pet (dedup by color+dose) plus decoys
+  const needed=[];
+  const seen=new Set();
+  pets.forEach(p=>{
+    const key=p.colorKey+p.dose;
+    if(!seen.has(key)){seen.add(key);needed.push({colorKey:p.colorKey,colorHex:p.colorHex,dose:p.dose});}
+  });
+  const trayList=needed.slice();
+  const decoyTarget=Math.min(6,needed.length+2+Math.floor(level/2));
+  let guard=0;
+  while(trayList.length<decoyTarget&&guard<50){
+    guard++;
+    const col=colorPool[rand(colorPool.length)];
+    const dose=1+rand(3);
+    const key=col[0]+dose;
+    if(!trayList.some(t=>t.colorKey+t.dose===key)){
+      trayList.push({colorKey:col[0],colorHex:col[1],dose});
+    }
+  }
+  tray=shuffle(trayList).slice(0,6);
+  selectedPet=null;
+  timeMax=Math.max(8,18-level*1.2);
+  timeLeft=timeMax;
+}
+
+function setFeedback(ok,msg){feedback={ok,msg};feedbackTimer=0.9;}
+function updateScoreDisplay(){
+  scoreDisp.textContent=I18N.t('score_status_label','Score: {s} | Lives: {l} | Level: {lv} | Hi: {h}')
+    .replace('{s}',score).replace('{l}',lives).replace('{lv}',level).replace('{h}',hi);
+}
+function saveHi(){ if(score>hi){hi=score;try{localStorage.setItem(HS_KEY,String(hi));}catch(e){}} }
+
+function loseLife(msg){
+  lives--;SFX.fail();setFeedback(false,msg);
+  if(lives<=0){gameOver=true;SFX.lose();saveHi();updateScoreDisplay();}
+}
+
+function allDone(){ return pets.every(p=>p.done); }
+
+function pickPet(idx){
+  const p=pets[idx];
+  if(!p||p.done||gameOver)return;
+  selectedPet=idx;
+  SFX.select();
+}
+
+function pickMed(idx){
+  if(selectedPet==null||gameOver)return;
+  const med=tray[idx];
+  const p=pets[selectedPet];
+  if(!med||!p||p.done)return;
+  if(med.colorKey===p.colorKey&&med.dose===p.dose){
+    p.done=true;
+    score+=15+level*2;
+    SFX.success();
+    setFeedback(true,I18N.t('dosed_msg','Dosed correctly!'));
+    selectedPet=null;
+    if(allDone()){
+      level++;
+      SFX.levelup();
+      saveHi();updateScoreDisplay();
+      buildRound();
+      return;
+    }
+  } else {
+    loseLife(I18N.t('wrong_med_msg','Wrong medication!'));
+  }
+  saveHi();updateScoreDisplay();
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=true;feedback=null;feedbackTimer=0;lastTime=null;
+  buildRound();
+  updateScoreDisplay();
+}
+
+function handleStart(){
+  if(!started){reset();return;}
+  if(gameOver){reset();return;}
+}
+
+document.addEventListener('keydown',e=>{
+  if(!started||gameOver){
+    if(e.key===' '||e.key==='Enter')handleStart();
+    return;
+  }
+  const n=parseInt(e.key,10);
+  if(n>=1&&n<=pets.length){e.preventDefault();pickPet(n-1);return;}
+  const letters='abcdef';
+  const li=letters.indexOf(e.key.toLowerCase());
+  if(li>=0&&li<tray.length){e.preventDefault();pickMed(li);}
+});
+
+function getPos(e){
+  const rect=c.getBoundingClientRect();
+  const t=e.touches&&e.touches.length?e.touches[0]:e.changedTouches&&e.changedTouches.length?e.changedTouches[0]:e;
+  return {x:(t.clientX-rect.left)*(c.width/rect.width), y:(t.clientY-rect.top)*(c.height/rect.height)};
+}
+function pointInRect(p,r){return p.x>=r.x&&p.x<=r.x+r.w&&p.y>=r.y&&p.y<=r.y+r.h;}
+
+let petRects=[],trayRects=[];
+
+function onPointer(e){
+  e.preventDefault();
+  if(!started||gameOver){handleStart();return;}
+  const p=getPos(e);
+  for(let i=0;i<petRects.length;i++){
+    if(pointInRect(p,petRects[i])){pickPet(i);return;}
+  }
+  for(let i=0;i<trayRects.length;i++){
+    if(pointInRect(p,trayRects[i])){pickMed(i);return;}
+  }
+}
+c.addEventListener('click',onPointer);
+c.addEventListener('touchstart',onPointer,{passive:false});
+
+function draw(){
+  ctx.clearRect(0,0,800,450);
+  const bg=ctx.createLinearGradient(0,0,0,450);
+  bg.addColorStop(0,'#162330');bg.addColorStop(1,'#1f2e3d');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,450);
+  ctx.textAlign='center';
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';
+    ctx.fillText(I18N.t('title_card','Pet Medication Schedule'),400,170);
+    ctx.font='20px Arial';ctx.fillStyle='#a8d8f0';
+    ctx.fillText(I18N.t('start_hint','Click, tap, or press Space to start'),400,210);
+    requestAnimationFrame(draw);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,170);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),400,210);
+    ctx.fillText(I18N.t('restart_hint','Click, tap, or press Space to restart'),400,240);
+    requestAnimationFrame(draw);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+  if(feedbackTimer>0)feedbackTimer-=dt;
+
+  timeLeft-=dt;
+  if(timeLeft<=0){
+    timeLeft=timeMax;
+    const remaining=pets.filter(p=>!p.done).length;
+    if(remaining>0){
+      for(let i=0;i<remaining;i++)loseLife(I18N.t('time_up_msg','Dose window missed!'));
+    }
+    if(!gameOver)buildRound();
+  }
+
+  // Dose window timer bar
+  const pct=Math.max(0,timeLeft/timeMax);
+  ctx.fillStyle='#333';ctx.fillRect(40,20,720,12);
+  ctx.fillStyle=pct>0.3?'#6fdc7a':'#ff6b6b';
+  ctx.fillRect(40,20,720*pct,12);
+
+  // Pets row
+  petRects=[];
+  const petW=Math.min(110,720/pets.length);
+  const petStartX=400-(pets.length*petW)/2;
+  pets.forEach((p,i)=>{
+    const x=petStartX+i*petW,y=55,w=petW-10,h=130;
+    petRects.push({x,y,w,h});
+    ctx.fillStyle=(selectedPet===i)?'#2d4a63':'#15222f';
+    if(p.done)ctx.fillStyle='#163a1f';
+    ctx.strokeStyle=(selectedPet===i)?'#a8d8f0':'#395';
+    ctx.lineWidth=(selectedPet===i)?3:1.5;
+    ctx.beginPath();
+    ctx.roundRect?ctx.roundRect(x,y,w,h,8):ctx.rect(x,y,w,h);
+    ctx.fill();ctx.stroke();
+    ctx.font='34px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(p.done?'✔':p.emoji,x+w/2,y+46);
+    ctx.font='bold 12px Arial';
+    ctx.fillStyle=p.colorHex;
+    ctx.beginPath();ctx.arc(x+w/2-14,y+66,7,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#fff';
+    ctx.fillText('x'+p.dose,x+w/2+10,y+70);
+    ctx.font='11px Arial';ctx.fillStyle='#cde';
+    ctx.fillText(colorName(p.colorKey),x+w/2,y+90);
+    ctx.font='bold 11px Arial';ctx.fillStyle='#9ab';
+    ctx.fillText(String(i+1),x+w/2,y+110);
+  });
+
+  // Tray
+  trayRects=[];
+  const trayW=Math.min(120,720/tray.length);
+  const trayStartX=400-(tray.length*trayW)/2;
+  const letters='ABCDEF';
+  tray.forEach((m,i)=>{
+    const x=trayStartX+i*trayW,y=300,w=trayW-10,h=110;
+    trayRects.push({x,y,w,h});
+    ctx.fillStyle='#15222f';
+    ctx.strokeStyle='#5a8';ctx.lineWidth=1.5;
+    ctx.beginPath();
+    ctx.roundRect?ctx.roundRect(x,y,w,h,8):ctx.rect(x,y,w,h);
+    ctx.fill();ctx.stroke();
+    ctx.fillStyle=m.colorHex;
+    ctx.beginPath();ctx.arc(x+w/2,y+36,18,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#fff';ctx.font='bold 14px Arial';
+    ctx.fillText('x'+m.dose,x+w/2,y+40);
+    ctx.font='11px Arial';ctx.fillStyle='#cde';
+    ctx.fillText(colorName(m.colorKey),x+w/2,y+70);
+    ctx.font='bold 13px Arial';ctx.fillStyle='#9ab';
+    ctx.fillText(letters[i],x+w/2,y+95);
+  });
+
+  ctx.font='14px Arial';ctx.fillStyle='#a8d8f0';
+  ctx.fillText(selectedPet!=null?I18N.t('tray_hint_selected','Now pick the matching medication'):I18N.t('tray_hint_select','Select a pet first'),400,295);
+
+  if(feedback&&feedbackTimer>0){
+    ctx.font='bold 18px Arial';
+    ctx.fillStyle=feedback.ok?'#6fdc7a':'#ff6b6b';
+    ctx.fillText(feedback.msg,400,440);
+  }
+
+  updateScoreDisplay();
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+</script></body></html>

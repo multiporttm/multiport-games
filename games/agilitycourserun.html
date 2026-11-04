@@ -1,0 +1,230 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Agility Course Run</title><meta name="description" content="Play Agility Course Run free online — Time your jump, duck, and weave cues to guide a dog through an agility course without knocking a bar."><link rel="canonical" href="https://games.multiportllc.com/games/agilitycourserun"><meta property="og:title" content="Agility Course Run - Multiport Games"><meta property="og:description" content="Play Agility Course Run free online — Time your jump, duck, and weave cues to guide a dog through an agility course without knocking a bar."><meta property="og:url" content="https://games.multiportllc.com/games/agilitycourserun"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Agility Course Run","description":"Play Agility Course Run free online instantly. Handle a dog through an agility course, timing directional cues to guide it through jumps, tunnels, and weave poles in the correct sequence as fast as possible without knocking a bar or missing an obstacle. Course speed and obstacle density rise with every run. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/agilitycourserun","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a936f;display:block;border-radius:8px;touch-action:none}
+#hud{color:#bffcde;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#ctrlRow{display:flex;justify-content:center;gap:10px;margin:10px 0;flex-wrap:wrap}
+#ctrlRow button{padding:12px 20px;background:#4ecdc4;border:none;border-radius:12px;color:#07241c;font-weight:800;font-size:1rem;cursor:pointer;min-width:84px}
+#ctrlRow button:active{transform:scale(.92)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Agility Course Run</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Level 1</span>
+    </div>
+    <canvas id="c" width="800" height="260"></canvas>
+    <div id="ctrlRow">
+      <button data-act="jump">Jump (↑)</button>
+      <button data-act="duck">Duck (↓)</button>
+      <button data-act="left">Weave L (←)</button>
+      <button data-act="right">Weave R (→)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Obstacles scroll toward your dog on the handler line. Press the matching cue right as the obstacle crosses the line: <b>↑ Jump</b> for a bar, <b>↓ Duck</b> for a tunnel, and alternate <b>← →</b> for weave poles. Arrow keys or the on-screen buttons both work. Knock a bar or miss the timing and you lose a life — 3 misses ends the run. Speed and obstacle density increase every level, so stay sharp!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+let score=0,hi=parseInt(localStorage.getItem('agilitycourserun_hi')||'0',10);
+let lives=3,level=1,gameOver=false,started=false,won=false;
+const LINE_X=160;
+const dog={y:190,legPhase:0,jumpT:0,duckT:0};
+let obstacles=[],spd=4.2,spawnTimer=0,distance=0,targetDistance=3000;
+let weaveNeeded=null; // 'left' or 'right' expected next for active weave obstacle
+let frame=0;
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('level_label','Level {l}').replace('{l}',level);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;won=false;
+  obstacles=[];spd=4.2;spawnTimer=0;distance=0;weaveNeeded=null;dog.jumpT=0;dog.duckT=0;
+  setHud();
+}
+
+function spawnObstacle(){
+  const types=['jump','duck'];
+  if(level>=2)types.push('weave');
+  const type=types[Math.floor(Math.random()*types.length)];
+  if(type==='weave'){
+    obstacles.push({type,x:820,w:70,resolved:false,step:0,needed:Math.random()<0.5?'left':'right'});
+  }else{
+    obstacles.push({type,x:820,w:30,resolved:false});
+  }
+}
+
+function act(action){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();return;}
+  const near=obstacles.find(o=>!o.resolved&&Math.abs(o.x-LINE_X)<40);
+  if(!near){SFX.click();return;}
+  let ok=false;
+  if(near.type==='jump'&&action==='jump'){ok=true;dog.jumpT=18;}
+  else if(near.type==='duck'&&action==='duck'){ok=true;dog.duckT=18;}
+  else if(near.type==='weave'&&(action==='left'||action==='right')){
+    if(action===near.needed){
+      near.step++;
+      near.needed=near.needed==='left'?'right':'left';
+      if(near.step>=3){ok=true;}
+      else{SFX.tick();return;}
+    }
+  }
+  if(ok){
+    near.resolved=true;
+    score+=10*level;
+    SFX.point();
+  }else{
+    near.resolved=true;
+    lives--;
+    SFX.error();
+    if(lives<=0){endRun(false);}
+  }
+  setHud();
+}
+
+function endRun(didWin){
+  gameOver=!didWin;won=didWin;
+  if(didWin)SFX.win();else SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem('agilitycourserun_hi',hi);}
+  setHud();
+}
+
+document.querySelectorAll('#ctrlRow button').forEach(b=>b.addEventListener('click',()=>act(b.dataset.act)));
+document.addEventListener('keydown',e=>{
+  const map={ArrowUp:'jump',ArrowDown:'duck',ArrowLeft:'left',ArrowRight:'right',Space:'start'};
+  if(map[e.code]){
+    e.preventDefault();
+    if(map[e.code]==='start'){ if(!started)started=true; else if(gameOver||won)reset(); }
+    else act(map[e.code]);
+  }
+});
+c.addEventListener('click',()=>{if(!started)started=true;else if(gameOver||won)reset();});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(!started)started=true;else if(gameOver||won)reset();},{passive:false});
+
+function drawDog(){
+  ctx.save();
+  ctx.translate(LINE_X,dog.y);
+  let yOff=0;
+  if(dog.jumpT>0){yOff=-Math.sin((18-dog.jumpT)/18*Math.PI)*45;dog.jumpT--;}
+  let squish=1;
+  if(dog.duckT>0){squish=0.55;dog.duckT--;}
+  ctx.translate(0,yOff);
+  ctx.fillStyle='#f4a261';
+  ctx.beginPath();ctx.ellipse(0,0,42*squish===42?42:40,24*squish,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(38,-10*squish,20,16*squish,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#2b1a10';ctx.beginPath();ctx.arc(48,-14*squish,2.5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#e76f51';
+  const legPhase=Math.floor(frame/4)%2;
+  ctx.fillRect(-28,16*squish,8,14);
+  ctx.fillRect(-8,16*squish+(legPhase?4:0),8,14);
+  ctx.fillRect(14,16*squish+(legPhase?0:4),8,14);
+  ctx.fillRect(30,16*squish,8,14);
+  ctx.restore();
+}
+
+function drawObstacle(o){
+  if(o.type==='jump'){
+    ctx.strokeStyle='#fff';ctx.lineWidth=5;
+    ctx.beginPath();ctx.moveTo(o.x,170);ctx.lineTo(o.x,220);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(o.x+o.w,170);ctx.lineTo(o.x+o.w,220);ctx.stroke();
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=7;
+    ctx.beginPath();ctx.moveTo(o.x-6,185);ctx.lineTo(o.x+o.w+6,185);ctx.stroke();
+  }else if(o.type==='duck'){
+    ctx.fillStyle='#264653';
+    ctx.beginPath();ctx.arc(o.x+o.w/2,220,35,Math.PI,0);ctx.fill();
+    ctx.fillStyle='#1a1a2e';
+    ctx.beginPath();ctx.ellipse(o.x+o.w/2,220,25,25,0,Math.PI,0,true);ctx.fill();
+  }else if(o.type==='weave'){
+    ctx.fillStyle='#e9c46a';
+    for(let i=0;i<5;i++){
+      ctx.fillRect(o.x+i*14,160,6,70);
+    }
+    ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+    ctx.fillText(o.needed==='left'?'←':'→',o.x+35,150);
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,260);
+  const sky=ctx.createLinearGradient(0,0,0,220);
+  sky.addColorStop(0,'#0c5c43');sky.addColorStop(1,'#1a936f');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,220);
+  ctx.fillStyle='#146c50';ctx.fillRect(0,220,800,40);
+  ctx.strokeStyle='#ffffff55';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(LINE_X,150);ctx.lineTo(LINE_X,240);ctx.stroke();
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';
+    ctx.fillText(I18N.t('start_hint','Tap / Space / any cue key to start'),400,100);
+    drawDog();
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','COURSE FAILED'),400,110);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,145);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#7ec850';ctx.font='bold 32px Arial';
+    ctx.fillText(I18N.t('win_title','COURSE CLEARED! 🏆'),400,100);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,135);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,165);
+    requestAnimationFrame(loop);return;
+  }
+
+  frame++;
+  distance+=spd;
+  spd=4.2+level*0.6;
+  if(distance>=targetDistance){endRun(true);}
+
+  spawnTimer++;
+  const interval=Math.max(55,110-level*8);
+  if(spawnTimer>=interval){spawnTimer=0;spawnObstacle();}
+
+  obstacles=obstacles.filter(o=>o.x>-100);
+  obstacles.forEach(o=>{
+    o.x-=spd;
+    drawObstacle(o);
+    if(!o.resolved&&o.x<LINE_X-50){
+      o.resolved=true;
+      lives--;SFX.error();
+      if(lives<=0)endRun(false);
+      setHud();
+    }
+  });
+
+  if(Math.floor(distance)%500===0&&level<6&&distance>0){
+    level=1+Math.floor(distance/500);
+  }
+
+  drawDog();
+  ctx.fillStyle='#fff';ctx.font='14px Arial';ctx.textAlign='right';
+  ctx.fillText(Math.floor(100*distance/targetDistance)+'%',780,20);
+  requestAnimationFrame(loop);
+}
+setHud();
+loop();
+</script></body></html>

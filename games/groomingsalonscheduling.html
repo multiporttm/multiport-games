@@ -1,0 +1,273 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Grooming Salon Scheduling</title><meta name="description" content="Play Grooming Salon Scheduling free online — Match each pet's bath, full groom, or nail trim to an open slot across your groomers' schedules before bookings close."><link rel="canonical" href="https://games.multiportllc.com/games/groomingsalonscheduling"><meta property="og:title" content="Grooming Salon Scheduling - Multiport Games"><meta property="og:description" content="Play Grooming Salon Scheduling free online — Match each pet's bath, full groom, or nail trim to an open slot across your groomers' schedules before bookings close."><meta property="og:url" content="https://games.multiportllc.com/games/groomingsalonscheduling"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Grooming Salon Scheduling","description":"Play Grooming Salon Scheduling free online instantly. Schedule a pet grooming salon's daily appointments: match each pet's required service time — bath, full groom, or nail trim — to an open slot across multiple groomers' schedules without overbooking anyone before the day's bookings close. Appointments arrive faster and schedules fill up more with every level. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/groomingsalonscheduling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a1a3a;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%;margin:0 auto}
+#hud{color:#f3e5f5;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#ce93d8}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+#msg{color:#ffd54f;font-weight:800;text-align:center;min-height:1.4em;margin-top:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Grooming Salon Scheduling</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="720" height="420"></canvas>
+    <div id="msg"> </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A new pet appointment appears at the top, showing its service (bath, full groom, or nail trim) and how many slots it needs. Press <b>1</b>-<b>4</b> (or tap a row) to pick a groomer, use <b>←</b>/<b>→</b> (or tap a slot) to choose the starting slot, then press <b>Enter</b>/<b>Space</b> (or tap <b>Book It</b>) to confirm. Bookings must fit without overlapping, and must finish before closing time. Miss the timer or double-book a groomer and you lose a life — three strikes and the shop closes early!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=720,H=420;
+const KEY='groomingsalonscheduling_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,level=1,lives=3,started=false,gameOver=false,streak=0;
+const SLOTS=10;
+let groomers=4;
+let schedule=[]; // schedule[groomer] = array(SLOTS) bool booked
+let selGroomer=0,selSlot=0;
+let appt=null,timer=0,timerMax=0,resolved=false;
+const SERVICES=[
+  {id:'nail',label:'Nail Trim',len:1,color:'#4fc3f7'},
+  {id:'bath',label:'Bath',len:2,color:'#81c784'},
+  {id:'groom',label:'Full Groom',len:3,color:'#e57373'}
+];
+let petNames=['Biscuit','Luna','Max','Coco','Rex','Daisy','Oscar','Mochi','Pepper','Zoe'];
+const CELL_W=(W-80)/SLOTS;
+
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);}
+function hsDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(Math.max(0,3-lives)));}
+function setMsg(t){document.getElementById('msg').textContent=t;}
+function saveHi(){ if(score>hi){ hi=score; localStorage.setItem(KEY,String(hi)); } }
+
+function resetSchedule(){
+  schedule=[];
+  for(let g=0;g<groomers;g++){
+    const row=new Array(SLOTS).fill(false);
+    // pre-fill some slots on higher levels to make it harder
+    const prefill=Math.min(SLOTS-3,Math.floor(level/2));
+    for(let i=0;i<prefill;i++){
+      const idx=Math.floor(Math.random()*SLOTS);
+      row[idx]=true;
+    }
+    schedule.push(row);
+  }
+}
+
+function fits(g,start,len){
+  if(start<0||start+len>SLOTS)return false;
+  for(let i=start;i<start+len;i++) if(schedule[g][i]) return false;
+  return true;
+}
+
+function newAppt(){
+  const svc=SERVICES[Math.floor(Math.random()*SERVICES.length)];
+  appt={svc,name:petNames[Math.floor(Math.random()*petNames.length)]};
+  timerMax=Math.max(110,240-level*12);
+  timer=timerMax;
+  resolved=false;
+  selGroomer=0;selSlot=0;
+  // auto-advance selection to a free-ish spot
+  for(let g=0;g<groomers;g++){
+    for(let s=0;s<SLOTS;s++){
+      if(fits(g,s,appt.svc.len)){ selGroomer=g;selSlot=s; return; }
+    }
+  }
+}
+
+function anyFitExists(){
+  for(let g=0;g<groomers;g++) for(let s=0;s<SLOTS;s++) if(fits(g,s,appt.svc.len)) return true;
+  return false;
+}
+
+function startGame(){
+  score=0;level=1;lives=3;streak=0;started=true;gameOver=false;groomers=4;
+  resetSchedule();
+  newAppt();
+  scoreDisp();lvDisp();hsDisp();livesDisp();
+  setMsg(I18N.t('go_msg','Booking day started! Pick a slot.'));
+}
+
+function book(){
+  if(!started||gameOver||resolved)return;
+  resolved=true;
+  if(fits(selGroomer,selSlot,appt.svc.len)){
+    for(let i=selSlot;i<selSlot+appt.svc.len;i++) schedule[selGroomer][i]=true;
+    score+=10*appt.svc.len+streak*2;
+    streak++;
+    SFX.success();
+    setMsg(I18N.t('booked_msg','Booked {n} for {s}!').replace('{n}',appt.name).replace('{s}',appt.svc.label));
+    if(streak>0&&streak%5===0){ level++; SFX.levelup(); lvDisp(); }
+  } else {
+    streak=0;lives--;
+    SFX.error();
+    setMsg(I18N.t('overbook_msg','That slot overlaps — {n} needs an open spot!').replace('{n}',appt.name));
+    livesDisp();
+    if(lives<=0){ endGame(); return; }
+  }
+  scoreDisp();saveHi();hsDisp();
+  setTimeout(()=>{
+    if(!started||gameOver)return;
+    if(!anyFitExists()){
+      // board too full: reset with fresh day for same level
+      resetSchedule();
+    }
+    newAppt();
+  },650);
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  saveHi();hsDisp();
+  setMsg(I18N.t('over_msg','Shop closed! Final score: {s}. Tap/Space to restart.').replace('{s}',score));
+}
+
+function drawGrid(){
+  const top=70,rowH=(H-top-30)/groomers;
+  for(let g=0;g<groomers;g++){
+    ctx.fillStyle='#e0d8ec';ctx.font='bold 14px Arial';ctx.textAlign='left';
+    ctx.fillText(I18N.t('groomer_label','Groomer {n}').replace('{n}',g+1),10,top+g*rowH+rowH/2+5);
+    for(let s=0;s<SLOTS;s++){
+      const x=90+s*CELL_W,y=top+g*rowH+6;
+      const booked=schedule[g][s];
+      ctx.fillStyle=booked?'#5d4037':'#4a3a5a';
+      ctx.fillRect(x,y,CELL_W-4,rowH-12);
+      if(appt&&!resolved){
+        const inSel=g===selGroomer&&s>=selSlot&&s<selSlot+appt.svc.len;
+        if(inSel){
+          const ok=fits(selGroomer,selSlot,appt.svc.len);
+          ctx.fillStyle=ok?'rgba(129,199,132,0.85)':'rgba(229,115,115,0.85)';
+          ctx.fillRect(x,y,CELL_W-4,rowH-12);
+        }
+      }
+      ctx.strokeStyle='#1a1026';ctx.strokeRect(x,y,CELL_W-4,rowH-12);
+    }
+  }
+}
+
+function drawAppt(){
+  if(!appt)return;
+  ctx.fillStyle=appt.svc.color;
+  ctx.fillRect(W/2-100,10,200,46);
+  ctx.strokeStyle='#1a1026';ctx.strokeRect(W/2-100,10,200,46);
+  ctx.fillStyle='#1a1026';ctx.font='bold 15px Arial';ctx.textAlign='center';
+  ctx.fillText(appt.name+' — '+appt.svc.label,W/2,30);
+  ctx.font='12px Arial';
+  ctx.fillText(I18N.t('slots_needed','{n} slot(s) needed').replace('{n}',appt.svc.len),W/2,46);
+}
+
+function drawTimerBar(){
+  const pct=Math.max(0,timer/timerMax);
+  ctx.fillStyle='#4a3a5a';ctx.fillRect(40,H-16,W-80,10);
+  ctx.fillStyle=pct>0.4?'#4caf50':pct>0.2?'#ffb300':'#e53935';
+  ctx.fillRect(40,H-16,(W-80)*pct,10);
+  ctx.strokeStyle='#1a1026';ctx.strokeRect(40,H-16,W-80,10);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#2a1a3a';ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#f3e5f5';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start'),W/2,H/2);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  drawGrid();
+  drawAppt();
+  drawTimerBar();
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','BOOKINGS CLOSED'),W/2,H/2);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(!resolved){
+    timer--;
+    if(timer<=0){
+      resolved=true;streak=0;lives--;
+      SFX.error();
+      setMsg(I18N.t('timeout_msg','Too slow! {n} walked out.').replace('{n}',appt.name));
+      livesDisp();
+      if(lives<=0){ endGame(); }
+      else { setTimeout(()=>{ if(started&&!gameOver) newAppt(); },650); }
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+
+function moveSel(dg,ds){
+  if(!appt)return;
+  selGroomer=(selGroomer+dg+groomers)%groomers;
+  selSlot=Math.max(0,Math.min(SLOTS-appt.svc.len,selSlot+ds));
+}
+
+function handleKey(e){
+  if(!started||gameOver){
+    if(e.code==='Space'){ e.preventDefault(); startGame(); }
+    return;
+  }
+  if(e.key>='1'&&e.key<='4'){ selGroomer=parseInt(e.key,10)-1; if(selGroomer>=groomers)selGroomer=groomers-1; }
+  else if(e.code==='ArrowLeft'){ e.preventDefault(); moveSel(0,-1); }
+  else if(e.code==='ArrowRight'){ e.preventDefault(); moveSel(0,1); }
+  else if(e.code==='ArrowUp'){ e.preventDefault(); moveSel(-1,0); }
+  else if(e.code==='ArrowDown'){ e.preventDefault(); moveSel(1,0); }
+  else if(e.code==='Enter'||e.code==='Space'){ e.preventDefault(); book(); }
+}
+document.addEventListener('keydown',handleKey);
+
+function pointerPick(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  const x=(clientX-rect.left)*(W/rect.width);
+  const y=(clientY-rect.top)*(H/rect.height);
+  const top=70,rowH=(H-top-30)/groomers;
+  if(y<top||!appt)return false;
+  const g=Math.floor((y-top)/rowH);
+  const s=Math.floor((x-90)/CELL_W);
+  if(g<0||g>=groomers||s<0||s>=SLOTS)return false;
+  selGroomer=g;
+  selSlot=Math.max(0,Math.min(SLOTS-appt.svc.len,s));
+  return true;
+}
+
+c.addEventListener('click',e=>{
+  if(!started||gameOver){ startGame(); return; }
+  if(pointerPick(e.clientX,e.clientY)){ book(); }
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started||gameOver){ startGame(); return; }
+  const t=e.changedTouches[0];
+  if(pointerPick(t.clientX,t.clientY)){ book(); }
+},{passive:false});
+
+hsDisp();livesDisp();scoreDisp();lvDisp();
+loop();
+</script></body></html>
