@@ -1,0 +1,336 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Zoo Hoof Care Clinic</title><meta name="description" content="Play Zoo Hoof Care Clinic free online — Trim and file overgrown hooves on zoo animals, stay inside the safe line, then check their gait before moving to the next patient."><link rel="canonical" href="https://games.multiportllc.com/games/zoohoofcareclinic"><meta property="og:title" content="Zoo Hoof Care Clinic - Multiport Games"><meta property="og:description" content="Play Zoo Hoof Care Clinic free online — Trim and file overgrown hooves on zoo animals, stay inside the safe line, then check their gait before moving to the next patient."><meta property="og:url" content="https://games.multiportllc.com/games/zoohoofcareclinic"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Zoo Hoof Care Clinic","description":"Play Zoo Hoof Care Clinic free online instantly. Trim and file overgrown hooves on zoo animals, stay inside the safe line, then check their gait before moving to the next patient. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/zoohoofcareclinic","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b2318;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#ui{color:#d9b382;text-align:center;padding:8px;font-size:1.05rem;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Zoo Hoof Care Clinic</div>
+  <div class="game-frame">
+    <div id="ui">Score: 0 | Hi: 0 | Lives: 3</div>
+    <canvas id="c" width="800" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Drag the trimmer along the overgrown hoof edge (orange) to file it down, staying between the safe inner line (green) and the overgrown edge — trim too close to the green line and you'll hurt the animal! Use <b>mouse/touch drag</b> or the <b>Arrow Keys</b> to move the trimmer and <b>Space</b> to trim. Finish the outline, then check the gait meter to release the animal. Harder animals arrive each round!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480;
+const HS_KEY='zhc_hi';
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+let score=0,lives=3,round=1,gameOver=false,started=false;
+let phase='trim'; // 'trim' then 'gait' then 'done'
+let feedback='',feedbackTimer=0,feedbackColor='#fff';
+
+const ANIMALS=['Giraffe','Zebra','Goat','Rhino','Deer','Camel','Horse','Bison'];
+const cx=W/2, cy=220; // hoof center
+let safeR=0,overR=0,points=[],trimmed=[],cursorAngle=0,cursorPos={x:0,y:0};
+let dragging=false;
+let gaitScore=0,gaitMeterPos=0,gaitMeterDir=1,gaitTarget=0;
+
+function newAnimal(){
+  phase='trim';
+  safeR=70;
+  overR=100+Math.max(0,20-round*1.5>0?20-round*1.5:0);
+  overR=Math.max(safeR+15,110-round*4);
+  const segs=Math.max(24,36-round);
+  points=[];trimmed=[];
+  for(let i=0;i<segs;i++){
+    const a=(i/segs)*Math.PI*2;
+    points.push(a);
+    trimmed.push(false);
+  }
+  cursorAngle=0;
+  cursorPos={x:cx+overR,y:cy};
+  gaitScore=0;gaitMeterPos=0;gaitMeterDir=1;
+  gaitTarget=0.6+Math.random()*0.25;
+}
+
+function angleIndex(a){
+  const segs=points.length;
+  let norm=((a%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+  return Math.floor(norm/(Math.PI*2)*segs)%segs;
+}
+
+function trimAt(angle,precision){
+  const idx=angleIndex(angle);
+  const spread=precision?0:1;
+  for(let d=-spread;d<=spread;d++){
+    const i=((idx+d)%points.length+points.length)%points.length;
+    if(!trimmed[i]){
+      trimmed[i]=true;
+      SFX.click();
+      gaitScore=Math.min(1,gaitScore+1/points.length);
+    }
+  }
+}
+
+function allTrimmed(){return trimmed.every(Boolean);}
+
+function flash(msg,color){feedback=msg;feedbackColor=color;feedbackTimer=60;}
+
+function tooClose(x,y){
+  const d=Math.hypot(x-cx,y-cy);
+  return d<safeR-6;
+}
+
+function loseLife(reason){
+  lives--;
+  flash(reason,'#e94560');
+  SFX.error();
+  if(lives<=0){endGame();}else{newAnimal();}
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+}
+
+function reset(){
+  score=0;lives=3;round=1;gameOver=false;started=true;
+  newAnimal();
+}
+function start(){
+  if(!started){started=true;reset();SFX.click();return;}
+  if(gameOver){reset();return;}
+}
+
+function finishTrim(){
+  score+=15+round*2;
+  SFX.success();
+  flash(I18N.t('trim_done_msg','Nicely trimmed!'),'#7ec850');
+  phase='gait';
+}
+
+function checkGait(){
+  const diff=Math.abs(gaitMeterPos-gaitTarget);
+  if(diff<0.08){
+    score+=10+round*2;
+    SFX.levelup();
+    flash(I18N.t('gait_good_msg','Great gait — released!'),'#7ec850');
+    round++;
+    if(round%3===0 && lives<3)lives++;
+    newAnimal();
+  } else {
+    loseLife(I18N.t('gait_bad_msg','Gait still uneven — needs more care.'));
+  }
+}
+
+// Keyboard controls
+let keyHeld={};
+document.addEventListener('keydown',e=>{
+  if(!started||gameOver){
+    if(e.code==='Space'||e.code==='Enter'){e.preventDefault();start();}
+    return;
+  }
+  keyHeld[e.code]=true;
+  if(e.code==='ArrowLeft'||e.code==='ArrowRight'||e.code==='ArrowUp'||e.code==='ArrowDown'||e.code==='Space'){
+    e.preventDefault();
+  }
+  if(phase==='trim'&&e.code==='Space'){
+    trimAt(cursorAngle,true);
+    if(allTrimmed())finishTrim();
+  }
+  if(phase==='gait'&&e.code==='Space'){
+    checkGait();
+  }
+});
+document.addEventListener('keyup',e=>{keyHeld[e.code]=false;});
+
+function updateKeyboardCursor(){
+  if(phase!=='trim')return;
+  const rotSpeed=0.06;
+  if(keyHeld['ArrowLeft'])cursorAngle-=rotSpeed;
+  if(keyHeld['ArrowRight'])cursorAngle+=rotSpeed;
+  cursorPos={x:cx+Math.cos(cursorAngle)*overR,y:cy+Math.sin(cursorAngle)*overR};
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const touch=e.touches&&e.touches[0];
+  const x=((touch?touch.clientX:e.clientX)-rect.left)*(W/rect.width);
+  const y=((touch?touch.clientY:e.clientY)-rect.top)*(H/rect.height);
+  return {x,y};
+}
+
+function pointerDown(e){
+  e.preventDefault();
+  if(!started||gameOver){start();return;}
+  if(phase==='trim'){
+    dragging=true;
+    const p=pointerPos(e);
+    handleTrimPointer(p);
+  }
+}
+function pointerMove(e){
+  if(!dragging||phase!=='trim')return;
+  e.preventDefault();
+  const p=pointerPos(e);
+  handleTrimPointer(p);
+}
+function pointerUp(e){dragging=false;}
+
+function handleTrimPointer(p){
+  const d=Math.hypot(p.x-cx,p.y-cy);
+  if(d<safeR-6){
+    loseLife(I18N.t('too_close_msg','Trimmed too close — ouch!'));
+    return;
+  }
+  if(d>safeR-6&&d<overR+20){
+    const angle=Math.atan2(p.y-cy,p.x-cx);
+    cursorAngle=angle;
+    cursorPos=p;
+    trimAt(angle,false);
+    if(allTrimmed())finishTrim();
+  }
+}
+
+c.addEventListener('mousedown',pointerDown);
+c.addEventListener('mousemove',pointerMove);
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',pointerDown,{passive:false});
+c.addEventListener('touchmove',pointerMove,{passive:false});
+c.addEventListener('touchend',pointerUp);
+
+// Gait meter click/tap/space handled by Space key above; also allow click on meter during gait phase
+c.addEventListener('click',e=>{
+  if(!started||gameOver){start();return;}
+  if(phase==='gait'){
+    checkGait();
+  }
+});
+
+function drawHoof(){
+  // overgrown ring
+  ctx.beginPath();
+  ctx.arc(cx,cy,overR,0,Math.PI*2);
+  ctx.fillStyle='#b5651d';
+  ctx.fill();
+  // trimmed segments drawn as safe-colored wedges
+  const segs=points.length;
+  for(let i=0;i<segs;i++){
+    if(trimmed[i]){
+      const a0=points[i]-Math.PI/segs;
+      const a1=points[i]+Math.PI/segs;
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      ctx.arc(cx,cy,overR,a0,a1);
+      ctx.closePath();
+      ctx.fillStyle='#8a9a5b';
+      ctx.fill();
+    }
+  }
+  // safe inner circle
+  ctx.beginPath();
+  ctx.arc(cx,cy,safeR,0,Math.PI*2);
+  ctx.fillStyle='#5c4a33';
+  ctx.fill();
+  ctx.strokeStyle='#4caf50';ctx.lineWidth=3;
+  ctx.stroke();
+  // overgrown outline
+  ctx.beginPath();
+  ctx.arc(cx,cy,overR,0,Math.PI*2);
+  ctx.strokeStyle='#ff8c42';ctx.lineWidth=2;
+  ctx.stroke();
+}
+
+function drawCursor(){
+  ctx.beginPath();
+  ctx.arc(cursorPos.x,cursorPos.y,10,0,Math.PI*2);
+  ctx.fillStyle=dragging||keyHeld['Space']?'#ffeb3b':'#fff';
+  ctx.fill();
+  ctx.strokeStyle='#333';ctx.lineWidth=2;
+  ctx.stroke();
+}
+
+function drawProgress(){
+  const pct=trimmed.filter(Boolean).length/trimmed.length;
+  const barW=300,barH=14,bx=W/2-barW/2,by=380;
+  ctx.fillStyle='#333';ctx.fillRect(bx,by,barW,barH);
+  ctx.fillStyle='#4caf50';ctx.fillRect(bx,by,barW*pct,barH);
+  ctx.fillStyle='#fff';ctx.font='13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('trim_progress_label','Trim Progress'),W/2,by-6);
+}
+
+function drawGaitMeter(){
+  const barW=400,barH=26,bx=W/2-barW/2,by=300;
+  ctx.fillStyle='#222';ctx.fillRect(bx,by,barW,barH);
+  ctx.strokeStyle='#4caf50';ctx.lineWidth=2;ctx.strokeRect(bx,by,barW,barH);
+  // target zone
+  const tzw=0.16*barW;
+  ctx.fillStyle='#4caf5066';
+  ctx.fillRect(bx+gaitTarget*barW-tzw/2,by,tzw,barH);
+  // moving marker
+  const mx=bx+gaitMeterPos*barW;
+  ctx.fillStyle='#ffeb3b';
+  ctx.fillRect(mx-3,by-6,6,barH+12);
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('gait_hint','Stop the marker in the green zone! Space / Click / Tap'),W/2,by-16);
+}
+
+function loop(){
+  updateKeyboardCursor();
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#1a140d');bg.addColorStop(1,'#2b2318');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_title_display','Zoo Hoof Care Clinic'),W/2,180);
+    ctx.font='20px Arial';ctx.fillStyle='#d9b382';
+    ctx.fillText(I18N.t('start_hint','Press Space / Click / Tap to start'),W/2,230);
+    document.getElementById('ui').textContent=I18N.t('score_hi_lives_label','Score: {s} | Hi: {h} | Lives: {l}').replace('{s}',score).replace('{h}',hi).replace('{l}',lives);
+    requestAnimationFrame(loop);
+    return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,180);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),W/2,222);
+    ctx.font='18px Arial';ctx.fillStyle='#d9b382';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,256);
+    document.getElementById('ui').textContent=I18N.t('score_hi_lives_label','Score: {s} | Hi: {h} | Lives: {l}').replace('{s}',score).replace('{h}',hi).replace('{l}',lives);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  ctx.fillStyle='#d9b382';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('animal_round_label','{a} — Round {r}').replace('{a}',ANIMALS[(round-1)%ANIMALS.length]).replace('{r}',round),W/2,30);
+
+  drawHoof();
+
+  if(phase==='trim'){
+    drawCursor();
+    drawProgress();
+  } else if(phase==='gait'){
+    gaitMeterPos+=0.012*gaitMeterDir*(1+round*0.05);
+    if(gaitMeterPos>=1){gaitMeterPos=1;gaitMeterDir=-1;}
+    if(gaitMeterPos<=0){gaitMeterPos=0;gaitMeterDir=1;}
+    drawGaitMeter();
+  }
+
+  if(feedbackTimer>0){
+    feedbackTimer--;
+    ctx.globalAlpha=Math.min(1,feedbackTimer/20);
+    ctx.fillStyle=feedbackColor;ctx.font='bold 22px Arial';
+    ctx.fillText(feedback,W/2,H-20);
+    ctx.globalAlpha=1;
+  }
+
+  document.getElementById('ui').textContent=I18N.t('score_hi_lives_label','Score: {s} | Hi: {h} | Lives: {l}').replace('{s}',score).replace('{h}',hi).replace('{l}',lives);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

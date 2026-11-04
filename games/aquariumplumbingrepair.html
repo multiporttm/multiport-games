@@ -1,0 +1,336 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Aquarium Plumbing Repair</title><meta name="description" content="Play Aquarium Plumbing Repair free online — Trace the pipes, close the right valves, patch the leak, then reopen the system before any tank drains dry."><link rel="canonical" href="https://games.multiportllc.com/games/aquariumplumbingrepair"><meta property="og:title" content="Aquarium Plumbing Repair - Multiport Games"><meta property="og:description" content="Play Aquarium Plumbing Repair free online — Trace the pipes, close the right valves, patch the leak, then reopen the system before any tank drains dry."><meta property="og:url" content="https://games.multiportllc.com/games/aquariumplumbingrepair"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Aquarium Plumbing Repair","description":"Play Aquarium Plumbing Repair free online instantly. A leak has broken out in the aquarium's life-support plumbing. Trace the water flow through the pipe diagram, find the leaking section, close the two valves that bracket it, patch the leak, then reopen the valves in order without letting any tank drain dry. More pipes, more valves, and faster drains arrive with every level. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/aquariumplumbingrepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0b2d3d;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#dff4ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#ffd54f}
+#hud span.lives{color:#ff8a80}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Aquarium Plumbing Repair</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="760" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Find the leak:</b> one pipe segment on the main line sprays water — click/tap it to diagnose it. <b>Close valves:</b> click/tap the two valves on either side of the leak to shut them (or use <b>←/→</b> to move the cursor and <b>Space</b> to toggle). <b>Repair:</b> click/tap the leak again once both valves are closed. <b>Reopen:</b> click/tap both valves again to restore flow. Closing the wrong valve costs a life, and any fish tank left cut off too long will drain dry. Three lives — more pipes and faster drains arrive each level.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const KEY='aquariumplumbingrepair_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,level=1,lives=3,gameOver=false,started=false;
+let segs=[],valves=[],tanks=[],leakIdx=-1,leakFixed=false;
+let cursor=0; // index into interactables: valves then leak
+let msg='',msgTime=0,flashBad=0,flashGood=0;
+const mainY=120;
+
+function buildLevel(){
+  const n=Math.min(6,3+Math.floor((level-1)/1));
+  segs=[];
+  const segW=(W-120)/n;
+  for(let i=0;i<n;i++){
+    segs.push({x0:60+i*segW,x1:60+(i+1)*segW});
+  }
+  valves=[];
+  for(let i=0;i<=n;i++){
+    valves.push({x:60+i*segW,open:true});
+  }
+  leakIdx=1+Math.floor(Math.random()*(n-1));
+  if(leakIdx<1)leakIdx=1;
+  if(leakIdx>n-1)leakIdx=n-1;
+  leakFixed=false;
+  tanks=[];
+  const tankCount=Math.min(4,2+Math.floor(level/2));
+  for(let i=0;i<tankCount;i++){
+    const seg=Math.floor((i+0.5)*n/tankCount);
+    tanks.push({segIdx:Math.min(n-1,seg),x:(segs[Math.min(n-1,seg)].x0+segs[Math.min(n-1,seg)].x1)/2,level:100,drainRate:0});
+  }
+  cursor=0;
+}
+
+function segConnectedToSource(i){
+  // flow reaches segment i only if no closed valve between 0..i and leak before i doesn't block (leak doesn't block flow itself, only valves do)
+  for(let v=0;v<=i;v++){
+    if(!valves[v].open)return false;
+  }
+  return true;
+}
+
+function updateTanks(dt){
+  tanks.forEach(t=>{
+    const connected=segConnectedToSource(t.segIdx);
+    const leaking=!leakFixed&&t.segIdx>=leakIdx&&connected;
+    if(!connected||leaking){
+      t.drainRate=Math.min(1,t.drainRate+dt*0.5);
+      t.level-=t.drainRate*(8+level*1.5)*dt;
+      if(t.level<0)t.level=0;
+    } else {
+      t.drainRate=0;
+      t.level=Math.min(100,t.level+dt*18);
+    }
+    if(t.level<=0&&!gameOver){
+      drainedOut();
+    }
+  });
+}
+
+function drainedOut(){
+  lives--;
+  flashBad=18;
+  SFX.hurt();
+  msg=I18N.t('msg_drained','A tank drained dry!');
+  msgTime=100;
+  if(lives<=0){endGame();return;}
+  resetTanks();
+}
+
+function resetTanks(){tanks.forEach(t=>{t.level=60;t.drainRate=0;});}
+
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);}
+function hsDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(3-Math.max(0,lives)));}
+
+function toggleValve(i){
+  if(i<0||i>=valves.length)return;
+  const v=valves[i];
+  const bracketsLeak=(i===leakIdx)||(i===leakIdx+1);
+  if(v.open){
+    v.open=false;
+    if(bracketsLeak&&!leakFixed){
+      SFX.click();
+      msg=I18N.t('msg_valve_closed','Valve closed.');msgTime=60;
+    } else if(!leakFixed){
+      lives--;flashBad=18;SFX.error();
+      msg=I18N.t('msg_wrong_valve','Wrong valve! That one does not border the leak.');msgTime=100;
+      if(lives<=0)endGame();
+    } else {
+      SFX.click();
+    }
+  } else {
+    v.open=true;
+    SFX.swoosh();
+    if(leakFixed){
+      const leftClosedNow=!valves[leakIdx].open,rightClosedNow=!valves[leakIdx+1].open;
+      if(!leftClosedNow&&!rightClosedNow){
+        levelMaybeComplete();
+      }
+    }
+  }
+}
+
+function tryRepairLeak(){
+  if(leakFixed){msg=I18N.t('msg_already_fixed','Already repaired.');msgTime=60;return;}
+  const leftClosed=!valves[leakIdx].open,rightClosed=!valves[leakIdx+1].open;
+  if(leftClosed&&rightClosed){
+    leakFixed=true;
+    flashGood=20;
+    score+=40;
+    SFX.success();
+    msg=I18N.t('msg_repaired','Leak patched! Reopen both valves to restore flow.');msgTime=110;
+    scoreDisp();
+  } else {
+    lives--;flashBad=18;SFX.error();
+    msg=I18N.t('msg_cant_repair','Close both bordering valves first!');msgTime=100;
+    if(lives<=0)endGame();
+  }
+}
+
+function levelMaybeComplete(){
+  const bonus=60+level*10;
+  score+=bonus;
+  SFX.levelup();
+  flashGood=24;
+  msg=I18N.t('msg_level_done','System restored! +{b} bonus').replace('{b}',bonus);
+  msgTime=110;
+  if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+  level++;
+  buildLevel();
+  resetTanks();
+  scoreDisp();lvDisp();hsDisp();
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+  hsDisp();
+  livesDisp();
+}
+
+function restart(){
+  score=0;level=1;lives=3;gameOver=false;started=false;
+  buildLevel();
+  resetTanks();
+  scoreDisp();lvDisp();hsDisp();livesDisp();
+}
+
+function interactableList(){
+  // valves first (index), then leak as special entry
+  return valves.length;
+}
+
+function hitTest(x,y){
+  for(let i=0;i<valves.length;i++){
+    const v=valves[i];
+    if(Math.hypot(x-v.x,y-mainY)<18)return {type:'valve',idx:i};
+  }
+  const seg=segs[leakIdx];
+  if(seg){
+    const mx=(seg.x0+seg.x1)/2;
+    if(Math.abs(x-mx)<24&&Math.abs(y-mainY)<24)return {type:'leak'};
+  }
+  return null;
+}
+
+function handlePick(x,y){
+  if(!started){started=true;return;}
+  if(gameOver){restart();return;}
+  const hit=hitTest(x,y);
+  if(!hit)return;
+  if(hit.type==='valve')toggleValve(hit.idx);
+  else tryRepairLeak();
+}
+
+c.addEventListener('click',e=>{
+  const r=c.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(W/r.width),y=(e.clientY-r.top)*(H/r.height);
+  handlePick(x,y);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const r=c.getBoundingClientRect();
+  const t=e.touches[0];
+  const x=(t.clientX-r.left)*(W/r.width),y=(t.clientY-r.top)*(H/r.height);
+  handlePick(x,y);
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(!started){
+    if(e.code==='Space'||e.code==='Enter')started=true;
+    return;
+  }
+  if(gameOver){
+    if(e.code==='Space'||e.code==='Enter')restart();
+    return;
+  }
+  const total=valves.length+1; // + leak slot
+  if(e.code==='ArrowRight'){cursor=(cursor+1)%total;e.preventDefault();}
+  else if(e.code==='ArrowLeft'){cursor=(cursor-1+total)%total;e.preventDefault();}
+  else if(e.code==='Space'||e.code==='Enter'){
+    e.preventDefault();
+    if(cursor<valves.length)toggleValve(cursor);
+    else tryRepairLeak();
+  }
+});
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#071f2b');g.addColorStop(1,flashBad>0?'#5a2020':flashGood>0?'#1f4d3a':'#0b2d3d');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  if(flashBad>0)flashBad--;
+  if(flashGood>0)flashGood--;
+
+  // main pipe
+  segs.forEach((s,i)=>{
+    const isLeak=i===leakIdx;
+    const flowing=segConnectedToSource(i);
+    ctx.lineWidth=14;
+    ctx.strokeStyle=isLeak&&!leakFixed?'#ff8a3d':(flowing?'#4fc3f7':'#555');
+    ctx.beginPath();ctx.moveTo(s.x0,mainY);ctx.lineTo(s.x1,mainY);ctx.stroke();
+    if(isLeak&&!leakFixed){
+      const mx=(s.x0+s.x1)/2;
+      ctx.fillStyle='#bfe9ff';
+      for(let k=0;k<3;k++){
+        const off=((Date.now()/150)+k*7)%20;
+        ctx.beginPath();ctx.arc(mx-6+k*6,mainY-18-off,3,0,Math.PI*2);ctx.fill();
+      }
+    }
+    if(isLeak&&leakFixed){
+      ctx.fillStyle='#ffd54f';ctx.font='bold 16px Arial';ctx.textAlign='center';
+      ctx.fillText('🔧',(s.x0+s.x1)/2,mainY-18);
+    }
+  });
+
+  // valves
+  valves.forEach((v,i)=>{
+    const sel=started&&!gameOver&&cursor===i;
+    ctx.beginPath();ctx.arc(v.x,mainY,16,0,Math.PI*2);
+    ctx.fillStyle=v.open?'#2e8b57':'#c0392b';
+    ctx.fill();
+    ctx.lineWidth=sel?4:2;
+    ctx.strokeStyle=sel?'#ffd54f':'#113';
+    ctx.stroke();
+    ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(v.open?'◯':'✕',v.x,mainY+1);
+  });
+  if(started&&!gameOver&&cursor===valves.length){
+    const s=segs[leakIdx];
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+    ctx.strokeRect((s.x0+s.x1)/2-22,mainY-22,44,44);
+  }
+
+  // tanks
+  tanks.forEach(t=>{
+    const tx=t.x,ty=250,tw=90,th=120;
+    ctx.strokeStyle='#4fc3f7';ctx.lineWidth=2;ctx.strokeRect(tx-tw/2,ty,tw,th);
+    ctx.fillStyle='#0a1a22';ctx.fillRect(tx-tw/2,ty,tw,th);
+    const lvlH=th*(t.level/100);
+    ctx.fillStyle=t.level<30?'#ff5252':'#29b6f6';
+    ctx.fillRect(tx-tw/2+2,ty+th-lvlH+2,tw-4,lvlH-4>0?lvlH-4:0);
+    ctx.font='22px Arial';ctx.textAlign='center';ctx.fillText('🐠',tx,ty+th/2);
+    // connecting drop pipe
+    ctx.strokeStyle='#4fc3f7';ctx.lineWidth=6;
+    ctx.beginPath();ctx.moveTo(tx,mainY+7);ctx.lineTo(tx,ty);ctx.stroke();
+  });
+
+  ctx.textAlign='center';ctx.textBaseline='alphabetic';
+  if(!started){
+    ctx.fillStyle='#dff4ff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Click/Tap or press Space to start the repair'),W/2,H-30);
+  } else if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,60);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,90);
+  } else if(msgTime>0){
+    msgTime--;
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(W/2-280,70,560,30);
+    ctx.fillStyle='#fff';ctx.font='bold 14px Arial';
+    ctx.fillText(msg,W/2,91);
+  }
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+  if(started&&!gameOver)updateTanks(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+restart();
+loop();
+</script></body></html>
