@@ -1,0 +1,295 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Subway Platform Crowd Control</title><meta name="description" content="Play Subway Platform Crowd Control free online — Drag waiting passengers along the platform to spread the crowd evenly and clear the doors before every train leaves."><link rel="canonical" href="https://games.multiportllc.com/games/subwayplatformcrowdcontrol"><meta property="og:title" content="Subway Platform Crowd Control - Multiport Games"><meta property="og:description" content="Play Subway Platform Crowd Control free online — Drag waiting passengers along the platform to spread the crowd evenly and clear the doors before every train leaves."><meta property="og:url" content="https://games.multiportllc.com/games/subwayplatformcrowdcontrol"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Subway Platform Crowd Control","description":"Play Subway Platform Crowd Control free online instantly. Direct waiting passengers to spread evenly along a busy subway platform and keep the doors clear before each train departs. Trains arrive faster and crowds grow larger with every round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/subwayplatformcrowdcontrol","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1a2e;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#e0e0f0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Subway Platform Crowd Control</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Round: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="760" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Drag</b> (mouse or touch) each passenger dot along the platform to an open zone, spreading the crowd evenly between the yellow doors before the timer runs out. Too many passengers bunched in one zone, or anyone left standing in a door zone when the train leaves, costs a life. Use <b>Arrow keys</b> to move the selected passenger and <b>Tab</b>/<b>click</b> to select one. Clear enough rounds to rack up points — crowds grow and the clock shrinks every round. Three lives.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const KEY='subwayplatformcrowdcontrol_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,round=1,lives=3,started=false,gameOver=false;
+let timer=0,timerMax=0;
+let zones=[]; // {x,cap}
+let doorZones=[];
+let passengers=[]; // {x,y,zone,targetX,targetY,vx,vy}
+let selected=null;
+let dragging=null;
+const NZONES=6;
+const PLATFORM_Y0=120,PLATFORM_Y1=360;
+let roundResultTime=0,roundResultMsg='';
+
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('round_label','Round: {l}').replace('{l}',round);}
+function hsDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(3-Math.max(0,lives)));}
+
+function zoneX(i){return 60+i*((W-120)/(NZONES-1));}
+
+function setupRound(){
+  zones=[];
+  for(let i=0;i<NZONES;i++){
+    zones.push({x:zoneX(i),cap:3+Math.min(3,Math.floor(round/2))});
+  }
+  // doors are at two random zones each round (where passengers must NOT be standing when train leaves)
+  doorZones=[];
+  const d1=1+Math.floor(Math.random()*(NZONES-2));
+  let d2=1+Math.floor(Math.random()*(NZONES-2));
+  while(d2===d1)d2=1+Math.floor(Math.random()*(NZONES-2));
+  doorZones=[d1,d2];
+
+  const count=Math.min(18,6+round*2);
+  passengers=[];
+  for(let i=0;i<count;i++){
+    // spawn bunched near door zones to force spreading
+    const z=doorZones[Math.floor(Math.random()*doorZones.length)];
+    const x=zones[z].x+(Math.random()*40-20);
+    const y=PLATFORM_Y0+30+Math.random()*(PLATFORM_Y1-PLATFORM_Y0-60);
+    passengers.push({x,y,targetX:x,targetY:y,zone:z,vx:0,vy:0,id:i});
+  }
+  timerMax=Math.max(10,22-round*1.2);
+  timer=timerMax;
+  selected=null;
+  dragging=null;
+}
+
+function zoneCounts(){
+  const counts=new Array(NZONES).fill(0);
+  passengers.forEach(p=>counts[p.zone]++);
+  return counts;
+}
+
+function nearestZone(x){
+  let best=0,bd=1e9;
+  for(let i=0;i<NZONES;i++){
+    const d=Math.abs(zones[i].x-x);
+    if(d<bd){bd=d;best=i;}
+  }
+  return best;
+}
+
+function reset(){
+  score=0;round=1;lives=3;started=false;gameOver=false;
+  setupRound();
+  scoreDisp();lvDisp();hsDisp();livesDisp();
+}
+
+function endRound(success){
+  if(success){
+    score+=20+round*5;
+    if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+    SFX.success();
+    roundResultMsg=I18N.t('round_clear','Round Clear!');
+    round++;
+    hsDisp();scoreDisp();
+    roundResultTime=60;
+    setTimeout(()=>{if(!gameOver)setupRound();},900);
+  } else {
+    lives--;
+    livesDisp();
+    SFX.fail();
+    roundResultMsg=I18N.t('round_failed','Crowd Too Uneven!');
+    roundResultTime=60;
+    if(lives<=0){
+      gameOver=true;
+      SFX.lose();
+      if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+      hsDisp();
+    } else {
+      setTimeout(()=>{if(!gameOver)setupRound();},900);
+    }
+  }
+}
+
+function checkClear(){
+  const counts=zoneCounts();
+  // doors must be empty or near-empty, and no zone over capacity
+  for(const d of doorZones){ if(counts[d]>1) return false; }
+  for(let i=0;i<NZONES;i++){ if(counts[i]>zones[i].cap) return false; }
+  // require reasonably even spread: max-min across non-door zones small
+  const nonDoor=counts.filter((_,i)=>!doorZones.includes(i));
+  const mx=Math.max(...nonDoor), mn=Math.min(...nonDoor);
+  return (mx-mn)<=2;
+}
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+function findPassengerAt(x,y){
+  let best=null,bd=22;
+  passengers.forEach(p=>{
+    const d=Math.hypot(p.x-x,p.y-y);
+    if(d<bd){bd=d;best=p;}
+  });
+  return best;
+}
+
+function start(){
+  if(!started){started=true;}
+  if(gameOver){reset();return;}
+}
+
+c.addEventListener('mousedown',e=>{
+  start();
+  const pos=pointerPos(e);
+  const p=findPassengerAt(pos.x,pos.y);
+  if(p){dragging=p;selected=p;}
+});
+c.addEventListener('mousemove',e=>{
+  if(dragging){const pos=pointerPos(e);dragging.x=Math.max(30,Math.min(W-30,pos.x));dragging.y=Math.max(PLATFORM_Y0+15,Math.min(PLATFORM_Y1-15,pos.y));}
+});
+window.addEventListener('mouseup',()=>{
+  if(dragging){dragging.zone=nearestZone(dragging.x);SFX.click();dragging=null;}
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();start();
+  const pos=pointerPos(e);
+  const p=findPassengerAt(pos.x,pos.y);
+  if(p){dragging=p;selected=p;}
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(dragging){const pos=pointerPos(e);dragging.x=Math.max(30,Math.min(W-30,pos.x));dragging.y=Math.max(PLATFORM_Y0+15,Math.min(PLATFORM_Y1-15,pos.y));}
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  e.preventDefault();
+  if(dragging){dragging.zone=nearestZone(dragging.x);SFX.click();dragging=null;}
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Tab',' ','Enter'].includes(e.key))e.preventDefault();
+  if(gameOver&&(e.key==='Enter'||e.key===' ')){reset();return;}
+  start();
+  if(e.key==='Tab'){
+    if(!passengers.length)return;
+    const idx=selected?passengers.indexOf(selected):-1;
+    selected=passengers[(idx+1)%passengers.length];
+    return;
+  }
+  if(!selected)return;
+  const step=12;
+  if(e.key==='ArrowLeft'){selected.x=Math.max(30,selected.x-step);selected.zone=nearestZone(selected.x);}
+  if(e.key==='ArrowRight'){selected.x=Math.min(W-30,selected.x+step);selected.zone=nearestZone(selected.x);}
+  if(e.key==='ArrowUp'){selected.y=Math.max(PLATFORM_Y0+15,selected.y-step);}
+  if(e.key==='ArrowDown'){selected.y=Math.min(PLATFORM_Y1-15,selected.y+step);}
+  if(e.key==='Enter'){SFX.click();}
+});
+
+function drawPlatform(){
+  ctx.fillStyle='#2a2a40';ctx.fillRect(0,PLATFORM_Y0,W,PLATFORM_Y1-PLATFORM_Y0);
+  ctx.fillStyle='#ffd54f';ctx.fillRect(0,PLATFORM_Y0,W,4);
+  ctx.fillStyle='#e94560';ctx.fillRect(0,PLATFORM_Y1-4,W,4);
+  // zone dividers
+  for(let i=0;i<NZONES;i++){
+    const isDoor=doorZones.includes(i);
+    ctx.fillStyle=isDoor?'rgba(255,213,79,0.18)':'rgba(255,255,255,0.04)';
+    ctx.fillRect(zones[i].x-35,PLATFORM_Y0,70,PLATFORM_Y1-PLATFORM_Y0);
+    if(isDoor){
+      ctx.fillStyle='#ffd54f';ctx.font='bold 12px Arial';ctx.textAlign='center';
+      ctx.fillText(I18N.t('door_label','DOOR'),zones[i].x,PLATFORM_Y0-8);
+    }
+  }
+}
+
+function drawPassengers(){
+  passengers.forEach(p=>{
+    ctx.beginPath();
+    ctx.fillStyle=p===selected?'#4fc3f7':'#7ec850';
+    ctx.arc(p.x,p.y,11,0,Math.PI*2);
+    ctx.fill();
+    ctx.strokeStyle='#0b3d2e';ctx.lineWidth=2;ctx.stroke();
+  });
+}
+
+function drawHud(){
+  const counts=zoneCounts();
+  for(let i=0;i<NZONES;i++){
+    const over=counts[i]>zones[i].cap;
+    ctx.fillStyle=over?'#ff6b6b':'#aaa';
+    ctx.font='bold 13px Arial';ctx.textAlign='center';
+    ctx.fillText(counts[i]+'/'+zones[i].cap,zones[i].x,PLATFORM_Y1+22);
+  }
+  // timer bar
+  const pct=Math.max(0,timer/timerMax);
+  ctx.fillStyle='#333';ctx.fillRect(20,20,W-40,14);
+  ctx.fillStyle=pct<0.3?'#ff6b6b':'#80deea';
+  ctx.fillRect(20,20,(W-40)*pct,14);
+}
+
+let lastTime=null;
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#16213e';ctx.fillRect(0,0,W,H);
+  drawPlatform();
+  drawPassengers();
+
+  if(!started){
+    ctx.fillStyle='#e0e0f0cc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Drag or Tab+Arrows to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap/Enter to restart'),W/2,H/2+24);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(roundResultTime>0){
+    roundResultTime-=dt;
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(roundResultMsg,W/2,H/2);
+  } else {
+    timer-=dt/60;
+    drawHud();
+    if(timer<=0){
+      timer=0;
+      endRound(checkClear());
+      roundResultTime=60;
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

@@ -1,0 +1,227 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rail Switch Throwing</title><meta name="description" content="Play Rail Switch Throwing free online — Read each train's destination signal and pull the right switch lever before it reaches the junction."><link rel="canonical" href="https://games.multiportllc.com/games/railswitchthrowing"><meta property="og:title" content="Rail Switch Throwing - Multiport Games"><meta property="og:description" content="Play Rail Switch Throwing free online — Read each train's destination signal and pull the right switch lever before it reaches the junction."><meta property="og:url" content="https://games.multiportllc.com/games/railswitchthrowing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rail Switch Throwing","description":"Play Rail Switch Throwing free online instantly. Read each approaching train's colored destination signal and throw the matching trackside switch lever before the train reaches the junction, routing it onto the correct track. Trains arrive faster and closer together every level. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/railswitchthrowing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#10191f;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#dcefe6;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rail Switch Throwing</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="760" height="380"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Goal:</b> Each incoming train shows a colored signal for its destination track (top = red, middle = yellow, bottom = cyan). Click/tap the lever for that track, or press <b>1</b>/<b>2</b>/<b>3</b> (or <b>↑</b>/<b>→</b>/<b>↓</b>), to throw the switch before the train reaches the junction line. Right switch = safely through; wrong switch, or no switch in time, costs a life. Trains come faster and closer together every level. Three lives.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=380;
+const KEY='railswitchthrowing_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,level=1,lives=3,started=false,gameOver=false;
+let lastTime=null;
+const JUNCTION_X=620;
+const TRACK_Y=[100,190,280];
+const COLORS=['#ff6b6b','#ffd54f','#4dd0e1'];
+let trains=[]; // {track, x, resolved, routedTrack}
+let leverState=[0,1,2]; // which track each lever currently points to isn't needed; we just track thrown lever per train attempt
+let spawnTimer=0,spawnInterval=140;
+let currentLever=-1; // which track is "armed" visually when thrown last
+
+function reset(){
+  score=0;level=1;lives=3;gameOver=false;started=false;
+  trains=[];spawnTimer=0;spawnInterval=140;lastTime=null;currentLever=-1;
+}
+
+function livesStr(){ return '●'.repeat(Math.max(0,lives))+'○'.repeat(Math.max(0,3-lives)); }
+
+function updateHud(){
+  document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);
+  document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+  document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {v}').replace('{v}',livesStr());
+}
+
+function loseLife(){
+  lives--;
+  SFX.hit();
+  updateHud();
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(KEY,String(Math.floor(hi)));}
+  }
+}
+
+function spawnTrain(){
+  const track=Math.floor(Math.random()*3);
+  trains.push({track,x:0,resolved:false});
+}
+
+function throwLever(trackIdx){
+  if(!started||gameOver)return;
+  currentLever=trackIdx;
+  SFX.click();
+  // find the closest unresolved train nearing the junction
+  let best=null;
+  trains.forEach(t=>{
+    if(!t.resolved && (best===null||t.x>best.x)) best=t;
+  });
+  if(!best)return;
+  best.resolved=true;
+  if(best.track===trackIdx){
+    score+=10+level*2;
+    if(score>hi)hi=score;
+    SFX.success();
+  } else {
+    loseLife();
+    SFX.error();
+  }
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver){reset();started=true;}
+}
+
+function leverHit(mx,my){
+  for(let i=0;i<3;i++){
+    const ly=TRACK_Y[i];
+    if(mx>JUNCTION_X-10&&mx<JUNCTION_X+60&&my>ly-30&&my<ly+30)return i;
+  }
+  return -1;
+}
+
+c.addEventListener('click',e=>{
+  const r=c.getBoundingClientRect();
+  const mx=(e.clientX-r.left)*(W/r.width), my=(e.clientY-r.top)*(H/r.height);
+  if(!started){startOrRestart();return;}
+  if(gameOver){startOrRestart();return;}
+  const hit=leverHit(mx,my);
+  if(hit>=0)throwLever(hit);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const r=c.getBoundingClientRect();
+  const t=e.changedTouches[0];
+  const mx=(t.clientX-r.left)*(W/r.width), my=(t.clientY-r.top)*(H/r.height);
+  if(!started){startOrRestart();return;}
+  if(gameOver){startOrRestart();return;}
+  const hit=leverHit(mx,my);
+  if(hit>=0)throwLever(hit);
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(!started){ if(e.code==='Space'){startOrRestart();} return; }
+  if(gameOver){ if(e.code==='Space'){startOrRestart();} return; }
+  if(e.key==='1'||e.code==='ArrowUp')throwLever(0);
+  else if(e.key==='2'||e.code==='ArrowRight')throwLever(1);
+  else if(e.key==='3'||e.code==='ArrowDown')throwLever(2);
+});
+
+function drawTrain(t){
+  const y=TRACK_Y[t.track];
+  ctx.fillStyle=COLORS[t.track];
+  ctx.fillRect(t.x,y-13,46,26);
+  ctx.fillStyle='#0a0a0a';
+  ctx.fillRect(t.x+6,y-6,10,10);
+  ctx.fillRect(t.x+22,y-6,10,10);
+}
+
+function drawLever(i){
+  const y=TRACK_Y[i];
+  const thrown=currentLever===i;
+  ctx.fillStyle=thrown?'#fff':'#55707a';
+  ctx.fillRect(JUNCTION_X,y-8,16,16);
+  ctx.strokeStyle=COLORS[i];ctx.lineWidth=3;
+  ctx.strokeRect(JUNCTION_X-4,y-14,24,28);
+  ctx.fillStyle='#dcefe6';ctx.font='bold 12px Arial';ctx.textAlign='left';
+  ctx.fillText(i+1,JUNCTION_X+26,y+4);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#10191f';ctx.fillRect(0,0,W,H);
+
+  // draw tracks
+  for(let i=0;i<3;i++){
+    ctx.strokeStyle='#2c3e44';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(0,TRACK_Y[i]);ctx.lineTo(JUNCTION_X,TRACK_Y[i]);ctx.stroke();
+    // signal lamp at start
+    ctx.fillStyle=COLORS[i];
+    ctx.beginPath();ctx.arc(20,TRACK_Y[i],6,0,Math.PI*2);ctx.fill();
+  }
+  // junction line
+  ctx.strokeStyle='#e94560';ctx.lineWidth=2;ctx.setLineDash([6,4]);
+  ctx.beginPath();ctx.moveTo(JUNCTION_X,20);ctx.lineTo(JUNCTION_X,H-20);ctx.stroke();
+  ctx.setLineDash([]);
+
+  for(let i=0;i<3;i++)drawLever(i);
+
+  if(!started){
+    ctx.fillStyle='#dcefe699';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Space to start'),W/2,40);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','DERAILED'),W/2,H/2-20);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click / Tap / Space to restart'),W/2,H/2+10);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  const newLevel=1+Math.floor(score/80);
+  if(newLevel>level){level=newLevel;SFX.levelup();}
+
+  spawnTimer+=dt;
+  spawnInterval=Math.max(55,140-level*8);
+  if(spawnTimer>=spawnInterval){spawnTimer-=spawnInterval;spawnTrain();}
+
+  const speed=2.6+level*0.25;
+  trains.forEach(t=>{ t.x+=speed*dt; });
+
+  // trains that cross the junction unresolved = miss
+  for(let i=trains.length-1;i>=0;i--){
+    const t=trains[i];
+    if(!t.resolved && t.x>=JUNCTION_X-23){
+      t.resolved=true;
+      loseLife();
+    }
+  }
+  trains=trains.filter(t=>t.x<JUNCTION_X+80);
+
+  trains.forEach(drawTrain);
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+reset();
+updateHud();
+loop();
+</script></body></html>

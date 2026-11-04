@@ -1,0 +1,262 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Train Dispatch Scheduling</title><meta name="description" content="Play Train Dispatch Scheduling free online — Assign each train a track and timing slot so no two trains collide or deadlock at the junction."><link rel="canonical" href="https://games.multiportllc.com/games/traindispatchscheduling"><meta property="og:title" content="Train Dispatch Scheduling - Multiport Games"><meta property="og:description" content="Play Train Dispatch Scheduling free online — Assign each train a track and timing slot so no two trains collide or deadlock at the junction."><meta property="og:url" content="https://games.multiportllc.com/games/traindispatchscheduling"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Train Dispatch Scheduling","description":"Play Train Dispatch Scheduling free online instantly. Assign each approaching train a free track and a timing slot through the junction so no two trains collide or deadlock. More trains enter the network and the schedule gets tighter every level. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/traindispatchscheduling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#17202b;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#dce6f0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Train Dispatch Scheduling</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="760" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Goal:</b> Each train waiting on the left shows its destination track. Click/tap a waiting train to select it, then click/tap one of the 3 tracks (or press <b>1</b>, <b>2</b>, <b>3</b> to select a train and <b>Q</b>, <b>W</b>, <b>E</b> to send it) to dispatch it onto that track. Only one train may occupy a track at a time — sending a train onto an occupied track or letting the junction clog costs a life. Clear trains before they pile up; more trains arrive and tracks clear slower each level. Three lives.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const KEY='traindispatchscheduling_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,level=1,lives=3,started=false,gameOver=false;
+let selected=-1;
+let waiting=[]; // {dest,age,spawnT}
+let tracks=[null,null,null]; // each: {dest,progress,train} or null
+let spawnTimer=0,spawnInterval=130;
+let lastTime=null;
+const TRACK_Y=[110,210,310];
+const TRACK_COLORS=['#ff6b6b','#ffd54f','#80deea'];
+const trainW=54,trainH=26;
+
+function reset(){
+  score=0;level=1;lives=3;gameOver=false;started=false;selected=-1;
+  waiting=[];tracks=[null,null,null];spawnTimer=0;spawnInterval=130;lastTime=null;
+  for(let i=0;i<3;i++)spawnWaiting();
+}
+
+function spawnWaiting(){
+  if(waiting.length>=6)return;
+  waiting.push({dest:Math.floor(Math.random()*3),age:0});
+}
+
+function livesStr(){ return '●'.repeat(Math.max(0,lives))+'○'.repeat(Math.max(0,3-lives)); }
+
+function updateHud(){
+  document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);
+  document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+  document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {v}').replace('{v}',livesStr());
+}
+
+function loseLife(){
+  lives--;
+  SFX.hit();
+  updateHud();
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(KEY,String(Math.floor(hi)));}
+  }
+}
+
+function selectWaiting(i){
+  if(gameOver||!started)return;
+  if(i<0||i>=waiting.length)return;
+  selected=i;
+  SFX.select();
+}
+
+function dispatchTo(trackIdx){
+  if(gameOver||!started)return;
+  if(selected<0||selected>=waiting.length)return;
+  const t=waiting[selected];
+  if(tracks[trackIdx]){
+    // collision: track occupied
+    loseLife();
+    selected=-1;
+    return;
+  }
+  if(t.dest!==trackIdx){
+    // wrong track — deadlock risk
+    loseLife();
+    selected=-1;
+    return;
+  }
+  tracks[trackIdx]={progress:0,dest:t.dest};
+  waiting.splice(selected,1);
+  selected=-1;
+  score+=10+level*2;
+  if(score>hi)hi=score;
+  SFX.success();
+  updateHud();
+}
+
+function handlePrimary(mx,my){
+  if(!started){started=true;return;}
+  if(gameOver){reset();started=true;return;}
+  // waiting trains area: x 20..300, rows
+  for(let i=0;i<waiting.length;i++){
+    const wx=20+ (i%2)*150, wy=30+Math.floor(i/2)*60;
+    if(mx>=wx&&mx<=wx+trainW+20&&my>=wy&&my<=wy+trainH+20){ selectWaiting(i); return; }
+  }
+  for(let ti=0;ti<3;ti++){
+    const ty=TRACK_Y[ti];
+    if(mx>330&&mx<W-10&&my>ty-30&&my<ty+30){ dispatchTo(ti); return; }
+  }
+}
+
+c.addEventListener('click',e=>{
+  const r=c.getBoundingClientRect();
+  const mx=(e.clientX-r.left)*(W/r.width), my=(e.clientY-r.top)*(H/r.height);
+  handlePrimary(mx,my);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const r=c.getBoundingClientRect();
+  const touch=e.changedTouches[0];
+  const mx=(touch.clientX-r.left)*(W/r.width), my=(touch.clientY-r.top)*(H/r.height);
+  handlePrimary(mx,my);
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(!started){ if(e.code==='Space'){started=true;} return; }
+  if(gameOver){ if(e.code==='Space'){reset();started=true;} return; }
+  if(e.key==='1')selectWaiting(0);
+  else if(e.key==='2')selectWaiting(1);
+  else if(e.key==='3')selectWaiting(2);
+  else if(e.key==='q'||e.key==='Q')dispatchTo(0);
+  else if(e.key==='w'||e.key==='W')dispatchTo(1);
+  else if(e.key==='e'||e.key==='E')dispatchTo(2);
+});
+
+function drawTrain(x,y,color,highlight){
+  ctx.save();
+  ctx.fillStyle=color;
+  ctx.fillRect(x,y,trainW,trainH);
+  ctx.fillStyle='#0008';
+  ctx.fillRect(x+6,y+4,12,10);
+  ctx.fillRect(x+24,y+4,12,10);
+  if(highlight){
+    ctx.strokeStyle='#fff';ctx.lineWidth=3;
+    ctx.strokeRect(x-3,y-3,trainW+6,trainH+6);
+  }
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#17202b';ctx.fillRect(0,0,W,H);
+
+  // draw tracks
+  for(let ti=0;ti<3;ti++){
+    const ty=TRACK_Y[ti];
+    ctx.strokeStyle='#4a5a6a';ctx.lineWidth=4;
+    ctx.beginPath();ctx.moveTo(330,ty);ctx.lineTo(W-10,ty);ctx.stroke();
+    ctx.fillStyle=TRACK_COLORS[ti];
+    ctx.font='bold 13px Arial';ctx.textAlign='left';
+    ctx.fillText(I18N.t('track_label','Track {n}').replace('{n}',ti+1),335,ty-14);
+  }
+
+  // waiting area label
+  ctx.fillStyle='#9fb3c8';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('waiting_label','Waiting'),20,16);
+  ctx.fillStyle='#9fb3c8';
+  ctx.fillText(I18N.t('junction_label','Junction →'),330,100);
+
+  if(!started){
+    ctx.fillStyle='#dce6f099';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Space to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','DISPATCH FAILURE'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click / Tap / Space to restart'),W/2,H/2+16);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  // level up based on score
+  const newLevel=1+Math.floor(score/120);
+  if(newLevel>level){level=newLevel;SFX.levelup();}
+
+  // spawn waiting trains
+  spawnTimer+=dt;
+  spawnInterval=Math.max(55,130-level*8);
+  if(spawnTimer>=spawnInterval){
+    spawnTimer-=spawnInterval;
+    spawnWaiting();
+  }
+
+  // age waiting trains — too long waiting = deadlock penalty
+  waiting.forEach(t=>t.age+=dt);
+  const overAge=waiting.findIndex(t=>t.age>480);
+  if(overAge>=0){
+    waiting.splice(overAge,1);
+    if(selected===overAge)selected=-1;
+    else if(selected>overAge)selected--;
+    loseLife();
+  }
+
+  // advance trains on tracks
+  const trackSpeed=0.9+level*0.08;
+  for(let ti=0;ti<3;ti++){
+    const tr=tracks[ti];
+    if(tr){
+      tr.progress+=trackSpeed*dt;
+      if(tr.progress>=W-340){
+        tracks[ti]=null;
+        score+=5;
+        if(score>hi)hi=score;
+      }
+    }
+  }
+
+  // draw waiting trains
+  for(let i=0;i<waiting.length;i++){
+    const wx=20+(i%2)*150, wy=30+Math.floor(i/2)*60;
+    drawTrain(wx,wy,TRACK_COLORS[waiting[i].dest],i===selected);
+    ctx.fillStyle='#dce6f0';ctx.font='11px Arial';ctx.textAlign='left';
+    ctx.fillText('→'+I18N.t('track_short','T')+(waiting[i].dest+1),wx,wy+trainH+14);
+  }
+
+  // draw trains on track
+  for(let ti=0;ti<3;ti++){
+    const tr=tracks[ti];
+    if(tr){
+      drawTrain(330+tr.progress,TRACK_Y[ti]-trainH/2,TRACK_COLORS[tr.dest],false);
+    }
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+reset();
+updateHud();
+loop();
+</script></body></html>

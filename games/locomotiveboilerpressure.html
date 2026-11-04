@@ -1,0 +1,241 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Locomotive Boiler Pressure</title><meta name="description" content="Play Locomotive Boiler Pressure free online — Balance firebox heat and water injection to keep steam pressure in the safe range across a full route."><link rel="canonical" href="https://games.multiportllc.com/games/locomotiveboilerpressure"><meta property="og:title" content="Locomotive Boiler Pressure - Multiport Games"><meta property="og:description" content="Play Locomotive Boiler Pressure free online — Balance firebox heat and water injection to keep steam pressure in the safe range across a full route."><meta property="og:url" content="https://games.multiportllc.com/games/locomotiveboilerpressure"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Locomotive Boiler Pressure","description":"Play Locomotive Boiler Pressure free online instantly. Shovel coal to raise heat and inject water to cool the boiler, keeping steam pressure in the safe working band through grades, flats and curves on a full route. Grades get steeper and the safe band narrows each level. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/locomotiveboilerpressure","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1310;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#f0e0cc;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+#btnRow{display:flex;justify-content:center;gap:14px;margin:10px 0}
+#btnRow button{padding:12px 20px;background:#e94560;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;font-weight:700;touch-action:none}
+#btnRow button#waterBtn{background:#2a7fb0}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Locomotive Boiler Pressure</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="760" height="380"></canvas>
+    <div id="btnRow">
+      <button id="fireBtn">🔥 Shovel Coal</button>
+      <button id="waterBtn">💧 Inject Water</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Goal:</b> Keep the boiler needle inside the green safe zone for the whole route. Hold <b>Up Arrow</b> / <b>F</b> or press <b>Shovel Coal</b> to add heat (raises pressure, needed to climb grades); hold <b>Down Arrow</b> / <b>D</b> or press <b>Inject Water</b> to cool the boiler (lowers pressure). Pressure drifts up on grades and down on flats automatically. Let the needle sit in the red zone too long — low (stalled) or high (safety valve blow) — and you lose a life. Grades get steeper and the safe zone narrows every level. Three lives.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=380;
+const KEY='locomotiveboilerpressure_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,level=1,lives=3,started=false,gameOver=false;
+let pressure=50; // 0-100
+let safeLo=35,safeHi=65;
+let dangerTimer=0;
+let routePos=0,routeLen=4000;
+let grade=0; // -1..1, current terrain slope demand
+let gradeTimer=0,gradeTarget=0;
+let heating=false,cooling=false;
+let lastTime=null;
+
+function reset(){
+  score=0;level=1;lives=3;gameOver=false;started=false;
+  pressure=50;dangerTimer=0;routePos=0;grade=0;gradeTimer=0;gradeTarget=0;
+  lastTime=null;
+  setDifficulty();
+}
+
+function setDifficulty(){
+  safeLo=38-level*1.0; safeHi=62+level*1.0;
+  if(safeLo<10)safeLo=10;
+  if(safeHi>90)safeHi=90;
+  routeLen=4000+level*600;
+}
+
+function livesStr(){ return '●'.repeat(Math.max(0,lives))+'○'.repeat(Math.max(0,3-lives)); }
+
+function updateHud(){
+  document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);
+  document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+  document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {v}').replace('{v}',livesStr());
+}
+
+function loseLife(){
+  lives--;
+  SFX.hit();
+  dangerTimer=0;
+  updateHud();
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(KEY,String(Math.floor(hi)));}
+  }
+}
+
+function winRoute(){
+  score+=100+level*20;
+  level++;
+  setDifficulty();
+  pressure=50;
+  routePos=0;
+  dangerTimer=0;
+  SFX.levelup();
+  if(score>hi)hi=score;
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver){reset();started=true;}
+}
+
+document.getElementById('fireBtn').addEventListener('pointerdown',e=>{e.preventDefault();startOrRestart();heating=true;});
+document.getElementById('fireBtn').addEventListener('pointerup',()=>heating=false);
+document.getElementById('fireBtn').addEventListener('pointerleave',()=>heating=false);
+document.getElementById('waterBtn').addEventListener('pointerdown',e=>{e.preventDefault();startOrRestart();cooling=true;});
+document.getElementById('waterBtn').addEventListener('pointerup',()=>cooling=false);
+document.getElementById('waterBtn').addEventListener('pointerleave',()=>cooling=false);
+
+c.addEventListener('click',startOrRestart);
+c.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowUp'||e.key==='f'||e.key==='F'){e.preventDefault();startOrRestart();heating=true;}
+  if(e.code==='ArrowDown'||e.key==='d'||e.key==='D'){e.preventDefault();startOrRestart();cooling=true;}
+  if(e.code==='Space'){e.preventDefault();startOrRestart();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp'||e.key==='f'||e.key==='F')heating=false;
+  if(e.code==='ArrowDown'||e.key==='d'||e.key==='D')cooling=false;
+});
+
+function drawGauge(){
+  const cx=W/2,cy=250,r=120;
+  ctx.save();
+  ctx.translate(cx,cy);
+  // background arc
+  const start=Math.PI,end=0;
+  ctx.lineWidth=28;
+  ctx.strokeStyle='#3a2a20';
+  ctx.beginPath();ctx.arc(0,0,r,start,end,false);ctx.stroke();
+  // safe zone arc
+  const toAngle=v=>Math.PI-(v/100)*Math.PI;
+  ctx.strokeStyle='#4caf50';
+  ctx.beginPath();ctx.arc(0,0,r,toAngle(safeLo),toAngle(safeHi),true);ctx.stroke();
+  // danger zones
+  ctx.strokeStyle='#e94560';
+  ctx.beginPath();ctx.arc(0,0,r,toAngle(0),toAngle(safeLo),true);ctx.stroke();
+  ctx.beginPath();ctx.arc(0,0,r,toAngle(safeHi),toAngle(100),true);ctx.stroke();
+  // needle
+  const ang=toAngle(pressure);
+  ctx.strokeStyle='#fff';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(ang)*(r-10),-Math.sin(ang)*(r-10));ctx.stroke();
+  ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(0,0,8,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+  ctx.fillStyle='#f0e0cc';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(Math.round(pressure)+' PSI',cx,cy+30);
+}
+
+function drawRoute(){
+  const barY=320,barW=W-60,barX=30;
+  ctx.fillStyle='#2a2018';ctx.fillRect(barX,barY,barW,14);
+  ctx.fillStyle='#e94560';
+  const pct=Math.min(1,routePos/routeLen);
+  ctx.fillRect(barX,barY,barW*pct,14);
+  ctx.fillStyle='#f0e0cc';ctx.font='12px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('route_label','Route progress'),barX,barY-6);
+  // grade indicator
+  ctx.textAlign='right';
+  const gLabel=grade>0.15?I18N.t('grade_up','⬆ Climbing grade'):(grade<-0.15?I18N.t('grade_down','⬇ Descending'):I18N.t('grade_flat','— Flat'));
+  ctx.fillText(gLabel,barX+barW,barY-6);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#1a1310';ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    drawGauge();
+    ctx.fillStyle='#f0e0cc99';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Space to start'),W/2,60);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawGauge();
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','BOILER FAILURE'),W/2,50);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click / Tap / Space to restart'),W/2,78);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  // grade changes periodically
+  gradeTimer+=dt;
+  if(gradeTimer>80){
+    gradeTimer=0;
+    gradeTarget=(Math.random()*2-1)*(0.5+level*0.08);
+  }
+  grade+=(gradeTarget-grade)*0.02*dt;
+
+  // pressure dynamics
+  let drift=grade*0.09;
+  if(heating)drift+=0.22+level*0.01;
+  if(cooling)drift-=0.26+level*0.01;
+  pressure+=drift*dt;
+  pressure=Math.max(0,Math.min(100,pressure));
+
+  routePos+=(1+level*0.15)*dt;
+
+  const inDanger=pressure<safeLo||pressure>safeHi;
+  if(inDanger){
+    dangerTimer+=dt;
+    if(dangerTimer>90){ loseLife(); }
+  } else {
+    dangerTimer=Math.max(0,dangerTimer-dt*2);
+    score+=0.05*dt;
+    if(score>hi)hi=score;
+  }
+
+  if(routePos>=routeLen){
+    winRoute();
+  }
+
+  drawGauge();
+  drawRoute();
+
+  if(inDanger){
+    ctx.fillStyle=(Math.floor(now/150)%2===0)?'#e9456055':'#00000000';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#e94560';ctx.font='bold 14px Arial';ctx.textAlign='center';
+    ctx.fillText(pressure>safeHi?I18N.t('warn_high','⚠ PRESSURE HIGH — valve risk!'):I18N.t('warn_low','⚠ PRESSURE LOW — losing power!'),W/2,100);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+reset();
+updateHud();
+loop();
+</script></body></html>

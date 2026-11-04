@@ -1,0 +1,217 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Taxi Cab Maintenance</title><meta name="description" content="Play Taxi Cab Maintenance free online — Check each cab's maintenance log and clear only the overdue items before sending it back out."><link rel="canonical" href="https://games.multiportllc.com/games/taxicabmaintenance"><meta property="og:title" content="Taxi Cab Maintenance - Multiport Games"><meta property="og:description" content="Play Taxi Cab Maintenance free online — Check each cab's maintenance log and clear only the overdue items before sending it back out."><meta property="og:url" content="https://games.multiportllc.com/games/taxicabmaintenance"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Taxi Cab Maintenance","description":"Play Taxi Cab Maintenance free online instantly. Read each taxi's maintenance log, work out which service items — oil change, tire rotation, brake check and more — are overdue based on the miles since they were last done, select exactly those items, and clear the cab for its next shift before time runs out. Logs get bigger and the clock gets tighter every level. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/taxicabmaintenance","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1b1f2a;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#e0d8c0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Taxi Cab Maintenance</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="760" height="460"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    Each log line shows the miles since that item was last done and the interval it's due every. Click/tap (or press <b>1</b>-<b>4</b>) to select exactly the items that are overdue (miles since &ge; interval), then press <b>Enter</b> or tap <b>Clear Cab</b> to send it back out. Picking the wrong set — missing an overdue item or flagging one that isn't due — costs a life. Three lives — more items appear and the clock tightens every level.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=460;
+const KEY='taxicabmaintenance_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,level=1,lives=3,started=false,gameOver=false,streak=0,cabNum=0;
+let items=[];
+let timer=0,timerMax=16;
+let flashBad=0,flashGood=0;
+let msg='',msgTime=0;
+
+const ITEMS_ALL=[
+  {id:'oil',label:'Oil Change',interval:3000},
+  {id:'tire',label:'Tire Rotation',interval:5000},
+  {id:'brake',label:'Brake Check',interval:8000},
+  {id:'air',label:'Air Filter',interval:6000}
+];
+
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);}
+function hsDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(3-Math.max(0,lives)));}
+
+function nextRound(){
+  cabNum++;
+  const count=level>=3?4:3;
+  items=ITEMS_ALL.slice(0,count).map(def=>{
+    const since=Math.round((200+Math.random()*10800)/100)*100;
+    return {id:def.id,label:def.label,interval:def.interval,since,overdue:since>=def.interval,selected:false};
+  });
+  timerMax=Math.max(8,16-level*0.9);
+  timer=timerMax;
+}
+
+function reset(){
+  score=0;level=1;lives=3;gameOver=false;streak=0;cabNum=0;
+  nextRound();
+}
+reset();
+scoreDisp();lvDisp();hsDisp();livesDisp();
+
+function loseLife(text){
+  lives--;SFX.fail();
+  msg=text;msgTime=1.8;flashBad=0.4;streak=0;
+  livesDisp();
+  if(lives<=0){
+    gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(KEY,hi);}
+    hsDisp();
+  } else {
+    nextRound();
+  }
+}
+
+function itemRects(){
+  const x0=80,w=W-160,h=52,gap=10;
+  return items.map((it,i)=>({it,x:x0,y:92+i*(h+gap),w,h}));
+}
+function clearBtnRect(){ return {x:W/2-110,y:92+items.length*62+14,w:220,h:38}; }
+
+function toggle(i){
+  items[i].selected=!items[i].selected;
+  SFX.select();
+}
+
+function submit(){
+  const correct=items.every(it=>it.selected===it.overdue);
+  if(correct){
+    score+=100*level;streak++;
+    SFX.success();
+    msg=I18N.t('cab_cleared','Cab cleared for its next shift!');msgTime=1.2;
+    scoreDisp();
+    if(streak>0&&streak%3===0){level++;SFX.levelup();flashGood=0.5;lvDisp();}
+    nextRound();
+  } else {
+    const overdueNames=items.filter(it=>it.overdue).map(it=>it.label);
+    const text=overdueNames.length?overdueNames.join(', '):I18N.t('nothing_overdue','nothing');
+    loseLife(I18N.t('wrong_items','Overdue items were: {l}').replace('{l}',text));
+  }
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+
+function handleActivate(px,py){
+  if(gameOver){reset();scoreDisp();lvDisp();hsDisp();livesDisp();started=false;return;}
+  if(!started){started=true;return;}
+  const rects=itemRects();
+  for(let i=0;i<rects.length;i++){
+    const r=rects[i];
+    if(px>=r.x&&px<=r.x+r.w&&py>=r.y&&py<=r.y+r.h){toggle(i);return;}
+  }
+  const b=clearBtnRect();
+  if(px>=b.x&&px<=b.x+b.w&&py>=b.y&&py<=b.y+b.h){submit();return;}
+}
+
+c.addEventListener('click',e=>{const p=pointerPos(e);handleActivate(p.x,p.y);});
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=pointerPos(e);handleActivate(p.x,p.y);},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){reset();scoreDisp();lvDisp();hsDisp();livesDisp();started=false;return;}
+  if(!started){if(e.code==='Space'||e.code==='Enter'){started=true;}return;}
+  if(/^Digit[1-4]$/.test(e.code)){
+    const idx=parseInt(e.code.slice(5),10)-1;
+    if(idx>=0&&idx<items.length)toggle(idx);
+    return;
+  }
+  if(e.code==='Enter'||e.code==='Space'){e.preventDefault();submit();}
+});
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#15192a');sky.addColorStop(1,'#272b3c');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  if(flashBad>0){flashBad-=dt;ctx.fillStyle=`rgba(255,0,0,${Math.max(0,flashBad)*0.3})`;ctx.fillRect(0,0,W,H);}
+  if(flashGood>0){flashGood-=dt;ctx.fillStyle=`rgba(255,215,0,${Math.max(0,flashGood)*0.25})`;ctx.fillRect(0,0,W,H);}
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap or press Space to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space/Enter to restart'),W/2,H/2+46);
+    requestAnimationFrame(loop);return;
+  }
+
+  timer-=dt;
+  if(timer<=0){timer=timerMax;loseLife(I18N.t('ran_out_time','Ran out of time!'));}
+
+  if(!gameOver){
+    const tpct=Math.max(0,timer/timerMax);
+    ctx.fillStyle='#222';ctx.fillRect(20,20,W-40,10);
+    ctx.fillStyle=tpct>0.3?'#7ec850':'#ff6b6b';
+    ctx.fillRect(20,20,(W-40)*tpct,10);
+
+    ctx.font='bold 16px Arial';ctx.textAlign='center';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('cab_prompt','Cab #{n} — select the overdue items').replace('{n}',cabNum),W/2,50);
+
+    itemRects().forEach(r=>{
+      ctx.fillStyle=r.it.selected?'#e94560':'#2b2f40';
+      ctx.fillRect(r.x,r.y,r.w,r.h);
+      ctx.strokeStyle=r.it.selected?'#fff':'#444';
+      ctx.lineWidth=2;ctx.strokeRect(r.x,r.y,r.w,r.h);
+      ctx.textAlign='left';
+      ctx.fillStyle='#fff';ctx.font='bold 15px Arial';
+      ctx.fillText(r.it.label,r.x+14,r.y+22);
+      ctx.font='13px Arial';ctx.fillStyle='#ccc';
+      ctx.fillText(I18N.t('since_interval_label','{s} mi since last — due every {i} mi').replace('{s}',r.it.since).replace('{i}',r.it.interval),r.x+14,r.y+40);
+      ctx.textAlign='center';
+    });
+
+    const b=clearBtnRect();
+    ctx.fillStyle='#4fc3f7';ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.fillStyle='#111';ctx.font='bold 15px Arial';
+    ctx.fillText(I18N.t('clear_cab_btn','CLEAR CAB (Enter)'),W/2,b.y+24);
+
+    if(msgTime>0){
+      msgTime-=dt;
+      ctx.fillStyle='#ffd54f';ctx.font='bold 13px Arial';
+      ctx.fillText(msg,W/2,H-8);
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

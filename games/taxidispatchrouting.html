@@ -1,0 +1,282 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Taxi Dispatch Routing</title><meta name="description" content="Play Taxi Dispatch Routing free online — Dispatch the nearest free cab to every incoming call before the clock runs out and keep your fleet moving."><link rel="canonical" href="https://games.multiportllc.com/games/taxidispatchrouting"><meta property="og:title" content="Taxi Dispatch Routing - Multiport Games"><meta property="og:description" content="Play Taxi Dispatch Routing free online — Dispatch the nearest free cab to every incoming call before the clock runs out and keep your fleet moving."><meta property="og:url" content="https://games.multiportllc.com/games/taxidispatchrouting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Taxi Dispatch Routing","description":"Play Taxi Dispatch Routing free online instantly. Run a taxi dispatch office: pick each incoming ride call and send the nearest free cab to it before its timer runs out, keeping wait times low across every zone of the city. Calls arrive faster and cabs must travel further as your fleet grows each level. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/taxidispatchrouting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1b1f2a;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#e0d8c0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#80deea}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Taxi Dispatch Routing</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="760" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    Click/tap a flashing ride call to select it, then click/tap a free (blue) cab to dispatch it — the closer the cab, the more points you earn. Or press a <b>number key</b> (1-9) to select a call and a <b>letter key</b> (A-F) to dispatch that cab. Calls that time out cost a life. Three lives — calls arrive faster and your fleet grows every level.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=420;
+const KEY='taxidispatchrouting_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,level=1,lives=3,started=false,gameOver=false;
+let taxis=[],calls=[],selectedCall=null;
+let spawnTimer=0,spawnInterval=4;
+let callSeq=1;
+let flashBad=0,flashGood=0;
+let msg='',msgTime=0;
+
+const TAXI_LETTERS=['A','B','C','D','E','F'];
+
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);}
+function hsDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(3-Math.max(0,lives)));}
+
+function taxiCountForLevel(lv){ return Math.min(6,3+Math.floor((lv-1)/2)); }
+function spawnIntervalForLevel(lv){ return Math.max(1.4,4-lv*0.25); }
+function deadlineForLevel(lv){ return Math.max(5,11-lv*0.45); }
+
+function initTaxis(){
+  const n=taxiCountForLevel(level);
+  taxis=[];
+  for(let i=0;i<n;i++){
+    taxis.push({x:60+i*((W-120)/Math.max(1,n-1||1)),y:382,status:'idle',label:TAXI_LETTERS[i]});
+  }
+}
+
+function reset(){
+  score=0;level=1;lives=3;gameOver=false;
+  calls=[];selectedCall=null;spawnTimer=0;spawnInterval=spawnIntervalForLevel(level);callSeq=1;
+  initTaxis();
+}
+reset();
+scoreDisp();lvDisp();hsDisp();livesDisp();
+
+function loseLife(text){
+  lives--;SFX.fail();
+  msg=text;msgTime=1.3;flashBad=0.4;
+  livesDisp();
+  if(lives<=0){
+    gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(KEY,hi);}
+    hsDisp();
+  }
+}
+
+function spawnCall(){
+  if(calls.length>=8)return;
+  const x=70+Math.random()*(W-140);
+  const y=60+Math.random()*190;
+  const dl=deadlineForLevel(level);
+  calls.push({id:callSeq++,x,y,deadline:dl,maxDeadline:dl});
+}
+
+function dispatch(callIdx,taxiIdx){
+  const call=calls[callIdx],taxi=taxis[taxiIdx];
+  if(!call||!taxi)return;
+  if(taxi.status!=='idle'){SFX.error();return;}
+  const idleDists=taxis.filter(t=>t.status==='idle').map(t=>Math.hypot(t.x-call.x,t.y-call.y));
+  const bestDist=Math.min.apply(null,idleDists);
+  const tripDist=Math.hypot(taxi.x-call.x,taxi.y-call.y);
+  taxi.status='enroute';
+  taxi.tx=call.x;taxi.ty=call.y;
+  taxi.bestDist=bestDist;taxi.tripDist=Math.max(1,tripDist);
+  calls.splice(callIdx,1);
+  selectedCall=null;
+}
+
+function updateTaxis(dt){
+  taxis.forEach(t=>{
+    if(t.status==='enroute'){
+      const dx=t.tx-t.x,dy=t.ty-t.y,d=Math.hypot(dx,dy);
+      const spd=190*dt;
+      if(d<=spd){
+        t.x=t.tx;t.y=t.ty;t.status='busy';t.busyTimer=0.9;
+        const ratio=t.bestDist/t.tripDist;
+        const pts=Math.round(40+60*Math.min(1,ratio));
+        score+=pts;
+        if(ratio>=0.98){SFX.success();}else{SFX.point();}
+        scoreDisp();
+      } else {
+        t.x+=dx/d*spd;t.y+=dy/d*spd;
+      }
+    } else if(t.status==='busy'){
+      t.busyTimer-=dt;
+      if(t.busyTimer<=0)t.status='idle';
+    }
+  });
+}
+
+function maybeLevelUp(){
+  const need=level*220;
+  if(score>=need){
+    level++;SFX.levelup();flashGood=0.5;
+    spawnInterval=spawnIntervalForLevel(level);
+    lvDisp();
+    const n=taxiCountForLevel(level);
+    while(taxis.length<n){
+      taxis.push({x:60+Math.random()*(W-120),y:382,status:'idle',label:TAXI_LETTERS[taxis.length]});
+    }
+  }
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+
+function handleActivate(px,py){
+  if(gameOver){reset();scoreDisp();lvDisp();hsDisp();livesDisp();started=false;return;}
+  if(!started){started=true;return;}
+  for(let i=0;i<calls.length;i++){
+    const call=calls[i];
+    if(Math.hypot(px-call.x,py-call.y)<=20){selectedCall=i;SFX.select();return;}
+  }
+  for(let j=0;j<taxis.length;j++){
+    const t=taxis[j];
+    if(Math.hypot(px-t.x,py-t.y)<=18){
+      if(selectedCall!=null)dispatch(selectedCall,j);
+      else SFX.click();
+      return;
+    }
+  }
+  selectedCall=null;
+}
+
+c.addEventListener('click',e=>{const p=pointerPos(e);handleActivate(p.x,p.y);});
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=pointerPos(e);handleActivate(p.x,p.y);},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){reset();scoreDisp();lvDisp();hsDisp();livesDisp();started=false;return;}
+  if(!started){if(e.code==='Space'||e.code==='Enter'){started=true;}return;}
+  if(/^Digit[1-9]$/.test(e.code)){
+    const idx=parseInt(e.code.slice(5),10)-1;
+    if(idx>=0&&idx<calls.length){selectedCall=idx;SFX.select();}
+    return;
+  }
+  const m=e.code.match(/^Key([A-F])$/);
+  if(m){
+    const idx=TAXI_LETTERS.indexOf(m[1]);
+    if(idx>=0&&idx<taxis.length&&selectedCall!=null)dispatch(selectedCall,idx);
+    return;
+  }
+  if(e.code==='Escape')selectedCall=null;
+});
+
+function drawTaxi(t,isSel){
+  ctx.save();
+  let color='#4fc3f7';
+  if(t.status==='enroute')color='#ffd54f';
+  if(t.status==='busy')color='#888';
+  ctx.fillStyle=color;
+  ctx.strokeStyle=isSel?'#fff':'#111';
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.roundRect?ctx.roundRect(t.x-16,t.y-11,32,22,5):ctx.rect(t.x-16,t.y-11,32,22);
+  ctx.fill();ctx.stroke();
+  ctx.fillStyle='#111';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText(t.label,t.x,t.y+4);
+  ctx.restore();
+}
+
+function drawCall(call,i,isSel){
+  const pct=Math.max(0,call.deadline/call.maxDeadline);
+  ctx.save();
+  ctx.beginPath();ctx.arc(call.x,call.y,16,0,Math.PI*2);
+  ctx.fillStyle=isSel?'#e94560':'#2b2f40';
+  ctx.fill();
+  ctx.strokeStyle=pct>0.4?'#7ec850':'#ff6b6b';
+  ctx.lineWidth=4;
+  ctx.beginPath();ctx.arc(call.x,call.y,16,-Math.PI/2,-Math.PI/2+Math.PI*2*pct);ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText(i+1,call.x,call.y+4);
+  ctx.restore();
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#15192a');sky.addColorStop(1,'#272b3c');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,0.05)';
+  for(let gx=0;gx<W;gx+=40){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,H);ctx.stroke();}
+  for(let gy=0;gy<H;gy+=40){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();}
+  ctx.fillStyle='#10131c';ctx.fillRect(0,360,W,60);
+
+  if(flashBad>0){flashBad-=dt;ctx.fillStyle=`rgba(255,0,0,${Math.max(0,flashBad)*0.3})`;ctx.fillRect(0,0,W,H);}
+  if(flashGood>0){flashGood-=dt;ctx.fillStyle=`rgba(255,215,0,${Math.max(0,flashGood)*0.25})`;ctx.fillRect(0,0,W,H);}
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap or press Space to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space/Enter to restart'),W/2,H/2+46);
+    requestAnimationFrame(loop);return;
+  }
+
+  spawnTimer+=dt;
+  if(spawnTimer>=spawnInterval){spawnTimer=0;spawnCall();}
+
+  for(let i=calls.length-1;i>=0;i--){
+    calls[i].deadline-=dt;
+    if(calls[i].deadline<=0){
+      calls.splice(i,1);
+      if(selectedCall===i)selectedCall=null;
+      else if(selectedCall!=null&&selectedCall>i)selectedCall--;
+      loseLife(I18N.t('call_missed','A call timed out!'));
+      if(gameOver)break;
+    }
+  }
+
+  if(!gameOver){
+    updateTaxis(dt);
+    maybeLevelUp();
+
+    calls.forEach((call,i)=>drawCall(call,i,selectedCall===i));
+    taxis.forEach(t=>drawTaxi(t,false));
+
+    ctx.fillStyle='#ddd';ctx.font='12px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('depot_label','DEPOT'),W/2,400);
+
+    if(msgTime>0){
+      msgTime-=dt;
+      ctx.fillStyle='#ffd54f';ctx.font='bold 16px Arial';ctx.textAlign='center';
+      ctx.fillText(msg,W/2,40);
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
