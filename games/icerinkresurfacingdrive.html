@@ -1,0 +1,279 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ice Rink Resurfacing Drive</title><meta name="description" content="Play Ice Rink Resurfacing Drive free online — Steer the ice resurfacer in overlapping passes to cover the whole rink in fresh ice before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/icerinkresurfacingdrive"><meta property="og:title" content="Ice Rink Resurfacing Drive - Multiport Games"><meta property="og:description" content="Play Ice Rink Resurfacing Drive free online — Steer the ice resurfacer in overlapping passes to cover the whole rink in fresh ice before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/icerinkresurfacingdrive"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ice Rink Resurfacing Drive","description":"Play Ice Rink Resurfacing Drive free online instantly. Drive an ice resurfacing machine around a hockey rink between periods, following overlapping passes to lay down a fresh smooth sheet of ice across the whole rink before the next period's puck drop. Each round the rink gets bigger and the clock gets tighter. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/icerinkresurfacingdrive","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0b2740;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#bfe9ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#meterWrap{max-width:600px;margin:0 auto 8px;background:#0e1a28;border-radius:10px;padding:4px}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#4ecdc4,#d8f7ff);width:0%;transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ice Rink Resurfacing Drive</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Period 1</span>
+    </div>
+    <div id="meterWrap"><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Steer the Zamboni with the <b>Arrow Keys</b> / <b>WASD</b> (or drag with mouse/finger) in overlapping passes across the rink, laying fresh ice as you go. Cover the whole sheet before the clock hits zero to finish the period. Clipping a wall or driving over the same fresh ice too much costs a life. Each period the rink grows and the clock gets tighter — lose all 3 lives and resurfacing is a bust!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+let hi=parseInt(localStorage.getItem('icerinkresurfacingdrive_hi')||'0',10);
+let score=0,lives=3,period=1,gameOver=false,started=false,won=false;
+let timeLeft=0,timeTotal=0;
+const keys={};
+let pointer=null;
+
+const RINK={x:60,y:60,w:680,h:320,r:40};
+
+let grid, cellSize, cols, rows, coveredCount, totalCells;
+let car={x:0,y:0,angle:0,speed:0,trail:[]};
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('period_label','Period {p}').replace('{p}',period);
+}
+
+function buildGrid(){
+  cellSize=Math.max(14,22-period);
+  cols=Math.floor(RINK.w/cellSize);
+  rows=Math.floor(RINK.h/cellSize);
+  grid=[];
+  totalCells=0;
+  for(let r=0;r<rows;r++){
+    const row=[];
+    for(let cl=0;cl<cols;cl++){
+      const inside=insideRink(RINK.x+cl*cellSize+cellSize/2,RINK.y+r*cellSize+cellSize/2);
+      row.push(inside?0:-1);
+      if(inside)totalCells++;
+    }
+    grid.push(row);
+  }
+  coveredCount=0;
+}
+
+function insideRink(px,py){
+  // rounded rectangle check
+  const x0=RINK.x,y0=RINK.y,x1=RINK.x+RINK.w,y1=RINK.y+RINK.h,rr=RINK.r;
+  if(px<x0||px>x1||py<y0||py>y1)return false;
+  const cx=Math.min(Math.max(px,x0+rr),x1-rr);
+  const cy=Math.min(Math.max(py,y0+rr),y1-rr);
+  if(px>=x0+rr&&px<=x1-rr)return true;
+  if(py>=y0+rr&&py<=y1-rr)return true;
+  const dx=px-cx,dy=py-cy;
+  return dx*dx+dy*dy<=rr*rr;
+}
+
+function resetRound(){
+  buildGrid();
+  car.x=RINK.x+40;car.y=RINK.y+40;car.angle=0;car.speed=0;car.trail=[];
+  timeTotal=Math.max(24,46-period*2);
+  timeLeft=timeTotal;
+}
+
+function startGame(){
+  score=0;lives=3;period=1;gameOver=false;won=false;started=true;
+  resetRound();
+}
+function reset(){started=false;gameOver=false;}
+
+function markCovered(px,py){
+  const cl=Math.floor((px-RINK.x)/cellSize);
+  const r=Math.floor((py-RINK.y)/cellSize);
+  if(r<0||r>=rows||cl<0||cl>=cols)return;
+  if(grid[r][cl]===0){grid[r][cl]=1;coveredCount++;}
+}
+
+function rect(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
+
+function hitWall(){
+  const len=18;
+  const fx=car.x+Math.cos(car.angle)*len,fy=car.y+Math.sin(car.angle)*len;
+  return !insideRink(fx,fy)||!insideRink(car.x-Math.cos(car.angle)*8,car.y-Math.sin(car.angle)*8);
+}
+
+function loseLife(){
+  lives--;SFX.hit();
+  if(lives<=0){gameOver=true;won=false;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('icerinkresurfacingdrive_hi',String(hi));}
+  } else {
+    car.x=RINK.x+40;car.y=RINK.y+40;car.angle=0;car.speed=0;
+  }
+}
+
+function finishPeriod(){
+  SFX.levelup();
+  score+=Math.round(100+timeLeft*5);
+  period++;
+  if(score>hi){hi=score;localStorage.setItem('icerinkresurfacingdrive_hi',String(hi));}
+  resetRound();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyA','KeyS','KeyD','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'){ if(!started||gameOver){ if(gameOver){reset();} startGame(); } }
+},{passive:false});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+c.addEventListener('pointerdown',e=>{
+  if(!started||gameOver){ if(gameOver)reset(); startGame(); return; }
+  const rc=c.getBoundingClientRect();
+  pointer={x:(e.clientX-rc.left)*(W/rc.width),y:(e.clientY-rc.top)*(H/rc.height)};
+});
+c.addEventListener('pointermove',e=>{
+  if(!pointer)return;
+  const rc=c.getBoundingClientRect();
+  pointer={x:(e.clientX-rc.left)*(W/rc.width),y:(e.clientY-rc.top)*(H/rc.height)};
+});
+window.addEventListener('pointerup',()=>{pointer=null;});
+
+function drawRinkShape(){
+  ctx.save();
+  const x0=RINK.x,y0=RINK.y,w=RINK.w,h=RINK.h,r=RINK.r;
+  ctx.beginPath();
+  ctx.moveTo(x0+r,y0);
+  ctx.arcTo(x0+w,y0,x0+w,y0+h,r);
+  ctx.arcTo(x0+w,y0+h,x0,y0+h,r);
+  ctx.arcTo(x0,y0+h,x0,y0,r);
+  ctx.arcTo(x0,y0,x0+w,y0,r);
+  ctx.closePath();
+  ctx.clip();
+  // base = rough unresurfaced ice
+  ctx.fillStyle='#5f8ba8';
+  ctx.fillRect(x0,y0,w,h);
+  // covered cells = fresh smooth ice
+  for(let r2=0;r2<rows;r2++){
+    for(let cl=0;cl<cols;cl++){
+      if(grid[r2][cl]===1){
+        ctx.fillStyle='#eaf8ff';
+        ctx.fillRect(RINK.x+cl*cellSize,RINK.y+r2*cellSize,cellSize,cellSize);
+      }
+    }
+  }
+  // center line + faceoff dots for flavor
+  ctx.strokeStyle='#e94560';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(x0+w/2,y0);ctx.lineTo(x0+w/2,y0+h);ctx.stroke();
+  ctx.fillStyle='#e94560';
+  [[0.25,0.3],[0.25,0.7],[0.75,0.3],[0.75,0.7]].forEach(([fx,fy])=>{
+    ctx.beginPath();ctx.arc(x0+w*fx,y0+h*fy,6,0,Math.PI*2);ctx.fill();
+  });
+  ctx.restore();
+  ctx.strokeStyle='#1a3550';ctx.lineWidth=4;
+  ctx.beginPath();
+  ctx.moveTo(x0+r,y0);
+  ctx.arcTo(x0+w,y0,x0+w,y0+h,r);
+  ctx.arcTo(x0+w,y0+h,x0,y0+h,r);
+  ctx.arcTo(x0,y0+h,x0,y0,r);
+  ctx.arcTo(x0,y0,x0+w,y0,r);
+  ctx.closePath();ctx.stroke();
+}
+
+function drawCar(){
+  ctx.save();
+  ctx.translate(car.x,car.y);
+  ctx.rotate(car.angle);
+  ctx.fillStyle='#2b6cb0';
+  ctx.fillRect(-16,-11,32,22);
+  ctx.fillStyle='#bfe9ff';
+  ctx.fillRect(4,-9,10,18);
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(14,-4,4,8);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0b2740';ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    drawRinkIntro();
+    requestAnimationFrame(loop);return;
+  }
+
+  drawRinkShape();
+
+  if(gameOver){
+    drawCar();
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+26);
+    setHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  // steering
+  const turnSpeed=0.045;
+  if(keys['ArrowLeft']||keys['KeyA'])car.angle-=turnSpeed;
+  if(keys['ArrowRight']||keys['KeyD'])car.angle+=turnSpeed;
+  let accel=0;
+  if(keys['ArrowUp']||keys['KeyW'])accel=0.22;
+  if(keys['ArrowDown']||keys['KeyS'])accel=-0.22;
+  if(pointer){
+    const dx=pointer.x-car.x,dy=pointer.y-car.y;
+    const targetAngle=Math.atan2(dy,dx);
+    let diff=targetAngle-car.angle;
+    while(diff>Math.PI)diff-=Math.PI*2;
+    while(diff<-Math.PI)diff+=Math.PI*2;
+    car.angle+=Math.max(-turnSpeed*1.6,Math.min(turnSpeed*1.6,diff));
+    if(Math.hypot(dx,dy)>8)accel=0.22;
+  }
+  car.speed+=accel;
+  car.speed*=0.93;
+  car.speed=Math.max(-2.2,Math.min(3.2,car.speed));
+
+  if(hitWall()){
+    car.speed*=-0.4;
+    loseLife();
+  } else {
+    car.x+=Math.cos(car.angle)*car.speed;
+    car.y+=Math.sin(car.angle)*car.speed;
+    markCovered(car.x,car.y);
+  }
+
+  timeLeft-=1/60;
+  if(coveredCount>=totalCells*0.97){
+    finishPeriod();
+  } else if(timeLeft<=0){
+    gameOver=true;won=false;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('icerinkresurfacingdrive_hi',String(hi));}
+  }
+
+  drawCar();
+
+  const pct=totalCells?coveredCount/totalCells:0;
+  document.getElementById('meterBar').style.width=Math.min(100,pct*100)+'%';
+  setHud();
+
+  ctx.fillStyle='#bfe9ff';ctx.font='bold 18px Arial';ctx.textAlign='right';
+  ctx.fillText(I18N.t('time_label','Time: {t}s').replace('{t}',Math.max(0,Math.ceil(timeLeft))),W-16,30);
+
+  requestAnimationFrame(loop);
+}
+
+function drawRinkIntro(){
+  ctx.fillStyle='#bfe9ff99';ctx.font='bold 22px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('start_hint','Press Space / Tap to start'),W/2,H/2);
+}
+
+setHud();
+loop();
+</script></body></html>
