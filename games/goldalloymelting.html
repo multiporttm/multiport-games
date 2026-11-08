@@ -1,0 +1,256 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Gold Alloy Melting</title><meta name="description" content="Play Gold Alloy Melting free online — Add metals to the crucible and manage the furnace temperature to hit the target gold karat without burning the melt."><link rel="canonical" href="https://games.multiportllc.com/games/goldalloymelting"><meta property="og:title" content="Gold Alloy Melting - Multiport Games"><meta property="og:description" content="Play Gold Alloy Melting free online — Add metals to the crucible and manage the furnace temperature to hit the target gold karat without burning the melt."><meta property="og:url" content="https://games.multiportllc.com/games/goldalloymelting"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Gold Alloy Melting - Multiport Games"><meta name="twitter:description" content="Play Gold Alloy Melting free online — Add metals to the crucible and manage the furnace temperature to hit the target gold karat without burning the melt."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Gold Alloy Melting","description":"Play Gold Alloy Melting free online instantly. Add metals to the crucible and manage the furnace temperature to hit the target gold karat without burning the melt. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/goldalloymelting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1008;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffcf4d;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#panel{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin:8px auto;max-width:800px}
+#panel button{padding:8px 16px;border:none;border-radius:10px;background:#8a5a2b;color:#fff;font-weight:700;cursor:pointer;font-size:.95rem}
+#panel button:active{transform:scale(.95)}
+#panel button.heat{background:#c23b22}
+#panel button.cool{background:#2a6fb0}
+#panel button.pour{background:#2a8a4e}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Gold Alloy Melting</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="360"></canvas>
+    <div id="panel">
+      <button class="heat" id="btn-heat">🔥 Heat</button>
+      <button class="cool" id="btn-cool">❄️ Cool</button>
+      <button id="btn-copper">+ Copper</button>
+      <button id="btn-silver">+ Silver</button>
+      <button id="btn-zinc">+ Zinc</button>
+      <button class="pour" id="btn-pour">⚗️ Pour</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Heat</b> / <b>Cool</b> (or <b>Up/Down Arrow</b>) to keep the crucible in the correct temperature band. Add <b>Copper</b>, <b>Silver</b> and <b>Zinc</b> (keys <b>1</b>,<b>2</b>,<b>3</b>) to hit the target karat, then hit <b>Pour</b> (<b>Space</b>) before it burns. 3 lives — don't overheat the melt!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=360;
+const scoreDisplay=document.getElementById('score-display');
+const HI_KEY='goldalloymelting_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let score=0,lives=3,level=1,gameOver=false,won=false,started=false;
+
+// Alloy targets: karat out of 24, achieved by gold fraction. We simulate adding
+// copper/silver/zinc which dilute the gold fraction; player must hit a target karat
+// window using a limited pour window while keeping temp in-band.
+const TARGETS=[
+  {karat:18,label:'18K',tempMin:1050,tempMax:1150,tol:0.6},
+  {karat:14,label:'14K',tempMin:980,tempMax:1080,tol:0.6},
+  {karat:22,label:'22K',tempMin:1100,tempMax:1200,tol:0.5},
+  {karat:10,label:'10K',tempMin:920,tempMax:1020,tol:0.7},
+  {karat:9,label:'9K',tempMin:880,tempMax:980,tol:0.8},
+];
+
+let target,temp,goldFrac,metals,pourArmed,timeLeft,levelTime;
+const BURN_TEMP=1300,MELT_TEMP=850;
+
+function karatFromFrac(f){return f*24;}
+
+function newLevel(){
+  target=TARGETS[(level-1)%TARGETS.length];
+  // scale difficulty: tighter tolerance & less time as level rises
+  const diffStep=Math.floor((level-1)/TARGETS.length);
+  const tol=Math.max(0.25,target.tol-diffStep*0.12);
+  target={...target,tol};
+  temp=900+Math.random()*80;
+  goldFrac=1.0; // pure gold start
+  metals={copper:0,silver:0,zinc:0};
+  pourArmed=false;
+  levelTime=Math.max(18,34-level*1.5);
+  timeLeft=levelTime;
+}
+newLevel();
+
+let heating=false,cooling=false;
+function addMetal(type){
+  if(gameOver||!started)return;
+  const amt=0.045;
+  metals[type]+=amt;
+  const totalAlloy=metals.copper+metals.silver+metals.zinc;
+  goldFrac=Math.max(0,1-totalAlloy);
+  temp+=type==='zinc'?-8:6; // zinc cools melt slightly, copper/silver add heat load
+  SFX.click();
+}
+
+document.getElementById('btn-heat').addEventListener('pointerdown',e=>{e.preventDefault();heating=true;});
+document.getElementById('btn-heat').addEventListener('pointerup',()=>heating=false);
+document.getElementById('btn-heat').addEventListener('pointerleave',()=>heating=false);
+document.getElementById('btn-cool').addEventListener('pointerdown',e=>{e.preventDefault();cooling=true;});
+document.getElementById('btn-cool').addEventListener('pointerup',()=>cooling=false);
+document.getElementById('btn-cool').addEventListener('pointerleave',()=>cooling=false);
+document.getElementById('btn-copper').addEventListener('click',()=>{started=true;addMetal('copper');});
+document.getElementById('btn-silver').addEventListener('click',()=>{started=true;addMetal('silver');});
+document.getElementById('btn-zinc').addEventListener('click',()=>{started=true;addMetal('zinc');});
+document.getElementById('btn-pour').addEventListener('click',()=>{started=true;doPour();});
+
+function doPour(){
+  if(gameOver)return;
+  pourArmed=true;
+}
+
+window.addEventListener('keydown',e=>{
+  if(e.code==='ArrowUp'){e.preventDefault();started=true;heating=true;}
+  else if(e.code==='ArrowDown'){e.preventDefault();started=true;cooling=true;}
+  else if(e.code==='Digit1'){started=true;addMetal('copper');}
+  else if(e.code==='Digit2'){started=true;addMetal('silver');}
+  else if(e.code==='Digit3'){started=true;addMetal('zinc');}
+  else if(e.code==='Space'){e.preventDefault();started=true;if(gameOver){resetGame();}else{doPour();}}
+});
+window.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp')heating=false;
+  if(e.code==='ArrowDown')cooling=false;
+});
+c.addEventListener('pointerdown',()=>{if(gameOver){resetGame();}});
+
+function resetGame(){
+  score=0;lives=3;level=1;gameOver=false;won=false;started=false;
+  newLevel();
+}
+
+function loseLife(reason){
+  lives--;
+  SFX.hit();
+  if(lives<=0){
+    gameOver=true;won=false;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  }else{
+    newLevel();
+  }
+}
+
+function evalPour(){
+  const karat=karatFromFrac(goldFrac);
+  const inTemp=temp>=target.tempMin&&temp<=target.tempMax;
+  const karatOk=Math.abs(karat-target.karat)<=target.tol;
+  if(karatOk&&inTemp){
+    const bonus=Math.max(0,Math.floor((target.tol-Math.abs(karat-target.karat))*200))+Math.floor(timeLeft*10)+100;
+    score+=bonus;
+    SFX.success();
+    level++;
+    if(level>TARGETS.length*3){
+      gameOver=true;won=true;SFX.win();
+      if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    }else{
+      newLevel();
+    }
+  }else{
+    loseLife('bad_pour');
+  }
+  pourArmed=false;
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#1a1008');bg.addColorStop(1,'#2b1a0d');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(started&&!gameOver){
+    timeLeft-=dt;
+    if(heating)temp+=70*dt;
+    if(cooling)temp-=70*dt;
+    temp-=10*dt; // natural cooling drift
+    temp=Math.max(MELT_TEMP-100,temp);
+
+    if(temp>=BURN_TEMP){
+      loseLife('burned');
+    } else if(timeLeft<=0){
+      loseLife('timeout');
+    } else if(pourArmed){
+      evalPour();
+    }
+  }
+
+  // Furnace / crucible
+  const cx=250,cy=230,cw=200,ch=90;
+  ctx.fillStyle='#3a2a1a';ctx.fillRect(cx-20,cy-20,cw+40,ch+60);
+  ctx.fillStyle='#120a05';ctx.fillRect(cx,cy,cw,ch);
+
+  // melt color depends on temp & gold fraction
+  const heatT=Math.max(0,Math.min(1,(temp-MELT_TEMP)/(BURN_TEMP-MELT_TEMP)));
+  const r=255,g=Math.floor(140+heatT*90),b=Math.floor(20+goldFrac*30);
+  ctx.fillStyle=`rgb(${r},${g},${b})`;
+  const meltLevel=Math.min(ch-6,20+ (metals.copper+metals.silver+metals.zinc)*120);
+  ctx.fillRect(cx+8,cy+ch-meltLevel,cw-16,meltLevel);
+  // glow flicker
+  if(temp>BURN_TEMP-80){
+    ctx.globalAlpha=0.3+0.2*Math.sin(now/80);
+    ctx.fillStyle='#ff5522';
+    ctx.fillRect(cx-10,cy-10,cw+20,ch+20);
+    ctx.globalAlpha=1;
+  }
+
+  // Thermometer
+  const tx=550,ty=60,tw=30,th=240;
+  ctx.fillStyle='#222';ctx.fillRect(tx,ty,tw,th);
+  const minShow=700,maxShow=1400;
+  const frac=Math.max(0,Math.min(1,(temp-minShow)/(maxShow-minShow)));
+  ctx.fillStyle=temp>=BURN_TEMP?'#ff2222':(temp>=target.tempMin&&temp<=target.tempMax?'#39d353':'#ffcf4d');
+  ctx.fillRect(tx,ty+th*(1-frac),tw,th*frac);
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.strokeRect(tx,ty,tw,th);
+  // target band marker
+  const bandTop=ty+th*(1-(target.tempMax-minShow)/(maxShow-minShow));
+  const bandBot=ty+th*(1-(target.tempMin-minShow)/(maxShow-minShow));
+  ctx.strokeStyle='#39d353';ctx.lineWidth=3;
+  ctx.strokeRect(tx-4,bandTop,tw+8,bandBot-bandTop);
+  ctx.fillStyle='#fff';ctx.font='13px Arial';ctx.textAlign='center';
+  ctx.fillText(Math.floor(temp)+'°',tx+tw/2,ty+th+20);
+
+  // Karat meter
+  const kx=650,ky=60,kw=100,kh=240;
+  ctx.fillStyle='#222';ctx.fillRect(kx,ky,kw,20);
+  const karat=karatFromFrac(goldFrac);
+  ctx.font='bold 16px Arial';ctx.fillStyle='#ffd54f';
+  ctx.fillText(karat.toFixed(1)+'K',kx+kw/2,ky+15);
+  ctx.font='12px Arial';ctx.fillStyle='#ccc';
+  ctx.fillText('Target: '+target.label+' ±'+target.tol.toFixed(2),kx+kw/2,ky+40);
+  ctx.fillText('Cu '+Math.round(metals.copper*100)+'%',kx+kw/2,ky+62);
+  ctx.fillText('Ag '+Math.round(metals.silver*100)+'%',kx+kw/2,ky+80);
+  ctx.fillText('Zn '+Math.round(metals.zinc*100)+'%',kx+kw/2,ky+98);
+  ctx.fillText('Au '+Math.round(goldFrac*100)+'%',kx+kw/2,ky+116);
+
+  // Lives / level / timer
+  ctx.textAlign='left';
+  ctx.font='16px Arial';ctx.fillStyle='#fff';
+  ctx.fillText(I18N.t('level_label','Round {n}').replace('{n}',level),20,30);
+  ctx.fillText('❤️'.repeat(Math.max(0,lives)),20,56);
+  ctx.fillStyle=timeLeft<5?'#ff5555':'#fff';
+  ctx.fillText(I18N.t('time_label','Time: {t}s').replace('{t}',Math.max(0,timeLeft).toFixed(1)),20,82);
+
+  if(!started){
+    ctx.textAlign='center';ctx.fillStyle='#ffd54f';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Add metals, manage heat, then Pour!'),W/2,H-20);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';ctx.fillStyle='#fff';
+    ctx.font='bold 36px Arial';
+    ctx.fillText(won?I18N.t('win_title','MASTER GOLDSMITH!'):I18N.t('game_over_title','MELT RUINED'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to try again'),W/2,H/2+20);
+  }
+
+  scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

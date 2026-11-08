@@ -1,0 +1,257 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Watch Movement Assembly</title><meta name="description" content="Play Watch Movement Assembly free online — Drag or tap each part onto its highlighted spot on the plate, in the correct build order: mainspring barrel, then gear train, then escapement, then bridges."><link rel="canonical" href="https://games.multiportllc.com/games/watchmovementassembly"><meta property="og:title" content="Watch Movement Assembly - Multiport Games"><meta property="og:description" content="Play Watch Movement Assembly free online — Drag or tap each part onto its highlighted spot on the plate, in the correct build order: mainspring barrel, then gear train, then escapement, then bridges."><meta property="og:url" content="https://games.multiportllc.com/games/watchmovementassembly"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Watch Movement Assembly - Multiport Games"><meta name="twitter:description" content="Play Watch Movement Assembly free online — Drag or tap each part onto its highlighted spot on the plate, in the correct build order: mainspring barrel, then gear train, then escapement, then bridges."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Watch Movement Assembly","description":"Play Watch Movement Assembly free online instantly. Drag or tap each part onto its highlighted spot on the plate, in the correct build order: mainspring barrel, then gear train, then escapement, then bridges. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/watchmovementassembly","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b2420;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#e0b84a;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#tray{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;padding:8px;min-height:70px}
+.trayPart{width:60px;height:60px;border-radius:8px;background:#3a3228;border:2px solid #7a6a4a;display:flex;align-items:center;justify-content:center;font-size:1.6rem;cursor:grab;user-select:none;touch-action:none}
+.trayPart.active{border-color:#ffd54f;box-shadow:0 0 10px #ffd54f88}
+.trayPart.used{opacity:.25;pointer-events:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Watch Movement Assembly</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="380"></canvas>
+    <div id="tray"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag (or tap a tray part, then tap its glowing slot) each watch part onto the plate in the correct build order — <b>mainspring barrel</b>, then the <b>gear train</b>, then the <b>escapement</b>, then the <b>bridges</b> that pin it all down. Place a part in the wrong slot or order and you lose a life. You have <b>3 lives</b>. Finish a movement to advance to a more complex one.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const tray=document.getElementById('tray');
+const scoreDisplay=document.getElementById('score-display');
+const ID='watchmovementassembly';
+let score=0,hi=parseInt(localStorage.getItem(ID+'_hi')||'0',10);
+let lives=3,level=1,gameOver=false,won=false,started=false;
+let parts=[],placed=[],nextIdx=0,selected=null;
+let flashTimer=0,flashMsg='',flashGood=true;
+
+const PLATE={x:150,y:40,w:500,h:300};
+
+function partTypes(lv){
+  // level 1: barrel, 1 wheel, escapement, bridge (4 parts)
+  // each level adds one more gear-train wheel, up to a cap
+  const wheels=Math.min(1+lv,5);
+  const list=[{type:'barrel',label:'🔘',name:'Mainspring Barrel'}];
+  const wheelNames=['Center Wheel','Third Wheel','Fourth Wheel','Minute Wheel','Intermediate Wheel'];
+  for(let i=0;i<wheels;i++)list.push({type:'wheel',label:'⚙️',name:wheelNames[i%wheelNames.length]});
+  list.push({type:'escapement',label:'⭐',name:'Escapement'});
+  list.push({type:'bridge',label:'🔩',name:'Bridge'});
+  return list;
+}
+
+function layoutSlots(list){
+  // place slots in a rough circular/grid pattern inside plate
+  const n=list.length;
+  const cols=Math.ceil(Math.sqrt(n*1.6));
+  const rows=Math.ceil(n/cols);
+  const cellW=PLATE.w/cols, cellH=PLATE.h/rows;
+  return list.map((p,i)=>{
+    const col=i%cols, row=Math.floor(i/cols);
+    return {...p, idx:i,
+      x:PLATE.x+cellW*col+cellW/2,
+      y:PLATE.y+cellH*row+cellH/2,
+      r:Math.min(cellW,cellH)*0.32,
+      done:false};
+  });
+}
+
+function setup(){
+  parts=layoutSlots(partTypes(level));
+  placed=parts.map(()=>false);
+  nextIdx=0;
+  selected=null;
+  renderTray();
+}
+
+function renderTray(){
+  tray.innerHTML='';
+  parts.forEach((p,i)=>{
+    const d=document.createElement('div');
+    d.className='trayPart'+(placed[i]?' used':'')+(i===nextIdx&&!placed[i]?' active':'');
+    d.textContent=p.label;
+    d.title=p.name;
+    d.dataset.idx=i;
+    d.addEventListener('pointerdown',ev=>{
+      ev.preventDefault();
+      if(placed[i]||gameOver)return;
+      selected=i;
+      highlightTray();
+    });
+    tray.appendChild(d);
+  });
+}
+function highlightTray(){
+  [...tray.children].forEach((el,i)=>{
+    el.style.outline = (i===selected)?'3px solid #4caf50':'none';
+  });
+}
+
+function flash(msg,good){flashMsg=msg;flashGood=good;flashTimer=60;}
+
+function attemptPlace(slotIdx){
+  if(gameOver||won)return;
+  if(selected==null)return;
+  if(placed[slotIdx])return;
+  if(selected===nextIdx){
+    placed[slotIdx]=true;
+    nextIdx++;
+    score+=10*level;
+    SFX.success();
+    flash(I18N.t('part_placed','Part placed!'),true);
+    selected=null;
+    renderTray();
+    if(nextIdx>=parts.length){
+      SFX.levelup();
+      flash(I18N.t('movement_complete','Movement complete!'),true);
+      score+=50*level;
+      setTimeout(()=>{ level++; setup(); },1200);
+    }
+  } else {
+    lives--;
+    SFX.error();
+    flash(I18N.t('wrong_part','Wrong part or order!'),false);
+    selected=null;
+    renderTray();
+    if(lives<=0){
+      gameOver=true;
+      SFX.lose();
+      if(score>hi){hi=score;localStorage.setItem(ID+'_hi',String(hi));}
+    }
+  }
+}
+
+function hitSlot(mx,my){
+  for(let i=0;i<parts.length;i++){
+    const p=parts[i];
+    if(placed[i])continue;
+    const dx=mx-p.x,dy=my-p.y;
+    if(dx*dx+dy*dy<=p.r*p.r*2.2)return i;
+  }
+  return -1;
+}
+
+function canvasPos(ev){
+  const rect=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-rect.left;
+  const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-rect.top;
+  return {x:cx*(c.width/rect.width), y:cy*(c.height/rect.height)};
+}
+
+c.addEventListener('pointerdown',ev=>{
+  if(!started){started=true;return;}
+  if(gameOver){restart();return;}
+  const pos=canvasPos(ev);
+  const slot=hitSlot(pos.x,pos.y);
+  if(slot>=0)attemptPlace(slot);
+});
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){restart();return;}
+  if(!started){started=true;return;}
+  if(e.code==='Space'||e.code==='Enter'){
+    if(nextIdx<parts.length)attemptPlace(nextIdx);
+  }
+  if(e.code==='ArrowRight'||e.code==='ArrowDown'){
+    selected=Math.min((selected==null?-1:selected)+1,parts.length-1);
+    while(selected<parts.length&&placed[selected])selected++;
+    highlightTray();
+  }
+  if(e.code==='ArrowLeft'||e.code==='ArrowUp'){
+    selected=Math.max((selected==null?1:selected)-1,0);
+    highlightTray();
+  }
+});
+
+function restart(){
+  score=0;lives=3;level=1;gameOver=false;won=false;started=true;
+  setup();
+}
+
+function drawPlate(){
+  ctx.save();
+  ctx.fillStyle='#4a4038';
+  ctx.beginPath();ctx.roundRect?ctx.roundRect(PLATE.x-10,PLATE.y-10,PLATE.w+20,PLATE.h+20,16):ctx.rect(PLATE.x-10,PLATE.y-10,PLATE.w+20,PLATE.h+20);
+  ctx.fill();
+  ctx.fillStyle='#6b5a44';
+  ctx.fillRect(PLATE.x,PLATE.y,PLATE.w,PLATE.h);
+  ctx.restore();
+}
+
+function drawSlots(){
+  parts.forEach((p,i)=>{
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+    if(placed[i]){
+      ctx.fillStyle='#c9a24a';
+      ctx.fill();
+      ctx.font=(p.r)+'px serif';
+      ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(p.label,p.x,p.y+2);
+    } else {
+      ctx.strokeStyle = i===nextIdx ? '#ffd54f' : '#998';
+      ctx.lineWidth = i===nextIdx ? 3 : 1.5;
+      ctx.setLineDash(i===nextIdx?[]:[4,4]);
+      ctx.stroke();
+      ctx.fillStyle='#ffffff55';
+      ctx.font='12px Arial';ctx.textAlign='center';
+      ctx.fillText(i+1,p.x,p.y+4);
+    }
+    ctx.restore();
+  });
+}
+
+function draw(){
+  ctx.clearRect(0,0,800,380);
+  const sky=ctx.createLinearGradient(0,0,0,380);
+  sky.addColorStop(0,'#1a1510');sky.addColorStop(1,'#2b2420');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,380);
+
+  ctx.fillStyle='#ffd54f';ctx.font='bold 16px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('level_label','Movement {n}').replace('{n}',level),20,30);
+  ctx.textAlign='right';
+  ctx.fillStyle='#ff6b6b';
+  ctx.fillText('♥'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives)),780,30);
+
+  if(!started){
+    ctx.fillStyle='#e0b84a';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to start'),400,190);
+    requestAnimationFrame(draw);
+    return;
+  }
+
+  drawPlate();
+  drawSlots();
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillStyle=flashGood?'#7ec850':'#e94560';
+    ctx.fillText(flashMsg,400,360);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,800,380);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,170);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,210);
+  }
+
+  scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  requestAnimationFrame(draw);
+}
+
+setup();
+draw();
+</script></body></html>
