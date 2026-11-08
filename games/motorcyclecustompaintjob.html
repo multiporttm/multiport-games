@@ -1,0 +1,310 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Motorcycle Custom Paint Job</title><meta name="description" content="Play Motorcycle Custom Paint Job free online — Airbrush the base coat, graphic design, and clear coat onto the tank with smooth, even spray passes."><link rel="canonical" href="https://games.multiportllc.com/games/motorcyclecustompaintjob"><meta property="og:title" content="Motorcycle Custom Paint Job - Multiport Games"><meta property="og:description" content="Play Motorcycle Custom Paint Job free online — Airbrush the base coat, graphic design, and clear coat onto the tank with smooth, even spray passes."><meta property="og:url" content="https://games.multiportllc.com/games/motorcyclecustompaintjob"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Motorcycle Custom Paint Job","description":"Play Motorcycle Custom Paint Job free online instantly. Airbrush a custom design onto a motorcycle's gas tank and fenders by sweeping the spray gun over the stencil in even, controlled passes, layering a base coat, graphic design, and clear coat in the correct order before the final buff reveals a show-quality finish. Every panel is bigger and the spray tolerance gets tighter. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/motorcyclecustompaintjob","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1b1e2a;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#ff8fd6;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px;color:#e05c5c}
+#meterWrap{max-width:600px;margin:0 auto 8px;background:#11131a;border-radius:10px;padding:4px}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#ff8fd6,#c77dff);width:0%;transition:width .08s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Motorcycle Custom Paint Job</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0</span>
+      <span id="hiLbl">Hi: 0</span>
+      <span id="levelLbl">Panel: 1</span>
+      <span class="lives" id="livesLbl">♥♥♥</span>
+    </div>
+    <div id="meterWrap"><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Hold the mouse (or your finger) down and sweep the airbrush slowly and evenly back and forth across the glowing panel outline to fill it with the current layer — <b>base coat</b>, then <b>graphic</b>, then <b>clear coat</b>. Stay inside the outline and keep your coverage even; spraying too fast, holding still too long, or drifting outside the lines wastes paint and costs a life. Fill the coverage meter to finish each layer!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreLbl=document.getElementById('scoreLbl'),hiLbl=document.getElementById('hiLbl'),levelLbl=document.getElementById('levelLbl'),livesLbl=document.getElementById('livesLbl'),meterBar=document.getElementById('meterBar');
+const HS_KEY='mcp_hiscore';
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+
+const LAYERS=[
+  {key:'base',name:'Base Coat',color:'#ff8fd6'},
+  {key:'graphic',name:'Graphic Design',color:'#c77dff'},
+  {key:'clear',name:'Clear Coat',color:'#9be8ff'}
+];
+
+let score=0,lives=3,level=1,gameOver=false,started=false;
+let layerIdx=0,coverage=0,required=100;
+let panel={x:150,y:80,w:500,h:220};
+let coveredCells=[],gridCols=40,gridRows=18;
+let spraying=false,lastPt=null,speedPenaltyTimer=0,outsideTimer=0;
+let flashTimer=0,flashMsg='',flashColor='#fff';
+let shakeTimer=0;
+let sprayDots=[];
+
+function panelSize(){
+  const grow=Math.min(60,level*8);
+  return {x:120-grow/4,y:70,w:560+grow,h:230};
+}
+
+function newLevel(){
+  panel=panelSize();
+  gridCols=Math.round(40+level*3);
+  gridRows=Math.round(16+level*1.5);
+  coveredCells=new Array(gridCols*gridRows).fill(0);
+  coverage=0;
+  layerIdx=0;
+  required=100;
+  sprayDots=[];
+  outsideTimer=0;
+}
+
+function flash(msg,color){flashMsg=msg;flashColor=color;flashTimer=55;}
+function reset(){score=0;lives=3;level=1;gameOver=false;started=false;newLevel();}
+
+function cellIndexAt(px,py){
+  const col=Math.floor((px-panel.x)/panel.w*gridCols);
+  const row=Math.floor((py-panel.y)/panel.h*gridRows);
+  if(col<0||col>=gridCols||row<0||row>=gridRows)return -1;
+  return row*gridCols+col;
+}
+
+function insidePanel(px,py){
+  return px>=panel.x&&px<=panel.x+panel.w&&py>=panel.y&&py<=panel.y+panel.h;
+}
+
+function computeCoverage(){
+  let filled=0;
+  for(let i=0;i<coveredCells.length;i++)if(coveredCells[i]>0)filled++;
+  return Math.min(100,(filled/coveredCells.length)*100);
+}
+
+function sprayAt(px,py,speed){
+  sprayDots.push({x:px,y:py,life:14});
+  if(!insidePanel(px,py)){
+    outsideTimer+=1;
+    if(outsideTimer>18){
+      loseLife(I18N.t('oversprayed','Oversprayed outside the lines!'));
+      outsideTimer=0;
+    }
+    return;
+  }
+  outsideTimer=Math.max(0,outsideTimer-1);
+  if(speed>26){
+    speedPenaltyTimer++;
+    if(speedPenaltyTimer>10){
+      loseLife(I18N.t('too_fast','Spraying too fast — uneven coat!'));
+      speedPenaltyTimer=0;
+    }
+    return;
+  }else{
+    speedPenaltyTimer=Math.max(0,speedPenaltyTimer-1);
+  }
+  const radius=2;
+  const centerCol=Math.floor((px-panel.x)/panel.w*gridCols);
+  const centerRow=Math.floor((py-panel.y)/panel.h*gridRows);
+  for(let dc=-radius;dc<=radius;dc++){
+    for(let dr=-radius;dr<=radius;dr++){
+      const col=centerCol+dc,row=centerRow+dr;
+      if(col<0||col>=gridCols||row<0||row>=gridRows)continue;
+      const dist=Math.sqrt(dc*dc+dr*dr);
+      if(dist>radius)continue;
+      const idx=row*gridCols+col;
+      coveredCells[idx]=Math.min(3,coveredCells[idx]+1);
+    }
+  }
+  coverage=computeCoverage();
+  if(coverage>=required){
+    finishLayer();
+  }
+}
+
+function loseLife(msg){
+  lives--;shakeTimer=12;SFX.fail();flash(msg,'#e05c5c');
+  if(lives<=0){
+    gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+  }
+}
+
+function finishLayer(){
+  score+=50+level*10;
+  SFX.success();
+  layerIdx++;
+  if(layerIdx>=LAYERS.length){
+    score+=80*level;
+    if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+    SFX.levelup();
+    flash(I18N.t('panel_complete','Show-quality finish!'),'#9be8ff');
+    level++;
+    setTimeout(()=>{ if(!gameOver) newLevel(); },1000);
+  }else{
+    flash(I18N.t('layer_done',`${LAYERS[layerIdx-1].name} done!`),'#8ec9a0');
+    coveredCells=new Array(gridCols*gridRows).fill(0);
+    coverage=0;
+  }
+}
+
+function canvasPointFromEvent(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=c.width/rect.width,scaleY=c.height/rect.height;
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+
+function startSpray(e){
+  if(gameOver){reset();return;}
+  if(!started){started=true;}
+  spraying=true;
+  const pt=canvasPointFromEvent(e);
+  lastPt=pt;
+  sprayAt(pt.x,pt.y,0);
+}
+function moveSpray(e){
+  if(!spraying||gameOver)return;
+  const pt=canvasPointFromEvent(e);
+  const speed = lastPt ? Math.hypot(pt.x-lastPt.x,pt.y-lastPt.y) : 0;
+  sprayAt(pt.x,pt.y,speed);
+  lastPt=pt;
+}
+function endSpray(){ spraying=false;lastPt=null; }
+
+c.addEventListener('mousedown',startSpray);
+c.addEventListener('mousemove',moveSpray);
+window.addEventListener('mouseup',endSpray);
+c.addEventListener('touchstart',e=>{e.preventDefault();startSpray(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();moveSpray(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();endSpray();},{passive:false});
+
+// Keyboard controls: arrow keys move a virtual spray cursor, Space holds the trigger
+let kx=400,ky=180,kbdSpraying=false;
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){reset();return;}
+  if(!started && (e.code==='Space'||e.code==='Enter'||e.code.startsWith('Arrow'))){started=true;}
+  const step=10;
+  if(e.code==='ArrowLeft'){kx=Math.max(0,kx-step);e.preventDefault();}
+  else if(e.code==='ArrowRight'){kx=Math.min(800,kx+step);e.preventDefault();}
+  else if(e.code==='ArrowUp'){ky=Math.max(0,ky-step);e.preventDefault();}
+  else if(e.code==='ArrowDown'){ky=Math.min(400,ky+step);e.preventDefault();}
+  else if(e.code==='Space'){ e.preventDefault(); kbdSpraying=true; }
+});
+document.addEventListener('keyup',e=>{ if(e.code==='Space')kbdSpraying=false; });
+
+let kbdLastPt=null;
+function kbdTick(){
+  if(kbdSpraying && started && !gameOver){
+    const speed = kbdLastPt ? Math.hypot(kx-kbdLastPt.x,ky-kbdLastPt.y) : 0;
+    sprayAt(kx,ky,speed);
+    kbdLastPt={x:kx,y:ky};
+  }else{
+    kbdLastPt=null;
+  }
+}
+
+function drawPanelOutline(){
+  ctx.save();
+  ctx.strokeStyle=LAYERS[layerIdx].color;
+  ctx.lineWidth=3;
+  ctx.setLineDash([10,6]);
+  ctx.strokeRect(panel.x,panel.y,panel.w,panel.h);
+  ctx.restore();
+}
+
+function drawCoverage(){
+  const cw=panel.w/gridCols,ch=panel.h/gridRows;
+  for(let row=0;row<gridRows;row++){
+    for(let col=0;col<gridCols;col++){
+      const v=coveredCells[row*gridCols+col];
+      if(v<=0)continue;
+      ctx.globalAlpha=Math.min(1,v/3)*0.9;
+      ctx.fillStyle=LAYERS[layerIdx].color;
+      ctx.fillRect(panel.x+col*cw,panel.y+row*ch,cw+0.5,ch+0.5);
+    }
+  }
+  ctx.globalAlpha=1;
+}
+
+function draw(){
+  kbdTick();
+  ctx.clearRect(0,0,800,400);
+  ctx.fillStyle='#1b1e2a';ctx.fillRect(0,0,800,400);
+  ctx.textAlign='center';
+
+  if(!started){
+    ctx.fillStyle='#ff8fd6';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Click & drag, touch, or use arrows + Space to begin'),400,190);
+    requestAnimationFrame(draw);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,160);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click or Space to restart'),400,200);
+    ctx.font='bold 18px Arial';ctx.fillStyle='#ff8fd6';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),400,240);
+    requestAnimationFrame(draw);return;
+  }
+
+  ctx.save();
+  if(shakeTimer>0){ctx.translate((Math.random()-0.5)*6,(Math.random()-0.5)*6);shakeTimer--;}
+  ctx.fillStyle='#2a2d3a';ctx.fillRect(panel.x,panel.y,panel.w,panel.h);
+  drawCoverage();
+  drawPanelOutline();
+
+  // spray dots fade
+  sprayDots=sprayDots.filter(d=>d.life>0);
+  sprayDots.forEach(d=>{
+    ctx.globalAlpha=d.life/14;
+    ctx.fillStyle='#fff';
+    ctx.beginPath();ctx.arc(d.x,d.y,3,0,Math.PI*2);ctx.fill();
+    d.life--;
+  });
+  ctx.globalAlpha=1;
+
+  if(spraying && lastPt){
+    ctx.strokeStyle='#fff';ctx.lineWidth=1;
+    ctx.beginPath();ctx.arc(lastPt.x,lastPt.y,14,0,Math.PI*2);ctx.stroke();
+  }
+  if(kbdSpraying){
+    ctx.strokeStyle='#fff';ctx.lineWidth=1;
+    ctx.beginPath();ctx.arc(kx,ky,14,0,Math.PI*2);ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.fillStyle='#b5b9c0';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('layer_progress','Layer: {name} ({a}/{b})').replace('{name}',LAYERS[layerIdx].name).replace('{a}',layerIdx+1).replace('{b}',LAYERS.length),400,30);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.globalAlpha=Math.min(1,flashTimer/20);
+    ctx.fillStyle=flashColor;
+    ctx.font='bold 22px Arial';
+    ctx.fillText(flashMsg,400,370);
+    ctx.globalAlpha=1;
+  }
+
+  meterBar.style.width=coverage+'%';
+  scoreLbl.textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  hiLbl.textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+  levelLbl.textContent=I18N.t('panel_label','Panel: {n}').replace('{n}',level);
+  livesLbl.textContent='♥'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+
+  requestAnimationFrame(draw);
+}
+
+newLevel();
+draw();
+</script></body></html>

@@ -1,0 +1,222 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Motorcycle Electrical Diagnostics</title><meta name="description" content="Play Motorcycle Electrical Diagnostics free online — Probe the wiring harness with the multimeter to trace voltage and continuity, then click the broken connection to fix it."><link rel="canonical" href="https://games.multiportllc.com/games/motorcycleelectricaldiagnostics"><meta property="og:title" content="Motorcycle Electrical Diagnostics - Multiport Games"><meta property="og:description" content="Play Motorcycle Electrical Diagnostics free online — Probe the wiring harness with the multimeter to trace voltage and continuity, then click the broken connection to fix it."><meta property="og:url" content="https://games.multiportllc.com/games/motorcycleelectricaldiagnostics"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Motorcycle Electrical Diagnostics","description":"Play Motorcycle Electrical Diagnostics free online instantly. Diagnose a dead motorcycle by probing a node-and-wire harness diagram with a multimeter, tracing voltage and continuity through each connection, correctly isolating the one broken wire or component so the bike starts again. The harness grows larger and the readings trickier every round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/motorcycleelectricaldiagnostics","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#14181f;display:block;border-radius:8px;touch-action:manipulation;cursor:crosshair}
+#hud{color:#7ee787;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px;color:#e05c5c}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Motorcycle Electrical Diagnostics</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0</span>
+      <span id="hiLbl">Hi: 0</span>
+      <span id="levelLbl">Harness: 1</span>
+      <span class="lives" id="livesLbl">♥♥♥</span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Click (or tap) each node along the wiring harness, starting from the <b>Battery</b>, to probe it with the multimeter. Good connections read full voltage; one wire in the chain is broken and will read <b>0V</b>. Click the node <b>right after</b> the break to isolate the fault and repair it. Wrong guesses cost a life — use the readings and the diagram to narrow it down before you touch a wire!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreLbl=document.getElementById('scoreLbl'),hiLbl=document.getElementById('hiLbl'),levelLbl=document.getElementById('levelLbl'),livesLbl=document.getElementById('livesLbl');
+const HS_KEY='med_hiscore';
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+
+const NAMES=['Battery','Fuse','Ignition Switch','Relay','Starter Solenoid','CDI Unit','Coil','Headlight','Tail Light','Horn'];
+
+let score=0,lives=3,level=1,gameOver=false,started=false;
+let nodes=[],breakAfterIdx=0,probed=[],readings=[],solved=false;
+let flashTimer=0,flashMsg='',flashColor='#fff';
+let shakeTimer=0,kbdSel=0;
+
+function chainLen(){return Math.min(NAMES.length,4+Math.floor((level-1)/1.5));}
+
+function newLevel(){
+  const n=chainLen();
+  nodes=[];
+  for(let i=0;i<n;i++){
+    const row=Math.floor(i/4),col=i%4;
+    nodes.push({name:NAMES[i],x:110+col*190,y:110+row*150});
+  }
+  breakAfterIdx = 1+Math.floor(Math.random()*(n-1)); // fault is in wire AFTER this node index (so node breakAfterIdx reads good, breakAfterIdx+1 reads 0V)
+  probed=new Array(n).fill(false);
+  readings=new Array(n).fill(null);
+  solved=false;
+  kbdSel=0;
+}
+
+function flash(msg,color){flashMsg=msg;flashColor=color;flashTimer=55;}
+function reset(){score=0;lives=3;level=1;gameOver=false;started=false;newLevel();}
+
+function voltageFor(i){
+  // node i reads good voltage if i <= breakAfterIdx, else 0V (break is in the wire between breakAfterIdx and breakAfterIdx+1)
+  return i<=breakAfterIdx ? (12-Math.random()*0.4).toFixed(1) : '0.0';
+}
+
+function probe(i){
+  if(gameOver){reset();return;}
+  if(!started){started=true;}
+  if(solved)return;
+  if(i<0||i>=nodes.length)return;
+  if(!probed[i]){
+    probed[i]=true;
+    readings[i]=voltageFor(i);
+    SFX.tick();
+    return; // first click just probes — repair guess happens on a later click
+  }
+  // a later click on an already-probed node attempts to call it "the fault point"
+  attemptFaultCall(i);
+}
+
+function attemptFaultCall(i){
+  const isCorrectFaultNode = (i===breakAfterIdx+1);
+  if(!isCorrectFaultNode){
+    // only treat as a wrong guess if the reading at this node is already known (0V) and player clicked repair without reason,
+    // or if they clicked repair on a clearly-good node far from plausible fault.
+    lives--;shakeTimer=12;SFX.fail();
+    flash(I18N.t('wrong_fault','Not the fault — keep tracing!'),'#e05c5c');
+    if(lives<=0){
+      gameOver=true;SFX.lose();
+      if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+    }
+    return;
+  }
+  solved=true;
+  score+=40+level*10;
+  if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+  SFX.success();
+  flash(I18N.t('fault_found','Fault isolated! Bike starts!'),'#7ee787');
+  SFX.levelup();
+  level++;
+  setTimeout(()=>{ if(!gameOver) newLevel(); },1000);
+}
+
+function nodeRects(){
+  return nodes.map((n,i)=>({x:n.x-50,y:n.y-30,w:100,h:60,ref:i}));
+}
+
+function canvasPointFromEvent(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=c.width/rect.width,scaleY=c.height/rect.height;
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+function hitTest(px,py){
+  for(const r of nodeRects()){ if(px>=r.x&&px<=r.x+r.w&&py>=r.y&&py<=r.y+r.h) return r.ref; }
+  return -1;
+}
+
+c.addEventListener('click',e=>{
+  if(gameOver){reset();return;}
+  const pt=canvasPointFromEvent(e);
+  const i=hitTest(pt.x,pt.y);
+  if(i>=0)probe(i);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){reset();return;}
+  const pt=canvasPointFromEvent(e);
+  const i=hitTest(pt.x,pt.y);
+  if(i>=0)probe(i);
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){reset();return;}
+  if(!nodes.length)return;
+  if(e.code==='ArrowRight'){kbdSel=(kbdSel+1)%nodes.length;e.preventDefault();}
+  else if(e.code==='ArrowLeft'){kbdSel=(kbdSel-1+nodes.length)%nodes.length;e.preventDefault();}
+  else if(e.code==='ArrowDown'){kbdSel=(kbdSel+4)%nodes.length;e.preventDefault();}
+  else if(e.code==='ArrowUp'){kbdSel=(kbdSel-4+nodes.length)%nodes.length;e.preventDefault();}
+  else if(e.code==='Space'||e.code==='Enter'){e.preventDefault();if(!started)started=true;probe(kbdSel);}
+});
+
+function drawWire(a,b,bad){
+  ctx.save();
+  ctx.strokeStyle = bad ? '#e05c5c' : '#444a55';
+  ctx.lineWidth=4;
+  if(bad){ctx.setLineDash([8,6]);}
+  ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,800,440);
+  ctx.fillStyle='#14181f';ctx.fillRect(0,0,800,440);
+  ctx.textAlign='center';
+
+  if(!started){
+    ctx.fillStyle='#7ee787';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Space on Battery to begin'),400,220);
+    requestAnimationFrame(draw);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,180);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,220);
+    ctx.font='bold 18px Arial';ctx.fillStyle='#7ee787';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),400,260);
+    requestAnimationFrame(draw);return;
+  }
+
+  ctx.fillStyle='#b5b9c0';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('probe_hint','Probe each node in order with the multimeter, then click the dead node twice to repair'),400,28);
+
+  for(let i=0;i<nodes.length-1;i++){
+    const knownBad = probed[i+1] && readings[i+1]==='0.0' && probed[i] && readings[i]!=='0.0';
+    drawWire(nodes[i],nodes[i+1],knownBad);
+  }
+
+  nodes.forEach((n,i)=>{
+    ctx.save();
+    if(shakeTimer>0 && i===breakAfterIdx+1)ctx.translate((Math.random()-0.5)*5,(Math.random()-0.5)*5);
+    const isSel=i===kbdSel;
+    ctx.fillStyle = probed[i] ? (readings[i]==='0.0'?'#3a2020':'#1d3324') : '#1f2330';
+    ctx.strokeStyle = isSel?'#ffd54f':(probed[i]?(readings[i]==='0.0'?'#e05c5c':'#7ee787'):'#555');
+    ctx.lineWidth = isSel?3:2;
+    ctx.beginPath();ctx.roundRect?ctx.roundRect(n.x-50,n.y-30,100,60,10):ctx.rect(n.x-50,n.y-30,100,60);
+    ctx.fill();ctx.stroke();
+    ctx.fillStyle='#eee';ctx.font='bold 13px Arial';
+    ctx.fillText(n.name,n.x,n.y-6);
+    ctx.font='bold 15px Arial';
+    ctx.fillStyle = probed[i] ? (readings[i]==='0.0'?'#e05c5c':'#7ee787') : '#777';
+    ctx.fillText(probed[i] ? readings[i]+'V' : '— V', n.x, n.y+16);
+    ctx.restore();
+  });
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.globalAlpha=Math.min(1,flashTimer/20);
+    ctx.fillStyle=flashColor;
+    ctx.font='bold 22px Arial';
+    ctx.fillText(flashMsg,400,420);
+    ctx.globalAlpha=1;
+  }
+  if(shakeTimer>0)shakeTimer--;
+
+  scoreLbl.textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  hiLbl.textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+  levelLbl.textContent=I18N.t('harness_label','Harness: {n}').replace('{n}',level);
+  livesLbl.textContent='♥'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+
+  requestAnimationFrame(draw);
+}
+
+newLevel();
+draw();
+</script></body></html>
