@@ -1,0 +1,254 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Escape Room Puzzle Design</title><meta name="description" content="Play Escape Room Puzzle Design free online — Arrange the puzzle cards into a chain where each solution unlocks the next, with no dead ends or skippable steps."><link rel="canonical" href="https://games.multiportllc.com/games/escaperoompuzzledesign"><meta property="og:title" content="Escape Room Puzzle Design - Multiport Games"><meta property="og:description" content="Play Escape Room Puzzle Design free online — Arrange the puzzle cards into a chain where each solution unlocks the next, with no dead ends or skippable steps."><meta property="og:url" content="https://games.multiportllc.com/games/escaperoompuzzledesign"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Escape Room Puzzle Design","description":"Play Escape Room Puzzle Design free online instantly. Arrange a new escape room's puzzle cards into a chain where each puzzle's solution unlocks access to the next, with no dead ends or skippable steps, before the room opens to its first group of players. Chains get longer and trickier every level. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/escaperoompuzzledesign","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1226;display:block;border-radius:8px;touch-action:none;user-select:none;max-width:100%}
+#hud{color:#e0c8ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#ffb74d}
+#hud span.hs{color:#7ec850}
+#hud span.lives{color:#ff8a80}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Escape Room Puzzle Design</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLabel">Score: 0</span>
+      <span class="lv" id="lvLabel">Level: 1</span>
+      <span class="hs" id="hsLabel">Hi: 0</span>
+      <span class="lives" id="livesLabel">Lives: ●●●</span>
+    </div>
+    <canvas id="c" width="760" height="460"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    Click/tap two puzzle cards to <b>swap</b> them, or use <b>Arrow Keys</b> to move the selector and <b>Space</b> to pick up/drop a card. Arrange the chain left-to-right so each puzzle's <b>unlock requirement</b> (shown below it) is satisfied by a puzzle already solved earlier in the chain — no dead ends, no skippable steps. Press/tap <b>Test Chain</b> (or <b>Enter</b>) to check it. Mistakes cost a life — three lives, and chains get longer each level.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=460;
+const KEY='escaperoompuzzledesign_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10)||0;
+let score=0,level=1,lives=3,started=false,gameOver=false;
+let msg='',msgTime=0,flashBad=0,flashGood=0;
+
+const PUZZLE_NAMES=['Padlock','Blacklight Clue','Riddle Note','Wired Panel','Symbol Dial','Hidden Drawer','Mirror Code','Sliding Tile','Laser Grid','Cipher Wheel','Keypad','Jigsaw Map'];
+const REQ_NAMES=['Padlock Key','UV Marks','Riddle Answer','Circuit Fix','Symbol Match','Drawer Item','Mirror Angle','Tile Pattern','Laser Path','Cipher Word','Keycode','Map Piece'];
+
+let chain=[]; // array of {name,reqIdx} reqIdx=-1 means no requirement (can start chain)
+let order=[]; // current displayed order (indices into chain)
+let selected=-1,activeIdx=0;
+
+function scoreDisp(){document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));}
+function lvDisp(){document.getElementById('lvLabel').textContent=I18N.t('level_label','Level: {l}').replace('{l}',level);}
+function hsDisp(){document.getElementById('hsLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));}
+function livesDisp(){document.getElementById('livesLabel').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(3-Math.max(0,lives)));}
+
+function shuffle(arr){
+  const a=arr.slice();
+  for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
+  return a;
+}
+
+function setupRound(){
+  const n=Math.min(8,4+Math.floor(level/2));
+  const idxPool=shuffle([...Array(PUZZLE_NAMES.length).keys()]).slice(0,n);
+  chain=idxPool.map((pi,i)=>({
+    name:PUZZLE_NAMES[pi],
+    reqName: i===0 ? null : REQ_NAMES[idxPool[i-1]],
+    solveId:pi
+  }));
+  // order = shuffled positions
+  order=shuffle([...Array(n).keys()]);
+  // make sure it's not already solved (if it happens to be correct, shuffle again)
+  let guard=0;
+  while(isSolved(order)&&guard<20){order=shuffle([...Array(n).keys()]);guard++;}
+  selected=-1;activeIdx=0;
+}
+
+function isSolved(ord){
+  // ord[0] must be a puzzle with reqName null; each subsequent puzzle's reqName must equal name of an EARLIER-solved puzzle's "unlock output"
+  // Each puzzle i (chain index) produces output REQ_NAMES[chain[i].solveId]. Puzzle j requires chain[j].reqName.
+  for(let pos=0;pos<ord.length;pos++){
+    const node=chain[ord[pos]];
+    if(pos===0){ if(node.reqName!==null) return false; continue; }
+    const prevNode=chain[ord[pos-1]];
+    const prevOutput=REQ_NAMES[prevNode.solveId];
+    if(node.reqName!==prevOutput) return false;
+  }
+  return true;
+}
+
+function reset(){
+  score=0;level=1;lives=3;gameOver=false;started=false;
+  setupRound();
+}
+reset();
+scoreDisp();lvDisp();hsDisp();livesDisp();
+
+function loseLife(text){
+  lives--;SFX.fail();
+  msg=text||'';msgTime=1.6;
+  flashBad=0.4;
+  livesDisp();
+  if(lives<=0){
+    gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(KEY,hi);}
+    hsDisp();
+  } else {
+    setupRound();
+  }
+}
+
+function cardRects(){
+  const rects=[];
+  const n=order.length;
+  const cw=Math.min(120,(W-40)/n-10);
+  const totalW=n*(cw+10)-10;
+  const x0=(W-totalW)/2;
+  const y=160,h=200;
+  for(let i=0;i<n;i++){
+    rects.push({x:x0+i*(cw+10),y,w:cw,h,pos:i});
+  }
+  return rects;
+}
+function testRect(){ return {x:W/2-110,y:H-40,w:220,h:34}; }
+
+function trySwap(i,j){
+  if(i===j)return;
+  const t=order[i];order[i]=order[j];order[j]=t;
+  SFX.click();
+}
+
+function pickAt(pos){
+  if(selected===-1){selected=pos;SFX.select();}
+  else { trySwap(selected,pos); selected=-1; }
+}
+
+function checkChain(){
+  if(isSolved(order)){
+    score+=100*level;
+    SFX.win();
+    level++;
+    flashGood=0.4;
+    msg=I18N.t('chain_approved','Puzzle chain approved — room opens to players!');msgTime=1.6;
+    scoreDisp();lvDisp();
+    setupRound();
+  } else {
+    loseLife(I18N.t('chain_broken','A puzzle unlocks before its requirement is ready — fix the chain!'));
+  }
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+
+function handleActivate(px,py){
+  if(gameOver){reset();scoreDisp();lvDisp();hsDisp();livesDisp();started=false;return;}
+  if(!started){started=true;return;}
+  const cards=cardRects();
+  for(const card of cards){
+    if(px>=card.x&&px<=card.x+card.w&&py>=card.y&&py<=card.y+card.h){
+      activeIdx=card.pos;
+      pickAt(card.pos);
+      return;
+    }
+  }
+  const tr=testRect();
+  if(px>=tr.x&&px<=tr.x+tr.w&&py>=tr.y&&py<=tr.y+tr.h){checkChain();return;}
+}
+
+c.addEventListener('click',e=>{const p=pointerPos(e);handleActivate(p.x,p.y);});
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=pointerPos(e);handleActivate(p.x,p.y);},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){reset();scoreDisp();lvDisp();hsDisp();livesDisp();started=false;return;}
+  if(!started){ if(e.code==='Space'||e.code==='Enter'){started=true;} return; }
+  if(e.code==='ArrowRight'){e.preventDefault();activeIdx=(activeIdx+1)%order.length;SFX.tick();}
+  else if(e.code==='ArrowLeft'){e.preventDefault();activeIdx=(activeIdx-1+order.length)%order.length;SFX.tick();}
+  else if(e.code==='Space'){e.preventDefault();pickAt(activeIdx);}
+  else if(e.code==='Enter'){e.preventDefault();checkChain();}
+});
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:(now-lastTime)/1000;
+  lastTime=now;
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#1a1226');sky.addColorStop(1,'#2d1b40');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  if(flashBad>0){flashBad-=dt;ctx.fillStyle=`rgba(255,0,0,${Math.max(0,flashBad)*0.3})`;ctx.fillRect(0,0,W,H);}
+  if(flashGood>0){flashGood-=dt;ctx.fillStyle=`rgba(0,255,100,${Math.max(0,flashGood)*0.25})`;ctx.fillRect(0,0,W,H);}
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap/Click or press Space to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',Math.floor(score)),W/2,H/2+16);
+    ctx.fillText(I18N.t('restart_hint','Tap or press Space/Enter to restart'),W/2,H/2+46);
+    requestAnimationFrame(loop);return;
+  }
+
+  ctx.fillStyle='#e0c8ff';ctx.font='bold 17px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('design_prompt','Order the puzzles so each unlock requirement is met by an earlier puzzle'),W/2,42);
+  ctx.font='13px Arial';
+  ctx.fillText(I18N.t('design_sub','Chain runs left to right — first card needs no requirement'),W/2,64);
+
+  const cards=cardRects();
+  cards.forEach(card=>{
+    const node=chain[order[card.pos]];
+    const activeHere=activeIdx===card.pos;
+    const sel=selected===card.pos;
+    ctx.fillStyle=sel?'#7b4fa3':'#4a2f66';
+    ctx.fillRect(card.x,card.y,card.w,card.h);
+    if(activeHere){ ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;ctx.strokeRect(card.x,card.y,card.w,card.h); }
+    else { ctx.strokeStyle='#bfa3d9';ctx.lineWidth=1;ctx.strokeRect(card.x,card.y,card.w,card.h); }
+    ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('pos_label','Step {n}').replace('{n}',card.pos+1),card.x+card.w/2,card.y+16);
+    ctx.font='bold 12px Arial';
+    ctx.fillText(I18N.t('puzzle_'+node.name.replace(/\s+/g,'_'),node.name),card.x+card.w/2,card.y+card.h/2-10);
+    ctx.font='10px Arial';ctx.fillStyle='#d9c6ef';
+    const reqText=node.reqName===null ? I18N.t('no_req','No requirement') : I18N.t('needs_label','Needs: {r}').replace('{r}',node.reqName);
+    ctx.fillText(reqText,card.x+card.w/2,card.y+card.h/2+14);
+    ctx.fillStyle='#8aff8a';ctx.font='10px Arial';
+    ctx.fillText(I18N.t('unlocks_label','Unlocks: {u}').replace('{u}',REQ_NAMES[node.solveId]),card.x+card.w/2,card.y+card.h-16);
+  });
+
+  const tr=testRect();
+  ctx.fillStyle='#2e7d32';
+  ctx.fillRect(tr.x,tr.y,tr.w,tr.h);
+  ctx.strokeStyle='#fff';ctx.strokeRect(tr.x,tr.y,tr.w,tr.h);
+  ctx.fillStyle='#fff';ctx.font='bold 15px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('test_chain_btn','TEST CHAIN'),tr.x+tr.w/2,tr.y+tr.h/2+5);
+
+  if(msgTime>0){
+    msgTime-=dt;
+    ctx.fillStyle='#ffd54f';ctx.font='bold 14px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,H-54);
+  }
+
+  ctx.textAlign='left';
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

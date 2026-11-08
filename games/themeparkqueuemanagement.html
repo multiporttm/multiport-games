@@ -1,0 +1,215 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Theme Park Queue Management</title><meta name="description" content="Play Theme Park Queue Management free online — Open and close queue lanes and balance the crowds as guest traffic shifts through the day. Don't let any line overflow!"><link rel="canonical" href="https://games.multiportllc.com/games/themeparkqueuemanagement"><meta property="og:title" content="Theme Park Queue Management - Multiport Games"><meta property="og:description" content="Play Theme Park Queue Management free online — Open and close queue lanes and balance the crowds as guest traffic shifts through the day. Don't let any line overflow!"><meta property="og:url" content="https://games.multiportllc.com/games/themeparkqueuemanagement"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Theme Park Queue Management","description":"Play Theme Park Queue Management free online instantly. Open and close queue lanes and balance the crowds as guest traffic shifts through the day. Don't let any line overflow! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/themeparkqueuemanagement","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#102a1e;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#7ee787;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Theme Park Queue Management</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click/tap a lane (or press <b>1-5</b>) to open or close it. Open lanes serve guests faster but take a moment to get going. Keep every lane's queue below the top line — three overflows and the park closes for the day!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreEl=document.getElementById('score-display');
+const HS_KEY='themeparkqueuemanagement_highscore';
+let score=0,hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+let lives=3,level=1,started=false,gameOver=false;
+const MAX_CAP=20;
+const SERVE_RATE=3.2; // guests served per second per fully-open lane
+const OPEN_DELAY=1.6; // seconds a lane takes to "ramp up" after opening
+let lanes=[];
+let arrivalRate=1.6; // guests per second total
+let levelTimer=0,levelDuration=28,surgeTimer=0,surgeActive=false;
+let guestAccumulator=0;
+
+function initLanes(n){
+  lanes=[];
+  for(let i=0;i<n;i++)lanes.push({open:i<2,count:0,rampTimer:0});
+}
+
+function reset(){
+  score=0;lives=3;level=1;started=false;gameOver=false;
+  arrivalRate=1.6;levelTimer=0;levelDuration=28;surgeTimer=5+Math.random()*6;surgeActive=false;
+  guestAccumulator=0;
+  initLanes(3);
+}
+reset();
+
+function startGame(){
+  if(gameOver){reset();return;}
+  started=true;
+}
+
+function laneCountAt(screenX){
+  const n=lanes.length;
+  const laneW=700/n,startX=50;
+  const idx=Math.floor((screenX-startX)/laneW);
+  if(idx>=0&&idx<n)return idx;
+  return -1;
+}
+
+function toggleLane(i){
+  if(!started||gameOver)return;
+  if(i<0||i>=lanes.length)return;
+  const openCount=lanes.filter(l=>l.open).length;
+  if(lanes[i].open&&openCount<=1)return; // must keep at least one open
+  lanes[i].open=!lanes[i].open;
+  lanes[i].rampTimer=lanes[i].open?OPEN_DELAY:0;
+  SFX.select();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='Enter'){e.preventDefault();startGame();return;}
+  const m=e.code.match(/^Digit([1-5])$/);
+  if(m){e.preventDefault();if(!started||gameOver)startGame();else toggleLane(parseInt(m[1],10)-1);}
+});
+
+function pointerAction(x,y){
+  if(!started||gameOver){startGame();return;}
+  if(y<50||y>280)return;
+  const idx=laneCountAt(x);
+  if(idx>=0)toggleLane(idx);
+}
+c.addEventListener('click',e=>{const r=c.getBoundingClientRect();pointerAction((e.clientX-r.left)*(800/r.width),(e.clientY-r.top)*(340/r.height));});
+c.addEventListener('touchstart',e=>{e.preventDefault();const r=c.getBoundingClientRect();const t=e.touches[0];pointerAction((t.clientX-r.left)*(800/r.width),(t.clientY-r.top)*(340/r.height));},{passive:false});
+
+function maybeUnlockLane(){
+  if(level===3&&lanes.length<4){lanes.push({open:false,count:0,rampTimer:0});}
+  if(level===5&&lanes.length<5){lanes.push({open:false,count:0,rampTimer:0});}
+}
+
+function update(dt){
+  levelTimer+=dt;
+  surgeTimer-=dt;
+  if(surgeTimer<=0){
+    surgeActive=!surgeActive;
+    surgeTimer=surgeActive?(3+Math.random()*3):(6+Math.random()*6);
+  }
+  const effectiveArrival=arrivalRate*(surgeActive?2.1:1);
+
+  // Guests arrive and join the shortest OPEN lane (greedy).
+  guestAccumulator+=effectiveArrival*dt;
+  while(guestAccumulator>=1){
+    guestAccumulator-=1;
+    const openLanes=lanes.filter(l=>l.open);
+    if(openLanes.length===0)break;
+    let best=openLanes[0];
+    openLanes.forEach(l=>{if(l.count<best.count)best=l;});
+    best.count++;
+  }
+
+  // Service: open+ramped lanes drain guests; count toward score.
+  lanes.forEach(l=>{
+    if(l.open){
+      if(l.rampTimer>0){l.rampTimer=Math.max(0,l.rampTimer-dt);}
+      else {
+        const served=SERVE_RATE*dt;
+        const actual=Math.min(l.count,served);
+        l.count-=actual;
+        score+=actual*2;
+      }
+    }
+    if(l.count>MAX_CAP){
+      l.count=MAX_CAP*0.6;
+      lives--;
+      SFX.hurt();
+      if(lives<=0){
+        gameOver=true;
+        started=false;
+        SFX.lose();
+      }
+    }
+  });
+
+  if(score>hi){hi=Math.floor(score);localStorage.setItem(HS_KEY,String(hi));}
+
+  if(levelTimer>=levelDuration&&!gameOver){
+    levelTimer=0;
+    level++;
+    arrivalRate+=0.55;
+    levelDuration=Math.max(18,levelDuration-1);
+    maybeUnlockLane();
+    SFX.levelup();
+  }
+}
+
+function drawLane(l,i,n){
+  const laneW=700/n,startX=50;
+  const x=startX+i*laneW,y=50,w=laneW-10,h=230;
+  const pct=Math.min(1,l.count/MAX_CAP);
+  ctx.fillStyle='#13331f';ctx.fillRect(x,y,w,h);
+  const fillH=h*pct;
+  ctx.fillStyle=pct>0.8?'#c0392b':pct>0.55?'#e67e22':'#27ae60';
+  ctx.fillRect(x,y+h-fillH,w,fillH);
+  ctx.strokeStyle=l.open?'#7ee787':'#555';ctx.lineWidth=l.open?3:2;
+  ctx.strokeRect(x,y,w,h);
+  if(!l.open){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(x,y,w,h);
+  } else if(l.rampTimer>0){
+    ctx.fillStyle='rgba(255,213,79,0.25)';ctx.fillRect(x,y,w,h);
+  }
+  ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('lane_label','Lane {n}').replace('{n}',i+1),x+w/2,y-8);
+  ctx.font='bold 18px Arial';
+  ctx.fillText(Math.floor(l.count),x+w/2,y+h/2);
+  ctx.font='12px Arial';ctx.fillStyle=l.open?'#7ee787':'#999';
+  ctx.fillText(l.open?(l.rampTimer>0?I18N.t('lane_opening','OPENING'):I18N.t('lane_open','OPEN')):I18N.t('lane_closed','CLOSED'),x+w/2,y+h+16);
+}
+
+function drawHud(){
+  ctx.textAlign='left';ctx.font='bold 16px Arial';ctx.fillStyle='#7ee787';
+  ctx.fillText(I18N.t('lives_label','Lives: {n}').replace('{n}','❤'.repeat(Math.max(0,lives))),20,310);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('level_label','Level {n}').replace('{n}',level),780,310);
+  if(surgeActive){
+    ctx.textAlign='center';ctx.font='bold 14px Arial';ctx.fillStyle='#ffd54f';
+    ctx.fillText(I18N.t('surge_warning','⚠ CROWD SURGE — OPEN MORE LANES!'),400,310);
+  }
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.05);
+  lastTime=now;
+
+  ctx.clearRect(0,0,800,340);
+  const sky=ctx.createLinearGradient(0,0,0,340);
+  sky.addColorStop(0,'#0a1f14');sky.addColorStop(1,'#102a1e');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,340);
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('tq_title','THEME PARK QUEUE MANAGEMENT'),400,140);
+    ctx.font='18px Arial';ctx.fillStyle='#7ee787';
+    ctx.fillText(I18N.t('start_hint2','Press Space or Tap a lane to begin'),400,175);
+  } else if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,120);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',Math.floor(score)),400,158);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,186);
+  } else {
+    update(dt);
+    lanes.forEach((l,i)=>drawLane(l,i,lanes.length));
+    drawHud();
+  }
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',hi);
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
