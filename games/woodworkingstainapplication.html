@@ -1,0 +1,295 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Woodworking Stain Application</title><meta name="description" content="Play Woodworking Stain Application free online — Wipe on stain with the grain, then wipe off at the right moment to match the target color depth on every section."><link rel="canonical" href="https://games.multiportllc.com/games/woodworkingstainapplication"><meta property="og:title" content="Woodworking Stain Application - Multiport Games"><meta property="og:description" content="Play Woodworking Stain Application free online — Wipe on stain with the grain, then wipe off at the right moment to match the target color depth on every section."><meta property="og:url" content="https://games.multiportllc.com/games/woodworkingstainapplication"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Woodworking Stain Application","description":"Play Woodworking Stain Application free online instantly. Wipe on wood stain with the grain in even coats and wipe off excess at the right moment to match the target color depth across every section of the furniture piece. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/woodworkingstainapplication","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1a1410}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;color:#f2e4c6;font-weight:800;margin-bottom:8px;font-size:1.02rem}
+#hud span b{color:#d99a44}
+#c{background:#3a2a1c;border-radius:10px;touch-action:none;cursor:pointer;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+#msg{min-height:1.6em;color:#ffd88a;font-weight:800;margin-top:8px;font-size:1.05rem}
+#hint{color:#c9b494;font-size:.85rem;margin-top:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Woodworking Stain Application</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span>Round: <b id="levelLabel">1</b></span>
+        <span>Score: <b id="scoreLabel">0</b></span>
+        <span>Hi: <b id="hiLabel">0</b></span>
+        <span>Lives: <b id="livesLabel">❤❤❤</b></span>
+      </div>
+      <canvas id="c" width="800" height="320"></canvas>
+      <div id="msg">Drag with the grain to wipe on stain, then wipe off at the right moment</div>
+      <div id="hint">Mouse/touch: pick a section, drag sideways along the grain to apply, then click Wipe Off when the gauge is in the green. Keyboard: ↑↓ pick a section, hold Space to apply, release Space to wipe off.</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Wipe on wood stain with the grain in even coats, then wipe off the excess at the right moment to get the desired color depth — match the target shade across every section of the piece.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const HS_KEY='hs_woodworkingstainapplication';
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+let level=1,score=0,lives=3,gameOver=false,started=false;
+let sections=[],activeIdx=0,target=0.5,tolerance=0.09;
+let applying=false,lastX=null,offGrainTime=0,applyMode=null;
+let wipeArmed=false,wipeTimer=0,wipeWindowStart=0,wipeWindowLen=0;
+let msgTimer=0;
+let lastTime=null;
+
+function setMsg(s){document.getElementById('msg').textContent=s;msgTimer=90;}
+
+function shadeColor(depth){
+  // depth 0..1 -> light raw wood to dark walnut
+  const r1=222,g1=184,b1=135, r2=58,g2=32,b2=16;
+  const r=Math.round(r1+(r2-r1)*depth),g=Math.round(g1+(g2-g1)*depth),b=Math.round(b1+(b2-b1)*depth);
+  return `rgb(${r},${g},${b})`;
+}
+
+function genLevel(){
+  const n=Math.min(3+Math.floor((level-1)/1),6);
+  tolerance=Math.max(0.045,0.1-level*0.006);
+  target=0.3+Math.random()*0.5;
+  sections=[];
+  const secW=640/n;
+  for(let i=0;i<n;i++){
+    sections.push({x:80+i*secW,w:secW-6,depth:0,done:false,coat:0,phase:'apply'});
+  }
+  activeIdx=0;
+  applying=false;wipeArmed=false;wipeTimer=0;
+  setMsg(I18N.t('round_start_msg','Round {n}: match the target shade on every section').replace('{n}',level));
+}
+
+function startGame(){started=true;gameOver=false;level=1;score=0;lives=3;genLevel();}
+function restart(){startGame();}
+
+function loseLife(reason){
+  lives--;SFX.hurt();setMsg(reason);
+  if(lives<=0)endGame();
+}
+function endGame(){
+  gameOver=true;SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+  setMsg(I18N.t('game_over_msg','Game over — final score {s}').replace('{s}',Math.floor(score)));
+}
+
+function finishSection(sec){
+  const diff=Math.abs(sec.depth-target);
+  sec.done=true;
+  if(diff<=tolerance){
+    const bonus=Math.round(40-diff*200);
+    score+=Math.max(10,bonus);
+    SFX.success();
+    setMsg(I18N.t('match_good_msg','Great match on that section!'));
+  } else {
+    loseLife(diff>target?I18N.t('too_dark_msg','That section came out too dark — mismatch!'):I18N.t('too_light_msg','That section came out too light — mismatch!'));
+  }
+  const next=sections.findIndex(s=>!s.done);
+  if(next===-1){
+    if(!gameOver){
+      SFX.levelup();
+      setMsg(I18N.t('round_complete_msg','All sections stained! Round {n} complete').replace('{n}',level));
+      level++;genLevel();
+    }
+  } else {
+    activeIdx=next;
+  }
+}
+
+function startWipeWindow(sec){
+  sec.phase='wipewait';
+  wipeWindowLen=Math.max(28,70-level*3);
+  wipeTimer=0;
+}
+
+function armApply(idx){
+  if(!sections[idx]||sections[idx].done)return;
+  activeIdx=idx;
+}
+
+// ---- pointer controls ----
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const tch=e.touches&&e.touches[0];
+  const cx=((tch?tch.clientX:e.clientX)-r.left)*(c.width/r.width);
+  const cy=((tch?tch.clientY:e.clientY)-r.top)*(c.height/r.height);
+  return {x:cx,y:cy};
+}
+function sectionAt(x){
+  return sections.findIndex(s=>x>=s.x&&x<=s.x+s.w);
+}
+
+c.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  if(!started||gameOver){restart();return;}
+  const p=getPos(e);
+  const idx=sectionAt(p.x);
+  if(idx<0)return;
+  const sec=sections[idx];
+  if(sec.done)return;
+  if(sec.phase==='apply'){
+    activeIdx=idx;applying=true;applyMode='pointer';lastX=p.x;offGrainTime=0;
+  } else if(sec.phase==='wipewait'){
+    doWipe(sec);
+  }
+});
+c.addEventListener('pointermove',e=>{
+  if(!applying)return;
+  const p=getPos(e);
+  const sec=sections[activeIdx];
+  if(!sec||sec.phase!=='apply')return;
+  const dx=p.x-lastX;
+  if(Math.abs(dx)>1.2){
+    sec.coat+=Math.abs(dx)*0.012;
+    sec.depth=Math.min(1,sec.coat);
+    if(sec.coat>=0.95){sec.coat=1;applying=false;startWipeWindow(sec);}
+  }
+  lastX=p.x;
+});
+window.addEventListener('pointerup',()=>{applying=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowUp'||e.code==='ArrowDown'){
+    e.preventDefault();
+    if(!started||gameOver)return;
+    const open=sections.map((s,i)=>i).filter(i=>!sections[i].done);
+    if(!open.length)return;
+    let pos=open.indexOf(activeIdx);
+    if(pos<0)pos=0;
+    pos=(pos+(e.code==='ArrowDown'?1:-1)+open.length)%open.length;
+    activeIdx=open[pos];
+  } else if(e.code==='Space'){
+    e.preventDefault();
+    if(!started||gameOver){if(!e.repeat)restart();return;}
+    const sec=sections[activeIdx];
+    if(!sec||sec.done)return;
+    if(sec.phase==='apply'){
+      applying=true;applyMode='keyboard';
+    } else if(sec.phase==='wipewait'&&!e.repeat){
+      doWipe(sec);
+    }
+  }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space')applying=false;
+});
+
+function doWipe(sec){
+  const progress=wipeTimer/wipeWindowLen;
+  const center=0.5,halfGreen=0.22;
+  const dist=Math.abs(progress-center);
+  let depth;
+  if(dist<=halfGreen){
+    depth=target+(Math.random()*2-1)*tolerance*0.3;
+    SFX.click();
+  } else if(progress<center){
+    depth=sec.depth*0.55; // wiped too early, too light
+    SFX.swoosh();
+  } else {
+    depth=Math.min(1,sec.depth*1.15+0.1); // wiped too late, too dark
+    SFX.swoosh();
+  }
+  sec.depth=Math.max(0,Math.min(1,depth));
+  sec.phase='done';
+  finishSection(sec);
+}
+
+function update(dt){
+  if(!started||gameOver)return;
+  sections.forEach(sec=>{
+    if(sec.phase==='wipewait'&&!sec.done){
+      wipeTimer+=dt;
+      if(wipeTimer>=wipeWindowLen){
+        wipeTimer=wipeWindowLen;
+        doWipe(sec);
+      }
+    }
+  });
+  if(applying){
+    const sec=sections[activeIdx];
+    if(sec&&sec.phase==='apply'&&applyMode==='keyboard'){
+      // keyboard apply: steady grain strokes
+      sec.coat+=0.016*dt;
+      sec.depth=Math.min(1,sec.coat);
+      if(sec.coat>=0.95){sec.coat=1;applying=false;startWipeWindow(sec);}
+    }
+  }
+}
+
+function drawGauge(x,y,w,sec){
+  ctx.fillStyle='#2a2018';ctx.fillRect(x,y,w,14);
+  ctx.fillStyle='#4a7a3a';ctx.fillRect(x+w*0.28,y,w*0.44,14);
+  const prog=Math.min(1,wipeTimer/wipeWindowLen);
+  ctx.fillStyle='#ffd88a';ctx.fillRect(x+w*prog-2,y-3,4,20);
+}
+
+function draw(){
+  ctx.clearRect(0,0,800,320);
+  const g=ctx.createLinearGradient(0,0,0,320);
+  g.addColorStop(0,'#241a12');g.addColorStop(1,'#1a1410');
+  ctx.fillStyle=g;ctx.fillRect(0,0,800,320);
+
+  // target swatch
+  ctx.fillStyle='#fff';ctx.font='13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('target_label','Target shade'),40,34);
+  ctx.fillStyle=shadeColor(target);
+  ctx.fillRect(40,42,50,30);
+  ctx.strokeStyle='#fff3';ctx.strokeRect(40,42,50,30);
+
+  sections.forEach((sec,i)=>{
+    const y=90,h=160;
+    ctx.fillStyle=shadeColor(sec.depth);
+    ctx.fillRect(sec.x,y,sec.w,h);
+    // grain lines
+    ctx.strokeStyle='rgba(0,0,0,0.15)';
+    for(let gy=y+10;gy<y+h;gy+=16){ctx.beginPath();ctx.moveTo(sec.x,gy);ctx.lineTo(sec.x+sec.w,gy);ctx.stroke();}
+    ctx.strokeStyle=(i===activeIdx&&!sec.done)?'#ffd88a':'#5a4228';
+    ctx.lineWidth=(i===activeIdx&&!sec.done)?3:1;
+    ctx.strokeRect(sec.x,y,sec.w,h);
+    if(sec.done){
+      const diff=Math.abs(sec.depth-target);
+      ctx.fillStyle=diff<=tolerance?'#7ec850':'#e94560';
+      ctx.font='bold 20px Arial';ctx.textAlign='center';
+      ctx.fillText(diff<=tolerance?'✓':'✗',sec.x+sec.w/2,y+h/2);
+    } else if(sec.phase==='wipewait'){
+      drawGauge(sec.x+6,y+h+10,sec.w-12,sec);
+    } else {
+      ctx.fillStyle='#f2e4c6';ctx.font='11px Arial';ctx.textAlign='center';
+      ctx.fillText(Math.round(sec.coat*100)+'%',sec.x+sec.w/2,y+h+20);
+    }
+  });
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space or tap to begin'),400,250);
+  } else if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,270);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press Space or tap to try again'),400,292);
+  }
+
+  document.getElementById('levelLabel').textContent=level;
+  document.getElementById('scoreLabel').textContent=Math.floor(score);
+  document.getElementById('hiLabel').textContent=Math.floor(hi);
+  document.getElementById('livesLabel').textContent='❤'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+}
+
+function loop(ts){
+  const dt=lastTime===null?1:Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+genLevel();
+requestAnimationFrame(loop);
+</script></body></html>

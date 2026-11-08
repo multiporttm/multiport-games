@@ -1,0 +1,329 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Dovetail Joint Cutting</title><meta name="description" content="Play Dovetail Joint Cutting free online — Saw along the marked lines without crossing the baseline, then chisel out the waste to fit the pins and tails tight."><link rel="canonical" href="https://games.multiportllc.com/games/dovetailjointcutting"><meta property="og:title" content="Dovetail Joint Cutting - Multiport Games"><meta property="og:description" content="Play Dovetail Joint Cutting free online — Saw along the marked lines without crossing the baseline, then chisel out the waste to fit the pins and tails tight."><meta property="og:url" content="https://games.multiportllc.com/games/dovetailjointcutting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Dovetail Joint Cutting","description":"Play Dovetail Joint Cutting free online instantly. Saw along the marked pin and tail lines without crossing the baseline, then chisel out the waste cleanly so the drawer joint fits tight. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/dovetailjointcutting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1b1209}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;color:#f2d9b8;font-weight:800;margin-bottom:8px;font-size:1.02rem}
+#hud span b{color:#e0a852}
+#c{background:#caa06c;border-radius:10px;touch-action:none;cursor:crosshair;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.4)}
+#msg{min-height:1.6em;color:#ffd88a;font-weight:800;margin-top:8px;font-size:1.05rem}
+#hint{color:#c9a876;font-size:.85rem;margin-top:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Dovetail Joint Cutting</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span id="phaseLabel">Phase: Sawing</span>
+        <span>Level: <b id="levelLabel">1</b></span>
+        <span>Score: <b id="scoreLabel">0</b></span>
+        <span>Hi: <b id="hiLabel">0</b></span>
+        <span>Lives: <b id="livesLabel">❤❤❤</b></span>
+      </div>
+      <canvas id="c" width="800" height="320"></canvas>
+      <div id="msg">Press Space or tap and drag to saw along the marked line</div>
+      <div id="hint">Mouse/touch: drag the saw along the line. Keyboard: hold Space to saw, use ← → to correct wobble. In the chisel phase use ← → to pick a bay and Space to strike it.</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Mark and saw along the angled pin/tail lines without drifting off the line or sawing past the baseline, then chisel out the waste bays (not the solid pins) so the two halves of the joint fit together tight.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const HS_KEY='hs_dovetailjointcutting';
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+let level=1,score=0,lives=3,gameOver=false,started=false;
+let phase='mark'; // 'mark' or 'chisel'
+let lines=[],zones=[];
+let activeIdx=0;
+let t=0,wobble=0,devSum=0,devCount=0;
+let engaged=false,pointerMode=false,px=0,py=0;
+let msgTimer=0;
+let selZone=0;
+let lastTime=null;
+
+const TOP_Y=60,BASE_Y=260;
+
+function setMsg(s){document.getElementById('msg').textContent=s;msgTimer=90;}
+
+function genLevel(){
+  phase='mark';activeIdx=0;t=0;wobble=0;devSum=0;devCount=0;
+  const pins=Math.min(3+Math.floor((level-1)/1),8);
+  const count=pins*2;
+  const spacing=620/count;
+  lines=[];
+  for(let i=0;i<count;i++){
+    const baseX=90+i*spacing;
+    const slant=(i%2===0)?18:-18;
+    lines.push({x1:baseX,y1:TOP_Y,x2:baseX+slant,y2:BASE_Y,done:false});
+  }
+  zones=[];
+  for(let i=0;i<count-1;i++){
+    const l1=lines[i],l2=lines[i+1];
+    const waste=(i%2===0);
+    zones.push({x1:Math.min(l1.x1,l1.x2),x2:Math.max(l2.x1,l2.x2),waste,hits:0,needed:3,cleared:!waste,yTop:TOP_Y,yBot:BASE_Y});
+  }
+  selZone=zones.findIndex(z=>z.waste);
+  document.getElementById('phaseLabel').textContent=I18N.t('phase_saw','Phase: Sawing');
+  setMsg(I18N.t('level_start_msg','Level {n}: saw each line top to bottom').replace('{n}',level));
+}
+
+function tol(){return Math.max(5,13-level*0.6);}
+function overTol(){return tol()*2.4;}
+
+function lineProgressPoint(ln,tt){return {x:ln.x1+(ln.x2-ln.x1)*tt,y:ln.y1+(ln.y2-ln.y1)*tt};}
+
+function loseLife(reason){
+  lives--;
+  SFX.hurt();
+  setMsg(reason);
+  if(lives<=0){endGame();}
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+  setMsg(I18N.t('game_over_msg','Game over — final score {s}').replace('{s}',Math.floor(score)));
+}
+
+function startGame(){
+  started=true;gameOver=false;level=1;score=0;lives=3;
+  genLevel();
+}
+
+function restart(){startGame();}
+
+// ---- input ----
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const tch=e.touches&&e.touches[0];
+  const cx=((tch?tch.clientX:e.clientX)-r.left)*(c.width/r.width);
+  const cy=((tch?tch.clientY:e.clientY)-r.top)*(c.height/r.height);
+  return {x:cx,y:cy};
+}
+
+c.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  if(!started||gameOver){restart();return;}
+  pointerMode=true;
+  const p=getPos(e);px=p.x;py=p.y;
+  engaged=true;
+  if(phase==='chisel')chiselHitAt(px,py);
+});
+c.addEventListener('pointermove',e=>{
+  if(!engaged||phase!=='mark')return;
+  const p=getPos(e);px=p.x;py=p.y;
+});
+window.addEventListener('pointerup',()=>{engaged=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();
+    if(!started||gameOver){if(!e.repeat)restart();return;}
+    pointerMode=false;engaged=true;
+    if(phase==='chisel'&&!e.repeat)chiselSelected();
+  } else if(e.code==='ArrowLeft'){
+    e.preventDefault();
+    if(!started||gameOver)return;
+    if(phase==='mark')wobble-=3.2;
+    else if(phase==='chisel'&&!e.repeat)moveSel(-1);
+  } else if(e.code==='ArrowRight'){
+    e.preventDefault();
+    if(!started||gameOver)return;
+    if(phase==='mark')wobble+=3.2;
+    else if(phase==='chisel'&&!e.repeat)moveSel(1);
+  }
+});
+document.addEventListener('keyup',e=>{if(e.code==='Space'){engaged=false;}});
+
+function moveSel(dir){
+  if(!zones.length)return;
+  let i=selZone;
+  for(let k=0;k<zones.length;k++){
+    i=(i+dir+zones.length)%zones.length;
+    selZone=i;
+    return;
+  }
+}
+function chiselSelected(){
+  const z=zones[selZone];
+  if(!z)return;
+  chiselZone(z);
+}
+function chiselHitAt(x,y){
+  const z=zones.find(z=>!z.cleared&&x>=z.x1&&x<=z.x2&&y>=z.yTop&&y<=z.yBot);
+  if(z){selZone=zones.indexOf(z);chiselZone(z);}
+}
+function chiselZone(z){
+  if(z.cleared)return;
+  if(!z.waste){
+    loseLife(I18N.t('chisel_pin_msg','That is solid wood — chisel the waste bays only!'));
+    return;
+  }
+  z.hits++;
+  if(z.hits>=z.needed){
+    z.cleared=true;
+    SFX.hit();
+    setMsg(I18N.t('bay_clear_msg','Bay cleared!'));
+    if(zones.every(z=>z.cleared))completeLevel();
+  } else {
+    SFX.click();
+  }
+}
+
+function completeLevel(){
+  score+=level*25;
+  SFX.levelup();
+  setMsg(I18N.t('level_complete_msg','Joint fits tight! Level {n} complete').replace('{n}',level));
+  level++;
+  genLevel();
+}
+
+function resetLineAttempt(reason){
+  t=0;wobble=0;devSum=0;devCount=0;
+  setMsg(reason);
+}
+
+function update(dt){
+  if(!started||gameOver)return;
+  if(phase==='mark'){
+    const ln=lines[activeIdx];
+    if(!ln)return;
+    let dev;
+    if(pointerMode){
+      if(engaged){
+        const dx=ln.x2-ln.x1,dy=ln.y2-ln.y1;
+        const len2=dx*dx+dy*dy;
+        let tt=((px-ln.x1)*dx+(py-ln.y1)*dy)/len2;
+        tt=Math.max(0,Math.min(1,tt));
+        const proj={x:ln.x1+dx*tt,y:ln.y1+dy*tt};
+        dev=Math.hypot(px-proj.x,py-proj.y);
+        t=Math.max(t,tt);
+        devSum+=dev;devCount++;
+        if(py>BASE_Y+18){resetLineAttempt(I18N.t('past_baseline_msg','Sawed past the baseline!'));loseLife(I18N.t('past_baseline_msg','Sawed past the baseline!'));return;}
+        if(dev>overTol()){resetLineAttempt(I18N.t('slip_msg','The saw slipped off the line!'));loseLife(I18N.t('slip_msg','The saw slipped off the line!'));return;}
+      }
+    } else {
+      if(engaged){
+        wobble+=(Math.random()*2-1)*(0.5+level*0.08);
+        wobble=Math.max(-overTol()-4,Math.min(overTol()+4,wobble));
+        t+=0.012*dt;
+        dev=Math.abs(wobble);
+        devSum+=dev;devCount++;
+        if(dev>overTol()){resetLineAttempt(I18N.t('slip_msg','The saw slipped off the line!'));loseLife(I18N.t('slip_msg','The saw slipped off the line!'));return;}
+      } else {
+        wobble*=0.9;
+      }
+    }
+    if(t>=1){
+      const avgDev=devCount?devSum/devCount:0;
+      const lineScore=Math.max(5,Math.round(30-avgDev));
+      score+=lineScore;
+      SFX.point();
+      ln.done=true;
+      activeIdx++;
+      t=0;wobble=0;devSum=0;devCount=0;
+      if(activeIdx>=lines.length){
+        phase='chisel';
+        document.getElementById('phaseLabel').textContent=I18N.t('phase_chisel','Phase: Chiseling');
+        selZone=zones.findIndex(z=>z.waste&&!z.cleared);
+        setMsg(I18N.t('chisel_start_msg','Now chisel out the waste bays'));
+      } else {
+        setMsg(I18N.t('next_line_msg','Next line! Saw it top to bottom'));
+      }
+    }
+  }
+}
+
+function drawSaw(x,y,angle){
+  ctx.save();
+  ctx.translate(x,y);ctx.rotate(angle);
+  ctx.fillStyle='#d8d8d8';
+  ctx.fillRect(-3,-14,6,28);
+  ctx.fillStyle='#6b4a2a';
+  ctx.fillRect(-5,10,10,16);
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,800,320);
+  const g=ctx.createLinearGradient(0,0,0,320);
+  g.addColorStop(0,'#2a1a0e');g.addColorStop(1,'#1b1209');
+  ctx.fillStyle=g;ctx.fillRect(0,0,800,320);
+
+  ctx.fillStyle='#caa06c';ctx.fillRect(60,TOP_Y,680,BASE_Y-TOP_Y);
+  // grain
+  ctx.strokeStyle='rgba(90,60,30,0.25)';
+  for(let gy=TOP_Y+10;gy<BASE_Y;gy+=14){ctx.beginPath();ctx.moveTo(60,gy);ctx.lineTo(740,gy);ctx.stroke();}
+
+  // baseline
+  ctx.strokeStyle='#8b1a1a';ctx.lineWidth=2;ctx.setLineDash([6,4]);
+  ctx.beginPath();ctx.moveTo(60,BASE_Y);ctx.lineTo(740,BASE_Y);ctx.stroke();
+  ctx.setLineDash([]);
+
+  if(started&&phase==='chisel'){
+    zones.forEach((z,i)=>{
+      ctx.fillStyle=z.cleared?'rgba(20,10,5,0.05)':(z.waste?'rgba(139,26,26,0.28)':'rgba(255,255,255,0.03)');
+      ctx.fillRect(z.x1,z.yTop,z.x2-z.x1,z.yBot-z.yTop);
+      if(i===selZone&&!z.cleared){
+        ctx.strokeStyle='#ffd88a';ctx.lineWidth=3;
+        ctx.strokeRect(z.x1+2,z.yTop+2,z.x2-z.x1-4,z.yBot-z.yTop-4);
+      }
+      if(z.waste&&!z.cleared){
+        ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';
+        ctx.fillText(z.hits+'/'+z.needed,(z.x1+z.x2)/2,(z.yTop+z.yBot)/2);
+      }
+    });
+  }
+
+  lines.forEach((ln,i)=>{
+    ctx.strokeStyle=ln.done?'#3a2a14':(i===activeIdx&&started&&phase==='mark'?'#ffd88a':'#5a3a1a');
+    ctx.lineWidth=i===activeIdx&&started&&phase==='mark'?3:2;
+    ctx.beginPath();ctx.moveTo(ln.x1,ln.y1);ctx.lineTo(ln.x2,ln.y2);ctx.stroke();
+  });
+
+  if(started&&!gameOver&&phase==='mark'&&lines[activeIdx]){
+    const ln=lines[activeIdx];
+    let x,y,ang;
+    if(pointerMode){x=px;y=py;}
+    else {
+      const p=lineProgressPoint(ln,Math.min(1,t));
+      x=p.x+wobble;y=p.y;
+    }
+    ang=Math.atan2(ln.y2-ln.y1,ln.x2-ln.x1)-Math.PI/2;
+    drawSaw(x,y,ang);
+  }
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space or tap to begin'),400,170);
+  } else if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,150);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press Space or tap to try again'),400,180);
+  }
+
+  document.getElementById('levelLabel').textContent=level;
+  document.getElementById('scoreLabel').textContent=Math.floor(score);
+  document.getElementById('hiLabel').textContent=Math.floor(hi);
+  document.getElementById('livesLabel').textContent='❤'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+}
+
+function loop(ts){
+  const dt=lastTime===null?1:Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+genLevel();
+requestAnimationFrame(loop);
+</script></body></html>
