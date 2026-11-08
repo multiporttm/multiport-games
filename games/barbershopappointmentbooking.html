@@ -1,0 +1,304 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Barbershop Appointment Booking</title><meta name="description" content="Play Barbershop Appointment Booking free online — Book each client into an open chair slot before the clock runs out and the day fills up."><link rel="canonical" href="https://games.multiportllc.com/games/barbershopappointmentbooking"><meta property="og:title" content="Barbershop Appointment Booking - Multiport Games"><meta property="og:description" content="Play Barbershop Appointment Booking free online — Book each client into an open chair slot before the clock runs out and the day fills up."><meta property="og:url" content="https://games.multiportllc.com/games/barbershopappointmentbooking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Barbershop Appointment Booking","description":"Play Barbershop Appointment Booking free online instantly. Match each walk-in client's requested service — a quick haircut, a shave, or a full service — to an open run of slots across the shop's three barber chairs before the booking clock runs out. Avoid double-booking any chair as appointments pile up and the clock gets shorter with every client. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/barbershopappointmentbooking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#15202b;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#bfe3ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#meterWrap{max-width:600px;margin:0 auto 8px;background:#0e1a28;border-radius:10px;padding:4px}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#4ecdc4,#ffd54f);width:100%;transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Barbershop Appointment Booking</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Client 1/18</span>
+      <span id="reqLbl">Needs: Haircut (1 slot)</span>
+    </div>
+    <div id="meterWrap"><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Each client needs a run of open slots in one chair's column — a <b>haircut</b> needs 1 slot, a <b>shave</b> needs 2, and a <b>full service</b> needs 3. Use the <b>Arrow Keys</b> to move the cursor and <b>Space/Enter</b> to book, or just click/tap the starting slot. Book before the clock bar empties! A double-booking or a missed clock costs a life — the clock gets shorter as the day fills up. Lose all 3 lives and the shop closes early.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const CHAIRS=3,SLOTS=14,TOTAL_CLIENTS=18;
+const SLOT_H=22,SLOT_W=150,GRID_X=120,GRID_Y=40,GAP=10;
+const HOURS=['9:00','9:30','10:00','10:30','11:00','11:30','12:00','12:30','1:00','1:30','2:00','2:30','3:00','3:30'];
+let hi=parseInt(localStorage.getItem('barbershopappointmentbooking_hi')||'0',10);
+let score=0,lives=3,clientIndex=0,gameOver=false,started=false,won=false;
+let grid,curChair,curSlot,duration,clockMax,clockLeft,flashTimer=0,flashGood=true,resultText='',resultTimer=0;
+let lastTime=null;
+const SERVICES=[
+  {name:'Haircut',len:1},
+  {name:'Shave',len:2},
+  {name:'Full Service',len:3}
+];
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('client_label','Client {n}/{t}').replace('{n}',Math.min(clientIndex+1,TOTAL_CLIENTS)).replace('{t}',TOTAL_CLIENTS);
+  const svc=SERVICES[duration-1]||SERVICES[0];
+  const nameKey='svc_'+(duration-1);
+  const names=[I18N.t('svc_0','Haircut'),I18N.t('svc_1','Shave'),I18N.t('svc_2','Full Service')];
+  document.getElementById('reqLbl').textContent=I18N.t('needs_label','Needs: {s} ({n} slot(s))').replace('{s}',names[duration-1]).replace('{n}',duration);
+}
+
+function emptyGrid(){
+  grid=[];
+  for(let ch=0;ch<CHAIRS;ch++){ grid.push(new Array(SLOTS).fill(false)); }
+}
+
+function freeRun(chair,start,len){
+  if(start+len>SLOTS)return false;
+  for(let i=0;i<len;i++) if(grid[chair][start+i]) return false;
+  return true;
+}
+
+function anyValidMoveExists(){
+  for(let ch=0;ch<CHAIRS;ch++) for(let s=0;s<SLOTS;s++) if(freeRun(ch,s,duration)) return true;
+  return false;
+}
+
+function pickClient(){
+  // weight toward shorter services early, longer later; fall back to shortest service that still fits.
+  const bias=Math.min(0.8,clientIndex*0.045);
+  let len;
+  const r=Math.random();
+  if(r<0.45-bias*0.3)len=1; else if(r<0.8-bias*0.1)len=2; else len=3;
+  duration=len;
+  if(!anyValidMoveExists()){
+    // try progressively shorter services so the round is always completable
+    for(let l=duration;l>=1;l--){ duration=l; if(anyValidMoveExists())break; }
+  }
+}
+
+function findFirstFree(){
+  for(let ch=0;ch<CHAIRS;ch++) for(let s=0;s<SLOTS;s++) if(freeRun(ch,s,duration)) return {ch,s};
+  return {ch:0,s:0};
+}
+
+function setupClient(){
+  clockMax=Math.max(3.2,8.6-clientIndex*0.28);
+  clockLeft=clockMax;
+  pickClient();
+  const pos=findFirstFree();
+  curChair=pos.ch;curSlot=pos.s;
+  resultTimer=0;
+}
+
+function filledCount(){
+  let n=0;
+  grid.forEach(col=>col.forEach(v=>{if(v)n++;}));
+  return n;
+}
+
+function reset(){
+  score=0;lives=3;clientIndex=0;gameOver=false;started=false;won=false;flashTimer=0;resultTimer=0;
+  emptyGrid();
+  setupClient();
+  setHud();
+}
+
+function bookAttempt(chair,slot){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();return;}
+  if(resultTimer>0)return;
+  if(freeRun(chair,slot,duration)){
+    for(let i=0;i<duration;i++)grid[chair][slot+i]=true;
+    score+=30*duration+Math.round(clockLeft*8);
+    SFX.success();
+    flashGood=true;flashTimer=18;
+    resultText=I18N.t('booked_ok','Booked!');
+    resultTimer=20;
+    clientIndex++;
+    if(clientIndex>=TOTAL_CLIENTS||filledCount()>=CHAIRS*SLOTS-2){
+      won=true;
+      SFX.win();
+      if(score>hi){hi=score;localStorage.setItem('barbershopappointmentbooking_hi',hi);}
+    }else{
+      setupClient();
+    }
+  }else{
+    lives--;
+    SFX.error();
+    flashGood=false;flashTimer=18;
+    resultText=I18N.t('double_booked','Double-booked!');
+    resultTimer=20;
+    if(lives<=0){
+      gameOver=true;
+      SFX.lose();
+      if(score>hi){hi=score;localStorage.setItem('barbershopappointmentbooking_hi',hi);}
+    }
+  }
+  setHud();
+}
+
+function missClient(){
+  lives--;
+  SFX.fail();
+  flashGood=false;flashTimer=18;
+  resultText=I18N.t('too_slow','Too slow!');
+  resultTimer=20;
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('barbershopappointmentbooking_hi',hi);}
+  }else{
+    setupClient();
+  }
+  setHud();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Enter'].includes(e.code))e.preventDefault();
+  if(!started){ if(e.code==='Space'||e.code==='Enter'){started=true;} return; }
+  if(gameOver||won){ if(e.code==='Space'||e.code==='Enter')reset(); return; }
+  if(resultTimer>0)return;
+  if(e.code==='ArrowLeft'){curChair=(curChair-1+CHAIRS)%CHAIRS;SFX.click();}
+  if(e.code==='ArrowRight'){curChair=(curChair+1)%CHAIRS;SFX.click();}
+  if(e.code==='ArrowUp'){curSlot=Math.max(0,curSlot-1);SFX.click();}
+  if(e.code==='ArrowDown'){curSlot=Math.min(SLOTS-1,curSlot+1);SFX.click();}
+  if(e.code==='Space'||e.code==='Enter'){bookAttempt(curChair,curSlot);}
+});
+
+function canvasPos(ev){
+  const r=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return {x:cx*(800/r.width),y:cy*(420/r.height)};
+}
+
+function cellAt(x,y){
+  for(let ch=0;ch<CHAIRS;ch++){
+    const cx0=GRID_X+ch*(SLOT_W+GAP);
+    if(x<cx0||x>cx0+SLOT_W)continue;
+    for(let s=0;s<SLOTS;s++){
+      const cy0=GRID_Y+s*SLOT_H;
+      if(y>=cy0&&y<cy0+SLOT_H)return {ch,s};
+    }
+  }
+  return null;
+}
+
+function handlePointer(ev){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();return;}
+  const p=canvasPos(ev);
+  const cell=cellAt(p.x,p.y);
+  if(cell){curChair=cell.ch;curSlot=cell.s;bookAttempt(cell.ch,cell.s);}
+}
+c.addEventListener('mousedown',e=>{e.preventDefault();handlePointer(e);});
+c.addEventListener('touchstart',e=>{e.preventDefault();handlePointer(e);},{passive:false});
+
+function drawGrid(){
+  for(let ch=0;ch<CHAIRS;ch++){
+    const cx0=GRID_X+ch*(SLOT_W+GAP);
+    ctx.fillStyle='#bfe3ff';ctx.font='bold 15px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('chair_label','Chair {n}').replace('{n}',ch+1),cx0+SLOT_W/2,GRID_Y-10);
+    for(let s=0;s<SLOTS;s++){
+      const cy0=GRID_Y+s*SLOT_H;
+      ctx.fillStyle=grid[ch][s]?'#3a5a6e':'#1b2c3a';
+      ctx.fillRect(cx0,cy0,SLOT_W,SLOT_H-2);
+      ctx.strokeStyle='#0e1a28';ctx.lineWidth=1;
+      ctx.strokeRect(cx0,cy0,SLOT_W,SLOT_H-2);
+    }
+  }
+  ctx.fillStyle='#8aa6b8';ctx.font='11px Arial';ctx.textAlign='right';
+  for(let s=0;s<SLOTS;s++){
+    ctx.fillText(HOURS[s]||'',GRID_X-10,GRID_Y+s*SLOT_H+15);
+  }
+}
+
+function drawCursor(){
+  const cx0=GRID_X+curChair*(SLOT_W+GAP);
+  const valid=freeRun(curChair,curSlot,duration);
+  ctx.strokeStyle=valid?'#7ec850':'#ff5f3d';
+  ctx.lineWidth=3;
+  for(let i=0;i<duration;i++){
+    const s=curSlot+i;
+    if(s>=SLOTS)break;
+    const cy0=GRID_Y+s*SLOT_H;
+    ctx.strokeRect(cx0+1,cy0+1,SLOT_W-2,SLOT_H-4);
+  }
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,800,420);
+  const sky=ctx.createLinearGradient(0,0,0,420);
+  sky.addColorStop(0,'#0e1620');sky.addColorStop(1,'#15202b');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,420);
+
+  drawGrid();
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Click a slot / Space to start'),400,20);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';
+    ctx.fillText(I18N.t('game_over_title','SHOP CLOSED EARLY'),400,200);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,235);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#7ec850';ctx.font='bold 28px Arial';
+    ctx.fillText(I18N.t('win_title','DAY FULLY BOOKED! 💈'),400,195);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,228);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,256);
+    requestAnimationFrame(loop);return;
+  }
+
+  drawCursor();
+
+  clockLeft-=dt/60;
+  if(resultTimer<=0&&clockLeft<=0){
+    missClient();
+  }
+  document.getElementById('meterBar').style.width=Math.max(0,clockLeft/clockMax*100)+'%';
+
+  if(resultTimer>0){
+    resultTimer-=dt;
+    ctx.fillStyle=flashGood?'#7ec850':'#ff5f3d';
+    ctx.font='bold 20px Arial';
+    ctx.fillText(resultText,400,400);
+  }else{
+    ctx.fillStyle='#bfe3ff';ctx.font='bold 16px Arial';
+    ctx.fillText(I18N.t('booking_hint','Pick a free run of slots before time runs out'),400,400);
+  }
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.18)':'rgba(255,80,61,0.2)';
+    ctx.fillRect(0,0,800,420);
+  }
+
+  requestAnimationFrame(loop);
+}
+reset();
+setHud();
+loop();
+</script></body></html>
