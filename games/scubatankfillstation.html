@@ -1,0 +1,361 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Scuba Tank Fill Station</title><meta name="description" content="Play Scuba Tank Fill Station free online — Hold the valve to fill each tank into its rated pressure band, release before it bursts, and cool down before the next customer's deadline. Puzzle game."><link rel="canonical" href="https://games.multiportllc.com/games/scubatankfillstation"><meta property="og:title" content="Scuba Tank Fill Station - Multiport Games"><meta property="og:description" content="Play Scuba Tank Fill Station free online — Hold the valve to fill each tank into its rated pressure band, release before it bursts, and cool down before the next customer's deadline. Puzzle game."><meta property="og:url" content="https://games.multiportllc.com/games/scubatankfillstation"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Scuba Tank Fill Station","description":"Play Scuba Tank Fill Station free online instantly. Run a dive shop compressor station: hold the fill valve to raise each tank's pressure, release it inside the correct rated band for that tank's gas mix, and never let it climb past the safe limit before it bursts. Let each tank cool before the next one starts, and keep up before every customer's deadline runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/scubatankfillstation","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0b2a3b;display:block;border-radius:8px;touch-action:none;user-select:none}
+#hud{color:#dff3ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#ffd54f}
+#hud span.hs{color:#7ec850}
+#hud span.liv{color:#e94560}
+#hud span.at{color:#8fd3f4}
+#actions{margin:10px auto 0;display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
+#actions button{padding:11px 26px;background:#1e88e5;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;font-weight:700;touch-action:none;user-select:none}
+#actions button:active{background:#1565c0}
+#actions button.hidden{display:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Scuba Tank Fill Station</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0</span>
+      <span class="lv" id="levelDisp">Shift: 1</span>
+      <span class="at" id="statusDisp">Mix: Air</span>
+      <span class="liv" id="livesDisp">Lives: ❤❤❤</span>
+      <span class="hs" id="hsDisp">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="380"></canvas>
+    <div id="actions">
+      <button id="mainBtn">Start</button>
+      <button id="valveBtn" class="hidden">Hold to Open Valve</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Space</b>, <b>Up Arrow</b>, or <b>press and hold the Valve button / canvas</b> to fill the tank. Release while the needle is inside the glowing <b>target band</b> for that gas mix. Release too early and nothing happens — keep holding. Go past the band or past the red <b>safe limit</b> and the tank is ruined. Fill enough tanks before each customer's timer runs out to clear the shift!</div>
+</div>
+<script>
+(function(){
+const HS_KEY='scubatankfillstation_hs';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=380;
+const MIXES=[
+  {name:'Air',lo:3000,hi:3200,color:'#8fd3f4'},
+  {name:'Nitrox 32',lo:2900,hi:3080,color:'#4caf50'},
+  {name:'Nitrox 36',lo:2780,hi:2960,color:'#ffd54f'},
+  {name:'Trimix',lo:3080,hi:3260,color:'#c77dff'}
+];
+const SAFE_MARGIN=220; // safeMax = hi + margin (margin shrinks with level)
+
+let score=0,hi=0,level=1,lives=3,gameOver=false,started=false;
+let phase='filling'; // 'filling' | 'cooling'
+let pressure=0,held=false;
+let mix=MIXES[0],safeMax=0;
+let tankTimeLeft=0,tankTimeMax=0;
+let coolLeft=0,coolMax=0;
+let tanksDone=0,tanksNeeded=3;
+let fillRate=420;
+let feedbackMsg='',feedbackTimer=0,feedbackGood=true;
+
+function loadHi(){ try{ hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0; }catch(e){ hi=0; } }
+function saveHi(){ try{ localStorage.setItem(HS_KEY,String(hi)); }catch(e){} }
+loadHi();
+
+function bandWidth(){ return Math.max(60,220-level*10); }
+function levelParams(){
+  const bw=bandWidth();
+  tanksNeeded=3+Math.floor((level-1)/2);
+  fillRate=420+level*22;
+  tankTimeMax=Math.max(6.5,13-level*0.45);
+  coolMax=Math.max(1.4,2.6-level*0.05);
+  return bw;
+}
+
+function newTank(){
+  const bw=levelParams();
+  const base=MIXES[Math.floor(Math.random()*MIXES.length)];
+  const center=(base.lo+base.hi)/2+(Math.random()*160-80);
+  mix={name:base.name,lo:Math.round(center-bw/2),hi:Math.round(center+bw/2),color:base.color};
+  safeMax=mix.hi+Math.max(70,SAFE_MARGIN-level*8);
+  pressure=0;
+  tankTimeLeft=tankTimeMax;
+  phase='filling';
+}
+
+function reset(){
+  score=0;level=1;lives=3;gameOver=false;tanksDone=0;
+  levelParams();
+  newTank();
+}
+reset();
+
+function setFeedback(msg,good){ feedbackMsg=msg;feedbackGood=good;feedbackTimer=1.1; }
+
+function startGame(){ if(!started){started=true;} else if(gameOver){reset();started=true;} }
+
+function burst(){
+  lives--;
+  SFX.hit();
+  setFeedback(I18N.t('burst_msg','BURST! Over the safe limit — tank ruined.'),false);
+  pressure=0;
+  if(lives<=0)endGame();
+}
+
+function overfilled(){
+  lives--;
+  SFX.fail();
+  setFeedback(I18N.t('overfilled_msg','Overfilled — not rated for this mix.'),false);
+  pressure=0;
+  if(lives<=0)endGame();
+}
+
+function timeout(){
+  lives--;
+  SFX.fail();
+  setFeedback(I18N.t('timeout_msg','Customer gave up waiting!'),false);
+  if(lives<=0){ endGame(); return; }
+  newTank();
+}
+
+function releaseValve(){
+  if(phase!=='filling'||gameOver)return;
+  if(pressure>safeMax){ burst(); return; }
+  if(pressure>=mix.lo&&pressure<=mix.hi){
+    const center=(mix.lo+mix.hi)/2;
+    const spread=(mix.hi-mix.lo)/2||1;
+    const acc=1-Math.min(1,Math.abs(pressure-center)/spread);
+    const gained=20+Math.round(acc*40);
+    score+=gained;
+    if(score>hi){hi=score;saveHi();}
+    SFX.success();
+    setFeedback(I18N.t('fill_good_msg','Filled perfectly! +{s}').replace('{s}',gained),true);
+    phase='cooling';
+    coolLeft=coolMax;
+    return;
+  }
+  if(pressure>mix.hi){ overfilled(); return; }
+  // below band: nothing happens, player can keep holding
+}
+
+function finishCooldown(){
+  tanksDone++;
+  if(tanksDone>=tanksNeeded){
+    level++;
+    tanksDone=0;
+    score+=60;
+    if(score>hi){hi=score;saveHi();}
+    SFX.levelup();
+    setFeedback(I18N.t('shift_clear_msg','Shift cleared! Next shift begins.'),true);
+    levelParams();
+  }
+  newTank();
+}
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;saveHi();}
+  SFX.lose();
+}
+
+document.getElementById('mainBtn').addEventListener('click',()=>{ startGame(); });
+
+const valveBtn=document.getElementById('valveBtn');
+function setHeld(v){
+  if(v&&!started){startGame();}
+  if(gameOver)return;
+  const was=held;
+  held=v;
+  if(was&&!v)releaseValve();
+}
+valveBtn.addEventListener('pointerdown',e=>{e.preventDefault();setHeld(true);});
+valveBtn.addEventListener('pointerup',e=>{e.preventDefault();setHeld(false);});
+valveBtn.addEventListener('pointerleave',()=>{ if(held)setHeld(false); });
+valveBtn.addEventListener('pointercancel',()=>{ if(held)setHeld(false); });
+
+c.addEventListener('pointerdown',e=>{e.preventDefault();setHeld(true);});
+c.addEventListener('pointerup',e=>{e.preventDefault();setHeld(false);});
+c.addEventListener('pointercancel',()=>{ if(held)setHeld(false); });
+c.addEventListener('pointerleave',()=>{ if(held)setHeld(false); });
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){
+    e.preventDefault();
+    if(!started){startGame();return;}
+    if(gameOver){reset();started=true;return;}
+    if(!held)setHeld(true);
+  } else if(e.code==='Enter'){
+    if(!started){startGame();}
+    else if(gameOver){reset();started=true;}
+  }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){
+    e.preventDefault();
+    if(held)setHeld(false);
+  }
+});
+window.addEventListener('blur',()=>{ if(held)setHeld(false); });
+
+function drawGauge(){
+  const gx=120,gy=40,gw=90,gh=280;
+  ctx.fillStyle='#07202c';ctx.fillRect(gx,gy,gw,gh);
+  ctx.strokeStyle='#0d3b4e';ctx.lineWidth=3;ctx.strokeRect(gx,gy,gw,gh);
+  const maxScale=safeMax+300;
+  function yFor(p){ return gy+gh-(Math.min(p,maxScale)/maxScale)*gh; }
+  // target band
+  const yLo=yFor(mix.lo),yHi=yFor(mix.hi);
+  ctx.fillStyle=mix.color+'55';
+  ctx.fillRect(gx,yHi,gw,yLo-yHi);
+  ctx.strokeStyle=mix.color;ctx.lineWidth=2;
+  ctx.strokeRect(gx,yHi,gw,yLo-yHi);
+  // safe limit line
+  const ySafe=yFor(safeMax);
+  ctx.strokeStyle='#e94560';ctx.lineWidth=3;
+  ctx.setLineDash([6,4]);
+  ctx.beginPath();ctx.moveTo(gx-6,ySafe);ctx.lineTo(gx+gw+6,ySafe);ctx.stroke();
+  ctx.setLineDash([]);
+  // fill level
+  const yP=yFor(pressure);
+  const grad=ctx.createLinearGradient(0,gy+gh,0,gy);
+  grad.addColorStop(0,'#1e88e5');grad.addColorStop(1,'#64b5f6');
+  ctx.fillStyle=pressure>safeMax?'#e94560':grad;
+  ctx.fillRect(gx+4,yP,gw-8,gy+gh-yP-4>0?gy+gh-yP-4:0);
+  // labels
+  ctx.fillStyle='#dff3ff';ctx.font='bold 14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('safe_limit_label','SAFE LIMIT'),gx+gw+10,ySafe+4);
+  ctx.fillStyle=mix.color;
+  ctx.fillText(I18N.t('target_band_label','TARGET'),gx+gw+10,(yLo+yHi)/2+4);
+  ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+  ctx.fillText(Math.round(pressure)+' psi',gx+gw/2,gy-14);
+}
+
+function drawTank(){
+  const tx=460,ty=60,tw=100,th=260;
+  ctx.fillStyle='#37474f';
+  ctx.beginPath();
+  ctx.moveTo(tx,ty+30);
+  ctx.quadraticCurveTo(tx,ty,tx+tw/2,ty);
+  ctx.quadraticCurveTo(tx+tw,ty,tx+tw,ty+30);
+  ctx.lineTo(tx+tw,ty+th);
+  ctx.quadraticCurveTo(tx+tw/2,ty+th+22,tx,ty+th);
+  ctx.closePath();
+  ctx.fill();
+  const fillFrac=phase==='cooling'?1:Math.min(1,pressure/mix.hi);
+  const barH=(th-20)*fillFrac;
+  ctx.fillStyle=pressure>safeMax?'#e94560':mix.color;
+  ctx.fillRect(tx+14,ty+th-10-barH,tw-28,barH);
+  ctx.strokeStyle='#263238';ctx.lineWidth=4;ctx.stroke();
+  ctx.fillStyle='#90a4ae';ctx.fillRect(tx+tw/2-10,ty-26,20,26);
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(mix.name,tx+tw/2,ty+th+40);
+}
+
+function drawCooling(){
+  const bx=600,by=70,bw=30,bh=230;
+  ctx.fillStyle='#07202c';ctx.fillRect(bx,by,bw,bh);
+  ctx.strokeStyle='#0d3b4e';ctx.lineWidth=2;ctx.strokeRect(bx,by,bw,bh);
+  const frac=coolMax>0?Math.max(0,coolLeft/coolMax):0;
+  const h=bh*frac;
+  ctx.fillStyle='#4caf50';
+  ctx.fillRect(bx+3,by+bh-h+3,bw-6,h-6>0?h-6:0);
+  ctx.fillStyle='#dff3ff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('cooling_label','COOLING'),bx+bw/2,by-10);
+}
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelDisp').textContent=I18N.t('shift_label','Shift: {l}').replace('{l}',level);
+  let statusText;
+  if(phase==='cooling')statusText=I18N.t('cooling_status','Cooling...');
+  else statusText=I18N.t('mix_label','Mix: {m}').replace('{m}',mix.name);
+  document.getElementById('statusDisp').textContent=statusText;
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {h}').replace('{h}','❤'.repeat(Math.max(0,lives)));
+  document.getElementById('hsDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+  const btn=document.getElementById('mainBtn');
+  if(!started){ btn.textContent=I18N.t('start_hint_btn','Start'); btn.classList.remove('hidden'); valveBtn.classList.add('hidden'); }
+  else if(gameOver){ btn.textContent=I18N.t('restart_btn','Restart'); btn.classList.remove('hidden'); valveBtn.classList.add('hidden'); }
+  else { btn.classList.add('hidden'); valveBtn.classList.remove('hidden'); }
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0b2a3b';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#dff3ff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('station_title','Compressor Station — fill, don’t burst!'),W/2,30);
+
+  if(!started){
+    drawGauge();drawTank();
+    ctx.fillStyle='#ffd54f99';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Hold Space / Tap to start filling'),W/2,H-20);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawGauge();drawTank();
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';
+    ctx.fillText(I18N.t('game_over_title','STATION CLOSED'),W/2,H/2-10);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Score: {s} — Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi)),W/2,H/2+24);
+    ctx.fillText(I18N.t('restart_hint','Tap or Enter to restart'),W/2,H/2+56);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(feedbackTimer>0)feedbackTimer-=dt;
+
+  if(phase==='filling'){
+    if(held)pressure+=fillRate*dt;
+    tankTimeLeft-=dt;
+    if(tankTimeLeft<=0){ tankTimeLeft=tankTimeMax; timeout(); }
+  } else if(phase==='cooling'){
+    coolLeft-=dt;
+    if(coolLeft<=0)finishCooldown();
+  }
+
+  drawGauge();
+  drawTank();
+  if(phase==='cooling')drawCooling();
+
+  // tank deadline bar
+  if(phase==='filling'){
+    const frac=Math.max(0,tankTimeLeft/tankTimeMax);
+    ctx.fillStyle='#07202c';ctx.fillRect(280,H-30,240,14);
+    ctx.fillStyle=frac<0.3?'#e94560':'#ffd54f';
+    ctx.fillRect(280,H-30,240*frac,14);
+    ctx.strokeStyle='#0d3b4e';ctx.strokeRect(280,H-30,240,14);
+    ctx.fillStyle='#dff3ff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('customer_wait_label','Customer patience'),400,H-36);
+  }
+
+  ctx.fillStyle='#dff3ff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('progress_label','Tanks this shift: {d}/{n}').replace('{d}',tanksDone).replace('{n}',tanksNeeded),400,H-6);
+
+  if(feedbackTimer>0){
+    ctx.fillStyle=feedbackGood?'rgba(76,175,80,0.18)':'rgba(231,76,60,0.18)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle=feedbackGood?'#4caf50':'#e94560';
+    ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(feedbackMsg,W/2,H/2);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script></body></html>

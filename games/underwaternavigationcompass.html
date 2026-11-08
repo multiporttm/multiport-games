@@ -1,0 +1,268 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Underwater Navigation Compass</title><meta name="description" content="Play Underwater Navigation Compass free online — Follow the bearing pattern with kick-cycle counting and get back to the anchor line without surfacing to check your position."><link rel="canonical" href="https://games.multiportllc.com/games/underwaternavigationcompass"><meta property="og:title" content="Underwater Navigation Compass - Multiport Games"><meta property="og:description" content="Play Underwater Navigation Compass free online — Follow the bearing pattern with kick-cycle counting and get back to the anchor line without surfacing to check your position."><meta property="og:url" content="https://games.multiportllc.com/games/underwaternavigationcompass"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Underwater Navigation Compass","description":"Play Underwater Navigation Compass free online instantly. Follow the bearing pattern with kick-cycle counting and get back to the anchor line without surfacing to check your position. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/underwaternavigationcompass","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#042233;display:block;border-radius:8px}
+#score-display{color:#5ec8e0;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Underwater Navigation Compass</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="460"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys</b> (or <b>swipe/drag on touch</b>) to turn the diver and kick toward each bearing in the pattern. There's no map view — follow the compass heading and kick-cycle counter to find each waypoint and get back to the anchor line before you run out of air. Drift too far off course and you fail the leg!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=460;
+const scoreDisp=document.getElementById('score-display');
+const HS_KEY='underwaternavigationcompass_hiscore';
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+
+let score=0,lives=3,level=1,gameOver=false,started=false;
+let diver,legs,legIdx,air,maxAir,kicks,targetKicks,heading,targetHeading,anchor,legState,flashTimer,flashOk;
+let keys={};
+
+function rnd(a,b){return a+Math.floor(Math.random()*(b-a+1));}
+
+function genLevel(lv){
+  anchor={x:W/2,y:H/2};
+  diver={x:anchor.x,y:anchor.y,dir:0,speed:0};
+  const legCount=Math.min(5,2+Math.floor(lv/2));
+  legs=[];
+  for(let i=0;i<legCount;i++){
+    legs.push({heading:rnd(0,35)*10,kicks:rnd(6,10+lv)});
+  }
+  // final leg always "return to anchor" computed after navigation completes via reciprocal sum
+  legIdx=0;
+  maxAir=160-Math.min(70,lv*6);
+  air=maxAir;
+  kicks=0;
+  targetKicks=legs[0].kicks;
+  heading=0;
+  targetHeading=legs[0].heading;
+  legState='aiming'; // aiming -> kicking
+  flashTimer=0;
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;
+  genLevel(level);
+}
+reset();
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'){
+    if(gameOver){reset();return;}
+    if(!started){started=true;return;}
+    confirmHeading();
+  }
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let touchStartX=null,touchStartY=null;
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){reset();return;}
+  if(!started){started=true;return;}
+  const t=e.touches[0];
+  const r=c.getBoundingClientRect();
+  touchStartX=t.clientX;touchStartY=t.clientY;
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(touchStartX==null)return;
+  const t=e.touches[0];
+  const dx=t.clientX-touchStartX,dy=t.clientY-touchStartY;
+  if(Math.abs(dx)>8){heading=(heading+(dx>0?3:-3)+360)%360;touchStartX=t.clientX;}
+  if(Math.abs(dy)>8){touchStartY=t.clientY;}
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  e.preventDefault();
+  touchStartX=null;touchStartY=null;
+},{passive:false});
+c.addEventListener('dblclick',()=>{if(legState==='aiming'&&started&&!gameOver)confirmHeading();});
+c.addEventListener('click',()=>{
+  if(gameOver){reset();return;}
+  if(!started){started=true;return;}
+});
+
+function confirmHeading(){
+  if(legState!=='aiming')return;
+  const diff=Math.min(Math.abs(heading-targetHeading),360-Math.abs(heading-targetHeading));
+  if(diff<=12){
+    legState='kicking';
+    kicks=0;
+    SFX.select();
+  } else {
+    SFX.error();
+    flashOk=false;flashTimer=30;
+    loseLeg();
+  }
+}
+
+function loseLeg(){
+  lives--;
+  SFX.hurt();
+  if(lives<=0){gameOver=true;SFX.lose();return;}
+  // retry current leg with a fresh heading target orientation reset
+  legState='aiming';
+}
+
+function finishKicking(){
+  SFX.point();
+  score+=40+level*5;
+  legIdx++;
+  if(legIdx>=legs.length){
+    // success: navigated full pattern, now return leg
+    score+=100+level*10;
+    SFX.levelup();
+    if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+    level++;
+    genLevel(level);
+    return;
+  }
+  targetHeading=legs[legIdx].heading;
+  targetKicks=legs[legIdx].kicks;
+  legState='aiming';
+}
+
+function update(dt){
+  if(legState==='aiming'){
+    if(keys['ArrowLeft'])heading=(heading-2.4*dt*60+360)%360;
+    if(keys['ArrowRight'])heading=(heading+2.4*dt*60)%360;
+  } else if(legState==='kicking'){
+    if(keys['ArrowUp']||keys['ArrowDown']){
+      // continuous movement handled by kick accumulation via time
+    }
+  }
+  if(legState==='kicking'){
+    kicks+=dt*3.2;
+    air-=dt*2.2;
+    if(kicks>=targetKicks){
+      finishKicking();
+    }
+  } else {
+    air-=dt*0.9;
+  }
+  if(air<=0&&!gameOver){
+    air=0;gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+  }
+  if(flashTimer>0)flashTimer--;
+}
+
+function drawCompassRose(cx,cy,r){
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.strokeStyle='rgba(255,255,255,0.4)';
+  ctx.lineWidth=3;
+  ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='14px Arial';ctx.textAlign='center';
+  const labels=['N','E','S','W'];
+  for(let i=0;i<4;i++){
+    const a=i*Math.PI/2-Math.PI/2;
+    ctx.fillText(labels[i],Math.cos(a)*(r-18),Math.sin(a)*(r-18)+5);
+  }
+  // target bearing marker
+  const ta=(targetHeading-90)*Math.PI/180;
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(ta)*r,Math.sin(ta)*r);ctx.stroke();
+  // current heading needle
+  const ha=(heading-90)*Math.PI/180;
+  ctx.strokeStyle='#ff5050';ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(ha)*(r-10),Math.sin(ha)*(r-10));ctx.stroke();
+  ctx.fillStyle='#ff5050';ctx.beginPath();ctx.arc(Math.cos(ha)*(r-10),Math.sin(ha)*(r-10),5,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+let lastTime=null;
+function loop(t){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0a4a66');sky.addColorStop(1,'#021622');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='bold 28px Arial';
+    ctx.fillText(I18N.t('game_title_canvas','UNDERWATER NAVIGATION'),W/2,120);
+    ctx.font='20px Arial';ctx.fillStyle='#9fd8ec';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start the dive'),W/2,165);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('surfaced_title','EMERGENCY SURFACE'),W/2,150);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),W/2,195);
+    ctx.font='18px Arial';ctx.fillStyle='#9fd8ec';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,230);
+    scoreDisp.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=t;
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+  update(dt);
+
+  ctx.textAlign='left';ctx.fillStyle='#fff';ctx.font='bold 20px Arial';
+  ctx.fillText(I18N.t('level_label','Level {l}').replace('{l}',level),20,32);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('lives_label','Lives: {l}').replace('{l}',lives),W-20,32);
+  ctx.textAlign='center';
+
+  drawCompassRose(W/2,160,110);
+
+  ctx.fillStyle='#e8f6fb';ctx.font='18px Arial';
+  if(legState==='aiming'){
+    ctx.fillText(I18N.t('aim_prompt','Turn to bearing {b}° then press Space / double-tap to swim').replace('{b}',targetHeading),W/2,300);
+  } else {
+    ctx.fillText(I18N.t('kick_prompt','Kicking... {k} / {t} kick cycles').replace('{k}',Math.floor(kicks)).replace('{t}',targetKicks),W/2,300);
+  }
+  ctx.fillText(I18N.t('leg_label','Leg {i} of {n}').replace('{i}',legIdx+1).replace('{n}',legs.length),W/2,328);
+
+  // air gauge
+  const barW=400,barX=(W-barW)/2,barY=360;
+  ctx.fillStyle='rgba(255,255,255,0.15)';ctx.fillRect(barX,barY,barW,18);
+  const frac=Math.max(0,air/maxAir);
+  ctx.fillStyle=frac>0.35?'#5ec8e0':'#ff6b6b';
+  ctx.fillRect(barX,barY,barW*frac,18);
+  ctx.strokeStyle='#fff';ctx.strokeRect(barX,barY,barW,18);
+  ctx.fillStyle='#fff';ctx.font='14px Arial';
+  ctx.fillText(I18N.t('air_label','AIR'),W/2,barY+13);
+
+  // kick progress bar
+  if(legState==='kicking'){
+    const kb=300,kx=(W-kb)/2,ky=400;
+    ctx.fillStyle='rgba(255,255,255,0.15)';ctx.fillRect(kx,ky,kb,12);
+    ctx.fillStyle='#7ec850';ctx.fillRect(kx,ky,kb*Math.min(1,kicks/targetKicks),12);
+  }
+
+  if(flashTimer>0){
+    ctx.fillStyle='rgba(255,80,80,0.5)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';
+    ctx.fillText(I18N.t('off_course_msg','OFF COURSE!'),W/2,H/2);
+  }
+
+  scoreDisp.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

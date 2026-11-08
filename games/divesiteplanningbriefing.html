@@ -1,0 +1,304 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Dive Site Planning Briefing</title><meta name="description" content="Play Dive Site Planning Briefing free online — Match the dive route, maximum depth, and turnaround air pressure to the site conditions and the group's certification level before the briefing clock runs out."><link rel="canonical" href="https://games.multiportllc.com/games/divesiteplanningbriefing"><meta property="og:title" content="Dive Site Planning Briefing - Multiport Games"><meta property="og:description" content="Play Dive Site Planning Briefing free online — Match the dive route, maximum depth, and turnaround air pressure to the site conditions and the group's certification level before the briefing clock runs out."><meta property="og:url" content="https://games.multiportllc.com/games/divesiteplanningbriefing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Dive Site Planning Briefing","description":"Play Dive Site Planning Briefing free online instantly. Match the dive route, maximum depth, and turnaround air pressure to the site conditions and the group's certification level before the briefing clock runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/divesiteplanningbriefing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#063247;display:block;border-radius:8px}
+#score-display{color:#5ec8e0;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Dive Site Planning Briefing</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="460"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Read the dive site conditions and the group's certification level, then click or use <b>Arrow Keys + Enter</b> (or <b>1/2/3</b>) to choose the correct <b>route</b>, <b>maximum depth</b>, and <b>turnaround pressure</b> before the briefing clock runs out. Three wrong briefings and the dive is called off!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=460;
+const scoreDisp=document.getElementById('score-display');
+
+const HS_KEY='divesiteplanningbriefing_hiscore';
+let hi=parseInt(localStorage.getItem(HS_KEY)||'0',10);
+
+let score=0,lives=3,round=1,gameOver=false,started=false;
+let stage=0; // 0=route,1=depth,2=pressure
+let timeLeft=0,maxTime=14;
+let site=null,options=[],selected=-1,sel=0,feedback=null,feedbackTimer=0;
+
+function rnd(a,b){return a+Math.floor(Math.random()*(b-a+1));}
+function pick(arr){return arr[Math.floor(Math.random()*arr.length)];}
+
+const CERTS=['Open Water','Advanced','Rescue','Divemaster'];
+const CERT_MAXDEPTH={'Open Water':18,'Advanced':30,'Rescue':30,'Divemaster':40};
+const SITE_NAMES=['Coral Wall Reef','Sunken Freighter','Kelp Forest Point','Blue Hole Cavern','Drift Channel','Pinnacle Rock','Seagrass Flats','Shark Point Ledge'];
+const ROUTES=['Out-and-back shore line','Drift with current to pickup boat','Circular reef loop','Anchor line descent and ascent'];
+
+function genSite(diff){
+  const cert=pick(CERTS.slice(0,Math.min(CERTS.length,1+Math.floor(diff/2))));
+  const certMax=CERT_MAXDEPTH[cert];
+  const siteDepth=rnd(10,Math.min(45,certMax+rnd(0,8)));
+  const correctDepth=Math.min(siteDepth,certMax);
+  const route=pick(ROUTES);
+  const startPressure=rnd(190,220);
+  // turnaround pressure: enough reserve to return + safety margin, roughly half tank plus margin scaled by depth
+  const correctPressure=Math.round((startPressure/2)+rnd(10,20)+Math.floor(correctDepth/5));
+  return {name:pick(SITE_NAMES),cert,certMax,siteDepth,route,startPressure,correctDepth,correctPressure};
+}
+
+function makeOptions(stageIdx,s){
+  if(stageIdx===0){
+    let opts=ROUTES.slice();
+    opts=opts.filter(o=>o!==s.route);
+    opts=[s.route,pick(opts),pick(opts.filter(o=>o!==opts[0]))];
+    // shuffle unique
+    opts=Array.from(new Set(opts));
+    while(opts.length<3)opts.push(pick(ROUTES.filter(o=>!opts.includes(o))));
+    return shuffle(opts);
+  } else if(stageIdx===1){
+    let opts=new Set([s.correctDepth]);
+    while(opts.size<3){
+      const d=s.correctDepth+pick([-12,-8,-5,5,8,12,15]);
+      if(d>5&&d<60)opts.add(d);
+    }
+    return shuffle(Array.from(opts)).map(v=>v+'m');
+  } else {
+    let opts=new Set([s.correctPressure]);
+    while(opts.size<3){
+      const p=s.correctPressure+pick([-40,-25,-15,15,25,40]);
+      if(p>30&&p<s.startPressure)opts.add(p);
+    }
+    return shuffle(Array.from(opts)).map(v=>v+' PSI/bar');
+  }
+}
+
+function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+function startRound(){
+  const diff=Math.min(8,round);
+  site=genSite(diff);
+  stage=0;sel=0;selected=-1;
+  options=makeOptions(0,site);
+  maxTime=Math.max(7,14-Math.floor(round/3));
+  timeLeft=maxTime;
+}
+
+function reset(){
+  score=0;lives=3;round=1;gameOver=false;started=false;feedback=null;
+  startRound();
+}
+reset();
+
+function stageLabel(i){
+  return [I18N.t('stage_route','PLANNED ROUTE'),I18N.t('stage_depth','MAXIMUM DEPTH'),I18N.t('stage_pressure','TURNAROUND PRESSURE')][i];
+}
+
+function choose(i){
+  if(gameOver||feedback)return;
+  if(!started){started=true;return;}
+  selected=i;
+  let correct=false;
+  if(stage===0)correct=(options[i]===site.route);
+  if(stage===1)correct=(options[i]===site.correctDepth+'m');
+  if(stage===2)correct=(options[i]===site.correctPressure+' PSI/bar');
+  if(correct){
+    score+=Math.max(10,Math.floor(timeLeft*5));
+    SFX.success();
+    feedback={ok:true,msg:I18N.t('correct_msg','Correct briefing point!')};
+  } else {
+    lives--;
+    SFX.error();
+    feedback={ok:false,msg:I18N.t('wrong_msg','That briefing was wrong!')};
+  }
+  feedbackTimer=55;
+  if(score>hi){hi=score;localStorage.setItem(HS_KEY,String(hi));}
+}
+
+function advance(){
+  if(lives<=0){gameOver=true;SFX.lose();return;}
+  stage++;
+  if(stage>2){
+    stage=0;round++;
+    startRound();
+    return;
+  }
+  options=makeOptions(stage,site);
+  sel=0;selected=-1;
+  maxTime=Math.max(7,14-Math.floor(round/3));
+  timeLeft=maxTime;
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&e.code==='Space'){reset();return;}
+  if(!started){started=true;return;}
+  if(feedback)return;
+  if(e.code==='ArrowUp'||e.code==='ArrowLeft'){sel=(sel+options.length-1)%options.length;SFX.click();}
+  else if(e.code==='ArrowDown'||e.code==='ArrowRight'){sel=(sel+1)%options.length;SFX.click();}
+  else if(e.code==='Enter'||e.code==='Space'){choose(sel);}
+  else if(e.code==='Digit1'){choose(0);}
+  else if(e.code==='Digit2'&&options.length>1){choose(1);}
+  else if(e.code==='Digit3'&&options.length>2){choose(2);}
+});
+
+function hitTest(mx,my){
+  const boxY=260,boxH=56,gap=14,boxW=560,boxX=(W-boxW)/2;
+  for(let i=0;i<options.length;i++){
+    const y=boxY+i*(boxH+gap);
+    if(mx>=boxX&&mx<=boxX+boxW&&my>=y&&my<=y+boxH)return i;
+  }
+  return -1;
+}
+
+function pointerAt(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+c.addEventListener('click',e=>{
+  if(gameOver){reset();return;}
+  if(!started){started=true;return;}
+  if(feedback)return;
+  const p=pointerAt(e);
+  const i=hitTest(p.x,p.y);
+  if(i>=0)choose(i);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(gameOver){reset();return;}
+  if(!started){started=true;return;}
+  if(feedback)return;
+  const p=pointerAt(e);
+  const i=hitTest(p.x,p.y);
+  if(i>=0)choose(i);
+},{passive:false});
+
+function drawBubbles(t){
+  for(let i=0;i<14;i++){
+    const bx=(i*61+Math.sin(t/900+i)*20)%W;
+    const by=(H-((t/20+i*70)%H));
+    ctx.beginPath();
+    ctx.arc(bx,by,2+((i*7)%4),0,Math.PI*2);
+    ctx.fillStyle='rgba(180,230,255,0.15)';
+    ctx.fill();
+  }
+}
+
+let lastTime=null;
+function loop(t){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0a4a66');sky.addColorStop(1,'#042233');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  drawBubbles(t);
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.textAlign='center';
+    ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('game_title_canvas','DIVE SITE PLANNING BRIEFING'),W/2,120);
+    ctx.font='20px Arial';
+    ctx.fillStyle='#9fd8ec';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start the briefing'),W/2,170);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('dive_called_off','DIVE CALLED OFF'),W/2,150);
+    ctx.font='22px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),W/2,195);
+    ctx.font='18px Arial';ctx.fillStyle='#9fd8ec';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,230);
+    scoreDisp.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=t;
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  if(!feedback){
+    timeLeft-=dt;
+    if(timeLeft<=0){
+      timeLeft=0;
+      lives--;
+      SFX.error();
+      feedback={ok:false,msg:I18N.t('time_up_msg','Time ran out on that briefing point!')};
+      feedbackTimer=55;
+      if(lives<=0){/* will be caught in feedback resolution */}
+    }
+  } else {
+    feedbackTimer--;
+    if(feedbackTimer<=0){
+      feedback=null;
+      advance();
+    }
+  }
+
+  // header
+  ctx.textAlign='left';
+  ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+  ctx.fillText(I18N.t('round_label','Round {r}').replace('{r}',round),24,36);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('lives_label','Lives: {l}').replace('{l}',lives),W-24,36);
+  ctx.textAlign='center';
+
+  // site card
+  ctx.fillStyle='rgba(255,255,255,0.08)';
+  ctx.fillRect(60,56,W-120,150);
+  ctx.strokeStyle='#5ec8e0';ctx.lineWidth=2;
+  ctx.strokeRect(60,56,W-120,150);
+  ctx.fillStyle='#ffd54f';ctx.font='bold 22px Arial';
+  ctx.fillText(site.name,W/2,86);
+  ctx.fillStyle='#e8f6fb';ctx.font='16px Arial';
+  ctx.fillText(I18N.t('site_depth_line','Site depth: {d}m   •   Group certification: {c} (max {m}m)').replace('{d}',site.siteDepth).replace('{c}',site.cert).replace('{m}',site.certMax),W/2,114);
+  ctx.fillText(I18N.t('start_pressure_line','Starting tank pressure: {p} PSI/bar').replace('{p}',site.startPressure),W/2,138);
+  ctx.fillStyle='#8fd6ec';ctx.font='bold 18px Arial';
+  ctx.fillText(I18N.t('stage_prompt','Brief the group on: {stage}').replace('{stage}',stageLabel(stage)),W/2,172);
+
+  // timer bar
+  const barW=560,barX=(W-barW)/2,barY=228;
+  ctx.fillStyle='rgba(255,255,255,0.15)';ctx.fillRect(barX,barY,barW,10);
+  const frac=Math.max(0,timeLeft/maxTime);
+  ctx.fillStyle=frac>0.4?'#5ec8e0':'#ff6b6b';
+  ctx.fillRect(barX,barY,barW*frac,10);
+
+  // options
+  const boxY=260,boxH=56,gap=14,boxW=560,boxX=(W-boxW)/2;
+  options.forEach((opt,i)=>{
+    const y=boxY+i*(boxH+gap);
+    let fill='rgba(255,255,255,0.1)';
+    if(feedback&&i===selected)fill=feedback.ok?'rgba(80,200,120,0.45)':'rgba(230,80,80,0.45)';
+    else if(!feedback&&i===sel)fill='rgba(94,200,224,0.25)';
+    ctx.fillStyle=fill;
+    ctx.fillRect(boxX,y,boxW,boxH);
+    ctx.strokeStyle=(!feedback&&i===sel)?'#5ec8e0':'rgba(255,255,255,0.3)';
+    ctx.lineWidth=2;
+    ctx.strokeRect(boxX,y,boxW,boxH);
+    ctx.fillStyle='#fff';ctx.font='18px Arial';
+    ctx.fillText(opt,W/2,y+boxH/2+6);
+  });
+
+  if(feedback){
+    ctx.fillStyle=feedback.ok?'#7ec850':'#ff8080';
+    ctx.font='bold 20px Arial';
+    ctx.fillText(feedback.msg,W/2,440);
+  }
+
+  scoreDisp.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

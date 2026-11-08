@@ -1,0 +1,239 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Surfboard Shaping</title><meta name="description" content="Play Surfboard Shaping free online — Planer and sand a foam blank to match the target rocker and rail profile before it goes to glassing."><link rel="canonical" href="https://games.multiportllc.com/games/surfboardshaping"><meta property="og:title" content="Surfboard Shaping - Multiport Games"><meta property="og:description" content="Play Surfboard Shaping free online — Planer and sand a foam blank to match the target rocker and rail profile before it goes to glassing."><meta property="og:url" content="https://games.multiportllc.com/games/surfboardshaping"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Surfboard Shaping","description":"Play Surfboard Shaping free online instantly. Shape a surfboard blank with a planer and sanding block, removing foam evenly along its length to match the target rocker curve and thickness profile before it goes to glassing. Shave too much off any spot and the board is ruined. Four board shapes to complete, each with a tighter tolerance and shorter clock. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/surfboardshaping","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b2420;display:block;border-radius:8px;touch-action:none;cursor:ew-resize}
+#hud{color:#f0dfc8;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#timeWrap{max-width:600px;margin:0 auto 8px;background:#3a2b1c;border-radius:10px;padding:4px}
+#timeBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#8d6e63,#e0c9a6);width:100%;transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Surfboard Shaping</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Board 1/4</span>
+    </div>
+    <div id="timeWrap"><div id="timeBar"></div></div>
+    <canvas id="c" width="800" height="300"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> The dashed line is the target rocker/thickness profile; the tan foam is your blank. Move the planer with <b>Left/Right Arrow</b> (or drag your mouse/finger) and hold <b>Space</b> or hold the mouse/finger down to shave foam at the tool's position. Get every section within the pale tolerance band around the target to send the board to glassing. Shave below the band anywhere and that board is ruined — lose a life and start the blank over. Each board shape has a tighter tolerance and a shorter clock!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+let hi=parseInt(localStorage.getItem('surfboardshaping_hi')||'0',10);
+let score=0,lives=3,level=1,gameOver=false,started=false,won=false;
+const TOTAL_LEVELS=4;
+const COLS=26;
+let target=[],cur=[],tolerance=0.07,timeLeft=0,timeMax=0,toolCol=13,shaving=false,flashTimer=0,flashGood=true;
+let lastTime=null;
+
+const SHAPES=[
+  {name:'Shortboard',fn:(u)=>0.55+0.35*Math.sin(u*Math.PI)-0.12*Math.pow(u-0.5,2)},
+  {name:'Fish',fn:(u)=>0.5+0.42*Math.sin(u*Math.PI)*(1-0.3*Math.abs(u-0.5))},
+  {name:'Longboard',fn:(u)=>0.6+0.25*Math.sin(u*Math.PI)+0.08*Math.cos(u*Math.PI*2)},
+  {name:'Gun',fn:(u)=>0.45+0.4*Math.sin(u*Math.PI)-0.15*Math.pow(u-0.5,2)}
+];
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  const shapeName=SHAPES[(level-1)%SHAPES.length].name;
+  document.getElementById('levelLbl').textContent=I18N.t('board_label','Board {n}/{t}: {shape}').replace('{n}',Math.min(level,TOTAL_LEVELS)).replace('{t}',TOTAL_LEVELS).replace('{shape}',shapeName);
+  document.getElementById('timeBar').style.width=Math.max(0,100*timeLeft/timeMax)+'%';
+}
+
+function toleranceFor(l){return Math.max(0.035,0.09-l*0.012);}
+function timeFor(l){return Math.max(16,34-l*3);}
+
+function startBoard(){
+  const shape=SHAPES[(level-1)%SHAPES.length];
+  target=[];cur=[];
+  for(let i=0;i<COLS;i++){
+    const u=i/(COLS-1);
+    target.push(Math.max(0.1,Math.min(0.95,shape.fn(u))));
+    cur.push(1.0);
+  }
+  tolerance=toleranceFor(level);
+  timeMax=timeFor(level);timeLeft=timeMax;
+  toolCol=Math.floor(COLS/2);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;won=false;lastTime=null;
+  startBoard();
+  setHud();
+}
+
+function ruinBoard(){
+  SFX.lose();
+  lives--;
+  flashTimer=35;flashGood=false;
+  if(lives<=0){gameOver=true;SFX.fail();}
+  else{startBoard();}
+  setHud();
+}
+
+function timeOut(){
+  SFX.fail();
+  lives--;
+  flashTimer=35;flashGood=false;
+  if(lives<=0){gameOver=true;}
+  else{startBoard();}
+  setHud();
+}
+
+function boardDone(){
+  for(let i=0;i<COLS;i++){
+    if(Math.abs(cur[i]-target[i])>tolerance)return false;
+  }
+  return true;
+}
+
+function nextBoard(){
+  SFX.success();
+  const bonus=Math.floor(timeLeft*4)+40;
+  score+=bonus;
+  flashTimer=35;flashGood=true;
+  if(level>=TOTAL_LEVELS){
+    won=true;gameOver=true;SFX.win();
+    if(score>hi){hi=score;localStorage.setItem('surfboardshaping_hi',String(Math.floor(hi)));}
+    setHud();return;
+  }
+  SFX.levelup();
+  level++;startBoard();
+  setHud();
+}
+
+function act(){
+  if(!started){started=true;return;}
+  if(gameOver){reset();started=true;return;}
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  if(!started||gameOver){ if(e.code==='Space')act(); return; }
+  if(e.code==='ArrowLeft')toolCol=Math.max(0,toolCol-1);
+  if(e.code==='ArrowRight')toolCol=Math.min(COLS-1,toolCol+1);
+  if(e.code==='Space')shaving=true;
+});
+document.addEventListener('keyup',e=>{ if(e.code==='Space')shaving=false; });
+
+function colFromX(px){
+  const r=c.getBoundingClientRect();
+  const x=(px-r.left)*(800/r.width);
+  const colW=700/COLS;
+  return Math.max(0,Math.min(COLS-1,Math.floor((x-50)/colW)));
+}
+
+c.addEventListener('pointerdown',e=>{
+  act();
+  if(!gameOver){shaving=true;toolCol=colFromX(e.clientX);}
+});
+c.addEventListener('pointermove',e=>{ if(shaving)toolCol=colFromX(e.clientX); });
+window.addEventListener('pointerup',()=>{shaving=false;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();act();
+  if(!gameOver){shaving=true;toolCol=colFromX(e.touches[0].clientX);}
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(shaving)toolCol=colFromX(e.touches[0].clientX);
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();shaving=false;},{passive:false});
+
+function drawBoardView(){
+  const colW=700/COLS;
+  for(let i=0;i<COLS;i++){
+    const x=50+i*colW;
+    const tY=250-target[i]*200;
+    const curY=250-cur[i]*200;
+    // tolerance band
+    ctx.fillStyle='rgba(224,201,166,0.18)';
+    ctx.fillRect(x,250-(target[i]+tolerance)*200,colW-1,tolerance*2*200);
+    // current foam
+    const bad=cur[i]<target[i]-tolerance;
+    ctx.fillStyle=bad?'#8d4a3d':'#d8b483';
+    ctx.fillRect(x,curY,colW-1,250-curY);
+    // target line
+    ctx.strokeStyle='#ffd166';ctx.lineWidth=2;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath();ctx.moveTo(x,tY);ctx.lineTo(x+colW-1,tY);ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // tool
+  const toolX=50+toolCol*colW+colW/2;
+  ctx.fillStyle=shaving?'#ff6b35':'#bfbfbf';
+  ctx.fillRect(toolX-4,20,8,240-cur[toolCol]*200+0);
+  ctx.beginPath();ctx.arc(toolX,20,8,0,Math.PI*2);ctx.fill();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,800,300);
+  ctx.fillStyle='#2b2420';ctx.fillRect(0,0,800,300);
+
+  if(!started){
+    ctx.fillStyle='#f0dfc8';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start'),400,150);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawBoardView();
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,800,300);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('all_shaped_title','QUIVER COMPLETE!'):I18N.t('game_over_title','GAME OVER'),400,140);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,165);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  timeLeft-=dt/60;
+  if(timeLeft<=0){timeLeft=0;timeOut();}
+
+  if(shaving){
+    cur[toolCol]-=0.012*dt;
+    if(cur[toolCol]<target[toolCol]-tolerance){
+      cur[toolCol]=target[toolCol]-tolerance;
+      ruinBoard();
+    }else{
+      sandTickTimer=(sandTickTimer||0)+dt;
+      if(sandTickTimer>=6){sandTickTimer=0;SFX.tick();}
+    }
+  }
+
+  drawBoardView();
+
+  if(boardDone())nextBoard();
+
+  if(flashTimer>0){
+    flashTimer-=dt;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.25)':'rgba(233,69,96,0.3)';
+    ctx.fillRect(0,0,800,300);
+  }
+
+  setHud();
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

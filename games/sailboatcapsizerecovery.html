@@ -1,0 +1,322 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Sailboat Capsize Recovery</title><meta name="description" content="Play Sailboat Capsize Recovery free online — Swim to the centerboard, right the hull with good leverage, climb aboard, then steer clear of danger."><link rel="canonical" href="https://games.multiportllc.com/games/sailboatcapsizerecovery"><meta property="og:title" content="Sailboat Capsize Recovery - Multiport Games"><meta property="og:description" content="Play Sailboat Capsize Recovery free online — Swim to the centerboard, right the hull with good leverage, climb aboard, then steer clear of danger."><meta property="og:url" content="https://games.multiportllc.com/games/sailboatcapsizerecovery"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Sailboat Capsize Recovery","description":"Play Sailboat Capsize Recovery free online instantly. Swim to the centerboard of a capsized dinghy, climb on and lean back with the right leverage to right the hull, haul yourself aboard, then steer away from the rocks before the current pushes you into danger. Every attempt the current gets stronger. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/sailboatcapsizerecovery","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0a3a52;display:block;border-radius:8px;touch-action:none}
+#hud{color:#dff3ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#touchRow{display:flex;justify-content:center;gap:16px;margin:8px 0}
+#touchRow button{width:70px;height:54px;font-size:1.6rem;border-radius:12px;border:none;background:#145a7a;color:#fff;cursor:pointer}
+#touchRow button:active{background:#1e86b8}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Sailboat Capsize Recovery</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="roundLbl">Attempt 1</span>
+    </div>
+    <canvas id="c" width="800" height="340"></canvas>
+    <div id="touchRow">
+      <button id="btnLeft">◀</button>
+      <button id="btnAction">●</button>
+      <button id="btnRight">▶</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Use <b>Left/Right Arrows</b> (or the on-screen buttons) to swim to the centerboard and to shift your weight. Press <b>Space</b> (or the center button) at the right moment to climb on, then to climb aboard, and to grab the tiller. Stage 1: swim onto the centerboard. Stage 2: lean to keep the balance meter centered while the hull rights itself — don't flip it back over. Stage 3: tap the action button when the climb prompt is green. Stage 4: steer clear of the rocks. The current gets stronger with every attempt — lose all 3 lives and you're adrift!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const GAME_ID='sailboatcapsizerecovery';
+let hi=parseInt(localStorage.getItem(GAME_ID+'_hi')||'0',10);
+let score=0,lives=3,round=1,gameOver=false,started=false;
+let stage='SWIM'; // SWIM, BALANCE, CLIMB_WAIT, STEER, RESULT
+const keys={};
+let swimmerX=200,targetX=500,drift=0;
+let balance=0,rightProgress=0;
+let climbPhase=0,climbZoneStart=0.4,climbZoneEnd=0.6,climbWindowActive=false;
+let steerX=400,steerTimer=0,steerDuration=0,obstacles=[];
+let resultText='',resultGood=false,resultTimer=0;
+let actionPressed=false;
+let pendingNext=null;
+
+function diffMul(){return 1+(round-1)*0.14;}
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('roundLbl').textContent=I18N.t('attempt_label','Attempt {n}').replace('{n}',round);
+}
+
+function reset(){
+  score=0;lives=3;round=1;gameOver=false;started=true;
+  startSwim();
+  setHud();
+}
+
+function startSwim(){
+  stage='SWIM';swimmerX=180+Math.random()*40;targetX=480+Math.random()*60;drift=0;
+}
+function startBalance(){
+  stage='BALANCE';balance=0;rightProgress=0;
+}
+function startClimb(){
+  stage='CLIMB_WAIT';climbPhase=0;
+  const w=Math.max(0.12,0.3-(round-1)*0.015);
+  climbZoneStart=0.5-w/2;climbZoneEnd=0.5+w/2;
+}
+function startSteer(){
+  stage='STEER';steerX=400;steerTimer=0;steerDuration=5200+round*180;obstacles=[];
+}
+
+function loseLife(msg){
+  lives--;
+  resultText=msg;resultGood=false;stage='RESULT';resultTimer=performance.now();
+  SFX.hurt();
+  setHud();
+  if(lives<=0){
+    gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(GAME_ID+'_hi',String(Math.floor(hi)));}
+    pendingNext=null;
+  } else {
+    pendingNext=startSwim;
+  }
+}
+
+function stageDone(points,msg,next){
+  score+=points;
+  resultText=msg;resultGood=true;stage='RESULT';resultTimer=performance.now();
+  SFX.point();
+  setHud();
+  pendingNext=next;
+}
+
+function roundComplete(){
+  const bonus=150*round;
+  score+=bonus;
+  if(score>hi){hi=score;localStorage.setItem(GAME_ID+'_hi',String(Math.floor(hi)));}
+  resultText=I18N.t('round_complete_msg','BACK ABOARD! +{p}').replace('{p}',bonus);
+  resultGood=true;stage='RESULT';resultTimer=performance.now();
+  SFX.win();
+  round++;
+  setHud();
+  pendingNext=startSwim;
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'&&!e.repeat)action();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function bindHold(btn,code){
+  const down=ev=>{ev.preventDefault();keys[code]=true;};
+  const up=ev=>{ev.preventDefault();keys[code]=false;};
+  btn.addEventListener('pointerdown',down);
+  btn.addEventListener('pointerup',up);
+  btn.addEventListener('pointerleave',up);
+  btn.addEventListener('touchstart',down,{passive:false});
+  btn.addEventListener('touchend',up,{passive:false});
+}
+bindHold(document.getElementById('btnLeft'),'ArrowLeft');
+bindHold(document.getElementById('btnRight'),'ArrowRight');
+document.getElementById('btnAction').addEventListener('pointerdown',e=>{e.preventDefault();action();});
+document.getElementById('btnAction').addEventListener('touchstart',e=>{e.preventDefault();action();},{passive:false});
+c.addEventListener('pointerdown',()=>{if(!started||gameOver)reset();});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(!started||gameOver)reset();},{passive:false});
+
+function action(){
+  if(!started||gameOver){reset();return;}
+  if(stage==='CLIMB_WAIT'&&climbWindowActive){
+    if(climbPhase>=climbZoneStart&&climbPhase<=climbZoneEnd){
+      stageDone(80*round,I18N.t('climb_ok_msg','Aboard! Grabbing the tiller...'),startSteer);
+    } else {
+      loseLife(I18N.t('climb_miss_msg','Missed the climb — slipped back in!'));
+    }
+    climbWindowActive=false;
+  }
+}
+
+function update(dt){
+  if(stage==='SWIM'){
+    const speed=2.4;
+    if(keys.ArrowLeft)swimmerX-=speed*dt;
+    if(keys.ArrowRight)swimmerX+=speed*dt;
+    drift+=0.015*dt*diffMul();
+    swimmerX-=drift*dt*0.2;
+    swimmerX=Math.max(20,Math.min(780,swimmerX));
+    if(Math.abs(swimmerX-targetX)<22){
+      stageDone(40*round,I18N.t('swim_ok_msg','Reached the centerboard!'),startBalance);
+    }
+    if(swimmerX<10){
+      loseLife(I18N.t('swim_fail_msg','Drifted too far from the boat!'));
+    }
+  } else if(stage==='BALANCE'){
+    const push=0.55*diffMul();
+    balance+=(Math.sin(performance.now()/650)*push)*dt*0.12;
+    if(keys.ArrowLeft)balance-=0.5*dt;
+    if(keys.ArrowRight)balance+=0.5*dt;
+    balance=Math.max(-100,Math.min(100,balance));
+    if(Math.abs(balance)<30)rightProgress+=0.55*dt;
+    else if(Math.abs(balance)>75)rightProgress-=0.3*dt;
+    rightProgress=Math.max(0,Math.min(100,rightProgress));
+    if(rightProgress>=100){
+      stageDone(60*round,I18N.t('balance_ok_msg','Hull righted!'),startClimb);
+    }
+    if(Math.abs(balance)>=95){
+      loseLife(I18N.t('balance_fail_msg','Flipped it back over!'));
+    }
+  } else if(stage==='CLIMB_WAIT'){
+    climbWindowActive=true;
+    climbPhase+=0.006*dt*diffMul();
+    if(climbPhase>1){
+      loseLife(I18N.t('climb_timeout_msg','Too slow — lost your grip!'));
+    }
+  } else if(stage==='STEER'){
+    steerTimer+=dt*16.6667;
+    const speed=3.4*diffMul();
+    if(keys.ArrowLeft)steerX-=speed*dt;
+    if(keys.ArrowRight)steerX+=speed*dt;
+    steerX=Math.max(40,Math.min(760,steerX));
+    if(Math.random()<0.028*dt*diffMul()){
+      obstacles.push({x:60+Math.random()*680,y:-20,w:36,h:36});
+    }
+    obstacles.forEach(o=>{o.y+=3.2*dt*diffMul();});
+    for(const o of obstacles){
+      if(o.y>250&&o.y<300&&Math.abs(o.x-steerX)<30){
+        loseLife(I18N.t('steer_fail_msg','Hit the rocks!'));
+        break;
+      }
+    }
+    obstacles=obstacles.filter(o=>o.y<340);
+    if(steerTimer>=steerDuration){
+      roundComplete();
+    }
+  }
+}
+
+function drawSwim(){
+  ctx.fillStyle='#0a3a52';ctx.fillRect(0,0,800,340);
+  // overturned hull
+  ctx.fillStyle='#e8e8e8';
+  ctx.beginPath();ctx.ellipse(targetX,190,90,34,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#90a4ae';ctx.fillRect(targetX-6,160,12,40);
+  // swimmer
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(swimmerX,220,14,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#1976d2';ctx.fillRect(swimmerX-18,228,36,14);
+  // waves
+  ctx.strokeStyle='#2a6a8a';ctx.lineWidth=2;
+  for(let i=0;i<10;i++){ctx.beginPath();ctx.moveTo(i*90,280+Math.sin(performance.now()/300+i)*4);ctx.lineTo(i*90+90,280+Math.sin(performance.now()/300+i+1)*4);ctx.stroke();}
+  ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('swim_prompt','Swim to the centerboard →'),400,40);
+}
+
+function drawBalance(){
+  ctx.fillStyle='#0a3a52';ctx.fillRect(0,0,800,340);
+  const tilt=-rightProgress/100*70;
+  ctx.save();
+  ctx.translate(400,200);
+  ctx.rotate(tilt*Math.PI/180);
+  ctx.fillStyle='#e8e8e8';
+  ctx.beginPath();ctx.ellipse(0,0,100,36,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#90a4ae';ctx.fillRect(-6,-70,12,70);
+  ctx.fillStyle='#ffd54f';ctx.beginPath();ctx.arc(0,-70+(balance/100)*20,10,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+  // balance meter
+  ctx.fillStyle='#0a2438';ctx.fillRect(250,290,300,22);
+  ctx.fillStyle='#1b5e20';ctx.fillRect(250+300*0.35,290,300*0.3,22);
+  ctx.fillStyle='#ffd54f';ctx.fillRect(250+(balance+100)/200*300-4,286,8,30);
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.strokeRect(250,290,300,22);
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('balance_prompt','Hold the lean to right the hull'),400,40);
+  ctx.fillStyle='#7ec850';ctx.fillRect(250,260,rightProgress*3,10);
+  ctx.strokeStyle='#fff';ctx.strokeRect(250,260,300,10);
+}
+
+function drawClimb(){
+  ctx.fillStyle='#0a3a52';ctx.fillRect(0,0,800,340);
+  ctx.fillStyle='#e8e8e8';
+  ctx.beginPath();ctx.moveTo(310,260);ctx.lineTo(490,260);ctx.lineTo(470,220);ctx.lineTo(330,220);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('climb_prompt','Tap / Space when the bar is green!'),400,40);
+  const bx=200,by=140,bw=400,bh=24;
+  ctx.fillStyle='#0a2438';ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle='#2e7d32';ctx.fillRect(bx+bw*climbZoneStart,by,bw*(climbZoneEnd-climbZoneStart),bh);
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.strokeRect(bx,by,bw,bh);
+  ctx.fillStyle='#ffd54f';ctx.fillRect(bx+bw*Math.min(1,climbPhase)-3,by-6,6,bh+12);
+}
+
+function drawSteer(){
+  ctx.fillStyle='#0a3a52';ctx.fillRect(0,0,800,340);
+  ctx.strokeStyle='#2a6a8a';ctx.lineWidth=2;
+  for(let i=0;i<10;i++){ctx.beginPath();ctx.moveTo(i*90,0);ctx.lineTo(i*90,340);ctx.stroke();}
+  obstacles.forEach(o=>{
+    ctx.fillStyle='#616161';
+    ctx.beginPath();ctx.arc(o.x,o.y,18,0,Math.PI*2);ctx.fill();
+  });
+  ctx.fillStyle='#e8e8e8';
+  ctx.beginPath();ctx.moveTo(steerX,250);ctx.lineTo(steerX-26,295);ctx.lineTo(steerX+26,295);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#ff8c42';
+  ctx.beginPath();ctx.moveTo(steerX,250);ctx.lineTo(steerX,180);ctx.lineTo(steerX+22,245);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('steer_prompt','Steer clear of the rocks!'),400,40);
+  const pct=Math.min(100,steerTimer/steerDuration*100);
+  ctx.fillStyle='#7ec850';ctx.fillRect(250,310,pct*3,10);
+  ctx.strokeStyle='#fff';ctx.strokeRect(250,310,300,10);
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(!started){
+    ctx.fillStyle='#0a3a52';ctx.fillRect(0,0,800,340);
+    ctx.fillStyle='#ffe082';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start'),400,170);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#0a3a52';ctx.fillRect(0,0,800,340);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,160);
+    ctx.font='20px Arial';ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,198);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(stage==='RESULT'){
+    ctx.fillStyle='#0a3a52';ctx.fillRect(0,0,800,340);
+    ctx.fillStyle=resultGood?'#7ec850':'#ff6b35';
+    ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(resultText,400,170);
+    if(now-resultTimer>900&&!gameOver&&pendingNext){
+      const n=pendingNext;pendingNext=null;n();
+    }
+    requestAnimationFrame(loop);return;
+  }
+
+  update(dt);
+  if(stage==='SWIM')drawSwim();
+  else if(stage==='BALANCE')drawBalance();
+  else if(stage==='CLIMB_WAIT')drawClimb();
+  else if(stage==='STEER')drawSteer();
+  requestAnimationFrame(loop);
+}
+loop();
+setHud();
+</script></body></html>

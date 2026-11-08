@@ -1,0 +1,342 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Yacht Navigation Plotting</title><meta name="description" content="Play Yacht Navigation Plotting free online — Dial in the correct heading to counter the current and drift, then run the course to reach the waypoint."><link rel="canonical" href="https://games.multiportllc.com/games/yachtnavigationplotting"><meta property="og:title" content="Yacht Navigation Plotting - Multiport Games"><meta property="og:description" content="Play Yacht Navigation Plotting free online — Dial in the correct heading to counter the current and drift, then run the course to reach the waypoint."><meta property="og:url" content="https://games.multiportllc.com/games/yachtnavigationplotting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Yacht Navigation Plotting","description":"Play Yacht Navigation Plotting free online instantly. Study the chart, the waypoint bearing and distance, and the current's speed and direction, then dial in the heading to steer that will carry the yacht to the waypoint despite the drift. Run the course and check your plotted track against the GPS fixes. The tolerance narrows and the currents get trickier every leg. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/yachtnavigationplotting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#e8ecd7;display:block;border-radius:8px;touch-action:none}
+#hud{color:#dff3ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#panel{max-width:600px;margin:8px auto 0;background:#12324a;border-radius:12px;padding:12px 16px;color:#dff3ff;text-align:center}
+#panel .row{display:flex;justify-content:center;gap:10px;align-items:center;margin:6px 0;flex-wrap:wrap}
+#panel button{padding:8px 16px;background:#e94560;border:none;border-radius:18px;color:#fff;cursor:pointer;font-size:1rem}
+#panel button:disabled{opacity:.4;cursor:not-allowed}
+#headingVal{font-size:1.4rem;font-weight:900;color:#ffd54f;min-width:70px;display:inline-block}
+#infoBox{font-size:.85rem;color:#bcd;margin-top:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Yacht Navigation Plotting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="roundLbl">Leg 1</span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <div id="panel">
+      <div class="row">
+        <button id="btnMinus10">−10°</button>
+        <button id="btnMinus1">−1°</button>
+        <span id="headingVal">000°</span>
+        <button id="btnPlus1">+1°</button>
+        <button id="btnPlus10">+10°</button>
+      </div>
+      <div class="row"><button id="btnPlot">Set Course &amp; Run</button></div>
+      <div id="infoBox">Drag the dial on the chart, or use the buttons / Left-Right arrow keys, to set your heading.</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Each leg shows the waypoint's bearing/distance and the current's speed/direction. Rotate the compass dial — drag it, use <b>Left/Right Arrows</b>, or the ± buttons — to set the heading to steer that compensates for the current's drift, then press <b>Set Course &amp; Run</b> (or <b>Enter</b>) to simulate the passage. Watch the GPS fixes track along your course; land within the tolerance circle around the waypoint to complete the leg. The tolerance narrows and the current gets trickier each leg — three missed plots and the passage ends!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const GAME_ID='yachtnavigationplotting';
+let hi=parseInt(localStorage.getItem(GAME_ID+'_hi')||'0',10);
+let score=0,lives=3,level=1,gameOver=false,started=false;
+let heading=0,phase='PLOT'; // PLOT, RUN, RESULT
+let start={x:150,y:350},waypoint={x:600,y:120},wpDist=0,wpBearing=0;
+let current={speed:0,dir:0};
+let boatSpeed=12;
+let tolerance=45;
+let runProgress=0,runFixes=[],finalPos=null,resultGood=false,resultTimer=0,resultText='';
+let dragging=false;
+const dialCenter={x:400,y:380},dialRadius=46;
+
+function toRad(deg){return (deg-90)*Math.PI/180;}
+function diffMul(){return 1+(level-1)*0.1;}
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('roundLbl').textContent=I18N.t('leg_label','Leg {n}').replace('{n}',level);
+  document.getElementById('headingVal').textContent=String(Math.round(((heading%360)+360)%360)).padStart(3,'0')+'°';
+}
+
+function bearingBetween(a,b){
+  const dx=b.x-a.x,dy=b.y-a.y;
+  let deg=Math.atan2(dx,-dy)*180/Math.PI;
+  return ((deg%360)+360)%360;
+}
+function distBetween(a,b){return Math.hypot(b.x-a.x,b.y-a.y);}
+
+function newLeg(){
+  start={x:120+Math.random()*60,y:300+Math.random()*60};
+  const ang=Math.random()*360;
+  const dist=160+Math.random()*120;
+  waypoint={x:start.x+Math.sin(ang*Math.PI/180)*dist,y:start.y-Math.cos(ang*Math.PI/180)*dist};
+  waypoint.x=Math.max(60,Math.min(740,waypoint.x));
+  waypoint.y=Math.max(60,Math.min(230,waypoint.y));
+  wpDist=distBetween(start,waypoint);
+  wpBearing=bearingBetween(start,waypoint);
+  current.dir=Math.random()*360;
+  current.speed=(1.2+Math.random()*1.8)*diffMul();
+  boatSpeed=12;
+  tolerance=Math.max(16,46-(level-1)*2.2);
+  heading=Math.round(wpBearing);
+  phase='PLOT';
+  runProgress=0;runFixes=[];finalPos=null;
+  setHud();
+}
+
+function computeTrack(hdg,durationUnits){
+  // vector sum: boat movement along heading + current drift, scaled by time units
+  const hdgRad=hdg*Math.PI/180;
+  const boatVx=Math.sin(hdgRad)*boatSpeed;
+  const boatVy=-Math.cos(hdgRad)*boatSpeed;
+  const curRad=current.dir*Math.PI/180;
+  const curVx=Math.sin(curRad)*current.speed;
+  const curVy=-Math.cos(curRad)*current.speed;
+  return {x:start.x+(boatVx+curVx)*durationUnits,y:start.y+(boatVy+curVy)*durationUnits};
+}
+
+function totalDuration(){
+  // time units needed to approximately cover wpDist along heading component
+  return wpDist/boatSpeed;
+}
+
+function startRun(){
+  phase='RUN';runProgress=0;runFixes=[];
+  const dur=totalDuration();
+  for(let i=1;i<=5;i++){
+    runFixes.push(computeTrack(heading,dur*i/5));
+  }
+  finalPos=runFixes[runFixes.length-1];
+}
+
+function finishRun(){
+  const d=distBetween(finalPos,waypoint);
+  if(d<=tolerance){
+    const bonus=Math.max(0,Math.floor((tolerance-d)*4))+120*level;
+    score+=bonus;
+    if(score>hi){hi=score;localStorage.setItem(GAME_ID+'_hi',String(Math.floor(hi)));}
+    resultText=I18N.t('leg_ok_msg','ON COURSE! +{p}').replace('{p}',bonus);
+    resultGood=true;SFX.success();
+    level++;
+  } else {
+    lives--;
+    resultText=I18N.t('leg_fail_msg','OFF COURSE — missed by {d} units').replace('{d}',Math.round(d));
+    resultGood=false;SFX.fail();
+    if(lives<=0){gameOver=true;SFX.lose();if(score>hi){hi=score;localStorage.setItem(GAME_ID+'_hi',String(Math.floor(hi)));}}
+  }
+  phase='RESULT';resultTimer=performance.now();
+  setHud();
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=true;
+  newLeg();
+}
+
+function adjustHeading(delta){
+  if(phase!=='PLOT')return;
+  heading=((heading+delta)%360+360)%360;
+  setHud();
+  SFX.tick();
+}
+
+function doPlot(){
+  if(!started||gameOver){reset();return;}
+  if(phase==='PLOT'){startRun();SFX.swoosh();}
+  else if(phase==='RESULT'&&performance.now()-resultTimer>200){
+    if(!gameOver)newLeg();
+  }
+}
+
+document.getElementById('btnMinus10').addEventListener('click',()=>adjustHeading(-10));
+document.getElementById('btnMinus1').addEventListener('click',()=>adjustHeading(-1));
+document.getElementById('btnPlus1').addEventListener('click',()=>adjustHeading(1));
+document.getElementById('btnPlus10').addEventListener('click',()=>adjustHeading(10));
+document.getElementById('btnPlot').addEventListener('click',doPlot);
+
+document.addEventListener('keydown',e=>{
+  if(!started||gameOver){if(e.code==='Space'||e.code==='Enter'){reset();}return;}
+  if(e.code==='ArrowLeft'){e.preventDefault();adjustHeading(e.shiftKey?-10:-1);}
+  else if(e.code==='ArrowRight'){e.preventDefault();adjustHeading(e.shiftKey?10:1);}
+  else if(e.code==='Enter'||e.code==='Space'){e.preventDefault();doPlot();}
+});
+
+function pointerAngle(evt){
+  const r=c.getBoundingClientRect();
+  const scaleX=c.width/r.width,scaleY=c.height/r.height;
+  const px=(evt.clientX-r.left)*scaleX,py=(evt.clientY-r.top)*scaleY;
+  const dx=px-dialCenter.x,dy=py-dialCenter.y;
+  let deg=Math.atan2(dx,-dy)*180/Math.PI;
+  return ((deg%360)+360)%360;
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(!started||gameOver){reset();return;}
+  if(phase==='RESULT'){doPlot();return;}
+  const r=c.getBoundingClientRect();
+  const scaleX=c.width/r.width,scaleY=c.height/r.height;
+  const px=(e.clientX-r.left)*scaleX,py=(e.clientY-r.top)*scaleY;
+  if(phase==='PLOT'&&Math.hypot(px-dialCenter.x,py-dialCenter.y)<dialRadius+30){
+    dragging=true;
+    heading=Math.round(pointerAngle(e));
+    setHud();
+  }
+});
+window.addEventListener('pointermove',e=>{
+  if(dragging&&phase==='PLOT'){
+    heading=Math.round(pointerAngle(e));
+    setHud();
+  }
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started||gameOver){reset();return;}
+  if(phase==='RESULT'){doPlot();return;}
+  const t=e.touches[0];
+  const r=c.getBoundingClientRect();
+  const scaleX=c.width/r.width,scaleY=c.height/r.height;
+  const px=(t.clientX-r.left)*scaleX,py=(t.clientY-r.top)*scaleY;
+  if(phase==='PLOT'&&Math.hypot(px-dialCenter.x,py-dialCenter.y)<dialRadius+30){
+    dragging=true;
+    heading=Math.round(((Math.atan2(px-dialCenter.x,-(py-dialCenter.y))*180/Math.PI)%360+360)%360);
+    setHud();
+  }
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  if(dragging&&phase==='PLOT'){
+    e.preventDefault();
+    const t=e.touches[0];
+    const r=c.getBoundingClientRect();
+    const scaleX=c.width/r.width,scaleY=c.height/r.height;
+    const px=(t.clientX-r.left)*scaleX,py=(t.clientY-r.top)*scaleY;
+    heading=Math.round(((Math.atan2(px-dialCenter.x,-(py-dialCenter.y))*180/Math.PI)%360+360)%360);
+    setHud();
+  }
+},{passive:false});
+c.addEventListener('touchend',()=>{dragging=false;});
+
+function drawChart(){
+  ctx.fillStyle='#e8ecd7';ctx.fillRect(0,0,800,420);
+  ctx.strokeStyle='#c7cdb0';ctx.lineWidth=1;
+  for(let x=0;x<800;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,300);ctx.stroke();}
+  for(let y=0;y<300;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(800,y);ctx.stroke();}
+  // start
+  ctx.fillStyle='#1976d2';
+  ctx.beginPath();ctx.arc(start.x,start.y,8,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#333';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('start_label','START'),start.x,start.y+22);
+  // waypoint + tolerance
+  ctx.strokeStyle='#2e7d32';ctx.setLineDash([5,4]);ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(waypoint.x,waypoint.y,tolerance,0,Math.PI*2);ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#c0392b';
+  ctx.beginPath();ctx.moveTo(waypoint.x,waypoint.y-10);ctx.lineTo(waypoint.x+9,waypoint.y+8);ctx.lineTo(waypoint.x-9,waypoint.y+8);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#333';ctx.fillText(I18N.t('waypoint_label','WAYPOINT'),waypoint.x,waypoint.y-16);
+  // current arrow
+  const cx=700,cy=60;
+  const curRad=current.dir*Math.PI/180;
+  const curLen=20+current.speed*8;
+  ctx.strokeStyle='#0277bd';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(cx+Math.sin(curRad)*curLen,cy-Math.cos(curRad)*curLen);ctx.stroke();
+  ctx.fillStyle='#0277bd';ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('current_label','CURRENT'),cx,cy-curLen-10);
+  ctx.font='11px Arial';
+  ctx.fillText(current.speed.toFixed(1)+' kn @ '+Math.round(current.dir)+'°',cx,cy+curLen+16);
+
+  // info text
+  ctx.fillStyle='#222';ctx.font='bold 14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('leg_info_label','Waypoint: bearing {b}° · distance {d} units').replace('{b}',Math.round(wpBearing)).replace('{d}',Math.round(wpDist)),20,24);
+  ctx.fillText(I18N.t('boat_speed_label','Boat speed: {s} kn').replace('{s}',boatSpeed),20,44);
+
+  if(phase==='RUN'||phase==='RESULT'){
+    ctx.strokeStyle='#e94560';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(start.x,start.y);
+    runFixes.forEach(f=>ctx.lineTo(f.x,f.y));
+    ctx.stroke();
+    runFixes.forEach((f,i)=>{
+      ctx.fillStyle='#ffd54f';
+      ctx.beginPath();ctx.arc(f.x,f.y,4,0,Math.PI*2);ctx.fill();
+    });
+    if(finalPos){
+      ctx.fillStyle='#8e24aa';
+      ctx.beginPath();ctx.arc(finalPos.x,finalPos.y,7,0,Math.PI*2);ctx.fill();
+    }
+  }
+
+  // dial
+  ctx.save();
+  ctx.fillStyle='#12324a';ctx.beginPath();ctx.arc(dialCenter.x,dialCenter.y,dialRadius+24,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#dff3ff';ctx.lineWidth=2;ctx.beginPath();ctx.arc(dialCenter.x,dialCenter.y,dialRadius+24,0,Math.PI*2);ctx.stroke();
+  for(let a=0;a<360;a+=30){
+    const rad=(a-90)*Math.PI/180;
+    ctx.strokeStyle='#5aa0c8';
+    ctx.beginPath();
+    ctx.moveTo(dialCenter.x+Math.cos(rad)*(dialRadius+10),dialCenter.y+Math.sin(rad)*(dialRadius+10));
+    ctx.lineTo(dialCenter.x+Math.cos(rad)*(dialRadius+22),dialCenter.y+Math.sin(rad)*(dialRadius+22));
+    ctx.stroke();
+  }
+  const hRad=toRad(heading);
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(dialCenter.x,dialCenter.y);
+  ctx.lineTo(dialCenter.x+Math.cos(hRad)*(dialRadius+18),dialCenter.y+Math.sin(hRad)*(dialRadius+18));
+  ctx.stroke();
+  ctx.fillStyle='#ffd54f';ctx.beginPath();ctx.arc(dialCenter.x,dialCenter.y,6,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 10px Arial';ctx.textAlign='center';
+  ctx.fillText('N',dialCenter.x,dialCenter.y-dialRadius-28);
+  ctx.restore();
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(!started){
+    ctx.fillStyle='#e8ecd7';ctx.fillRect(0,0,800,420);
+    ctx.fillStyle='#333';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start'),400,200);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    drawChart();
+    ctx.fillStyle='rgba(20,20,30,0.75)';ctx.fillRect(0,0,800,420);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,190);
+    ctx.font='20px Arial';ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,228);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(phase==='RUN'){
+    runProgress+=dt*0.03;
+    if(runProgress>=1){finishRun();}
+  }
+
+  drawChart();
+
+  if(phase==='RESULT'){
+    ctx.fillStyle='rgba(20,20,30,0.55)';ctx.fillRect(0,300,800,120);
+    ctx.fillStyle=resultGood?'#7ec850':'#ff6b35';
+    ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(resultText,400,340);
+    ctx.fillStyle='#fff';ctx.font='16px Arial';
+    ctx.fillText(I18N.t('continue_hint','Tap / Space / Enter to continue'),400,368);
+  }
+  requestAnimationFrame(loop);
+}
+loop();
+setHud();
+</script></body></html>

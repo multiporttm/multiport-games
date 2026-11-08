@@ -1,0 +1,323 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Decompression Stop Monitoring</title><meta name="description" content="Play Decompression Stop Monitoring free online — Guide a diver's ascent, hold at every required decompression stop for the full duration, then surface safely. Puzzle game."><link rel="canonical" href="https://games.multiportllc.com/games/decompressionstopmonitoring"><meta property="og:title" content="Decompression Stop Monitoring - Multiport Games"><meta property="og:description" content="Play Decompression Stop Monitoring free online — Guide a diver's ascent, hold at every required decompression stop for the full duration, then surface safely. Puzzle game."><meta property="og:url" content="https://games.multiportllc.com/games/decompressionstopmonitoring"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Decompression Stop Monitoring","description":"Play Decompression Stop Monitoring free online instantly. Monitor a diver's ascent: correctly time the required decompression stops at the right depths for the dive profile's accumulated nitrogen load, hold at each stop for the correct duration, and keep air in reserve while ascending safely to the surface. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/decompressionstopmonitoring","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#031824;display:block;border-radius:8px;touch-action:none;user-select:none}
+#hud{color:#dff3ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span.lv{color:#ffd54f}
+#hud span.hs{color:#7ec850}
+#hud span.liv{color:#e94560}
+#hud span.at{color:#8fd3f4}
+#actions{margin:10px auto 0;display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
+#actions button{padding:12px 26px;background:#1e88e5;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;font-weight:700;touch-action:none;user-select:none}
+#actions button.down{background:#546e7a}
+#actions button:active{filter:brightness(0.85)}
+#actions button.hidden{display:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Decompression Stop Monitoring</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0</span>
+      <span class="lv" id="levelDisp">Dive: 1</span>
+      <span class="at" id="statusDisp">Depth: 100ft</span>
+      <span class="liv" id="livesDisp">Lives: ❤❤❤</span>
+      <span class="hs" id="hsDisp">Hi: 0</span>
+    </div>
+    <canvas id="c" width="800" height="400"></canvas>
+    <div id="actions">
+      <button id="mainBtn">Start</button>
+      <button id="ascendBtn" class="hidden">Hold to Ascend (Up)</button>
+      <button id="descendBtn" class="down hidden">Hold to Descend (Down)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Up Arrow</b> or the <b>Ascend button</b> to rise; hold <b>Down Arrow</b> or the <b>Descend button</b> to sink back down. Stop and hold steady inside each glowing <b>decompression stop</b> band until its timer fills, then keep ascending. Blow through a required stop without completing it, or run out of air, and it is a dive injury!</div>
+</div>
+<script>
+(function(){
+const HS_KEY='decompressionstopmonitoring_hs';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+const START_DEPTH_BASE=90;
+const TOP=40,BOTTOM=340; // pixel range for the depth track
+
+let score=0,hi=0,level=1,lives=3,gameOver=false,started=false;
+let depth=0,maxDepth=100,ascendRate=9,ascending=false,descending=false;
+let zones=[],air=100,airDrain=1.2;
+let diveCount=0,divesNeeded=2;
+let feedbackMsg='',feedbackTimer=0,feedbackGood=true;
+
+function loadHi(){ try{ hi=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0; }catch(e){ hi=0; } }
+function saveHi(){ try{ localStorage.setItem(HS_KEY,String(hi)); }catch(e){} }
+loadHi();
+
+function buildZones(){
+  maxDepth=START_DEPTH_BASE+level*8;
+  const count=Math.min(4,1+Math.floor((level-1)/2));
+  zones=[];
+  const stopDepths=[15,10,20,30].slice(0,count).sort((a,b)=>b-a);
+  stopDepths.forEach(d=>{
+    if(d<maxDepth-5){
+      zones.push({depth:d,band:4,required:3+level*0.6,held:0,done:false,missed:false});
+    }
+  });
+  zones.sort((a,b)=>b.depth-a.depth);
+}
+
+function levelParams(){
+  ascendRate=9+level*0.6;
+  airDrain=1.0+level*0.12;
+  divesNeeded=2+Math.floor((level-1)/2);
+  buildZones();
+}
+
+function newDive(){
+  depth=maxDepth;
+  air=100;
+  ascending=false;descending=false;
+  zones.forEach(z=>{z.held=0;z.done=false;z.missed=false;});
+}
+
+function reset(){
+  score=0;level=1;lives=3;gameOver=false;diveCount=0;
+  levelParams();
+  newDive();
+}
+reset();
+
+function setFeedback(msg,good){ feedbackMsg=msg;feedbackGood=good;feedbackTimer=1.1; }
+
+function startGame(){ if(!started){started=true;} else if(gameOver){reset();started=true;} }
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;saveHi();}
+  SFX.lose();
+}
+
+function loseLife(msg){
+  lives--;
+  SFX.fail();
+  setFeedback(msg,false);
+  if(lives<=0){ endGame(); return true; }
+  return false;
+}
+
+function finishDive(){
+  const bonus=Math.round(air*1.5)+30+level*5;
+  score+=bonus;
+  if(score>hi){hi=score;saveHi();}
+  SFX.win();
+  setFeedback(I18N.t('surfaced_msg','Surfaced safely! +{s}').replace('{s}',bonus),true);
+  diveCount++;
+  if(diveCount>=divesNeeded){
+    level++;
+    diveCount=0;
+    SFX.levelup();
+    levelParams();
+  }
+  newDive();
+}
+
+const ascendBtn=document.getElementById('ascendBtn');
+const descendBtn=document.getElementById('descendBtn');
+function setAscend(v){ if(v&&!started){startGame();} if(gameOver)return; ascending=v; if(v)descending=false; }
+function setDescend(v){ if(v&&!started){startGame();} if(gameOver)return; descending=v; if(v)ascending=false; }
+
+ascendBtn.addEventListener('pointerdown',e=>{e.preventDefault();setAscend(true);});
+ascendBtn.addEventListener('pointerup',e=>{e.preventDefault();setAscend(false);});
+ascendBtn.addEventListener('pointerleave',()=>setAscend(false));
+ascendBtn.addEventListener('pointercancel',()=>setAscend(false));
+descendBtn.addEventListener('pointerdown',e=>{e.preventDefault();setDescend(true);});
+descendBtn.addEventListener('pointerup',e=>{e.preventDefault();setDescend(false);});
+descendBtn.addEventListener('pointerleave',()=>setDescend(false));
+descendBtn.addEventListener('pointercancel',()=>setDescend(false));
+
+c.addEventListener('pointerdown',e=>{
+  if(!started){startGame();return;}
+  if(gameOver){reset();started=true;return;}
+  const rect=c.getBoundingClientRect();
+  const my=(e.clientY-rect.top)*(H/rect.height);
+  if(my<H/2)setAscend(true); else setDescend(true);
+});
+c.addEventListener('pointerup',()=>{ setAscend(false); setDescend(false); });
+c.addEventListener('pointerleave',()=>{ setAscend(false); setDescend(false); });
+
+document.getElementById('mainBtn').addEventListener('click',()=>{ startGame(); });
+
+document.addEventListener('keydown',e=>{
+  if(!started){ if(e.code==='Space'||e.code==='Enter'){ e.preventDefault(); startGame(); } return; }
+  if(gameOver){ if(e.code==='Space'||e.code==='Enter'){ e.preventDefault(); reset(); started=true; } return; }
+  if(e.code==='ArrowUp'){ e.preventDefault(); setAscend(true); }
+  else if(e.code==='ArrowDown'){ e.preventDefault(); setDescend(true); }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp')setAscend(false);
+  else if(e.code==='ArrowDown')setDescend(false);
+});
+window.addEventListener('blur',()=>{ setAscend(false); setDescend(false); });
+
+function zoneAt(d){
+  for(const z of zones){
+    if(!z.done&&Math.abs(d-z.depth)<=z.band/2)return z;
+  }
+  return null;
+}
+
+function depthToY(d){ return TOP+(1-d/maxDepth)*(BOTTOM-TOP); }
+
+function drawTrack(){
+  ctx.fillStyle='#0a3348';ctx.fillRect(60,TOP,30,BOTTOM-TOP);
+  zones.forEach(z=>{
+    const yc=depthToY(z.depth);
+    const yTop=depthToY(z.depth+z.band/2),yBot=depthToY(z.depth-z.band/2);
+    ctx.fillStyle=z.done?'#4caf5088':(z.missed?'#e9456055':'#ffd54f55');
+    ctx.fillRect(60,yTop,30,yBot-yTop);
+    ctx.strokeStyle=z.done?'#4caf50':(z.missed?'#e94560':'#ffd54f');
+    ctx.lineWidth=2;
+    ctx.strokeRect(60,yTop,30,yBot-yTop);
+    ctx.fillStyle='#dff3ff';ctx.font='bold 13px Arial';ctx.textAlign='left';
+    ctx.fillText(z.depth+'ft stop',100,yc+4);
+    if(!z.done&&!z.missed){
+      const frac=Math.min(1,z.held/z.required);
+      ctx.fillStyle='#07202c';ctx.fillRect(220,yc-8,90,16);
+      ctx.fillStyle='#4caf50';ctx.fillRect(220,yc-8,90*frac,16);
+      ctx.strokeStyle='#0d3b4e';ctx.strokeRect(220,yc-8,90,16);
+    }
+  });
+  // surface marker
+  ctx.fillStyle='#8fd3f4';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('surface_label','SURFACE'),100,TOP-6);
+  // diver marker
+  const dy=depthToY(depth);
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.moveTo(75,dy);ctx.lineTo(60,dy-9);ctx.lineTo(60,dy+9);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#1976d2';ctx.beginPath();ctx.arc(45,dy,11,0,Math.PI*2);ctx.fill();
+}
+
+function drawGauges(){
+  // air gauge
+  const gx=630,gy=60,gw=40,gh=260;
+  ctx.fillStyle='#07202c';ctx.fillRect(gx,gy,gw,gh);
+  ctx.strokeStyle='#0d3b4e';ctx.lineWidth=2;ctx.strokeRect(gx,gy,gw,gh);
+  const frac=Math.max(0,air/100);
+  const h=gh*frac;
+  ctx.fillStyle=frac<0.25?'#e94560':'#8fd3f4';
+  ctx.fillRect(gx+4,gy+gh-h+4,gw-8,h-8>0?h-8:0);
+  ctx.fillStyle='#dff3ff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('air_label','AIR'),gx+gw/2,gy-10);
+  ctx.fillText(Math.round(air)+'%',gx+gw/2,gy+gh+20);
+}
+
+function updateHud(){
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',Math.floor(score));
+  document.getElementById('levelDisp').textContent=I18N.t('dive_label','Dive: {l}').replace('{l}',level);
+  document.getElementById('statusDisp').textContent=I18N.t('depth_label','Depth: {d}ft').replace('{d}',Math.round(depth));
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {h}').replace('{h}','❤'.repeat(Math.max(0,lives)));
+  document.getElementById('hsDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',Math.floor(hi));
+  const btn=document.getElementById('mainBtn');
+  if(!started){ btn.textContent=I18N.t('start_hint_btn','Start'); btn.classList.remove('hidden'); ascendBtn.classList.add('hidden'); descendBtn.classList.add('hidden'); }
+  else if(gameOver){ btn.textContent=I18N.t('restart_btn','Restart'); btn.classList.remove('hidden'); ascendBtn.classList.add('hidden'); descendBtn.classList.add('hidden'); }
+  else { btn.classList.add('hidden'); ascendBtn.classList.remove('hidden'); descendBtn.classList.remove('hidden'); }
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#073347');sky.addColorStop(1,'#020e16');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#dff3ff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('ascent_title','Controlled Ascent'),W/2,26);
+
+  if(!started){
+    drawTrack();drawGauges();
+    ctx.fillStyle='#ffd54f99';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Hold Up / Tap top half to start'),W/2,H-14);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawTrack();drawGauges();
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';
+    ctx.fillText(I18N.t('game_over_title','DIVE INJURY'),W/2,H/2-10);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Score: {s} — Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi)),W/2,H/2+24);
+    ctx.fillText(I18N.t('restart_hint','Tap or Enter to restart'),W/2,H/2+56);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(feedbackTimer>0)feedbackTimer-=dt;
+
+  if(dt>0){
+    const curZone=zoneAt(depth);
+    const inHoldingZone=curZone&&!curZone.done;
+    if(ascending&&!(inHoldingZone)){
+      depth=Math.max(0,depth-ascendRate*dt);
+    } else if(descending){
+      depth=Math.min(maxDepth,depth+ascendRate*dt);
+    }
+    if(inHoldingZone){
+      curZone.held+=dt;
+      if(curZone.held>=curZone.required){
+        curZone.done=true;
+        SFX.success();
+        setFeedback(I18N.t('stop_cleared_msg','Stop cleared — continue ascending.'),true);
+      }
+    }
+    // check for missed zones (drifted past without completing)
+    zones.forEach(z=>{
+      if(!z.done&&!z.missed&&depth<z.depth-z.band/2){
+        z.missed=true;
+        const died=loseLife(I18N.t('skipped_stop_msg','Skipped a required decompression stop!'));
+        if(died)return;
+      }
+    });
+    air-=airDrain*dt;
+    if(air<=0){
+      air=0;
+      if(!gameOver){ const died=loseLife(I18N.t('out_of_air_msg','Ran out of air!')); if(died){} else { newDive(); } }
+    }
+    if(!gameOver&&depth<=0){
+      finishDive();
+    }
+  }
+
+  drawTrack();
+  drawGauges();
+
+  ctx.fillStyle='#dff3ff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('progress_label','Dives this round: {d}/{n}').replace('{d}',diveCount).replace('{n}',divesNeeded),W/2,H-6);
+
+  if(feedbackTimer>0){
+    ctx.fillStyle=feedbackGood?'rgba(76,175,80,0.18)':'rgba(231,76,60,0.18)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle=feedbackGood?'#4caf50':'#e94560';
+    ctx.font='bold 20px Arial';
+    ctx.fillText(feedbackMsg,W/2,H/2);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+})();
+</script></body></html>

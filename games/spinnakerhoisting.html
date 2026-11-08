@@ -1,0 +1,234 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Spinnaker Hoisting</title><meta name="description" content="Play Spinnaker Hoisting free online — Pull the halyard in a steady rhythm after rounding each mark to fill the spinnaker cleanly without a wrap or a collapse."><link rel="canonical" href="https://games.multiportllc.com/games/spinnakerhoisting"><meta property="og:title" content="Spinnaker Hoisting - Multiport Games"><meta property="og:description" content="Play Spinnaker Hoisting free online — Pull the halyard in a steady rhythm after rounding each mark to fill the spinnaker cleanly without a wrap or a collapse."><meta property="og:url" content="https://games.multiportllc.com/games/spinnakerhoisting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Spinnaker Hoisting","description":"Play Spinnaker Hoisting free online instantly. Round the mark then pull the halyard in a steady rhythm, not too fast, not too slow, to hoist a clean spinnaker while the crew sets the pole. Pull too quickly and the sail wraps the headstay; hesitate too long and it collapses. The rhythm window tightens every mark. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/spinnakerhoisting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0e3a5f;display:block;border-radius:8px;touch-action:none}
+#hud{color:#dff3ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#rhythmWrap{max-width:600px;margin:0 auto 8px;background:#0a2438;border-radius:10px;padding:4px}
+#rhythmBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#ffd54f,#ff6b35);width:0%;transition:width .08s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Spinnaker Hoisting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="roundLbl">Mark 1</span>
+    </div>
+    <div id="rhythmWrap"><div id="rhythmBar"></div></div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> After rounding each mark, pull the halyard with <b>Space</b>, <b>Up Arrow</b>, or a <b>Tap/Click</b> in a steady rhythm. Pull again too fast and the spinnaker wraps the headstay; wait too long between pulls and it collapses. Keep a smooth, even beat to hoist it clean. Each mark the rhythm window gets tighter — lose all 3 lives and the race is over!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const GAME_ID='spinnakerhoisting';
+let hi=parseInt(localStorage.getItem(GAME_ID+'_hi')||'0',10);
+let score=0,lives=3,level=1,gameOver=false,started=false;
+let phase='INTRO'; // INTRO, APPROACH, HOIST, RESULT
+let fill=0,lastPullTime=null,phaseStart=0,resultText='',resultGood=false,resultTimer=0;
+let gapHistory=[];
+let boatX=300,waveT=0;
+
+function minGap(){return Math.max(95,220-(level-1)*9);}
+function maxGap(){return Math.max(360,640-(level-1)*22);}
+function idealGap(){return (minGap()+maxGap())/2;}
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('roundLbl').textContent=I18N.t('mark_label','Mark {n}').replace('{n}',level);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=true;
+  startApproach();
+  setHud();
+}
+
+function startApproach(){
+  phase='APPROACH';phaseStart=performance.now();fill=0;lastPullTime=null;gapHistory=[];
+}
+
+function startHoist(){
+  phase='HOIST';phaseStart=performance.now();fill=0;lastPullTime=null;gapHistory=[];
+}
+
+function fail(kind){
+  phase='RESULT';resultGood=false;lives--;
+  resultText = kind==='wrap' ? I18N.t('wrap_msg','WRAPPED! Pulled too fast.') : I18N.t('collapse_msg','COLLAPSED! Too slow.');
+  SFX.fail();
+  resultTimer=performance.now();
+  setHud();
+  if(lives<=0){ gameOver=true; SFX.lose(); if(score>hi){hi=score;localStorage.setItem(GAME_ID+'_hi',String(Math.floor(hi)));} }
+}
+
+function succeed(){
+  phase='RESULT';resultGood=true;
+  let avgDev=0;
+  if(gapHistory.length){
+    avgDev=gapHistory.reduce((a,g)=>a+Math.abs(g-idealGap()),0)/gapHistory.length;
+  }
+  const precisionBonus=Math.max(0,60-Math.floor(avgDev/4));
+  score+=100*level+precisionBonus;
+  if(score>hi){hi=score;localStorage.setItem(GAME_ID+'_hi',String(Math.floor(hi)));}
+  resultText=I18N.t('hoisted_msg','SPINNAKER UP! +{p}').replace('{p}',100*level+precisionBonus);
+  SFX.success();
+  resultTimer=performance.now();
+  level++;
+  setHud();
+}
+
+function pull(){
+  if(!started||gameOver){reset();return;}
+  if(phase==='APPROACH'){
+    // early pull during approach just gets ignored, treat as impatience warning
+    return;
+  }
+  if(phase!=='HOIST')return;
+  const now=performance.now();
+  if(lastPullTime!==null){
+    const gap=now-lastPullTime;
+    if(gap<minGap()){fail('wrap');return;}
+    gapHistory.push(gap);
+  }
+  lastPullTime=now;
+  fill=Math.min(100,fill+10);
+  SFX.click();
+  if(fill>=100){succeed();return;}
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.repeat)return;
+  if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();pull();}
+});
+c.addEventListener('pointerdown',e=>{e.preventDefault();pull();});
+c.addEventListener('touchstart',e=>{e.preventDefault();pull();},{passive:false});
+
+function drawBoat(fillPct,wrapped,collapsed){
+  ctx.save();
+  // water
+  const sky=ctx.createLinearGradient(0,0,0,320);
+  sky.addColorStop(0,'#0a2c4a');sky.addColorStop(1,'#0e3a5f');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,320);
+  ctx.fillStyle='#124a73';
+  for(let i=0;i<6;i++){
+    ctx.fillRect(0,250+i*8+Math.sin(waveT/20+i)*3,800,3);
+  }
+  // hull
+  ctx.fillStyle='#e8e8e8';
+  ctx.beginPath();
+  ctx.moveTo(boatX-90,260);ctx.lineTo(boatX+90,260);ctx.lineTo(boatX+70,285);ctx.lineTo(boatX-70,285);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#c0392b';ctx.fillRect(boatX-90,258,180,4);
+  // mast
+  ctx.strokeStyle='#8a6d3b';ctx.lineWidth=6;
+  ctx.beginPath();ctx.moveTo(boatX,260);ctx.lineTo(boatX,40);ctx.stroke();
+  // headstay (bow to top)
+  ctx.strokeStyle='#cfd8dc';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(boatX,40);ctx.lineTo(boatX+85,255);ctx.stroke();
+  // pole to leeward
+  ctx.strokeStyle='#8a6d3b';ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(boatX,80);ctx.lineTo(boatX-110,110);ctx.stroke();
+
+  if(wrapped){
+    ctx.strokeStyle='#ff6b35';ctx.lineWidth=10;ctx.lineCap='round';
+    ctx.beginPath();
+    for(let i=0;i<5;i++){
+      const yy=250-i*40;
+      ctx.moveTo(boatX-6,yy);ctx.lineTo(boatX+6,yy-18);
+    }
+    ctx.stroke();
+    ctx.fillStyle='#ffd54f';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText('✗',boatX+40,120);
+  } else if(collapsed){
+    ctx.fillStyle='#90a4ae';
+    ctx.beginPath();
+    ctx.moveTo(boatX,80);
+    ctx.quadraticCurveTo(boatX-60,160,boatX-100,230);
+    ctx.quadraticCurveTo(boatX-40,210,boatX,120);
+    ctx.closePath();ctx.fill();
+  } else if(fillPct>0){
+    const topY=80;
+    const bottomY=topY+(255-topY)*(fillPct/100);
+    const bulge=40*(fillPct/100);
+    ctx.fillStyle='#ff8c42';
+    ctx.beginPath();
+    ctx.moveTo(boatX,topY);
+    ctx.quadraticCurveTo(boatX-110-bulge*0.4,(topY+bottomY)/2,boatX-100,bottomY);
+    ctx.lineTo(boatX,bottomY-6);
+    ctx.quadraticCurveTo(boatX-20,(topY+bottomY)/2,boatX,topY);
+    ctx.closePath();ctx.fill();
+    ctx.fillStyle='#ffb27a';
+    ctx.beginPath();
+    ctx.moveTo(boatX,topY);
+    ctx.quadraticCurveTo(boatX+30,(topY+bottomY)/2,boatX,bottomY-6);
+    ctx.closePath();ctx.fill();
+  }
+  ctx.restore();
+}
+
+function loop(){
+  waveT++;
+  if(!started){
+    drawBoat(0,false,false);
+    ctx.fillStyle='#ffe08299';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start'),400,150);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    drawBoat(0,false,false);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,140);
+    ctx.font='20px Arial';ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,178);
+    document.getElementById('rhythmBar').style.width='0%';
+    requestAnimationFrame(loop);return;
+  }
+  const now=performance.now();
+
+  if(phase==='APPROACH'){
+    drawBoat(0,false,false);
+    const elapsed=now-phaseStart;
+    const waitTime=900;
+    ctx.fillStyle='#ffe082';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('approach_msg','Rounding the mark...'),400,140);
+    if(elapsed>waitTime){
+      startHoist();
+      SFX.swoosh();
+    }
+  } else if(phase==='HOIST'){
+    if(lastPullTime===null){
+      if(now-phaseStart>maxGap()){fail('collapse');}
+    } else if(now-lastPullTime>maxGap()&&fill<100){
+      fail('collapse');
+    }
+    drawBoat(fill,false,false);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('hoist_msg','HOIST! Pull steadily'),400,30);
+    document.getElementById('rhythmBar').style.width=fill+'%';
+  } else if(phase==='RESULT'){
+    drawBoat(resultGood?100:fill,!resultGood&&resultText.indexOf('WRAP')>=0,!resultGood&&resultText.indexOf('COLLAPSE')>=0);
+    ctx.fillStyle=resultGood?'#7ec850':'#ff6b35';
+    ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(resultText,400,150);
+    if(now-resultTimer>1100){
+      if(gameOver){/* handled next frame by gameOver branch */}
+      else startApproach();
+    }
+  }
+  requestAnimationFrame(loop);
+}
+loop();
+setHud();
+</script></body></html>
