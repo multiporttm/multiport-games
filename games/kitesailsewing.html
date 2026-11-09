@@ -1,0 +1,248 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Kite Sail Sewing</title><meta name="description" content="Play Kite Sail Sewing free online — Track the wandering seam line with your needle and stitch in rhythm to keep tension even. Drag, use arrow keys, or tap to steer. Puckered seams cost a life."><link rel="canonical" href="https://games.multiportllc.com/games/kitesailsewing"><meta property="og:title" content="Kite Sail Sewing - Multiport Games"><meta property="og:description" content="Play Kite Sail Sewing free online — Track the wandering seam line with your needle and stitch in rhythm to keep tension even. Drag, use arrow keys, or tap to steer. Puckered seams cost a life."><meta property="og:url" content="https://games.multiportllc.com/games/kitesailsewing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Kite Sail Sewing","description":"Play Kite Sail Sewing free online instantly. Track the wandering seam line with your needle and let it auto-stitch in rhythm, keeping the offset small so the panel tension stays even. Too many puckered stitches cost a life, across longer, wavier multi-panel sail designs. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/kitesailsewing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b2140;display:block;border-radius:8px;touch-action:none}
+#hud{color:#f3e9ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Kite Sail Sewing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span data-i18n="hud_panel">Panel: <b id="lvlEl">1</b></span>
+      <span data-i18n="hud_score">Score: <b id="scoreEl">0</b></span>
+      <span data-i18n="hud_lives">Lives: <b id="livesEl">3</b></span>
+      <span data-i18n="hud_hi">Hi: <b id="hiEl">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    Move the needle with your <b>mouse/touch</b> or <b>↑ ↓ arrow keys</b> to follow the wandering seam line. The needle auto-stitches in rhythm — the closer you stay to the line when it stitches, the more even the tension. Too many puckered stitches cost a life. Finish each panel's stitch count to move to a longer, wavier sail!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const lvlEl=document.getElementById('lvlEl'),scoreEl=document.getElementById('scoreEl'),livesEl=document.getElementById('livesEl'),hiEl=document.getElementById('hiEl');
+const HI_KEY='kitesailsewing_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+hiEl.textContent=hi;
+
+let level=1,score=0,lives=3,gameOver=false,won=false,started=false;
+const MAX_LEVEL=5;
+let needleY=170,targetKeyOffset=0;
+let t=0,lastTime=null;
+let stitchTimer=0,stitchInterval=1.1;
+let stitchesDone=0,stitchesNeeded=16;
+let puckerMeter=0; // 0..100
+let amp=22,freq=1.2,tolTight=10,tolLoose=24;
+let needleX=120; // fixed sewing head x position, fabric scrolls under it
+let scrollOffset=0;
+let particles=[];
+let flashColor=null,flashTimer=0;
+let keys={up:false,down:false};
+
+function seamY(x){
+  return 170+Math.sin((x+scrollOffset)*0.02*freq)*amp + Math.sin((x+scrollOffset)*0.007*freq)*amp*0.4;
+}
+
+function levelParams(lv){
+  amp=18+lv*6;
+  freq=1+lv*0.22;
+  tolTight=Math.max(5,11-lv);
+  tolLoose=Math.max(14,26-lv*1.5);
+  stitchInterval=Math.max(0.42,1.0-lv*0.09);
+  stitchesNeeded=14+lv*5;
+}
+
+function startLevel(lv){
+  level=lv;levelParams(lv);
+  stitchesDone=0;puckerMeter=0;stitchTimer=0;scrollOffset=0;
+  lvlEl.textContent=lv;
+  needleY=seamY(needleX);
+}
+
+function restart(){
+  score=0;lives=3;gameOver=false;won=false;started=false;
+  scoreEl.textContent=0;livesEl.textContent=3;
+  startLevel(1);
+}
+
+function addScore(n){score+=n;scoreEl.textContent=score;if(score>hi){hi=score;hiEl.textContent=hi;localStorage.setItem(HI_KEY,String(hi));}}
+
+function loseLife(){
+  lives--;livesEl.textContent=Math.max(0,lives);
+  SFX.hurt();
+  flashColor='rgba(255,0,0,.3)';flashTimer=16;
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    SFX.lose();
+  }else{
+    puckerMeter=40;
+  }
+}
+
+function doStitch(){
+  const seam=seamY(needleX);
+  const off=Math.abs(needleY-seam);
+  particles.push({x:needleX,y:needleY,life:20});
+  if(off<=tolTight){
+    SFX.point();addScore(20);puckerMeter=Math.max(0,puckerMeter-8);flashColor='rgba(80,255,120,.18)';flashTimer=8;
+  }else if(off<=tolLoose){
+    SFX.tick();addScore(8);puckerMeter=Math.min(100,puckerMeter+10);
+  }else{
+    SFX.error();puckerMeter=Math.min(100,puckerMeter+26);flashColor='rgba(255,180,0,.22)';flashTimer=10;
+  }
+  stitchesDone++;
+  if(puckerMeter>=100){
+    puckerMeter=0;
+    loseLife();
+  }
+  if(!gameOver&&stitchesDone>=stitchesNeeded){
+    SFX.success();
+    if(level>=MAX_LEVEL){
+      won=true;gameOver=true;SFX.win();
+      if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    }else{
+      startLevel(level+1);
+    }
+  }
+}
+
+function canvasPos(e){
+  const r=c.getBoundingClientRect();
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return cy*(c.height/r.height);
+}
+
+function onDown(e){
+  e.preventDefault();
+  if(!started){started=true;return;}
+  if(gameOver){restart();return;}
+  needleY=canvasPos(e);
+}
+function onMove(e){
+  if(!started||gameOver)return;
+  if(e.buttons===0&&e.type==='mousemove')return;
+  needleY=canvasPos(e);
+}
+c.addEventListener('mousedown',onDown);
+c.addEventListener('mousemove',onMove);
+c.addEventListener('touchstart',onDown,{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();onMove(e);},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowUp'){keys.up=true;e.preventDefault();}
+  if(e.code==='ArrowDown'){keys.down=true;e.preventDefault();}
+  if(e.code==='Space'||e.code==='Enter'){
+    e.preventDefault();
+    if(!started){started=true;return;}
+    if(gameOver){restart();}
+  }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp')keys.up=false;
+  if(e.code==='ArrowDown')keys.down=false;
+});
+
+function draw(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,800,340);
+  const bg=ctx.createLinearGradient(0,0,0,340);
+  bg.addColorStop(0,'#241a38');bg.addColorStop(1,'#2b2140');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,340);
+
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('panel_label','Sail Panel '+level+' — fabric scrolling under the needle'),400,26);
+
+  if(!started){
+    ctx.fillStyle='#f3e9ff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint2','Click / Tap / Space to start sewing'),400,170);
+    requestAnimationFrame(draw);return;
+  }
+
+  if(!gameOver){
+    scrollOffset+=70*dt/60;
+    if(keys.up)needleY-=3.2*dt;
+    if(keys.down)needleY+=3.2*dt;
+    needleY=Math.max(40,Math.min(300,needleY));
+
+    stitchTimer+=dt/60;
+    if(stitchTimer>=stitchInterval){stitchTimer-=stitchInterval;doStitch();}
+  }
+
+  // draw seam line
+  ctx.beginPath();
+  ctx.strokeStyle='rgba(255,213,79,.8)';ctx.setLineDash([6,5]);ctx.lineWidth=2;
+  for(let x=0;x<=760;x+=6){
+    const y=seamY(x);
+    if(x===0)ctx.moveTo(x+20,y);else ctx.lineTo(x+20,y);
+  }
+  ctx.stroke();ctx.setLineDash([]);
+
+  // tolerance band around current needle x
+  const seam=seamY(needleX);
+  ctx.fillStyle='rgba(76,175,80,.18)';
+  ctx.fillRect(needleX-6,seam-tolTight,12,tolTight*2);
+  ctx.fillStyle='rgba(255,193,7,.12)';
+  ctx.fillRect(needleX-6,seam-tolLoose,12,tolLoose*2);
+
+  // stitched dots trail
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    ctx.fillStyle='rgba(255,255,255,'+(p.life/20)+')';
+    ctx.beginPath();ctx.arc(p.x,p.y,4,0,7);ctx.fill();
+    p.life-=dt;
+  });
+
+  // needle
+  ctx.strokeStyle='#e0e0e0';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(needleX,0);ctx.lineTo(needleX,needleY-10);ctx.stroke();
+  ctx.fillStyle='#e94560';
+  ctx.beginPath();ctx.arc(needleX,needleY,7,0,7);ctx.fill();
+
+  // pucker meter
+  ctx.fillStyle='#333';ctx.fillRect(560,50,200,16);
+  ctx.fillStyle=puckerMeter>70?'#ff5252':(puckerMeter>35?'#ffb300':'#4caf50');
+  ctx.fillRect(560,50,200*(puckerMeter/100),16);
+  ctx.strokeStyle='#fff';ctx.strokeRect(560,50,200,16);
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('pucker_label','Pucker'),560,46);
+
+  // progress
+  ctx.fillStyle='#333';ctx.fillRect(40,50,200,16);
+  ctx.fillStyle='#64b5f6';
+  ctx.fillRect(40,50,200*Math.min(1,stitchesDone/stitchesNeeded),16);
+  ctx.strokeStyle='#fff';ctx.strokeRect(40,50,200,16);
+  ctx.fillText(I18N.t('stitches_label','Stitches '+stitchesDone+'/'+stitchesNeeded),40,46);
+
+  if(flashTimer>0&&flashColor){
+    ctx.fillStyle=flashColor;ctx.fillRect(0,0,800,340);flashTimer--;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.72)';ctx.fillRect(0,0,800,340);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('win_title2','SAIL COMPLETE!'):I18N.t('game_over_title','GAME OVER'),400,150);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Score: {s}').replace('{s}',score),400,186);
+    ctx.fillText(I18N.t('restart_hint2','Click or press Space/Enter to restart'),400,218);
+  }
+
+  requestAnimationFrame(draw);
+}
+
+restart();
+draw();
+</script></body></html>
