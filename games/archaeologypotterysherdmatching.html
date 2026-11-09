@@ -1,0 +1,345 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Archaeology Pottery Sherd Matching</title><meta name="description" content="Play Archaeology Pottery Sherd Matching free online — Fit broken pottery sherds together by their edge patterns and decoration to reconstruct ancient vessels."><link rel="canonical" href="https://games.multiportllc.com/games/archaeologypotterysherdmatching"><meta property="og:title" content="Archaeology Pottery Sherd Matching - Multiport Games"><meta property="og:description" content="Play Archaeology Pottery Sherd Matching free online — Fit broken pottery sherds together by their edge patterns and decoration to reconstruct ancient vessels."><meta property="og:url" content="https://games.multiportllc.com/games/archaeologypotterysherdmatching"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Archaeology Pottery Sherd Matching - Multiport Games"><meta name="twitter:description" content="Play Archaeology Pottery Sherd Matching free online — Fit broken pottery sherds together by their edge patterns and decoration to reconstruct ancient vessels."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Archaeology Pottery Sherd Matching","description":"Play Archaeology Pottery Sherd Matching free online instantly. Drag scattered broken pottery sherds onto a grid outline and rotate them with a click to line up matching edge notches and painted decoration, reconstructing the ancient vessel before time runs out. Later vessels are more shattered and larger, with trickier decoration to align. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/archaeologypotterysherdmatching","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#d8c3a0;display:block;border-radius:8px;touch-action:none}
+#hud{color:#5a3c1e;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px;color:#e94560}
+#ctrlRow{display:flex;justify-content:center;gap:10px;margin:10px 0;flex-wrap:wrap}
+#ctrlRow button{padding:12px 24px;background:#b5743a;border:none;border-radius:12px;color:#fff;font-weight:800;font-size:1rem;cursor:pointer;min-width:120px}
+#ctrlRow button:active{transform:scale(.92)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Archaeology Pottery Sherd Matching</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Vessel 1</span>
+    </div>
+    <canvas id="c" width="800" height="340"></canvas>
+    <div id="ctrlRow">
+      <button id="rotBtn">Rotate Selected (R)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Drag the scattered pottery sherds on the left into their matching slots in the vessel outline on the right. Click a sherd (or press <b>R</b> while it's selected) to rotate it 90° — edges and painted decoration must line up correctly to lock a sherd in place; a wrong placement costs a life. Reconstruct the whole vessel before the timer runs out to advance — each new vessel is more shattered and larger than the last.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const GID='archaeologypotterysherdmatching';
+let score=0,hi=parseInt(localStorage.getItem(GID+'_hi')||'0',10);
+let lives=3,level=1,gameOver=false,started=false,won=false;
+const MAXLVL=5;
+
+let gridCols=2,gridRows=2,cellSize=70;
+const BOARD_X=460,BOARD_Y=40;
+let sherds=[]; // {col,row,correctRot, curRot, x,y, w,h, placed, color, pattern, dragging}
+let selected=null,dragOff={x:0,y:0};
+let timeLeft=0,timeLimit=0,placedCount=0,totalSherds=0;
+let dragging=null;
+
+function palette(lvl){
+  const sets=[
+    {base:'#c87f41',deco:'#5a2e12'},
+    {base:'#b5774a',deco:'#2e3a5a'},
+    {base:'#d49a5a',deco:'#7a1f1f'},
+    {base:'#a8703f',deco:'#1f5a3a'},
+    {base:'#c08a4e',deco:'#4a1f5a'}
+  ];
+  return sets[(lvl-1)%sets.length];
+}
+
+function buildVessel(lvl){
+  gridCols=Math.min(5,1+lvl);
+  gridRows=gridCols;
+  cellSize=Math.min(70,260/gridCols);
+  totalSherds=gridCols*gridRows;
+  placedCount=0;
+  const pal=palette(lvl);
+  sherds=[];
+  // decoration: each cell gets a deterministic pattern index based on position so edges can "match" visually/logically
+  for(let r=0;r<gridRows;r++){
+    for(let cc=0;cc<gridCols;cc++){
+      const patternSeed=(r*7+cc*13+level*3)%4;
+      sherds.push({
+        col:cc,row:r,
+        correctRot:0,
+        curRot:[0,1,2,3][Math.floor(Math.random()*4)]*90,
+        placed:false,
+        color:pal.base,
+        deco:pal.deco,
+        pattern:patternSeed,
+        x:0,y:0,
+        homeX:0,homeY:0
+      });
+    }
+  }
+  // scatter sherds on the left side
+  const areaW=380,areaH=260;
+  sherds.forEach(s=>{
+    s.x=20+Math.random()*(areaW-cellSize);
+    s.y=40+Math.random()*(areaH-cellSize);
+    s.homeX=s.x;s.homeY=s.y;
+  });
+  timeLimit=Math.max(2400,5400-level*500);
+  timeLeft=timeLimit;
+}
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('vessel_label','Vessel {l}').replace('{l}',level);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;won=false;
+  buildVessel(level);
+  setHud();
+}
+
+function slotRect(col,row){
+  return {x:BOARD_X+col*cellSize,y:BOARD_Y+row*cellSize,w:cellSize,h:cellSize};
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const touch=e.touches?e.touches[0]:(e.changedTouches?e.changedTouches[0]:e);
+  const cx=(touch.clientX)-rect.left;
+  const cy=(touch.clientY)-rect.top;
+  return {x:cx*(800/rect.width),y:cy*(340/rect.height)};
+}
+
+function sherdAt(x,y){
+  for(let i=sherds.length-1;i>=0;i--){
+    const s=sherds[i];
+    if(s.placed)continue;
+    if(x>=s.x&&x<=s.x+cellSize&&y>=s.y&&y<=s.y+cellSize)return s;
+  }
+  return null;
+}
+
+function onDown(e){
+  e.preventDefault();
+  if(!started){started=true;buildVessel(level);setHud();return;}
+  if(gameOver||won){reset();return;}
+  const p=pointerPos(e);
+  const s=sherdAt(p.x,p.y);
+  if(s){
+    selected=s;
+    dragging=s;
+    dragOff.x=p.x-s.x;dragOff.y=p.y-s.y;
+  }
+}
+function onMove(e){
+  if(!dragging)return;
+  e.preventDefault();
+  const p=pointerPos(e);
+  dragging.x=p.x-dragOff.x;
+  dragging.y=p.y-dragOff.y;
+}
+function onUp(e){
+  if(!dragging)return;
+  e.preventDefault();
+  const s=dragging;
+  dragging=null;
+  const slot=slotRect(s.col,s.row);
+  const cx=s.x+cellSize/2,cy=s.y+cellSize/2;
+  const scx=slot.x+cellSize/2,scy=slot.y+cellSize/2;
+  if(Math.hypot(cx-scx,cy-scy)<cellSize*0.55){
+    // dropped near its correct slot — check rotation
+    if(s.curRot%360===0){
+      s.placed=true;s.x=slot.x;s.y=slot.y;
+      placedCount++;score+=20*level;
+      SFX.success();
+      setHud();
+      checkDone();
+    }else{
+      lives--;score=Math.max(0,score-5);SFX.error();
+      setHud();
+      s.x=s.homeX;s.y=s.homeY;
+      if(lives<=0)endLose();
+    }
+  }
+  // else: just drop where released (free placement), no penalty for exploring position
+}
+
+function endLose(){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem(GID+'_hi',hi);}
+  SFX.lose();
+}
+
+function checkDone(){
+  if(placedCount>=totalSherds){
+    score+=80*level;
+    SFX.win();
+    setHud();
+    setTimeout(()=>{
+      if(gameOver)return;
+      if(level>=MAXLVL){
+        won=true;
+        if(score>hi){hi=score;localStorage.setItem(GID+'_hi',hi);}
+        setHud();
+      }else{
+        level++;buildVessel(level);setHud();
+      }
+    },700);
+  }
+}
+
+c.addEventListener('mousedown',onDown);
+c.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+c.addEventListener('touchstart',onDown,{passive:false});
+c.addEventListener('touchmove',onMove,{passive:false});
+c.addEventListener('touchend',onUp,{passive:false});
+
+function rotateSelected(){
+  if(!selected||selected.placed)return;
+  selected.curRot=(selected.curRot+90)%360;
+  SFX.click();
+}
+document.getElementById('rotBtn').addEventListener('click',()=>{
+  if(!started){started=true;buildVessel(level);setHud();return;}
+  if(gameOver||won){reset();return;}
+  rotateSelected();
+});
+document.addEventListener('keydown',e=>{
+  if(e.code==='KeyR'){e.preventDefault();rotateSelected();}
+  else if(e.code==='Space'){
+    e.preventDefault();
+    if(!started){started=true;buildVessel(level);setHud();}
+    else if(gameOver||won)reset();
+  }else if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)&&selected&&!selected.placed){
+    e.preventDefault();
+    const step=18;
+    if(e.code==='ArrowUp')selected.y-=step;
+    if(e.code==='ArrowDown')selected.y+=step;
+    if(e.code==='ArrowLeft')selected.x-=step;
+    if(e.code==='ArrowRight')selected.x+=step;
+  }else if(e.code==='Enter'&&selected&&!selected.placed){
+    e.preventDefault();
+    const s=selected;
+    const slot=slotRect(s.col,s.row);
+    const cx=s.x+cellSize/2,cy=s.y+cellSize/2;
+    const scx=slot.x+cellSize/2,scy=slot.y+cellSize/2;
+    if(Math.hypot(cx-scx,cy-scy)<cellSize*0.55){
+      if(s.curRot%360===0){
+        s.placed=true;s.x=slot.x;s.y=slot.y;
+        placedCount++;score+=20*level;SFX.success();setHud();checkDone();
+      }else{
+        lives--;score=Math.max(0,score-5);SFX.error();setHud();
+        s.x=s.homeX;s.y=s.homeY;
+        if(lives<=0)endLose();
+      }
+    }
+  }
+});
+
+function drawDecoration(s,x,y){
+  ctx.save();
+  ctx.translate(x+cellSize/2,y+cellSize/2);
+  ctx.rotate(s.curRot*Math.PI/180);
+  ctx.strokeStyle=s.deco;ctx.lineWidth=3;
+  ctx.beginPath();
+  if(s.pattern===0){
+    ctx.moveTo(-cellSize*0.3,0);ctx.lineTo(cellSize*0.3,0);
+  }else if(s.pattern===1){
+    ctx.arc(0,0,cellSize*0.22,0,Math.PI*2);
+  }else if(s.pattern===2){
+    ctx.moveTo(-cellSize*0.25,-cellSize*0.25);ctx.lineTo(cellSize*0.25,cellSize*0.25);
+    ctx.moveTo(cellSize*0.25,-cellSize*0.25);ctx.lineTo(-cellSize*0.25,cellSize*0.25);
+  }else{
+    for(let i=-1;i<=1;i++){ctx.moveTo(i*cellSize*0.18,-cellSize*0.25);ctx.lineTo(i*cellSize*0.18,cellSize*0.25);}
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawSherd(s){
+  const x=s.x,y=s.y;
+  ctx.save();
+  ctx.fillStyle=s.color;
+  ctx.strokeStyle='#3a2410';ctx.lineWidth=2;
+  ctx.fillRect(x+1,y+1,cellSize-2,cellSize-2);
+  ctx.strokeRect(x+1,y+1,cellSize-2,cellSize-2);
+  drawDecoration(s,x,y);
+  if(s===selected&&!s.placed){
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+    ctx.strokeRect(x,y,cellSize,cellSize);
+  }
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,340);
+  ctx.fillStyle='#e9d8b8';ctx.fillRect(0,0,800,340);
+  ctx.textAlign='center';
+
+  if(!started){
+    ctx.fillStyle='#5a3c1e';ctx.font='bold 24px Arial';
+    ctx.fillText(I18N.t('start_hint','Drag sherds into place to start'),400,170);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#8a1f1f';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','VESSEL SHATTERED'),400,130);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,165);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,195);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#2e6b2e';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','ALL VESSELS RESTORED! 🏺'),400,120);
+    ctx.fillStyle='#5a3c1e';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,155);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,185);
+    requestAnimationFrame(loop);return;
+  }
+
+  timeLeft--;
+  if(timeLeft<=0){endLose();}
+
+  // board outline
+  ctx.strokeStyle='#5a3c1e';ctx.lineWidth=3;
+  for(let r=0;r<gridRows;r++){
+    for(let cc=0;cc<gridCols;cc++){
+      const slot=slotRect(cc,r);
+      ctx.strokeRect(slot.x,slot.y,slot.w,slot.h);
+      ctx.fillStyle='#00000011';
+      ctx.fillRect(slot.x,slot.y,slot.w,slot.h);
+    }
+  }
+
+  ctx.strokeStyle='#8a6a3a';ctx.lineWidth=1;
+  ctx.strokeRect(10,30,390,270);
+
+  sherds.forEach(s=>{ if(!s.placed) drawSherd(s); });
+  sherds.forEach(s=>{ if(s.placed) drawSherd(s); });
+
+  // timer bar
+  ctx.fillStyle='#5a3c1e';ctx.font='14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('pieces_label','Pieces: {p} / {t}').replace('{p}',placedCount).replace('{t}',totalSherds),20,320);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('time_label','Time: {s}s').replace('{s}',Math.max(0,Math.ceil(timeLeft/60))),780,320);
+
+  requestAnimationFrame(loop);
+}
+reset();
+setHud();
+loop();
+</script></body></html>

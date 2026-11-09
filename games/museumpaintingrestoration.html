@@ -1,0 +1,310 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Museum Painting Restoration</title><meta name="description" content="Play Museum Painting Restoration free online — Mix paint with the RGB sliders to match the color around each flaking patch, then dab it in before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/museumpaintingrestoration"><meta property="og:title" content="Museum Painting Restoration - Multiport Games"><meta property="og:description" content="Play Museum Painting Restoration free online — Mix paint with the RGB sliders to match the color around each flaking patch, then dab it in before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/museumpaintingrestoration"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Museum Painting Restoration","description":"Play Museum Painting Restoration free online instantly. Drag the red, green, and blue paint sliders (or select one with number keys and nudge it with the Arrow Keys) to mix a color matching each flaking patch on an old painting, then click the patch to dab in the retouch before time runs out. Work through five paintings with trickier color matches and more damage. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/museumpaintingrestoration","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b2340;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#d4af37;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#timeWrap{max-width:600px;margin:0 auto 8px;background:#1a1530;border-radius:10px;padding:4px}
+#timeBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#c77dff,#e0aaff);width:100%;transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Museum Painting Restoration</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Painting 1/5</span>
+    </div>
+    <div id="timeWrap"><div id="timeBar"></div></div>
+    <canvas id="c" width="800" height="360"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Each gray patch is flaking paint. Drag the <b>R</b>, <b>G</b>, and <b>B</b> sliders (or press <b>1/2/3</b> to select a channel and use the <b>Arrow Keys</b>) until the swatch matches the patch's surrounding color, then click or tap the patch to dab it in. A close match restores it; a bad match wastes the dab and costs a life. Clear every patch before the timer runs out. Later paintings have trickier colors and less time!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const TOTAL_PAINTINGS=5;
+let hi=parseInt(localStorage.getItem('museumpaintingrestoration_hi')||'0',10);
+let score=0,lives=3,paintIndex=0,gameOver=false,started=false,won=false;
+let patches=[],mix=[128,128,128],tolerance=60,timeLeft=0,timeTotal=0;
+let flashTimer=0,flashGood=true,selChan=0;
+const keys={};
+const SLIDER_Y=[300,320,340],SLIDER_X=250,SLIDER_W=400;
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('painting_label','Painting {n}/{t}').replace('{n}',Math.min(paintIndex+1,TOTAL_PAINTINGS)).replace('{t}',TOTAL_PAINTINGS);
+}
+
+function randColor(){
+  return [40+Math.floor(Math.random()*180),40+Math.floor(Math.random()*180),40+Math.floor(Math.random()*180)];
+}
+
+function buildPatches(){
+  patches=[];
+  const n=2+Math.floor(paintIndex*0.8)+1;
+  for(let i=0;i<n;i++){
+    const x=110+Math.random()*580;
+    const y=50+Math.random()*180;
+    const r=14+Math.random()*10;
+    patches.push({x,y,r,color:randColor(),done:false,bad:0});
+  }
+}
+
+function setupPainting(){
+  buildPatches();
+  tolerance=Math.max(16,55-paintIndex*7);
+  timeTotal=Math.max(16,30-paintIndex*2.2);
+  timeLeft=timeTotal;
+  mix=[128,128,128];
+  selChan=0;
+}
+
+function reset(){
+  score=0;lives=3;paintIndex=0;gameOver=false;started=false;won=false;flashTimer=0;
+  setupPainting();
+  setHud();
+}
+
+function allDone(){ return patches.every(p=>p.done); }
+
+function loseLife(){
+  lives--;
+  SFX.error();
+  flashTimer=20;flashGood=false;
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem('museumpaintingrestoration_hi',hi);}
+    setHud();
+    return true;
+  }
+  setHud();
+  return false;
+}
+
+function failPainting(){
+  if(loseLife())return true;
+  paintIndex++;
+  if(paintIndex>=TOTAL_PAINTINGS)paintIndex=TOTAL_PAINTINGS-1;
+  setupPainting();
+  setHud();
+  return false;
+}
+
+function completePainting(){
+  score+=Math.round(100+timeLeft*4);
+  SFX.success();
+  flashTimer=20;flashGood=true;
+  paintIndex++;
+  if(paintIndex>=TOTAL_PAINTINGS){
+    won=true;
+    SFX.levelup();
+    if(score>hi){hi=score;localStorage.setItem('museumpaintingrestoration_hi',hi);}
+    setHud();
+    return;
+  }
+  setupPainting();
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();}
+}
+
+function canvasPos(ev){
+  const r=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.changedTouches[0].clientX:ev.clientX)-r.left;
+  const cy=(ev.touches?ev.changedTouches[0].clientY:ev.clientY)-r.top;
+  return {x:cx*(800/r.width),y:cy*(360/r.height)};
+}
+
+let draggingSlider=-1;
+function sliderAt(p){
+  for(let i=0;i<3;i++){
+    if(Math.abs(p.y-SLIDER_Y[i])<=12&&p.x>=SLIDER_X-10&&p.x<=SLIDER_X+SLIDER_W+10)return i;
+  }
+  return -1;
+}
+function setSliderFromX(i,x){
+  const v=Math.round(((x-SLIDER_X)/SLIDER_W)*255);
+  mix[i]=Math.max(0,Math.min(255,v));
+}
+
+function tryDab(p){
+  for(const patch of patches){
+    if(patch.done)continue;
+    const d=Math.hypot(p.x-patch.x,p.y-patch.y);
+    if(d<=patch.r){
+      const dist=Math.hypot(mix[0]-patch.color[0],mix[1]-patch.color[1],mix[2]-patch.color[2]);
+      if(dist<=tolerance){
+        patch.done=true;
+        score+=Math.round(30+(tolerance-dist));
+        SFX.success();
+      }else{
+        patch.bad=12;
+        if(failPainting())return;
+      }
+      return;
+    }
+  }
+}
+
+function pointerDown(ev){
+  startOrRestart();
+  const p=canvasPos(ev);
+  const s=sliderAt(p);
+  if(s>=0){draggingSlider=s;selChan=s;setSliderFromX(s,p.x);return;}
+  if(started&&!gameOver&&!won)tryDab(p);
+}
+function pointerMove(ev){
+  if(draggingSlider<0)return;
+  const p=canvasPos(ev);
+  setSliderFromX(draggingSlider,p.x);
+}
+function pointerUp(){ draggingSlider=-1; }
+
+c.addEventListener('mousedown',pointerDown);
+c.addEventListener('mousemove',pointerMove);
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();pointerDown(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();pointerMove(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerUp();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space')startOrRestart();
+  if(e.key==='1')selChan=0;
+  if(e.key==='2')selChan=1;
+  if(e.key==='3')selChan=2;
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function rgb(a){ return `rgb(${a[0]},${a[1]},${a[2]})`; }
+
+function drawPatch(p){
+  ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+  if(p.done){
+    ctx.fillStyle=rgb(p.color);
+  }else{
+    ctx.fillStyle=p.bad>0?'#e94560':'#8a8a92';
+  }
+  ctx.fill();
+  ctx.lineWidth=2;ctx.strokeStyle='#1a1530';ctx.stroke();
+  if(p.bad>0)p.bad--;
+}
+
+function drawFrame(){
+  ctx.fillStyle='#6b4a2a';
+  ctx.fillRect(60,30,680,230);
+  patches.forEach(p=>{
+    ctx.save();
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r+14,0,Math.PI*2);ctx.clip();
+    ctx.fillStyle=rgb(p.color);
+    ctx.fillRect(p.x-p.r-14,p.y-p.r-14,(p.r+14)*2,(p.r+14)*2);
+    ctx.restore();
+  });
+}
+
+function drawSliders(){
+  const labels=['R','G','B'],cols=['#ff6b6b','#51cf66','#5c9eff'];
+  for(let i=0;i<3;i++){
+    const y=SLIDER_Y[i];
+    ctx.fillStyle='rgba(255,255,255,0.12)';
+    ctx.fillRect(SLIDER_X,y-5,SLIDER_W,10);
+    ctx.fillStyle=cols[i];
+    ctx.fillRect(SLIDER_X,y-5,SLIDER_W*(mix[i]/255),10);
+    const hx=SLIDER_X+SLIDER_W*(mix[i]/255);
+    ctx.beginPath();ctx.arc(hx,y,selChan===i?10:7,0,Math.PI*2);
+    ctx.fillStyle=selChan===i?'#ffd54f':'#fff';ctx.fill();
+    ctx.strokeStyle='#1a1530';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle='#d4af37';ctx.font='bold 14px Arial';ctx.textAlign='right';
+    ctx.fillText(labels[i],SLIDER_X-16,y+5);
+  }
+  ctx.textAlign='left';
+  ctx.fillStyle=rgb(mix);
+  ctx.fillRect(SLIDER_X+SLIDER_W+30,SLIDER_Y[0]-5,36,50);
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.strokeRect(SLIDER_X+SLIDER_W+30,SLIDER_Y[0]-5,36,50);
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,360);
+  const bg=ctx.createLinearGradient(0,0,0,360);
+  bg.addColorStop(0,'#1a1530');bg.addColorStop(1,'#2b2340');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,360);
+
+  ctx.textAlign='center';
+  if(!started){
+    drawFrame();patches.forEach(drawPatch);drawSliders();
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Mix & dab / Space to start'),400,20);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','PAINTING RUINED'),400,150);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,185);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#7ec850';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','GALLERY RESTORED! 🖼️'),400,140);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,175);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,205);
+    requestAnimationFrame(loop);return;
+  }
+
+  const kSpd=3;
+  if(keys['ArrowRight'])mix[selChan]=Math.min(255,mix[selChan]+kSpd);
+  if(keys['ArrowLeft'])mix[selChan]=Math.max(0,mix[selChan]-kSpd);
+  if(keys['ArrowUp'])selChan=(selChan+2)%3;
+  if(keys['ArrowDown'])selChan=(selChan+1)%3;
+
+  timeLeft-=1/60;
+  if(timeLeft<=0){
+    timeLeft=0;
+    if(!failPainting()){ requestAnimationFrame(loop);return; }
+  }
+
+  drawFrame();
+  patches.forEach(drawPatch);
+  drawSliders();
+
+  if(allDone()){
+    completePainting();
+  }
+
+  document.getElementById('timeBar').style.width=Math.max(0,(timeLeft/timeTotal)*100)+'%';
+
+  ctx.fillStyle='#d4af37';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('match_hint','Match the color, then click the patch to dab'),400,20);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.2)':'rgba(255,80,100,0.2)';
+    ctx.fillRect(0,0,800,360);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+setHud();
+loop();
+</script></body></html>

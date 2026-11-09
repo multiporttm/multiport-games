@@ -1,0 +1,391 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Museum Ceramic Repair</title><meta name="description" content="Play Museum Ceramic Repair free online — Fit broken ceramic shards back together in order and apply just the right amount of reversible adhesive at each joint."><link rel="canonical" href="https://games.multiportllc.com/games/museumceramicrepair"><meta property="og:title" content="Museum Ceramic Repair - Multiport Games"><meta property="og:description" content="Play Museum Ceramic Repair free online — Fit broken ceramic shards back together in order and apply just the right amount of reversible adhesive at each joint."><meta property="og:url" content="https://games.multiportllc.com/games/museumceramicrepair"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Museum Ceramic Repair","description":"Play Museum Ceramic Repair free online instantly. Drag each broken shard back to its matching gap on the vessel in the right order, then hold to apply reversible conservation adhesive — filling the joint's gauge exactly, not too little and not a drip too much. Vessels shatter into more pieces and tighter gauges every round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/museumceramicrepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1c1a22;display:block;border-radius:8px;touch-action:none}
+#hud{color:#e8d8c0;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#meterWrap{max-width:600px;margin:0 auto 8px;background:#11101a;border-radius:10px;padding:4px}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#c9a06a,#f0d9a8);width:0%;transition:width .08s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Museum Ceramic Repair</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Vessel 1/8</span>
+    </div>
+    <div id="meterWrap"><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Drag the next highlighted shard (lowest number first — the correct join order) from the tray onto its matching gap in the vessel, or press <b>Tab</b> to auto-select the next shard and <b>Arrow Keys</b>+<b>Enter</b> to place it. Once seated, hold the mouse/finger down (or hold <b>Space</b>) to squeeze out adhesive and release right when the gauge bar is in the green zone — too little leaves it loose, too much drips and weakens the bond, either way costing a life. Lose 3 lives and the vessel can't be saved. Vessels shatter into more shards with tighter adhesive gauges each round.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const TOTAL=8;
+let hi=parseInt(localStorage.getItem('museumceramicrepair_hi')||'0',10);
+let score=0,lives=3,idx=0,gameOver=false,started=false,won=false;
+let shards=[],placedCount=0,activeShard=null,dragging=null,flashTimer=0,flashGood=true;
+let gluing=false,glueAmt=0,glueTarget=0,glueTol=0,glueSpeed=0;
+let selIndex=0;
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('vessel_label','Vessel {n}/{t}').replace('{n}',Math.min(idx+1,TOTAL)).replace('{t}',TOTAL);
+}
+
+function setupVessel(){
+  const n=Math.min(8,3+idx);
+  shards=[];
+  const cx=260,cy=175,r=100;
+  for(let i=0;i<n;i++){
+    const a0=(i/n)*Math.PI*2,a1=((i+1)/n)*Math.PI*2;
+    const mid=(a0+a1)/2;
+    const gapX=cx+Math.cos(mid)*r*0.55,gapY=cy+Math.sin(mid)*r*0.55;
+    shards.push({
+      id:i,order:i,
+      gapX,gapY,a0,a1,
+      placed:false,glued:false,
+      trayX:0,trayY:0,
+      x:0,y:0
+    });
+  }
+  // tray positions on right side
+  shards.forEach((s,i)=>{
+    const col=i%2,row=Math.floor(i/2);
+    s.trayX=560+col*110;
+    s.trayY=60+row*58;
+    s.x=s.trayX;s.y=s.trayY;
+  });
+  placedCount=0;activeShard=null;dragging=null;gluing=false;glueAmt=0;
+  vesselCenter={cx,cy,r};
+  pickNextActive();
+}
+let vesselCenter={cx:260,cy:175,r:100};
+
+function pickNextActive(){
+  activeShard=shards.find(s=>!s.placed)||null;
+}
+
+function reset(){
+  score=0;lives=3;idx=0;gameOver=false;started=false;won=false;flashTimer=0;
+  setupVessel();
+  setHud();
+}
+
+function failJoint(){
+  lives--;
+  SFX.error();
+  flashTimer=18;flashGood=false;
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem('museumceramicrepair_hi',hi);}
+    setHud();
+    return true;
+  }
+  return false;
+}
+
+function completeVessel(){
+  score+=90+idx*12;
+  SFX.success();
+  flashTimer=18;flashGood=true;
+  idx++;
+  if(idx>=TOTAL){
+    won=true;
+    SFX.levelup();
+    if(score>hi){hi=score;localStorage.setItem('museumceramicrepair_hi',hi);}
+    setHud();
+    return;
+  }
+  setupVessel();
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();}
+}
+
+function canvasPos(ev){
+  const r=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return {x:cx*(800/r.width),y:cy*(340/r.height)};
+}
+
+function startGlue(s){
+  gluing=true;
+  glueAmt=0;
+  glueTarget=55+Math.random()*20;
+  glueTol=Math.max(6,16-idx*1.1);
+  glueSpeed=1.6+idx*0.12;
+}
+
+function resolveGlue(s){
+  gluing=false;
+  const diff=Math.abs(glueAmt-glueTarget);
+  if(diff<=glueTol){
+    s.glued=true;s.placed=true;placedCount++;
+    score+=20;
+    SFX.point();
+    if(placedCount>=shards.length){
+      completeVessel();
+    } else {
+      pickNextActive();
+    }
+  } else {
+    SFX.hit();
+    if(!failJoint()){
+      pickNextActive();
+    }
+  }
+}
+
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+c.addEventListener('mousedown',e=>{
+  if(!started){startOrRestart();return;}
+  if(gameOver||won){startOrRestart();return;}
+  const p=canvasPos(e);
+  if(activeShard && !gluing){
+    if(dist(p,{x:activeShard.x,y:activeShard.y})<36){
+      dragging=activeShard;
+    }
+  }
+});
+c.addEventListener('mousemove',e=>{
+  if(dragging){
+    const p=canvasPos(e);
+    dragging.x=p.x;dragging.y=p.y;
+  }
+});
+window.addEventListener('mouseup',()=>{
+  if(dragging){
+    const s=dragging;
+    if(dist({x:s.x,y:s.y},{x:s.gapX,y:s.gapY})<40){
+      s.x=s.gapX;s.y=s.gapY;
+      startGlue(s);
+    } else {
+      s.x=s.trayX;s.y=s.trayY;
+    }
+    dragging=null;
+  }
+  if(gluing && activeShard){
+    resolveGlue(activeShard);
+  }
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started){startOrRestart();return;}
+  if(gameOver||won){startOrRestart();return;}
+  const p=canvasPos(e);
+  if(activeShard && !gluing && dist(p,{x:activeShard.x,y:activeShard.y})<40){
+    dragging=activeShard;
+  }
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(dragging){
+    const p=canvasPos(e);
+    dragging.x=p.x;dragging.y=p.y;
+  }
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  e.preventDefault();
+  if(dragging){
+    const s=dragging;
+    if(dist({x:s.x,y:s.y},{x:s.gapX,y:s.gapY})<40){
+      s.x=s.gapX;s.y=s.gapY;
+      startGlue(s);
+    } else {
+      s.x=s.trayX;s.y=s.trayY;
+    }
+    dragging=null;
+  } else if(gluing && activeShard){
+    resolveGlue(activeShard);
+  }
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(!started){startOrRestart();return;}
+  if(gameOver||won){ if(e.code==='Space')startOrRestart(); return; }
+  if(e.code==='Tab'){ e.preventDefault(); pickNextActive(); return; }
+  if(activeShard && !gluing && e.code==='Enter'){
+    activeShard.x=activeShard.gapX;activeShard.y=activeShard.gapY;
+    startGlue(activeShard);
+    return;
+  }
+  if(e.code==='Space'){
+    e.preventDefault();
+    if(!gluing && activeShard && activeShard.x===activeShard.gapX){
+      startGlue(activeShard);
+    }
+  }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space' && gluing && activeShard){
+    resolveGlue(activeShard);
+  }
+});
+
+function drawShardShape(s,isTray){
+  const {cx,cy,r}=vesselCenter;
+  ctx.save();
+  ctx.translate(isTray?s.x:s.gapX,isTray?s.y:s.gapY);
+  ctx.fillStyle=s.placed?'#c9a878':'#b5916a';
+  ctx.strokeStyle='#5a4328';ctx.lineWidth=2;
+  ctx.beginPath();
+  const rr=isTray?26:0;
+  if(isTray){
+    ctx.arc(0,0,26,s.a0,s.a1);
+    ctx.lineTo(0,0);
+  } else {
+    ctx.moveTo(cx-s.gapX+Math.cos(s.a0)*r,cy-s.gapY+Math.sin(s.a0)*r);
+    ctx.arc(cx-s.gapX,cy-s.gapY,r,s.a0,s.a1);
+    ctx.lineTo(cx-s.gapX,cy-s.gapY);
+  }
+  ctx.closePath();
+  ctx.fill();ctx.stroke();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,340);
+  const sky=ctx.createLinearGradient(0,0,0,340);
+  sky.addColorStop(0,'#141220');sky.addColorStop(1,'#1c1a22');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,340);
+
+  ctx.textAlign='center';ctx.textBaseline='alphabetic';
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Drag / Tap / Space to start'),400,30);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','VESSEL LOST'),400,150);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,185);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#7ec850';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','COLLECTION RESTORED! 🏺'),400,140);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,175);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,205);
+    requestAnimationFrame(loop);return;
+  }
+
+  // vessel base outline
+  const {cx,cy,r}=vesselCenter;
+  ctx.strokeStyle='rgba(255,255,255,0.12)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.stroke();
+
+  // placed shards
+  shards.forEach(s=>{
+    if(s.placed){
+      ctx.save();
+      ctx.translate(cx,cy);
+      ctx.fillStyle='#c9a878';
+      ctx.strokeStyle='#5a4328';ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.arc(0,0,r,s.a0,s.a1);
+      ctx.closePath();
+      ctx.fill();ctx.stroke();
+      ctx.restore();
+    }
+  });
+
+  // gap markers (unplaced, not currently dragging)
+  shards.forEach(s=>{
+    if(!s.placed){
+      ctx.save();
+      ctx.strokeStyle= s===activeShard ? 'rgba(255,220,120,0.8)' : 'rgba(255,255,255,0.18)';
+      ctx.lineWidth=2;
+      ctx.setLineDash([4,4]);
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      ctx.arc(cx,cy,r,s.a0,s.a1);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+  });
+
+  // tray shards (unplaced and not seated at gap)
+  shards.forEach(s=>{
+    if(!s.placed){
+      ctx.save();
+      ctx.translate(s.x,s.y);
+      ctx.fillStyle = s===activeShard?'#e0b888':'#9a7d5a';
+      ctx.strokeStyle='#fff';ctx.lineWidth = s===activeShard?2:1;
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.arc(0,0,24,s.a0,s.a1);
+      ctx.closePath();
+      ctx.fill();ctx.stroke();
+      ctx.fillStyle='#2a2010';ctx.font='bold 12px Arial';ctx.textAlign='center';
+      ctx.fillText(String(s.order+1),0,r*0+6-20);
+      ctx.restore();
+    }
+  });
+
+  if(gluing){
+    glueAmt=Math.min(100,glueAmt+glueSpeed);
+    if(glueAmt>=100){
+      resolveGlue(activeShard);
+    }
+    const bx=260,by=300,bw=300,bh=18;
+    ctx.fillStyle='#0a0810';ctx.fillRect(bx,by,bw,bh);
+    const lo=glueTarget-glueTol,hi2=glueTarget+glueTol;
+    ctx.fillStyle='rgba(126,200,80,0.5)';
+    ctx.fillRect(bx+bw*(lo/100),by,bw*((hi2-lo)/100),bh);
+    ctx.fillStyle='#f0d9a8';
+    ctx.fillRect(bx,by,bw*(glueAmt/100),bh);
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(bx+bw*(glueAmt/100),by-4);ctx.lineTo(bx+bw*(glueAmt/100),by+bh+4);ctx.stroke();
+    document.getElementById('meterBar').style.width=glueAmt+'%';
+    ctx.fillStyle='#e8d8c0';ctx.font='bold 14px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('glue_hint','Release in the green zone!'),bx+bw/2,by-10);
+  } else {
+    document.getElementById('meterBar').style.width='0%';
+  }
+
+  ctx.fillStyle='#e8d8c0';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('shard_hint','Drag shard #{n} into its gap, then hold to glue').replace('{n}',activeShard?activeShard.order+1:'-'),400,30);
+
+  if(dragging){
+    drawShardShape(dragging,true);
+  }
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.18)':'rgba(255,80,100,0.2)';
+    ctx.fillRect(0,0,800,340);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+setHud();
+loop();
+</script></body></html>
