@@ -1,0 +1,336 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Butcher Primal Cutting</title><meta name="description" content="Play Butcher Primal Cutting free online — Trace the glowing seam line with your knife to break the carcass into primal cuts. Stay on the line — straying too far wastes meat and costs a life."><link rel="canonical" href="https://games.multiportllc.com/games/butcherprimalcutting"><meta property="og:title" content="Butcher Primal Cutting - Multiport Games"><meta property="og:description" content="Play Butcher Primal Cutting free online — Trace the glowing seam line with your knife to break the carcass into primal cuts. Stay on the line — straying too far wastes meat and costs a life."><meta property="og:url" content="https://games.multiportllc.com/games/butcherprimalcutting"><meta property="og:type" content="website"><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Butcher Primal Cutting","description":"Play Butcher Primal Cutting free online instantly. Trace the glowing seam line with your knife to break the carcass into primal cuts. Stay on the line — straying too far wastes meat and costs a life. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/butcherprimalcutting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a2430;display:block;border-radius:8px;cursor:crosshair;touch-action:none}
+#score-display{color:#ffb366;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#lives-display{color:#ff6b6b;font-size:1rem;text-align:center;padding:2px 0 8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Butcher Primal Cutting</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <div id="lives-display">Lives: ❤️❤️❤️</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click/tap and hold on the knife, then drag along the glowing <b>seam line</b> to separate the primal cut. Keep the blade close to the line — wander too far off the seam and you waste meat. Release at the end of the cut to finish it. Three wasted cuts and it's over.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+let score=0,hi=parseFloat(localStorage.getItem('butcherprimalcutting_hi')||'0');
+let lives=3,level=1,gameOver=false,started=false,win=false;
+let path=[],cutProgress=0,dragging=false,knife={x:0,y:0},strayTimer=0,maxStray=0;
+let cutsDoneThisLevel=0,cutsNeededThisLevel=2;
+let flashMsg='',flashTimer=0;
+
+const ANIMALS=[
+  {name:'Hog Shoulder',color:'#d98e73'},
+  {name:'Beef Chuck',color:'#b5544a'},
+  {name:'Lamb Leg',color:'#c77b6b'},
+  {name:'Pork Loin',color:'#e0a08a'},
+  {name:'Beef Brisket',color:'#9c4a42'}
+];
+
+function genSeam(levelN){
+  // Build a wavy seam line across the carcass; harder levels = more curvature & tighter tolerance
+  const pts=[];
+  const n=6+Math.min(levelN,6);
+  const amp=20+levelN*6;
+  const x0=90,x1=W-90;
+  for(let i=0;i<=n;i++){
+    const t=i/n;
+    const x=x0+(x1-x0)*t;
+    const y=H/2 + Math.sin(t*Math.PI*(1+levelN*0.35)+levelN)*amp + (Math.random()-0.5)*amp*0.4;
+    pts.push({x,y:Math.max(60,Math.min(H-60,y))});
+  }
+  return pts;
+}
+
+function sampleCurve(pts,res){
+  // Catmull-rom-ish via simple linear interpolation between control points for smoothness
+  const out=[];
+  for(let i=0;i<pts.length-1;i++){
+    const a=pts[i],b=pts[i+1];
+    const steps=res;
+    for(let s=0;s<steps;s++){
+      const t=s/steps;
+      out.push({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t});
+    }
+  }
+  out.push(pts[pts.length-1]);
+  return out;
+}
+
+let seamPts=[],curve=[];
+let animal=ANIMALS[0];
+
+function tolerance(){ return Math.max(10,28-level*1.6); }
+
+function newCut(){
+  animal=ANIMALS[Math.min(level-1,ANIMALS.length-1)];
+  seamPts=genSeam(level);
+  curve=sampleCurve(seamPts,18);
+  cutProgress=0;
+  dragging=false;
+  maxStray=0;
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;win=false;
+  cutsDoneThisLevel=0;cutsNeededThisLevel=2;
+  newCut();
+}
+reset();
+
+function pos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+function nearestCurveIndex(p){
+  let best=0,bd=1e9;
+  for(let i=0;i<curve.length;i++){
+    const d=(curve[i].x-p.x)**2+(curve[i].y-p.y)**2;
+    if(d<bd){bd=d;best=i;}
+  }
+  return {idx:best,dist:Math.sqrt(bd)};
+}
+
+function start(p){
+  if(gameOver||win){ if(!started){} restartOrNext(); return; }
+  if(!started){started=true;}
+  const startPt=curve[0];
+  const d=Math.hypot(p.x-startPt.x,p.y-startPt.y);
+  if(d<40){
+    dragging=true;
+    knife.x=p.x;knife.y=p.y;
+    SFX.click();
+  }
+}
+
+function move(p){
+  if(!dragging)return;
+  knife.x=p.x;knife.y=p.y;
+  const {idx,dist}=nearestCurveIndex(p);
+  const frac=idx/(curve.length-1);
+  if(frac>cutProgress-0.03)cutProgress=Math.max(cutProgress,frac);
+  if(dist>maxStray)maxStray=dist;
+  if(dist>tolerance()*2.2){
+    strayTimer++;
+    if(strayTimer>8){
+      failCut();
+    }
+  } else {
+    strayTimer=Math.max(0,strayTimer-1);
+  }
+  if(cutProgress>=0.985){
+    finishCut(true);
+  }
+}
+
+function end(){
+  if(!dragging)return;
+  dragging=false;
+  if(cutProgress<0.9){
+    // released early
+    finishCut(false);
+  }
+}
+
+function failCut(){
+  dragging=false;
+  lives--;
+  flashMsg=I18N.t('wasted_meat','Wasted meat! Off the seam.');
+  flashTimer=70;
+  SFX.hurt();
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('butcherprimalcutting_hi',hi);}
+  } else {
+    newCut();
+  }
+}
+
+function finishCut(clean){
+  dragging=false;
+  if(clean){
+    const precision=Math.max(0,1-maxStray/(tolerance()*2.2));
+    const pts=Math.round(50+precision*100)*level;
+    score+=pts;
+    if(score>hi){hi=score;localStorage.setItem('butcherprimalcutting_hi',hi);}
+    flashMsg=I18N.t('clean_cut','Clean cut! +'+pts);
+    flashTimer=60;
+    SFX.success();
+    cutsDoneThisLevel++;
+    if(cutsDoneThisLevel>=cutsNeededThisLevel){
+      level++;
+      cutsDoneThisLevel=0;
+      cutsNeededThisLevel++;
+      if(level>ANIMALS.length+4){
+        win=true;SFX.win();
+        return;
+      }
+      SFX.levelup();
+    }
+    newCut();
+  } else {
+    lives--;
+    flashMsg=I18N.t('incomplete_cut','Incomplete cut!');
+    flashTimer=60;
+    SFX.fail();
+    if(lives<=0){
+      gameOver=true;SFX.lose();
+      if(score>hi){hi=score;localStorage.setItem('butcherprimalcutting_hi',hi);}
+    } else {
+      newCut();
+    }
+  }
+}
+
+function restartOrNext(){
+  reset();
+  started=true;
+}
+
+c.addEventListener('mousedown',e=>{start(pos(e));});
+c.addEventListener('mousemove',e=>{move(pos(e));});
+window.addEventListener('mouseup',()=>{end();});
+c.addEventListener('touchstart',e=>{e.preventDefault();start(pos(e));},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();move(pos(e));},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();end();},{passive:false});
+
+// keyboard: arrow keys nudge a virtual knife along progress for accessibility
+let kbActive=false;
+document.addEventListener('keydown',e=>{
+  if(gameOver||win){ if(e.code==='Space'||e.code==='Enter'){restartOrNext();} return; }
+  if(!started){started=true;}
+  if(e.code==='ArrowRight'||e.code==='ArrowUp'){
+    e.preventDefault();
+    if(!kbActive){kbActive=true;dragging=true;cutProgress=0;}
+    const idx=Math.min(curve.length-1,Math.floor(cutProgress*(curve.length-1))+2);
+    cutProgress=idx/(curve.length-1);
+    knife=curve[idx];
+    maxStray=0;
+    if(cutProgress>=0.985){finishCut(true);kbActive=false;}
+  } else if(e.code==='ArrowLeft'||e.code==='ArrowDown'){
+    e.preventDefault();
+    if(kbActive){end();kbActive=false;}
+  }
+});
+
+function drawCarcass(){
+  ctx.fillStyle=animal.color;
+  ctx.beginPath();
+  ctx.ellipse(W/2,H/2,320,160,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.15)';
+  ctx.lineWidth=3;
+  for(let i=1;i<5;i++){
+    ctx.beginPath();
+    ctx.ellipse(W/2,H/2,320-i*40,160-i*20,0,0,Math.PI*2);
+    ctx.stroke();
+  }
+}
+
+function drawSeam(){
+  ctx.save();
+  ctx.lineWidth=tolerance();
+  ctx.strokeStyle='rgba(255,220,100,0.18)';
+  ctx.beginPath();
+  curve.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y); });
+  ctx.stroke();
+
+  ctx.lineWidth=3;
+  ctx.setLineDash([10,8]);
+  ctx.strokeStyle='#ffe066';
+  ctx.beginPath();
+  curve.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y); });
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // progress overlay - cut portion drawn solid dark red
+  const upto=Math.floor(cutProgress*(curve.length-1));
+  if(upto>0){
+    ctx.lineWidth=8;
+    ctx.strokeStyle='#5c1a1a';
+    ctx.beginPath();
+    for(let i=0;i<=upto;i++){ if(i===0)ctx.moveTo(curve[i].x,curve[i].y);else ctx.lineTo(curve[i].x,curve[i].y); }
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // start marker
+  ctx.fillStyle='#4caf50';
+  ctx.beginPath();ctx.arc(curve[0].x,curve[0].y,10,0,Math.PI*2);ctx.fill();
+  // end marker
+  ctx.fillStyle='#e94560';
+  ctx.beginPath();ctx.arc(curve[curve.length-1].x,curve[curve.length-1].y,10,0,Math.PI*2);ctx.fill();
+}
+
+function drawKnife(){
+  if(!dragging)return;
+  ctx.save();
+  ctx.translate(knife.x,knife.y);
+  ctx.fillStyle='#cfd8dc';
+  ctx.beginPath();
+  ctx.moveTo(-6,-4);ctx.lineTo(28,-10);ctx.lineTo(30,0);ctx.lineTo(28,10);ctx.lineTo(-6,4);
+  ctx.closePath();ctx.fill();
+  ctx.fillStyle='#4e342e';
+  ctx.fillRect(-26,-6,20,12);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#241318');bg.addColorStop(1,'#3a2430');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  drawCarcass();
+  drawSeam();
+  drawKnife();
+
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='left';
+  ctx.fillText((I18N.t('level_label','Level')+' '+level+' — '+animal.name),20,30);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('cuts_label','Cuts')+': '+cutsDoneThisLevel+'/'+cutsNeededThisLevel,W-20,30);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.textAlign='center';
+    ctx.font='bold 22px Arial';
+    ctx.fillStyle='rgba(255,255,255,'+Math.min(1,flashTimer/30)+')';
+    ctx.fillText(flashMsg,W/2,70);
+  }
+
+  if(!started){
+    ctx.fillStyle='#ffe06699';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_cut','Click/tap the green dot and drag the seam to start'),W/2,H/2+200);
+  }
+
+  if(gameOver||win){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(win?I18N.t('win_title','ALL CUTS COMPLETE!'):I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+20);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  document.getElementById('lives-display').textContent=I18N.t('lives_label','Lives')+': '+'❤️'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

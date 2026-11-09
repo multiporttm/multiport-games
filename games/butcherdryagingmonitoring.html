@@ -1,0 +1,339 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Butcher Dry Aging Monitoring</title><meta name="description" content="Play Butcher Dry Aging Monitoring free online — Keep temperature, humidity and airflow in range on multiple dry-aging beef cuts over simulated weeks, trimming mold as needed, without spoiling any of them."><link rel="canonical" href="https://games.multiportllc.com/games/butcherdryagingmonitoring"><meta property="og:title" content="Butcher Dry Aging Monitoring - Multiport Games"><meta property="og:description" content="Play Butcher Dry Aging Monitoring free online — Keep temperature, humidity and airflow in range on multiple dry-aging beef cuts over simulated weeks, trimming mold as needed, without spoiling any of them."><meta property="og:url" content="https://games.multiportllc.com/games/butcherdryagingmonitoring"><meta property="og:type" content="website"><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Butcher Dry Aging Monitoring","description":"Play Butcher Dry Aging Monitoring free online instantly. Keep temperature, humidity and airflow in range on multiple dry-aging beef cuts over simulated weeks, trimming mold as needed, without spoiling any of them. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/butcherdryagingmonitoring","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#121a1f;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#score-display{color:#ffb366;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#lives-display{color:#ff6b6b;font-size:1rem;text-align:center;padding:2px 0 8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Butcher Dry Aging Monitoring</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <div id="lives-display">Lives: ❤️❤️❤️</div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click/tap a cut to select it, then use the <b>Temp</b>, <b>Humidity</b> and <b>Fan</b> buttons (or keys <b>1</b>/<b>2</b>/<b>3</b> to select a cut, arrows to adjust) to nudge its readings back into the green range. Click <b>Trim</b> when a cut needs its pellicle/mold trimmed. Each simulated week a cut stays out of range it loses condition — let one spoil and you lose a life. Keep more cuts aging at once as rounds advance.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+let score=0,hi=parseFloat(localStorage.getItem('butcherdryagingmonitoring_hi')||'0');
+let lives=3,round=1,gameOver=false,started=false,win=false;
+let cuts=[],selected=0,weekTimer=0,weekLen=240,flashMsg='',flashTimer=0;
+const CUTNAMES=['Ribeye Primal','Striploin','Tri-Tip','Sirloin Butt','Chuck Roll','Short Loin'];
+
+const TEMP_RANGE=[34,38]; // F
+const HUM_RANGE=[75,85]; // %
+const TARGET_WEEKS=5;
+
+function mkCut(id){
+  return {
+    id,name:CUTNAMES[id%CUTNAMES.length],
+    temp:36+(Math.random()*6-3),
+    hum:80+(Math.random()*12-6),
+    fan: 2+Math.floor(Math.random()*2),
+    mold:Math.random()*20,
+    condition:100,
+    weeks:0,
+    done:false,
+    spoiled:false
+  };
+}
+
+function cutsForRound(r){ return Math.min(1+Math.floor((r-1)/1)+ (r>1?1:0), 5); }
+
+function newRound(){
+  const n=Math.min(1+round,5+Math.floor(round/3));
+  cuts=[];
+  for(let i=0;i<Math.min(n,6);i++)cuts.push(mkCut(i));
+  selected=0;
+  weekTimer=0;
+  weekLen=Math.max(90,240-round*12);
+}
+
+function reset(){
+  score=0;lives=3;round=1;gameOver=false;started=false;win=false;
+  newRound();
+}
+reset();
+
+function driftRate(){ return 0.55+round*0.07; }
+
+function tick(){
+  cuts.forEach(ct=>{
+    if(ct.done||ct.spoiled)return;
+    // random drift
+    ct.temp += (Math.random()-0.5)*driftRate();
+    ct.hum += (Math.random()-0.5)*driftRate()*1.6;
+    // fan setting pulls humidity down a bit, temp stable requires attention
+    ct.hum -= (ct.fan-2)*0.3;
+    ct.mold += Math.max(0, (ct.hum-HUM_RANGE[1])*0.08) + 0.04;
+    const tempOk = ct.temp>=TEMP_RANGE[0]&&ct.temp<=TEMP_RANGE[1];
+    const humOk = ct.hum>=HUM_RANGE[0]&&ct.hum<=HUM_RANGE[1];
+    const moldOk = ct.mold<60;
+    if(!tempOk||!humOk) ct.condition -= 3.2;
+    if(!moldOk) ct.condition -= 4;
+    if(tempOk&&humOk&&moldOk) ct.condition = Math.min(100,ct.condition+1.2);
+    if(ct.condition<=0){
+      ct.spoiled=true;
+      loseLife();
+    }
+  });
+}
+
+function loseLife(){
+  lives--;
+  flashMsg=I18N.t('cut_spoiled','A cut spoiled!');
+  flashTimer=70;
+  SFX.hurt();
+  if(lives<=0){
+    gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('butcherdryagingmonitoring_hi',hi);}
+  }
+}
+
+function weekPass(){
+  cuts.forEach(ct=>{
+    if(ct.done||ct.spoiled)return;
+    ct.weeks++;
+    if(ct.weeks>=TARGET_WEEKS&&ct.condition>55){
+      ct.done=true;
+      const pts=Math.round(ct.condition*2)*round;
+      score+=pts;
+      if(score>hi){hi=score;localStorage.setItem('butcherdryagingmonitoring_hi',hi);}
+      flashMsg=I18N.t('cut_aged','Cut aged perfectly! +'+pts);
+      flashTimer=60;
+      SFX.success();
+    } else if(ct.weeks>=TARGET_WEEKS){
+      ct.spoiled=true;
+      loseLife();
+    }
+  });
+  if(gameOver)return;
+  if(cuts.every(ct=>ct.done||ct.spoiled)){
+    const anyGood=cuts.some(ct=>ct.done);
+    if(!anyGood){ gameOver=true;SFX.lose(); return; }
+    round++;
+    if(round>8){ win=true;SFX.win();return; }
+    SFX.levelup();
+    newRound();
+  }
+}
+
+function selectCut(i){
+  if(i>=0&&i<cuts.length){selected=i;SFX.click();}
+}
+
+function adjust(field,dir){
+  const ct=cuts[selected];
+  if(!ct||ct.done||ct.spoiled)return;
+  if(field==='temp')ct.temp+=dir*0.8;
+  if(field==='hum')ct.hum+=dir*1.5;
+  if(field==='fan')ct.fan=Math.max(1,Math.min(4,ct.fan+dir));
+}
+
+function trim(){
+  const ct=cuts[selected];
+  if(!ct||ct.done||ct.spoiled)return;
+  if(ct.mold>8){
+    ct.mold=Math.max(0,ct.mold-30);
+    ct.condition=Math.min(100,ct.condition+2);
+    SFX.coin();
+  } else {
+    SFX.click();
+  }
+}
+
+// --- UI hit areas ---
+const btnDefs=[
+  {key:'temp-',label:'Temp -',field:'temp',dir:-1},
+  {key:'temp+',label:'Temp +',field:'temp',dir:1},
+  {key:'hum-',label:'Hum -',field:'hum',dir:-1},
+  {key:'hum+',label:'Hum +',field:'hum',dir:1},
+  {key:'fan-',label:'Fan -',field:'fan',dir:-1},
+  {key:'fan+',label:'Fan +',field:'fan',dir:1},
+  {key:'trim',label:'Trim',field:null,dir:0}
+];
+
+function layoutButtons(){
+  const y=H-50;
+  const bw=96,gap=8;
+  let x=20;
+  const rects=[];
+  btnDefs.forEach(b=>{
+    rects.push({...b,x,y,w:bw,h:34});
+    x+=bw+gap;
+  });
+  return rects;
+}
+
+function pos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+function handleClick(e){
+  if(gameOver||win){ reset(); started=true; return; }
+  if(!started){started=true;}
+  const p=pos(e);
+  // cut cards
+  const cardW=120,cardGap=14,startX=20,cardY=60;
+  cuts.forEach((ct,i)=>{
+    const x=startX+i*(cardW+cardGap);
+    if(p.x>=x&&p.x<=x+cardW&&p.y>=cardY&&p.y<=cardY+150){
+      selectCut(i);
+    }
+  });
+  const btns=layoutButtons();
+  btns.forEach(b=>{
+    if(p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h){
+      if(b.key==='trim')trim(); else adjust(b.field,b.dir);
+    }
+  });
+}
+
+c.addEventListener('mousedown',handleClick);
+c.addEventListener('touchstart',e=>{e.preventDefault();handleClick(e);},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(gameOver||win){ if(e.code==='Space'||e.code==='Enter'){reset();started=true;} return; }
+  if(!started){started=true;}
+  if(e.code==='Digit1')selectCut(0);
+  if(e.code==='Digit2')selectCut(1);
+  if(e.code==='Digit3')selectCut(2);
+  if(e.code==='Digit4')selectCut(3);
+  if(e.code==='Digit5')selectCut(4);
+  if(e.code==='Digit6')selectCut(5);
+  if(e.code==='ArrowUp'){e.preventDefault();adjust('temp',1);}
+  if(e.code==='ArrowDown'){e.preventDefault();adjust('temp',-1);}
+  if(e.code==='ArrowRight'){e.preventDefault();adjust('hum',1);}
+  if(e.code==='ArrowLeft'){e.preventDefault();adjust('hum',-1);}
+  if(e.code==='KeyF')adjust('fan',1);
+  if(e.code==='KeyG')adjust('fan',-1);
+  if(e.code==='KeyT')trim();
+});
+
+let frameCount=0;
+function loop(){
+  frameCount++;
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0c1317');bg.addColorStop(1,'#121a1f');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(started&&!gameOver&&!win){
+    if(frameCount%3===0)tick();
+    weekTimer++;
+    if(weekTimer>=weekLen){
+      weekTimer=0;
+      weekPass();
+    }
+  }
+
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('round_label','Round')+' '+round,20,30);
+  ctx.textAlign='right';
+  if(started&&!gameOver&&!win){
+    const pct=Math.floor((weekTimer/weekLen)*100);
+    ctx.fillText(I18N.t('week_progress','Week progress')+': '+pct+'%',W-20,30);
+  }
+
+  // cut cards
+  const cardW=120,cardGap=14,startX=20,cardY=60;
+  cuts.forEach((ct,i)=>{
+    const x=startX+i*(cardW+cardGap);
+    ctx.save();
+    ctx.fillStyle = i===selected? '#2e3b40':'#1b2529';
+    ctx.strokeStyle = i===selected? '#ffe066':'#37474f';
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    if(ctx.roundRect)ctx.roundRect(x,cardY,cardW,150,10); else ctx.rect(x,cardY,cardW,150);
+    ctx.fill();ctx.stroke();
+
+    ctx.fillStyle = ct.spoiled? '#e94560' : (ct.done? '#4caf50':'#fff');
+    ctx.font='bold 12px Arial';ctx.textAlign='center';
+    ctx.fillText(ct.name,x+cardW/2,cardY+16);
+
+    if(ct.spoiled){
+      ctx.font='bold 14px Arial';
+      ctx.fillText(I18N.t('spoiled_label','SPOILED'),x+cardW/2,cardY+80);
+    } else if(ct.done){
+      ctx.font='bold 14px Arial';
+      ctx.fillText(I18N.t('aged_label','AGED!'),x+cardW/2,cardY+80);
+    } else {
+      const tempOk=ct.temp>=TEMP_RANGE[0]&&ct.temp<=TEMP_RANGE[1];
+      const humOk=ct.hum>=HUM_RANGE[0]&&ct.hum<=HUM_RANGE[1];
+      ctx.font='11px Arial';ctx.textAlign='left';
+      ctx.fillStyle=tempOk?'#8bc34a':'#ff6b6b';
+      ctx.fillText(I18N.t('temp_label','Temp')+': '+ct.temp.toFixed(1)+'°F',x+6,cardY+36);
+      ctx.fillStyle=humOk?'#8bc34a':'#ff6b6b';
+      ctx.fillText(I18N.t('hum_label','Hum')+': '+ct.hum.toFixed(0)+'%',x+6,cardY+52);
+      ctx.fillStyle='#90caf9';
+      ctx.fillText(I18N.t('fan_label','Fan')+': '+ct.fan,x+6,cardY+68);
+      ctx.fillStyle = ct.mold>40?'#ff6b6b':'#bbb';
+      ctx.fillText(I18N.t('mold_label','Mold')+': '+Math.floor(ct.mold)+'%',x+6,cardY+84);
+      ctx.fillStyle='#ddd';
+      ctx.fillText(I18N.t('week_label','Week')+' '+ct.weeks+'/'+TARGET_WEEKS,x+6,cardY+100);
+
+      // condition bar
+      ctx.fillStyle='#333';ctx.fillRect(x+6,cardY+112,cardW-12,10);
+      ctx.fillStyle= ct.condition>60?'#4caf50':(ct.condition>30?'#ffb300':'#e94560');
+      ctx.fillRect(x+6,cardY+112,(cardW-12)*Math.max(0,ct.condition/100),10);
+      ctx.strokeStyle='#666';ctx.lineWidth=1;ctx.strokeRect(x+6,cardY+112,cardW-12,10);
+      ctx.fillStyle='#aaa';ctx.font='9px Arial';ctx.textAlign='center';
+      ctx.fillText(I18N.t('condition_label','Condition'),x+cardW/2,cardY+133);
+    }
+    ctx.restore();
+  });
+
+  // buttons
+  const btns=layoutButtons();
+  btns.forEach(b=>{
+    ctx.fillStyle='#2e3b40';
+    ctx.strokeStyle='#546e7a';
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    if(ctx.roundRect)ctx.roundRect(b.x,b.y,b.w,b.h,6); else ctx.rect(b.x,b.y,b.w,b.h);
+    ctx.fill();ctx.stroke();
+    ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('btn_'+b.key,b.label),b.x+b.w/2,b.y+22);
+  });
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.textAlign='center';
+    ctx.font='bold 20px Arial';
+    ctx.fillStyle='rgba(255,255,255,'+Math.min(1,flashTimer/30)+')';
+    ctx.fillText(flashMsg,W/2,H-70);
+  }
+
+  if(!started){
+    ctx.fillStyle='#ffe06699';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_age','Click/tap a cut or a button to start monitoring'),W/2,H-90);
+  }
+
+  if(gameOver||win){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(win?I18N.t('win_title_age','ALL ROUNDS AGED!'):I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+20);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  document.getElementById('lives-display').textContent=I18N.t('lives_label','Lives')+': '+'❤️'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
