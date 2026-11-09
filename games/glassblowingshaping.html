@@ -1,0 +1,288 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Glassblowing Shaping</title><meta name="description" content="Play Glassblowing Shaping free online — Hold Space or Tap to blow air into the bubble, use Arrow Keys or drag to shape it with wet wooden tools, and match the target vase, bowl, or ornament outline."><link rel="canonical" href="https://games.multiportllc.com/games/glassblowingshaping"><meta property="og:title" content="Glassblowing Shaping - Multiport Games"><meta property="og:description" content="Play Glassblowing Shaping free online — Hold Space or Tap to blow air into the bubble, use Arrow Keys or drag to shape it with wet wooden tools, and match the target vase, bowl, or ornament outline."><meta property="og:url" content="https://games.multiportllc.com/games/glassblowingshaping"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Glassblowing Shaping","description":"Play Glassblowing Shaping free online instantly. Blow air into the pipe while rotating and shape the hot glass bubble with wet wooden tools to match a target vessel outline — a vase, bowl, or ornament — before the glass cools. Target shapes grow more intricate and tolerances narrower each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/glassblowingshaping","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#16222e;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#bfe3ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#meterWrap{max-width:600px;margin:0 auto 8px;background:#0e1a28;border-radius:10px;padding:4px}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#4ecdc4,#a0f0e8);width:0%;transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Glassblowing Shaping</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Piece 1/8</span>
+    </div>
+    <div id="meterWrap"><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Hold <b>Space</b> or <b>press-and-hold</b> to blow air and inflate the bubble. Use <b>Arrow Keys</b> or drag your mouse/finger left-right to press the wet wooden tool against the bubble and shape it, matching the dashed target outline (vase, bowl, or ornament). Lock in the shape with <b>Enter</b> or by releasing when the match meter is high. Match too poorly and the piece cracks, costing a life — targets get more intricate and tolerances tighter each round. Lose all 3 lives and the session ends!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320;
+const TOTAL=8;
+const SHAPE_TYPES=['vase','bowl','ornament'];
+let hi=parseInt(localStorage.getItem('glassblowingshaping_hi')||'0',10);
+let score=0,lives=3,level=0,gameOver=false,started=false,won=false;
+let blowing=false,radiusProfile=[],targetProfile=[],shapeType='vase',tolerance=14,coolTimer=0,resultTimer=0,resultGood=false;
+const SEGMENTS=24;
+const keys={};
+let dragActive=false,dragX=null;
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('piece_label','Piece {n}/{t}').replace('{n}',Math.min(level+1,TOTAL)).replace('{t}',TOTAL);
+}
+
+function makeTargetProfile(type,complexity){
+  const prof=[];
+  for(let i=0;i<SEGMENTS;i++){
+    const u=i/(SEGMENTS-1);
+    let r;
+    if(type==='vase'){
+      r=55+Math.sin(u*Math.PI)*35-Math.pow(u-0.15,2)*120+Math.sin(u*Math.PI*2*(1+complexity*0.3))*6*complexity;
+      r=Math.max(18,r);
+    } else if(type==='bowl'){
+      r=20+Math.pow(u,1.4)*90-Math.sin(u*Math.PI*(1+complexity*0.2))*5*complexity;
+      r=Math.max(15,r);
+    } else {
+      r=60*Math.sin(u*Math.PI)+10+Math.sin(u*Math.PI*4*(1+complexity*0.25))*8*complexity;
+      r=Math.max(12,r);
+    }
+    prof.push(r);
+  }
+  return prof;
+}
+
+function setupLevel(){
+  shapeType=SHAPE_TYPES[level%SHAPE_TYPES.length];
+  const complexity=Math.min(3,level*0.4);
+  targetProfile=makeTargetProfile(shapeType,complexity);
+  radiusProfile=new Array(SEGMENTS).fill(14);
+  tolerance=Math.max(6,16-level*1.1);
+  blowing=false;
+  coolTimer=0;
+}
+
+function reset(){
+  score=0;lives=3;level=0;gameOver=false;started=false;won=false;resultTimer=0;
+  setupLevel();
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();started=true;return;}
+}
+
+function currentSegment(){
+  // the "active" band being worked, moves slowly with time for feedback target
+  return Math.floor((Date.now()/300)%SEGMENTS);
+}
+
+function matchPercent(){
+  let total=0;
+  for(let i=0;i<SEGMENTS;i++){
+    const diff=Math.abs(radiusProfile[i]-targetProfile[i]);
+    total+=Math.max(0,1-diff/ (tolerance*3));
+  }
+  return Math.max(0,Math.min(100,(total/SEGMENTS)*100));
+}
+
+function lockIn(){
+  if(!started||gameOver||won||resultTimer>0)return;
+  const pct=matchPercent();
+  if(pct>=70){
+    score+=Math.round(30+pct);
+    SFX.success();
+    resultGood=true;
+    level++;
+    if(level>=TOTAL){
+      won=true;SFX.levelup();
+      if(score>hi){hi=score;localStorage.setItem('glassblowingshaping_hi',hi);}
+      setHud();
+      return;
+    }
+  } else {
+    lives--;
+    SFX.error();
+    resultGood=false;
+    if(lives<=0){
+      gameOver=true;
+      if(score>hi){hi=score;localStorage.setItem('glassblowingshaping_hi',hi);}
+      setHud();
+      resultTimer=40;
+      return;
+    }
+  }
+  resultTimer=40;
+  setHud();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['Space','ArrowLeft','ArrowRight','Enter'].includes(e.code))e.preventDefault();
+  if(!started||gameOver||won){ if(e.code==='Space'||e.code==='Enter')startOrRestart(); return; }
+  keys[e.code]=true;
+  if(e.code==='Space')blowing=true;
+  if(e.code==='Enter')lockIn();
+});
+document.addEventListener('keyup',e=>{
+  keys[e.code]=false;
+  if(e.code==='Space')blowing=false;
+});
+
+c.addEventListener('mousedown',e=>{
+  if(!started||gameOver||won){startOrRestart();return;}
+  dragActive=true;dragX=e.clientX;blowing=true;
+});
+window.addEventListener('mousemove',e=>{
+  if(dragActive&&started&&!gameOver&&!won){
+    const dx=e.clientX-dragX;dragX=e.clientX;
+    shapeSegment(dx*0.4);
+  }
+});
+window.addEventListener('mouseup',()=>{dragActive=false;blowing=false;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started||gameOver||won){startOrRestart();return;}
+  dragActive=true;dragX=e.touches[0].clientX;blowing=true;
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(dragActive&&started&&!gameOver&&!won){
+    const dx=e.touches[0].clientX-dragX;dragX=e.touches[0].clientX;
+    shapeSegment(dx*0.4);
+  }
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragActive=false;blowing=false;},{passive:false});
+c.addEventListener('dblclick',()=>lockIn());
+
+function shapeSegment(delta){
+  const seg=currentSegment();
+  radiusProfile[seg]=Math.max(5,Math.min(100,radiusProfile[seg]-delta));
+  const n1=(seg+1)%SEGMENTS,n2=(seg-1+SEGMENTS)%SEGMENTS;
+  radiusProfile[n1]+=(-delta)*0.25;
+  radiusProfile[n2]+=(-delta)*0.25;
+}
+
+function update(){
+  if(!started||gameOver||won||resultTimer>0)return;
+  if(keys['ArrowLeft'])shapeSegment(-1.5);
+  if(keys['ArrowRight'])shapeSegment(1.5);
+  if(blowing){
+    for(let i=0;i<SEGMENTS;i++)radiusProfile[i]=Math.min(100,radiusProfile[i]+0.35);
+    SFX_throttle();
+  }
+}
+let blowSoundTimer=0;
+function SFX_throttle(){
+  blowSoundTimer++;
+  if(blowSoundTimer%20===0)SFX.swoosh();
+}
+
+function drawProfile(points,cx,baseY,color,dashed){
+  ctx.save();
+  ctx.strokeStyle=color;
+  ctx.lineWidth=2.5;
+  if(dashed)ctx.setLineDash([6,5]);
+  const h=200;
+  ctx.beginPath();
+  for(let i=0;i<points.length;i++){
+    const y=baseY-i*(h/(points.length-1));
+    const x=cx+points[i];
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  for(let i=points.length-1;i>=0;i--){
+    const y=baseY-i*(h/(points.length-1));
+    const x=cx-points[i];
+    ctx.lineTo(x,y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function loop(){
+  update();
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#101c28');sky.addColorStop(1,'#16222e');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+
+  const cx=W/2,baseY=280;
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Hold Space / Tap to start shaping'),W/2,30);
+    drawProfile(targetProfile,cx,baseY,'rgba(255,255,255,0.4)',true);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    drawProfile(targetProfile,cx,baseY,'rgba(255,255,255,0.3)',true);
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','PIECE CRACKED'),W/2,130);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,165);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#7ec850';ctx.font='bold 32px Arial';
+    ctx.fillText(I18N.t('win_title','MASTER GLASS SHAPER! 🏺'),W/2,110);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,W/2,145);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,175);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(resultTimer>0){
+    resultTimer--;
+    drawProfile(targetProfile,cx,baseY,'rgba(255,255,255,0.4)',true);
+    drawProfile(radiusProfile,cx,baseY,'#ff7f50',false);
+    ctx.fillStyle=resultGood?'rgba(126,200,80,0.22)':'rgba(233,69,96,0.22)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';
+    ctx.fillText(resultGood?I18N.t('good_shape','Shape matched!'):I18N.t('bad_shape','Piece cracked!'),W/2,60);
+    if(resultTimer===0 && !gameOver && !won)setupLevel();
+    requestAnimationFrame(loop);return;
+  }
+
+  drawProfile(targetProfile,cx,baseY,'rgba(255,255,255,0.45)',true);
+  drawProfile(radiusProfile,cx,baseY,blowing?'#ffb347':'#ff7f50',false);
+
+  const seg=currentSegment();
+  const h=200;
+  const y=baseY-seg*(h/(SEGMENTS-1));
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(cx+radiusProfile[seg],y,5,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(cx-radiusProfile[seg],y,5,0,Math.PI*2);ctx.fill();
+
+  const pct=matchPercent();
+  document.getElementById('meterBar').style.width=pct+'%';
+
+  ctx.fillStyle='#bfe3ff';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('shape_hint','{type} — Hold to blow, drag/Arrows to shape, Enter to lock in').replace('{type}',I18N.t('shape_'+shapeType,shapeType)),W/2,20);
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+setHud();
+loop();
+</script></body></html>

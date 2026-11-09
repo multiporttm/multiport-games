@@ -1,0 +1,261 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Stained Glass Soldering</title><meta name="description" content="Play Stained Glass Soldering free online — Run a hot soldering iron along copper-foiled glass seams, keeping a smooth, even bead of solder without gaps or blobs, across larger stained glass panels."><link rel="canonical" href="https://games.multiportllc.com/games/stainedglasssoldering"><meta property="og:title" content="Stained Glass Soldering - Multiport Games"><meta property="og:description" content="Play Stained Glass Soldering free online — Run a hot soldering iron along copper-foiled glass seams, keeping a smooth, even bead of solder without gaps or blobs, across larger stained glass panels."><meta property="og:url" content="https://games.multiportllc.com/games/stainedglasssoldering"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Stained Glass Soldering","description":"Play Stained Glass Soldering free online instantly. Guide a hot soldering iron along the copper-foiled seam of each stained glass panel, moving fast enough to avoid pooling blobs but slow enough to avoid leaving gaps, and lay a smooth, even bead from start to finish. Score points for a clean, steady pass, across larger and more winding panels. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/stainedglasssoldering","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1b1430;display:block;border-radius:8px;touch-action:none}
+#hud{color:#e6d9ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px;color:#ff6b9d}
+#blobWrap{width:500px;max-width:90vw;margin:10px auto 0;background:#120c1f;border-radius:10px;border:1px solid #4a3a6e;overflow:hidden}
+#blobBar{height:14px;width:0%;background:linear-gradient(90deg,#ffd166,#ff6b9d);transition:width .08s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Stained Glass Soldering</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0 | Hi: 0</span>
+      <span id="levelDisp">Panel: 1</span>
+      <span class="lives" id="livesDisp">♥♥♥</span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+    <div id="blobWrap"><div id="blobBar"></div></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Press mouse/finger down on the glowing dot and drag the <b>soldering iron</b> along the copper seam. Move too fast and you leave a gap; linger too long in one spot and solder pools into a <b>blob</b> (watch the blob meter below the panel — it empties while you move steadily and fills while you dawdle). Reach the end with a clean bead to score. Three gaps/blobs or strayed seams and it is game over. Panels get bigger and the safe speed window gets tighter as you go.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+const scoreDisp=document.getElementById('scoreDisp');
+const levelDisp=document.getElementById('levelDisp');
+const livesDisp=document.getElementById('livesDisp');
+const blobBar=document.getElementById('blobBar');
+
+let score=0,hi=parseInt(localStorage.getItem('stainedglasssoldering_hi')||'0',10);
+let lives=3,level=1,path=[],tracedIdx=0,tracing=false;
+let gameOver=false,started=false;
+let shakeT=0,flashT=0;
+let gapCount=0,blobMeter=0,blobMax=100,idleFrames=0,dwellLimit=26,maxAdvance=5;
+
+function hiLabel(){return I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));}
+function panelLabel(){return I18N.t('panel_label','Panel: {n}').replace('{n}',level);}
+
+function updateHud(){
+  scoreDisp.textContent=hiLabel();
+  levelDisp.textContent=panelLabel();
+  livesDisp.textContent='♥'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+  blobBar.style.width=Math.min(100,blobMeter)+'%';
+}
+
+// Build a winding seam path for the given level: longer and curvier at higher levels.
+function buildPath(lv){
+  const pts=[];
+  const n=70+Math.min(lv,10)*5;
+  const amp=16+Math.min(lv,12)*7;
+  const freq=1.2+Math.min(lv,10)*0.4;
+  const x0=80,x1=720,y0=220;
+  for(let i=0;i<=n;i++){
+    const t=i/n;
+    const x=x0+(x1-x0)*t;
+    const y=y0+Math.sin(t*Math.PI*freq+lv*0.9)*amp*Math.sin(t*Math.PI);
+    pts.push({x,y});
+  }
+  return pts;
+}
+
+function startLevel(lv){
+  path=buildPath(lv);
+  tracedIdx=0;
+  tracing=false;
+  gapCount=0;
+  blobMeter=0;
+  idleFrames=0;
+  dwellLimit=Math.max(10,26-lv);
+  maxAdvance=Math.max(2,5-Math.floor(lv/3));
+  updateHud();
+}
+
+function resetGame(){
+  score=0;lives=3;level=1;gameOver=false;started=false;
+  startLevel(level);
+}
+resetGame();
+
+function toCanvasXY(evt){
+  const r=c.getBoundingClientRect();
+  const cx=(evt.touches?evt.touches[0].clientX:evt.clientX)-r.left;
+  const cy=(evt.touches?evt.touches[0].clientY:evt.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+function distToSeg(p,a,b){
+  const dx=b.x-a.x,dy=b.y-a.y;
+  const len2=dx*dx+dy*dy;
+  let t=len2>0?((p.x-a.x)*dx+(p.y-a.y)*dy)/len2:0;
+  t=Math.max(0,Math.min(1,t));
+  const px=a.x+dx*t,py=a.y+dy*t;
+  return Math.hypot(p.x-px,p.y-py);
+}
+
+function failPass(){
+  lives--;
+  shakeT=18;
+  SFX.hit();
+  updateHud();
+  if(lives<=0){endGame();}
+  else{startLevel(level);}
+}
+
+function pointerDown(e){
+  if(!started){started=true;}
+  if(gameOver){resetGame();return;}
+  const p=toCanvasXY(e);
+  if(Math.hypot(p.x-path[0].x,p.y-path[0].y)<30){
+    tracing=true;
+    tracedIdx=0;
+    idleFrames=0;
+  }
+}
+function pointerMove(e){
+  if(!tracing)return;
+  const p=toCanvasXY(e);
+  let idx=tracedIdx;
+  while(idx<path.length-1 && Math.hypot(p.x-path[idx+1].x,p.y-path[idx+1].y)<40){
+    idx++;
+  }
+  const d=distToSeg(p,path[Math.max(0,idx-1)],path[Math.min(path.length-1,idx)]);
+  if(d>26){
+    tracing=false;
+    failPass();
+    return;
+  }
+  const advance=idx-tracedIdx;
+  if(advance>maxAdvance){
+    gapCount++;
+    flashT=10;
+    SFX.swoosh();
+    if(gapCount>=3){tracing=false;failPass();return;}
+  }
+  if(advance>0){
+    idleFrames=0;
+    blobMeter=Math.max(0,blobMeter-advance*1.5);
+  }
+  tracedIdx=Math.max(tracedIdx,idx);
+  if(tracedIdx>=path.length-1){
+    tracing=false;
+    finishPass();
+  }
+}
+function pointerUp(){
+  if(tracing&&tracedIdx<path.length-1){
+    tracing=false;
+    failPass();
+  }
+}
+
+c.addEventListener('mousedown',e=>{e.preventDefault();pointerDown(e);});
+c.addEventListener('mousemove',pointerMove);
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();pointerDown(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();pointerMove(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerUp();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){
+    e.preventDefault();
+    if(gameOver){resetGame();return;}
+    if(!started){started=true;}
+  }
+});
+
+function finishPass(){
+  const smoothBonus=Math.round(200*(1-gapCount/3)*(1-blobMeter/blobMax));
+  score+=150+Math.max(0,smoothBonus);
+  SFX.success();
+  if(score>hi){hi=score;localStorage.setItem('stainedglasssoldering_hi',String(hi));}
+  level++;
+  updateHud();
+  startLevel(level);
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+}
+
+function drawPath(){
+  ctx.save();
+  ctx.lineWidth=3;
+  ctx.strokeStyle='#b08d57';
+  ctx.beginPath();
+  path.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+  ctx.stroke();
+  ctx.lineWidth=7;
+  ctx.strokeStyle=flashT>0?'#ff6b9d':'#d8d8e8';
+  ctx.beginPath();
+  for(let i=0;i<=tracedIdx&&i<path.length;i++){
+    const p=path[i];
+    i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
+  }
+  ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle=tracing||tracedIdx>0?'#555':'#ffe066';
+  ctx.beginPath();ctx.arc(path[0].x,path[0].y,10,0,7);ctx.fill();
+  const tipIdx=Math.min(tracedIdx,path.length-1);
+  const tip=path[tipIdx];
+  ctx.fillStyle='#ff6b9d';
+  ctx.beginPath();ctx.arc(tip.x,tip.y,8,0,7);ctx.fill();
+}
+
+function loop(){
+  ctx.save();
+  if(flashT>0)flashT--;
+  if(shakeT>0){
+    shakeT--;
+    ctx.translate((Math.random()-0.5)*8,(Math.random()-0.5)*8);
+  }
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#241c3d');grad.addColorStop(1,'#15102a');
+  ctx.fillStyle=grad;ctx.fillRect(-20,-20,W+40,H+40);
+  ctx.strokeStyle='#3a2d5e';ctx.lineWidth=10;ctx.strokeRect(10,10,W-20,H-20);
+
+  ctx.fillStyle='#cbb8ff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+  if(!started){
+    ctx.fillText(I18N.t('start_hint_solder','Press on the glowing dot and drag the iron along the seam'),W/2,60);
+  }else if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,160);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,196);
+  }else{
+    ctx.fillText(I18N.t('solder_hint','Keep a steady pace — not too fast, not too slow'),W/2,60);
+  }
+
+  if(started&&!gameOver){
+    drawPath();
+    if(tracing&&idleFrames>dwellLimit){
+      blobMeter=Math.min(blobMax,blobMeter+1.2);
+    }
+  }
+  if(tracing){
+    idleFrames++;
+    if(blobMeter>=blobMax){
+      tracing=false;
+      failPass();
+    }
+  }
+  ctx.restore();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
