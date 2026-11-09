@@ -1,0 +1,269 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Marionette Joint Carving</title><meta name="description" content="Play Marionette Joint Carving free online — Whittle a wooden marionette joint down to match the target shape without carving past the weak spots."><link rel="canonical" href="https://games.multiportllc.com/games/marionettejointcarving"><meta property="og:title" content="Marionette Joint Carving - Multiport Games"><meta property="og:description" content="Play Marionette Joint Carving free online — Whittle a wooden marionette joint down to match the target shape without carving past the weak spots."><meta property="og:url" content="https://games.multiportllc.com/games/marionettejointcarving"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Marionette Joint Carving - Multiport Games"><meta name="twitter:description" content="Play Marionette Joint Carving free online — Whittle a wooden marionette joint down to match the target shape without carving past the weak spots."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Marionette Joint Carving","description":"Play Marionette Joint Carving free online instantly. Drag your knife along a wooden joint blank, carving away wood to match the glowing target outline for an elbow, knee, or ankle joint without cutting past the outline into the weak, thin wood underneath. Target shapes get trickier and the safe margin narrows with every joint. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/marionettejointcarving","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a2016;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#ffe3b0;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#meterWrap{max-width:600px;margin:0 auto 8px;background:#1d140b;border-radius:10px;padding:4px}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#d4af37,#f0e0a0);width:100%;transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Marionette Joint Carving</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Joint 1/10</span>
+    </div>
+    <div id="meterWrap"><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="300"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A dotted target outline shows the joint shape to carve — elbow, knee, or ankle. Drag your mouse or finger (or steer with the <b>Arrow Keys</b>) along the outline to shave wood down to the gold line. Stay inside the safe band and your wood meter holds; stray past the outline into the thin red zone and the joint weakens, eventually snapping and costing a life. Finish tracing the whole outline before the meter breaks to move to the next joint. Shapes get trickier and the safe band narrows every joint — lose all 3 lives and the blank is ruined!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const TOTAL_JOINTS=10;
+let hi=parseInt(localStorage.getItem('marionettejointcarving_hi')||'0',10);
+let score=0,lives=3,jointIndex=0,gameOver=false,started=false,won=false;
+let t=0,speed=0.0032,tolerance=36,wood=100,path=[],knife={x:400,y:150};
+let flashTimer=0,flashGood=true;
+const keys={};
+const JOINT_NAMES=['Elbow','Knee','Ankle'];
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('joint_label','Joint {n}/{t}').replace('{n}',Math.min(jointIndex+1,TOTAL_JOINTS)).replace('{t}',TOTAL_JOINTS);
+}
+
+function jointName(){ return JOINT_NAMES[jointIndex%3]; }
+
+function buildPath(){
+  // joint-hinge shaped curve: an angular zig to mimic elbow/knee/ankle bend
+  path=[];
+  const kind=jointIndex%3; // 0 elbow, 1 knee, 2 ankle
+  const bendSharp=0.5+Math.min(0.9,jointIndex*0.07);
+  const amp=36+((jointIndex*9)%46);
+  for(let i=0;i<=400;i++){
+    const u=i/400;
+    const x=140+u*520;
+    let y;
+    if(kind===0){
+      // elbow: smooth single bend
+      y=150+Math.sin(u*Math.PI)*amp*bendSharp;
+    }else if(kind===1){
+      // knee: sharper double curve
+      y=150+Math.sin(u*Math.PI*1.6)*amp*0.8*bendSharp - Math.cos(u*Math.PI*0.6)*14;
+    }else{
+      // ankle: tight zig near the end
+      y=150+Math.sin(u*Math.PI*0.9)*amp*0.6 + (u>0.6?Math.sin((u-0.6)*Math.PI*5)*amp*0.5*bendSharp:0);
+    }
+    path.push({x,y});
+  }
+}
+
+function setupJoint(){
+  t=0;
+  speed=0.0024+jointIndex*0.00042;
+  tolerance=Math.max(15,36-jointIndex*2);
+  wood=100;
+  buildPath();
+  knife={x:path[0].x,y:path[0].y};
+}
+
+function reset(){
+  score=0;lives=3;jointIndex=0;gameOver=false;started=false;won=false;flashTimer=0;
+  setupJoint();
+  setHud();
+}
+
+function guidePoint(){
+  const idx=Math.min(path.length-1,Math.floor(t*(path.length-1)));
+  return path[idx];
+}
+
+function failJoint(){
+  lives--;
+  SFX.error();
+  flashTimer=20;flashGood=false;
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('marionettejointcarving_hi',hi);}
+    setHud();
+    return true;
+  }
+  jointIndex++;
+  if(jointIndex>=TOTAL_JOINTS)jointIndex=TOTAL_JOINTS-1;
+  setupJoint();
+  setHud();
+  return false;
+}
+
+function completeJoint(){
+  score+=Math.round(60+wood*1.4);
+  SFX.success();
+  flashTimer=20;flashGood=true;
+  jointIndex++;
+  if(jointIndex>=TOTAL_JOINTS){
+    won=true;
+    SFX.win();
+    if(score>hi){hi=score;localStorage.setItem('marionettejointcarving_hi',hi);}
+    setHud();
+    return;
+  }
+  setupJoint();
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver||won)reset();
+}
+
+function canvasPos(ev){
+  const r=c.getBoundingClientRect();
+  const touch=ev.touches&&ev.touches[0];
+  const cx=(touch?touch.clientX:ev.clientX)-r.left;
+  const cy=(touch?touch.clientY:ev.clientY)-r.top;
+  return {x:cx*(800/r.width),y:cy*(300/r.height)};
+}
+
+let pointerActive=false;
+c.addEventListener('mousedown',e=>{startOrRestart();pointerActive=true;const p=canvasPos(e);knife.x=p.x;knife.y=p.y;});
+c.addEventListener('mousemove',e=>{if(pointerActive&&started&&!gameOver&&!won){const p=canvasPos(e);knife.x=p.x;knife.y=p.y;}});
+window.addEventListener('mouseup',()=>{pointerActive=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();pointerActive=true;const p=canvasPos(e);knife.x=p.x;knife.y=p.y;},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(started&&!gameOver&&!won){const p=canvasPos(e);knife.x=p.x;knife.y=p.y;}},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space')startOrRestart();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function drawPath(){
+  ctx.strokeStyle='rgba(150,30,30,0.35)';
+  ctx.lineWidth=tolerance*2+16;
+  ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();
+  path.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+  ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,0.15)';
+  ctx.lineWidth=tolerance*2;
+  ctx.beginPath();
+  path.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+  ctx.stroke();
+  ctx.strokeStyle='#d4af37';
+  ctx.lineWidth=3;
+  ctx.setLineDash([8,6]);
+  ctx.beginPath();
+  path.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,300);
+  const sky=ctx.createLinearGradient(0,0,0,300);
+  sky.addColorStop(0,'#1d150c');sky.addColorStop(1,'#2a2016');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,300);
+  ctx.textAlign='center';
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Drag / Tap / Space to start'),400,30);
+    buildPathOnce();
+    drawPath();
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','BLANK RUINED'),400,110);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,145);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#7ec850';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','FULL JOINT SET CARVED! 🪵'),400,100);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,135);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,165);
+    requestAnimationFrame(loop);return;
+  }
+
+  const kSpd=5.5;
+  if(keys['ArrowUp'])knife.y-=kSpd;
+  if(keys['ArrowDown'])knife.y+=kSpd;
+  if(keys['ArrowLeft'])knife.x-=kSpd;
+  if(keys['ArrowRight'])knife.x+=kSpd;
+  knife.x=Math.max(10,Math.min(790,knife.x));
+  knife.y=Math.max(10,Math.min(290,knife.y));
+
+  t+=speed;
+  if(t>=1)t=1;
+
+  drawPath();
+
+  const gp=guidePoint();
+  const dist=Math.hypot(knife.x-gp.x,knife.y-gp.y);
+  if(dist>tolerance){
+    wood-=1.2;
+  }else{
+    wood=Math.min(100,wood+0.4);
+  }
+
+  if(wood<=0){
+    if(!failJoint()){ requestAnimationFrame(loop);return; }
+  }else if(t>=1){
+    completeJoint();
+  }
+
+  ctx.strokeStyle='rgba(212,175,55,0.6)';
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(gp.x,gp.y,tolerance,0,Math.PI*2);ctx.stroke();
+
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(gp.x,gp.y,7,0,Math.PI*2);ctx.fill();
+
+  ctx.fillStyle='#c0c0c0';
+  ctx.beginPath();ctx.moveTo(knife.x,knife.y-10);ctx.lineTo(knife.x+8,knife.y+8);ctx.lineTo(knife.x-8,knife.y+8);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+
+  document.getElementById('meterBar').style.width=Math.max(0,wood)+'%';
+
+  ctx.fillStyle='#ffe3b0';ctx.font='bold 18px Arial';
+  ctx.fillText(I18N.t('carve_hint','Carving the {j}').replace('{j}',I18N.t('joint_'+jointName().toLowerCase(),jointName())),400,25);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.2)':'rgba(255,80,100,0.2)';
+    ctx.fillRect(0,0,800,300);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+let pathBuilt=false;
+function buildPathOnce(){ if(!pathBuilt){ buildPath(); pathBuilt=true; } }
+
+reset();
+setHud();
+loop();
+</script></body></html>

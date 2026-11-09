@@ -1,0 +1,277 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Model Train Locomotive Detailing</title><meta name="description" content="Play Model Train Locomotive Detailing free online — Drag tiny detail parts onto a model locomotive shell to match the reference diagram, across more detailed locomotive models."><link rel="canonical" href="https://games.multiportllc.com/games/modeltrainlocomotivedetailing"><meta property="og:title" content="Model Train Locomotive Detailing - Multiport Games"><meta property="og:description" content="Play Model Train Locomotive Detailing free online — Drag tiny detail parts onto a model locomotive shell to match the reference diagram, across more detailed locomotive models."><meta property="og:url" content="https://games.multiportllc.com/games/modeltrainlocomotivedetailing"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Model Train Locomotive Detailing - Multiport Games"><meta name="twitter:description" content="Play Model Train Locomotive Detailing free online — Drag tiny detail parts onto a model locomotive shell to match the reference diagram, across more detailed locomotive models."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Model Train Locomotive Detailing","description":"Play Model Train Locomotive Detailing free online instantly. Drag each tiny detail part from the parts tray — handrails, ladders, piping, bells, horns — onto its correct marked slot on the locomotive shell, matching the reference diagram. A correct drop glues the part in place; a wrong drop costs a life. Finish every part before time runs out to move on to a bigger, busier locomotive. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/modeltrainlocomotivedetailing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1f2b;display:block;border-radius:8px;touch-action:none;cursor:pointer;margin:0 auto}
+#hud{color:#9ac8e8;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#timeBar{max-width:420px;margin:4px auto;height:10px;background:#1a1310;border-radius:5px;overflow:hidden}
+#timeFill{height:100%;width:100%;background:#7ec850;transition:width .2s linear,background .2s}
+#msg{color:#ffd54f;text-align:center;font-weight:800;min-height:1.4em;margin:4px 0}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Model Train Locomotive Detailing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Locomotive 1</span>
+    </div>
+    <canvas id="c" width="760" height="420"></canvas>
+    <div id="msg">&nbsp;</div>
+    <div id="timeBar"><div id="timeFill"></div></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Drag a part from the tray along the bottom onto the matching numbered slot on the locomotive shell (or press <b>Tab</b> to select a tray part, <b>Arrow keys</b> to pick a slot, and <b>Enter</b> to glue it). The faint reference silhouette shows where each part belongs. A correct placement glues the part down; dropping it on the wrong slot costs a life. Detail the whole locomotive before time runs out — later locomotives pack in more parts and tighter slots.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const GID='modeltrainlocomotivedetailing';
+let score=0,hi=parseInt(localStorage.getItem(GID+'_hi')||'0',10);
+let lives=3,level=1,gameOver=false,paused=false;
+let parts=[],slots=[],traySel=0,slotSel=0,timeLeft=1,timeMax=1;
+let dragging=null,dragPos=null;
+
+const PART_NAMES=['Handrail','Ladder','Bell','Horn','Pipe','Vent','Light','Grab Iron','Antenna','Marker Lamp'];
+const PART_COLORS=['#d9c58a','#8ab4e8','#e0a84a','#e0e0e0','#9ad98a','#e894c2','#f0f070','#c0c0ff','#ff9e6d','#80e0d0'];
+
+function partCount(lvl){ return Math.min(4+Math.floor((lvl-1)/1.5),10); }
+function tolerance(lvl){ return Math.max(20,38-lvl*2); }
+
+function newLevel(lvl){
+  const n=partCount(lvl);
+  const used=new Set();
+  parts=[];slots=[];
+  const bodyX=60,bodyY=60,bodyW=640,bodyH=220;
+  for(let i=0;i<n;i++){
+    let typeIdx;
+    do{typeIdx=Math.floor(Math.random()*PART_NAMES.length);}while(used.has(typeIdx)&&used.size<PART_NAMES.length);
+    used.add(typeIdx);
+    const sx=bodyX+30+Math.random()*(bodyW-60);
+    const sy=bodyY+30+Math.random()*(bodyH-60);
+    slots.push({id:i,x:sx,y:sy,filled:false,typeIdx});
+    parts.push({id:i,typeIdx,placed:false,trayX:0,trayY:0});
+  }
+  layoutTray();
+  traySel=0;slotSel=0;dragging=null;dragPos=null;
+  timeMax=Math.max(22,55-lvl*2);
+  timeLeft=timeMax;
+  document.getElementById('levelLbl').textContent=I18N.t('loco_label','Locomotive {n}').replace('{n}',lvl);
+  setMsg('');
+}
+
+function layoutTray(){
+  const unplaced=parts.filter(p=>!p.placed);
+  const n=unplaced.length;
+  const w=Math.min(64,700/Math.max(n,1));
+  unplaced.forEach((p,i)=>{
+    p.trayX=40+i*w+w/2;
+    p.trayY=370;
+  });
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+function updateLivesLbl(){
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(lives,0))+'🖤'.repeat(Math.max(3-lives,0));
+}
+
+function startGame(){
+  score=0;lives=3;level=1;gameOver=false;paused=false;
+  updateLivesLbl();
+  newLevel(level);
+}
+
+function allPlaced(){ return parts.every(p=>p.placed); }
+
+function tryPlace(part,slot){
+  if(slot.filled)return false;
+  if(slot.typeIdx===part.typeIdx){
+    slot.filled=true;part.placed=true;
+    SFX.success();
+    score+=20+level*3;
+    layoutTray();
+    if(allPlaced())levelComplete();
+    return true;
+  } else {
+    SFX.error();
+    loseLife();
+    return false;
+  }
+}
+
+function levelComplete(){
+  score+=Math.floor(timeLeft*4)+level*30;
+  if(score>hi){hi=score;localStorage.setItem(GID+'_hi',String(hi));}
+  if(score>hi){hi=score;}
+  paused=true;
+  setMsg(I18N.t('loco_complete','Locomotive detailed! Next model...'));
+  level++;
+  setTimeout(()=>{paused=false;newLevel(level);},1100);
+}
+
+function loseLife(){
+  lives--;
+  SFX.hurt();
+  updateLivesLbl();
+  if(lives<=0){endGame();return;}
+  setMsg(I18N.t('wrong_slot','Wrong slot! Careful — part returned to tray.'));
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  setMsg(I18N.t('game_over_tap','Game Over — Tap/Click or press R to restart'));
+}
+
+function canvasPoint(evt){
+  const r=c.getBoundingClientRect();
+  const sx=(evt.clientX!==undefined?evt.clientX:evt.touches[0].clientX)-r.left;
+  const sy=(evt.clientY!==undefined?evt.clientY:evt.touches[0].clientY)-r.top;
+  return {x:sx*(c.width/r.width),y:sy*(c.height/r.height)};
+}
+
+function partAt(px,py){
+  const unplaced=parts.filter(p=>!p.placed);
+  for(const p of unplaced){
+    if(Math.hypot(px-p.trayX,py-p.trayY)<24)return p;
+  }
+  return null;
+}
+function slotAt(px,py,tol){
+  for(const s of slots){
+    if(Math.hypot(px-s.x,py-s.y)<tol)return s;
+  }
+  return null;
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(gameOver){startGame();return;}
+  if(paused)return;
+  const p=canvasPoint(e);
+  const part=partAt(p.x,p.y);
+  if(part){dragging=part;dragPos={x:p.x,y:p.y};}
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  dragPos=canvasPoint(e);
+});
+c.addEventListener('pointerup',e=>{
+  if(!dragging)return;
+  const p=canvasPoint(e);
+  const tol=tolerance(level);
+  const slot=slotAt(p.x,p.y,tol);
+  if(slot)tryPlace(dragging,slot);
+  dragging=null;dragPos=null;
+});
+c.addEventListener('touchstart',e=>{e.preventDefault();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='KeyR'||e.code==='Enter')){startGame();return;}
+  if(paused||gameOver)return;
+  const unplaced=parts.filter(p=>!p.placed);
+  if(!unplaced.length)return;
+  if(e.code==='Tab'){traySel=(traySel+1)%unplaced.length;e.preventDefault();}
+  else if(e.code==='ArrowRight'){slotSel=(slotSel+1)%slots.length;e.preventDefault();}
+  else if(e.code==='ArrowLeft'){slotSel=(slotSel-1+slots.length)%slots.length;e.preventDefault();}
+  else if(e.code==='ArrowUp'||e.code==='ArrowDown'){slotSel=(slotSel+1)%slots.length;e.preventDefault();}
+  else if(e.code==='Enter'||e.code==='Space'){
+    const part=unplaced[traySel%unplaced.length];
+    const slot=slots[slotSel];
+    if(part&&slot)tryPlace(part,slot);
+    traySel=0;
+    e.preventDefault();
+  }
+});
+
+function drawLoco(){
+  ctx.fillStyle='#2a3245';
+  ctx.fillRect(60,60,640,220);
+  ctx.strokeStyle='#4a5a75';ctx.lineWidth=2;
+  ctx.strokeRect(60,60,640,220);
+  ctx.fillStyle='#394258';
+  ctx.fillRect(60,250,640,30);
+  ctx.fillStyle='#9ac8e8';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('loco_caption','Locomotive Shell — reference diagram'),380,40);
+}
+
+function drawSlot(s,i){
+  const isSel=(i===slotSel)&&!gameOver&&!paused;
+  ctx.save();
+  if(!s.filled){
+    ctx.strokeStyle=isSel?'#ffd54f':'rgba(255,255,255,.5)';
+    ctx.lineWidth=isSel?3:1.5;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath();ctx.arc(s.x,s.y,16,0,7);ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle='rgba(255,255,255,.7)';ctx.font='11px Arial';ctx.textAlign='center';
+    ctx.fillText(String(s.id+1),s.x,s.y+4);
+  } else {
+    ctx.fillStyle=PART_COLORS[s.typeIdx];
+    ctx.beginPath();ctx.arc(s.x,s.y,15,0,7);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawPart(p,i,isSelTray){
+  ctx.save();
+  ctx.fillStyle=PART_COLORS[p.typeIdx];
+  ctx.beginPath();ctx.arc(p.trayX,p.trayY,18,0,7);ctx.fill();
+  ctx.strokeStyle=isSelTray?'#ffd54f':'#000';
+  ctx.lineWidth=isSelTray?3:1.5;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function render(){
+  ctx.clearRect(0,0,760,420);
+  ctx.fillStyle='#10141c';ctx.fillRect(0,0,760,420);
+  drawLoco();
+  slots.forEach((s,i)=>drawSlot(s,i));
+  ctx.fillStyle='#444c5e';ctx.fillRect(0,350,760,70);
+  const unplaced=parts.filter(p=>!p.placed);
+  unplaced.forEach((p,i)=>drawPart(p,i,i===(traySel%Math.max(unplaced.length,1))&&!gameOver&&!paused));
+  if(dragging&&dragPos){
+    ctx.fillStyle=PART_COLORS[dragging.typeIdx];
+    ctx.beginPath();ctx.arc(dragPos.x,dragPos.y,18,0,7);ctx.fill();
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;ctx.stroke();
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,760,420);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),380,200);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),380,235);
+  }
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+
+function tick(){
+  if(!gameOver&&!paused){
+    timeLeft-=0.1;
+    if(timeLeft<=0){
+      timeLeft=0;
+      loseLife();
+      if(!gameOver){paused=true;setTimeout(()=>{paused=false;newLevel(level);},900);}
+    }
+    const pct=Math.max(0,timeLeft/timeMax)*100;
+    const fill=document.getElementById('timeFill');
+    fill.style.width=pct+'%';
+    fill.style.background=pct<25?'#e94560':pct<55?'#ffd54f':'#7ec850';
+  }
+  render();
+}
+
+setInterval(tick,100);
+startGame();
+</script></body></html>

@@ -1,0 +1,285 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Model Train Track Laying</title><meta name="description" content="Play Model Train Track Laying free online — Rotate model track pieces to connect the start to the end before time runs out, across increasingly complex layout boards."><link rel="canonical" href="https://games.multiportllc.com/games/modeltraintracklaying"><meta property="og:title" content="Model Train Track Laying - Multiport Games"><meta property="og:description" content="Play Model Train Track Laying free online — Rotate model track pieces to connect the start to the end before time runs out, across increasingly complex layout boards."><meta property="og:url" content="https://games.multiportllc.com/games/modeltraintracklaying"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Model Train Track Laying - Multiport Games"><meta name="twitter:description" content="Play Model Train Track Laying free online — Rotate model track pieces to connect the start to the end before time runs out, across increasingly complex layout boards."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Model Train Track Laying","description":"Play Model Train Track Laying free online instantly. Click or tap a track piece — or move the keyboard cursor and press Space — to rotate it until the layout forms one unbroken route from the start signal to the end signal. Finish before the clock runs out. Run out of time three times and it's game over. Each new layout board is bigger and uses trickier pieces, including switches. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/modeltraintracklaying","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1b2a1b;display:block;border-radius:8px;touch-action:none;cursor:pointer;margin:0 auto}
+#hud{color:#d9c58a;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#timeBar{max-width:420px;margin:4px auto;height:10px;background:#1a1310;border-radius:5px;overflow:hidden}
+#timeFill{height:100%;width:100%;background:#7ec850;transition:width .2s linear,background .2s}
+#msg{color:#ffd54f;text-align:center;font-weight:800;min-height:1.4em;margin:4px 0}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Model Train Track Laying</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Board 1</span>
+    </div>
+    <canvas id="c" width="760" height="420"></canvas>
+    <div id="msg">&nbsp;</div>
+    <div id="timeBar"><div id="timeFill"></div></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Click/tap a track piece — or move the cursor with the <b>Arrow keys</b> and press <b>Space/Enter</b> — to rotate it 90°. Rotate every piece until a single unbroken track runs from the green start signal to the red end signal. Complete the layout before the time bar runs out — run out of time three times and the game ends. Later boards are bigger and add track switches, so plan the route carefully.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const GID='modeltraintracklaying';
+let score=0,hi=parseInt(localStorage.getItem(GID+'_hi')||'0',10);
+let lives=3,level=1,gameOver=false,solvedFlash=0;
+let grid,cols,rows,cell,cx0,cy0,startPos,endPos,curX=0,curY=0,timeLeft=1,timeMax=1,timerId=null,paused=false;
+
+// Directions bitmask: N=1 E=2 S=4 W=8
+const N=1,E=2,S=4,W=8;
+const OPP={};OPP[N]=S;OPP[E]=W;OPP[S]=N;OPP[W]=E;
+
+// piece templates (base rotation at rot=0), rotating adds 90 deg clockwise steps
+function rotateMask(mask,steps){
+  let m=mask;
+  for(let i=0;i<((steps%4)+4)%4;i++){
+    let nm=0;
+    if(m&N)nm|=E;
+    if(m&E)nm|=S;
+    if(m&S)nm|=W;
+    if(m&W)nm|=N;
+    m=nm;
+  }
+  return m;
+}
+
+function makePiece(type){
+  // base masks
+  let base;
+  if(type==='straight')base=N|S;
+  else if(type==='curve')base=N|E;
+  else base=N|E|S; // switch: three-way
+  return {type,rot:Math.floor(Math.random()*4),base,locked:false};
+}
+
+function pieceMask(p){ return rotateMask(p.base,p.rot); }
+
+function boardSize(lvl){
+  const c=Math.min(4+Math.floor((lvl-1)/2),8);
+  const r=Math.min(3+Math.floor((lvl-1)/2),6);
+  return [c,r];
+}
+
+function switchChance(lvl){ return Math.min(0.08+lvl*0.04,0.4); }
+
+function newBoard(lvl){
+  [cols,rows]=boardSize(lvl);
+  cell=Math.min(Math.floor(680/cols),Math.floor(380/rows),72);
+  cx0=(760-cols*cell)/2; cy0=10+(400-rows*cell)/2;
+  grid=[];
+  for(let y=0;y<rows;y++){
+    const row=[];
+    for(let x=0;x<cols;x++){
+      const useSwitch=Math.random()<switchChance(lvl);
+      const t=useSwitch?'switch':(Math.random()<0.5?'straight':'curve');
+      row.push(makePiece(t));
+    }
+    grid.push(row);
+  }
+  startPos={x:0,y:Math.floor(rows/2)};
+  endPos={x:cols-1,y:Math.floor(rows/2)};
+  curX=0;curY=0;
+  timeMax=Math.max(18,42-lvl*1.6);
+  timeLeft=timeMax;
+  document.getElementById('levelLbl').textContent=I18N.t('board_label','Board {n}').replace('{n}',lvl);
+  setMsg('');
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function connected(x,y,dir){
+  // does piece at x,y have connection dir, and does neighbor connect back
+  if(x<0||y<0||x>=cols||y>=rows)return false;
+  const m=pieceMask(grid[y][x]);
+  return !!(m&dir);
+}
+
+function solved(){
+  // BFS from start following piece connections
+  const visited=new Set();
+  const key=(x,y)=>x+','+y;
+  const stack=[{x:startPos.x,y:startPos.y}];
+  visited.add(key(startPos.x,startPos.y));
+  while(stack.length){
+    const {x,y}=stack.pop();
+    const m=pieceMask(grid[y][x]);
+    const dirs=[[N,0,-1,S],[E,1,0,W],[S,0,1,N],[W,-1,0,E]];
+    for(const [dir,dx,dy,needBack] of dirs){
+      if(!(m&dir))continue;
+      const nx=x+dx,ny=y+dy;
+      if(nx<0||ny<0||nx>=cols||ny>=rows)continue;
+      const nm=pieceMask(grid[ny][nx]);
+      if(!(nm&needBack))continue;
+      if(!visited.has(key(nx,ny))){visited.add(key(nx,ny));stack.push({x:nx,y:ny});}
+    }
+  }
+  return visited.has(key(endPos.x,endPos.y));
+}
+
+function rotatePieceAt(x,y){
+  if(gameOver||paused)return;
+  if(x<0||y<0||x>=cols||y>=rows)return;
+  grid[y][x].rot=(grid[y][x].rot+1)%4;
+  SFX.click();
+  checkSolved();
+}
+
+function checkSolved(){
+  if(solved()){
+    SFX.success();
+    score+=Math.floor(timeLeft*8)+level*40;
+    if(score>hi){hi=score;localStorage.setItem(GID+'_hi',String(hi));}
+    solvedFlash=30;
+    level++;
+    paused=true;
+    setMsg(I18N.t('board_complete','Track complete! Next board...'));
+    setTimeout(()=>{paused=false;newBoard(level);},1100);
+  }
+}
+
+function loseLife(){
+  lives--;
+  SFX.hurt();
+  updateLivesLbl();
+  if(lives<=0){endGame();return;}
+  setMsg(I18N.t('out_of_time','Out of time! Board reshuffled.'));
+  paused=true;
+  setTimeout(()=>{paused=false;newBoard(level);},900);
+}
+
+function updateLivesLbl(){
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(lives,0))+'🖤'.repeat(Math.max(3-lives,0));
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  setMsg(I18N.t('game_over_tap','Game Over — Tap/Click or press R to restart'));
+}
+
+function startGame(){
+  score=0;lives=3;level=1;gameOver=false;paused=false;
+  updateLivesLbl();
+  newBoard(level);
+}
+
+function px2cell(px,py){
+  const x=Math.floor((px-cx0)/cell);
+  const y=Math.floor((py-cy0)/cell);
+  return {x,y};
+}
+
+function handlePointer(evt){
+  const r=c.getBoundingClientRect();
+  const sx=(evt.clientX!==undefined?evt.clientX:evt.touches[0].clientX)-r.left;
+  const sy=(evt.clientY!==undefined?evt.clientY:evt.touches[0].clientY)-r.top;
+  const px=sx*(c.width/r.width), py=sy*(c.height/r.height);
+  if(gameOver){startGame();return;}
+  const {x,y}=px2cell(px,py);
+  rotatePieceAt(x,y);
+}
+
+c.addEventListener('click',handlePointer);
+c.addEventListener('touchstart',e=>{e.preventDefault();handlePointer(e);},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='KeyR'||e.code==='Space'||e.code==='Enter')){startGame();return;}
+  if(paused||gameOver)return;
+  if(e.code==='ArrowLeft'){curX=Math.max(0,curX-1);e.preventDefault();}
+  else if(e.code==='ArrowRight'){curX=Math.min(cols-1,curX+1);e.preventDefault();}
+  else if(e.code==='ArrowUp'){curY=Math.max(0,curY-1);e.preventDefault();}
+  else if(e.code==='ArrowDown'){curY=Math.min(rows-1,curY+1);e.preventDefault();}
+  else if(e.code==='Space'||e.code==='Enter'){rotatePieceAt(curX,curY);e.preventDefault();}
+});
+
+function drawPiece(p,x,y){
+  const cxp=cx0+x*cell+cell/2, cyp=cy0+y*cell+cell/2;
+  const m=pieceMask(p);
+  ctx.save();
+  ctx.strokeStyle='#8a7550';
+  ctx.lineWidth=1;
+  ctx.strokeRect(cx0+x*cell,cy0+y*cell,cell,cell);
+  ctx.strokeStyle=p.type==='switch'?'#e0a84a':'#c8c8c8';
+  ctx.lineWidth=Math.max(5,cell*0.12);
+  ctx.lineCap='round';
+  const half=cell/2-2;
+  const pts={};
+  pts[N]=[cxp,cyp-half]; pts[E]=[cxp+half,cyp]; pts[S]=[cxp,cyp+half]; pts[W]=[cxp-half,cyp];
+  const dirs=[N,E,S,W].filter(d=>m&d);
+  if(dirs.length===2){
+    const [a,b]=dirs;
+    ctx.beginPath();
+    ctx.moveTo(pts[a][0],pts[a][1]);
+    if((a===N&&b===S)||(a===E&&b===W)){ ctx.lineTo(pts[b][0],pts[b][1]); }
+    else { ctx.quadraticCurveTo(cxp,cyp,pts[b][0],pts[b][1]); }
+    ctx.stroke();
+  } else {
+    dirs.forEach(d=>{
+      ctx.beginPath();
+      ctx.moveTo(cxp,cyp);
+      ctx.lineTo(pts[d][0],pts[d][1]);
+      ctx.stroke();
+    });
+    ctx.fillStyle='#e0a84a';
+    ctx.beginPath();ctx.arc(cxp,cyp,Math.max(3,cell*0.08),0,7);ctx.fill();
+  }
+  ctx.restore();
+}
+
+function render(){
+  ctx.clearRect(0,0,760,420);
+  ctx.fillStyle='#142314';ctx.fillRect(0,0,760,420);
+  for(let y=0;y<rows;y++)for(let x=0;x<cols;x++)drawPiece(grid[y][x],x,y);
+  // start/end markers
+  ctx.fillStyle='#4caf50';
+  ctx.beginPath();ctx.arc(cx0+startPos.x*cell+cell*0.2,cy0+startPos.y*cell+cell/2,8,0,7);ctx.fill();
+  ctx.fillStyle='#e94560';
+  ctx.beginPath();ctx.arc(cx0+endPos.x*cell+cell*0.8,cy0+endPos.y*cell+cell/2,8,0,7);ctx.fill();
+  // keyboard cursor
+  if(!gameOver){
+    ctx.strokeStyle=solvedFlash>0?'#ffd54f':'#ffffffaa';
+    ctx.lineWidth=3;
+    ctx.strokeRect(cx0+curX*cell+2,cy0+curY*cell+2,cell-4,cell-4);
+  }
+  if(solvedFlash>0)solvedFlash--;
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,760,420);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),380,200);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),380,235);
+  }
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+
+function tick(){
+  if(!gameOver&&!paused){
+    timeLeft-=0.1;
+    if(timeLeft<=0){timeLeft=0;loseLife();}
+    const pct=Math.max(0,timeLeft/timeMax)*100;
+    const fill=document.getElementById('timeFill');
+    fill.style.width=pct+'%';
+    fill.style.background=pct<25?'#e94560':pct<55?'#ffd54f':'#7ec850';
+  }
+  render();
+}
+
+setInterval(tick,100);
+startGame();
+</script></body></html>

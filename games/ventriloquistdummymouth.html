@@ -1,0 +1,274 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ventriloquist Dummy Mouth</title><meta name="description" content="Play Ventriloquist Dummy Mouth free online — Flick the lever to snap the dummy's jaw open and shut right on the beat of the flashing speech pattern. Miss the timing and the act falls flat."><link rel="canonical" href="https://games.multiportllc.com/games/ventriloquistdummymouth"><meta property="og:title" content="Ventriloquist Dummy Mouth - Multiport Games"><meta property="og:description" content="Play Ventriloquist Dummy Mouth free online — Flick the lever to snap the dummy's jaw open and shut right on the beat of the flashing speech pattern. Miss the timing and the act falls flat."><meta property="og:url" content="https://games.multiportllc.com/games/ventriloquistdummymouth"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Ventriloquist Dummy Mouth - Multiport Games"><meta name="twitter:description" content="Play Ventriloquist Dummy Mouth free online — Flick the lever to snap the dummy's jaw open and shut right on the beat of the flashing speech pattern. Miss the timing and the act falls flat."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ventriloquist Dummy Mouth","description":"Play Ventriloquist Dummy Mouth free online instantly. Watch the glowing speech-beat track and snap the dummy's jaw lever open or shut exactly when each beat lights up, keeping the mouth believably in sync with the patter. Patterns get faster and trickier with every round, with syncopated beats and rests to trip you up. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/ventriloquistdummymouth","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#201327;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#ffd5e5;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#leverWrap{max-width:600px;margin:0 auto 8px;text-align:center}
+#leverBtn{padding:10px 26px;background:#ff5fa2;border:none;border-radius:20px;color:#fff;font-weight:800;font-size:1rem;cursor:pointer;touch-action:manipulation}
+#leverBtn:active{transform:scale(.95)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ventriloquist Dummy Mouth</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Routine 1</span>
+    </div>
+    <canvas id="c" width="800" height="300"></canvas>
+    <div id="leverWrap"><button id="leverBtn">Flick Lever (Space)</button></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Beats light up on the speech track as the dummy patters away. Press <b>Space</b>, <b>click/tap the lever</b>, or tap the canvas exactly when a beat lights up to snap the jaw and keep the act believable. Hit it clean and your sync meter climbs; miss the timing and it drops, costing a life when it empties. Each routine speeds up and throws in trickier syncopated beats and rests — survive all 3 lives worth of mistakes and finish every routine to win the show!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const TOTAL_ROUTINES=8;
+let hi=parseInt(localStorage.getItem('ventriloquistdummymouth_hi')||'0',10);
+let score=0,lives=3,routine=0,gameOver=false,started=false,won=false;
+let sync=100,flashTimer=0,flashGood=true;
+let beats=[],beatIdx=0,t=0,speed=0,mouthOpen=false,mouthAnimT=0;
+let judged=[];
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('routine_label','Routine {n}/{t}').replace('{n}',Math.min(routine+1,TOTAL_ROUTINES)).replace('{t}',TOTAL_ROUTINES);
+}
+
+function buildBeats(){
+  // beat positions as fractions of the routine's timeline (0..1), with a type: 'open' or 'rest'
+  beats=[];
+  const count=6+Math.min(10,routine*2);
+  let pos=0.06;
+  for(let i=0;i<count;i++){
+    beats.push({pos,hit:false,missed:false});
+    const gapOpts=routine<2?[0.09,0.1]:[0.05,0.07,0.1,0.14];
+    pos+=gapOpts[Math.floor(Math.random()*gapOpts.length)];
+    if(pos>0.97)break;
+  }
+  judged=beats.map(()=>false);
+}
+
+function setupRoutine(){
+  t=0;
+  speed=0.00065+routine*0.00011;
+  sync=100;
+  buildBeats();
+}
+
+function reset(){
+  score=0;lives=3;routine=0;gameOver=false;started=false;won=false;flashTimer=0;
+  setupRoutine();
+  setHud();
+}
+
+const HIT_WINDOW=0.028;
+
+function nearestBeat(){
+  let best=-1,bestDist=Infinity;
+  beats.forEach((b,i)=>{
+    if(judged[i])return;
+    const d=Math.abs(b.pos-t);
+    if(d<bestDist){bestDist=d;best=i;}
+  });
+  return {i:best,dist:bestDist};
+}
+
+function flick(){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();return;}
+  mouthOpen=!mouthOpen;
+  mouthAnimT=1;
+  const {i,dist}=nearestBeat();
+  if(i>=0&&dist<=HIT_WINDOW){
+    judged[i]=true;
+    beats[i].hit=true;
+    score+=Math.round(20+(1-dist/HIT_WINDOW)*20);
+    sync=Math.min(100,sync+6);
+    SFX.catch();
+    flashTimer=10;flashGood=true;
+  }else{
+    sync-=14;
+    SFX.error();
+    flashTimer=10;flashGood=false;
+    if(sync<=0)failRoutine();
+  }
+}
+
+function failRoutine(){
+  lives--;
+  flashTimer=16;flashGood=false;
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('ventriloquistdummymouth_hi',hi);}
+    setHud();
+    return;
+  }
+  SFX.hit();
+  setupRoutine();
+  setHud();
+}
+
+function completeRoutine(){
+  score+=Math.round(40+sync);
+  SFX.success();
+  flashTimer=16;flashGood=true;
+  routine++;
+  if(routine>=TOTAL_ROUTINES){
+    won=true;
+    SFX.win();
+    if(score>hi){hi=score;localStorage.setItem('ventriloquistdummymouth_hi',hi);}
+    setHud();
+    return;
+  }
+  setupRoutine();
+  setHud();
+}
+
+document.getElementById('leverBtn').addEventListener('click',flick);
+c.addEventListener('pointerdown',e=>{e.preventDefault();flick();});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();flick();}
+});
+
+function drawDummy(){
+  const cx=400,cy=175;
+  ctx.save();
+  ctx.fillStyle='#e8c39e';
+  ctx.beginPath();ctx.ellipse(cx,cy,70,85,0,0,Math.PI*2);ctx.fill();
+  // eyes
+  ctx.fillStyle='#2a1d33';
+  ctx.beginPath();ctx.ellipse(cx-26,cy-20,8,10,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(cx+26,cy-20,8,10,0,0,Math.PI*2);ctx.fill();
+  // rosy cheeks
+  ctx.fillStyle='rgba(255,120,150,0.4)';
+  ctx.beginPath();ctx.ellipse(cx-40,cy+8,12,8,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(cx+40,cy+8,12,8,0,0,Math.PI*2);ctx.fill();
+  // mouth hinge animation
+  const openAmt=mouthOpen?1:0;
+  const easeOpen=Math.min(1,mouthAnimT)*openAmt + (1-Math.min(1,mouthAnimT))*(openAmt?0:0);
+  const gap=mouthOpen?34:6;
+  ctx.fillStyle='#7a2d3d';
+  ctx.beginPath();
+  ctx.moveTo(cx-34,cy+28);
+  ctx.lineTo(cx+34,cy+28);
+  ctx.lineTo(cx+30,cy+28+gap);
+  ctx.lineTo(cx-30,cy+28+gap);
+  ctx.closePath();ctx.fill();
+  if(mouthOpen){
+    ctx.fillStyle='#fff';
+    ctx.fillRect(cx-28,cy+28,56,6);
+  }
+  // jaw outline
+  ctx.strokeStyle='#5a3a28';ctx.lineWidth=3;
+  ctx.beginPath();ctx.ellipse(cx,cy,70,85,0,0,Math.PI*2);ctx.stroke();
+  ctx.restore();
+  if(mouthAnimT>0)mouthAnimT-=0.12;
+}
+
+function drawTrack(){
+  const trackY=250,trackX0=40,trackX1=760;
+  ctx.strokeStyle='rgba(255,255,255,0.2)';
+  ctx.lineWidth=6;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(trackX0,trackY);ctx.lineTo(trackX1,trackY);ctx.stroke();
+
+  beats.forEach((b,i)=>{
+    const bx=trackX0+b.pos*(trackX1-trackX0);
+    const active=Math.abs(b.pos-t)<=HIT_WINDOW*1.6 && !judged[i];
+    let col='rgba(255,255,255,0.5)';
+    if(judged[i]&&b.hit)col='#7ec850';
+    else if(active)col='#ffd54f';
+    ctx.fillStyle=col;
+    ctx.beginPath();ctx.arc(bx,trackY,active?12:8,0,Math.PI*2);ctx.fill();
+  });
+
+  // playhead
+  const px=trackX0+Math.min(1,t)*(trackX1-trackX0);
+  ctx.strokeStyle='#ff5fa2';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(px,trackY-20);ctx.lineTo(px,trackY+20);ctx.stroke();
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,300);
+  const sky=ctx.createLinearGradient(0,0,0,300);
+  sky.addColorStop(0,'#160d1c');sky.addColorStop(1,'#201327');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,300);
+  ctx.textAlign='center';
+
+  if(!started){
+    drawDummy();
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Space / Tap to start'),400,30);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','ACT BOMBED'),400,110);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,145);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#7ec850';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t("win_title","SHOW'S A HIT! 🎭"),400,100);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,135);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,165);
+    requestAnimationFrame(loop);return;
+  }
+
+  t+=speed;
+  // auto-miss beats that scroll past the hit window
+  beats.forEach((b,i)=>{
+    if(!judged[i]&&t-b.pos>HIT_WINDOW){
+      judged[i]=true;b.missed=true;
+      sync-=10;
+      if(sync<=0){failRoutine();}
+    }
+  });
+
+  drawTrack();
+  drawDummy();
+
+  ctx.fillStyle='#ffd5e5';ctx.font='bold 18px Arial';
+  ctx.fillText(I18N.t('sync_hint','Flick on the beat to stay in sync'),400,25);
+
+  // sync meter
+  ctx.fillStyle='rgba(0,0,0,0.3)';ctx.fillRect(300,40,200,14);
+  ctx.fillStyle=sync>50?'#7ec850':'#ff6b6b';
+  ctx.fillRect(300,40,Math.max(0,sync)*2,14);
+  ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.strokeRect(300,40,200,14);
+
+  if(t>=1){
+    const allDone=judged.every(Boolean);
+    if(allDone)completeRoutine();
+  }
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.18)':'rgba(255,80,100,0.18)';
+    ctx.fillRect(0,0,800,300);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+setHud();
+loop();
+</script></body></html>
