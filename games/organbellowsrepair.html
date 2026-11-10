@@ -1,0 +1,273 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Organ Bellows Repair</title><meta name="description" content="Play Organ Bellows Repair free online — Click or tap a leaking spot to glue a patch, then drag/rub across it (or use arrow keys) to smooth out air bubbles before the leather sets. Patch every leak before the wind pressure runs out!"><link rel="canonical" href="https://games.multiportllc.com/games/organbellowsrepair"><meta property="og:title" content="Organ Bellows Repair - Multiport Games"><meta property="og:description" content="Play Organ Bellows Repair free online — Click or tap a leaking spot to glue a patch, then drag/rub across it (or use arrow keys) to smooth out air bubbles before the leather sets. Patch every leak before the wind pressure runs out!"><meta property="og:url" content="https://games.multiportllc.com/games/organbellowsrepair"><meta property="og:type" content="website"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="Organ Bellows Repair - Multiport Games"><meta name="twitter:description" content="Play Organ Bellows Repair free online — Click or tap a leaking spot to glue a patch, then drag/rub across it (or use arrow keys) to smooth out air bubbles before the leather sets. Patch every leak before the wind pressure runs out!"><link rel="apple-touch-icon" href="../icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Organ Bellows Repair","description":"Play Organ Bellows Repair free online instantly. Glue leather patches over worn spots on an organ wind bellows and smooth out air bubbles before the glue sets, across more leaks and trickier leather folds. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/organbellowsrepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#score-display{color:#e9c46a;font-size:1.1rem;font-weight:700;text-align:center;padding:6px}
+#hud{display:flex;justify-content:space-between;color:#ffd54f;font-weight:800;font-size:.95rem;max-width:640px;margin:0 auto 6px;flex-wrap:wrap;gap:4px;padding:0 6px}
+#c{background:#5a3b22;display:block;border-radius:8px;margin:0 auto;touch-action:none}
+#pressurebar{height:10px;background:#222;border-radius:5px;overflow:hidden;max-width:640px;margin:6px auto}
+#pressurefill{height:100%;background:#4caf50;width:100%;transition:width .2s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Organ Bellows Repair</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="levelDisplay">Level: 1</span>
+      <span id="livesDisplay">Lives: ♥♥♥</span>
+      <span id="scoreDisplay">Score: 0 | Hi: 0</span>
+    </div>
+    <div id="pressurebar"><div id="pressurefill"></div></div>
+    <canvas id="c" width="640" height="340" tabindex="0"></canvas>
+    <div id="score-display">Click a worn spot, then rub to smooth the bubbles</div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click, tap, or press <b>Enter</b> on a selected leak (use <b>arrow keys</b> or <b>Tab</b> to select) to glue a patch, then drag/rub across it — or press <b>Left/Right</b> repeatedly — to smooth out the air bubbles before the leather sets. Seal every leak before the bellows loses all its wind pressure!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+let level=1,lives=3,score=0,hi=0;
+try{hi=parseInt(localStorage.getItem('organbellowsrepair_hi')||'0',10)||0;}catch(e){hi=0;}
+
+let leaks=[],selected=0,pressure=100,pressureDrain=2.2,gameOver=false,won=false,active=false;
+let rubbing=false,lastRubX=null;
+let lastT=null,raf=null;
+
+function setStatus(t){document.getElementById('score-display').textContent=t;}
+function updateHud(){
+  document.getElementById('levelDisplay').textContent=I18N.t('level_label','Level: {n}').replace('{n}',level);
+  document.getElementById('livesDisplay').textContent=I18N.t('lives_label','Lives: {h}').replace('{h}','♥'.repeat(Math.max(0,lives)));
+  document.getElementById('scoreDisplay').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+
+function leakCount(){return Math.min(8,2+level);}
+
+function newRound(){
+  leaks=[];
+  const n=leakCount();
+  for(let i=0;i<n;i++){
+    leaks.push({
+      x:60+Math.random()*520,
+      y:60+Math.random()*220,
+      r:16+Math.random()*10,
+      patched:false,
+      bubbles:Math.min(1,0.5+level*0.05+Math.random()*0.3),
+      smoothed:0
+    });
+  }
+  selected=0;
+  pressure=100;
+  pressureDrain=1.4+level*0.22;
+  active=true;
+  rubbing=false;
+  setStatus(I18N.t('find_leaks','Patch every leak before pressure runs out!'));
+  updateHud();
+  lastT=null;
+  if(raf)cancelAnimationFrame(raf);
+  raf=requestAnimationFrame(loop);
+}
+
+function nearestUnpatched(fromIdx){
+  const unpatched=leaks.map((l,i)=>i).filter(i=>!leaks[i].patched);
+  if(unpatched.length===0)return -1;
+  if(unpatched.includes(fromIdx))return fromIdx;
+  return unpatched[0];
+}
+
+function allPatched(){return leaks.every(l=>l.patched&&l.smoothed>=1);}
+
+function draw(){
+  ctx.clearRect(0,0,c.width,c.height);
+  const g=ctx.createLinearGradient(0,0,0,c.height);
+  g.addColorStop(0,'#6b4a2c');g.addColorStop(1,'#4a3119');
+  ctx.fillStyle=g;ctx.fillRect(0,0,c.width,c.height);
+  for(let i=0;i<6;i++){
+    ctx.strokeStyle='rgba(0,0,0,0.15)';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(0,40+i*45);ctx.lineTo(c.width,40+i*45);ctx.stroke();
+  }
+  leaks.forEach((l,i)=>{
+    if(l.patched){
+      ctx.fillStyle=`rgba(120,80,40,${0.5+0.5*l.smoothed})`;
+      ctx.beginPath();ctx.ellipse(l.x,l.y,l.r+6,l.r+6,0,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle='#8a5a2a';ctx.lineWidth=2;ctx.stroke();
+      if(l.smoothed<1){
+        const bubbleR=(1-l.smoothed)*(l.r*0.5);
+        ctx.fillStyle='rgba(220,220,200,0.55)';
+        ctx.beginPath();ctx.ellipse(l.x,l.y,bubbleR,bubbleR*0.7,0,0,Math.PI*2);ctx.fill();
+      }
+    }else{
+      ctx.fillStyle=i===selected&&active?'rgba(233,69,96,0.85)':'rgba(20,10,5,0.75)';
+      ctx.beginPath();ctx.ellipse(l.x,l.y,l.r,l.r,0,0,Math.PI*2);ctx.fill();
+      if(i===selected&&active){
+        ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;ctx.stroke();
+      }
+    }
+  });
+}
+
+function patchSelected(){
+  if(!active||gameOver)return;
+  const i=nearestUnpatched(selected);
+  if(i<0)return;
+  selected=i;
+  const l=leaks[i];
+  if(!l.patched){
+    l.patched=true;
+    SFX.click();
+    setStatus(I18N.t('rub_prompt','Now rub to smooth the bubbles!'));
+  }
+}
+
+function rubAt(idx,amount){
+  const l=leaks[idx];
+  if(!l||!l.patched||l.smoothed>=1)return;
+  l.smoothed=Math.min(1,l.smoothed+amount);
+  if(l.smoothed>=1){
+    SFX.point();
+    const nextIdx=leaks.findIndex(x=>!x.patched);
+    if(nextIdx>=0)selected=nextIdx;
+    checkWin();
+  }
+}
+
+function checkWin(){
+  if(allPatched()&&active){
+    active=false;
+    const pts=Math.round(50*level+pressure*2);
+    score+=pts;
+    if(score>hi){hi=score;try{localStorage.setItem('organbellowsrepair_hi',String(hi));}catch(e){}}
+    SFX.success();
+    setStatus(I18N.t('sealed_msg','Bellows sealed! +{p} points').replace('{p}',pts));
+    level++;
+    updateHud();
+    if(level>12){
+      endGame(true);
+    }else{
+      setTimeout(newRound,900);
+    }
+  }
+}
+
+function loseLife(){
+  active=false;
+  lives--;
+  SFX.hit();
+  updateHud();
+  if(lives<=0){
+    endGame(false);
+  }else{
+    setStatus(I18N.t('leak_won','Pressure lost! Starting a fresh bellows...'));
+    setTimeout(newRound,900);
+  }
+}
+
+function endGame(isWin){
+  gameOver=true;won=isWin;active=false;
+  if(raf)cancelAnimationFrame(raf);
+  if(isWin){
+    SFX.win();
+    setStatus(I18N.t('win_msg','Every bellows repaired! Final score: {s}. Click to play again.').replace('{s}',score));
+  }else{
+    SFX.lose();
+    setStatus(I18N.t('lose_msg','Out of leather! Final score: {s}. Click to play again.').replace('{s}',score));
+  }
+}
+
+function restart(){
+  level=1;lives=3;score=0;gameOver=false;won=false;
+  newRound();
+}
+
+function loop(ts){
+  if(!lastT)lastT=ts;
+  const dt=(ts-lastT)/1000;lastT=ts;
+  if(active&&!gameOver){
+    pressure-=pressureDrain*dt;
+    document.getElementById('pressurefill').style.width=Math.max(0,pressure)+'%';
+    if(pressure<=0){
+      pressure=0;
+      loseLife();
+    }
+  }
+  draw();
+  raf=requestAnimationFrame(loop);
+}
+
+function canvasPos(e){
+  const rect=c.getBoundingClientRect();
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  return {
+    x:(clientX-rect.left)*(c.width/rect.width),
+    y:(clientY-rect.top)*(c.height/rect.height)
+  };
+}
+
+function leakAt(pos){
+  for(let i=0;i<leaks.length;i++){
+    const l=leaks[i];
+    const dx=pos.x-l.x,dy=pos.y-l.y;
+    if(dx*dx+dy*dy<=(l.r+8)*(l.r+8))return i;
+  }
+  return -1;
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(gameOver){restart();return;}
+  const pos=canvasPos(e);
+  const i=leakAt(pos);
+  if(i>=0){
+    if(!leaks[i].patched){selected=i;patchSelected();}
+    else if(leaks[i].smoothed<1){selected=i;rubbing=true;lastRubX=pos.x;}
+  }
+});
+c.addEventListener('pointermove',e=>{
+  if(!rubbing)return;
+  const pos=canvasPos(e);
+  const l=leaks[selected];
+  if(l&&l.patched&&l.smoothed<1){
+    const delta=Math.abs(pos.x-(lastRubX==null?pos.x:lastRubX));
+    if(delta>2){rubAt(selected,delta/60);lastRubX=pos.x;}
+  }
+});
+window.addEventListener('pointerup',()=>{rubbing=false;lastRubX=null;});
+c.addEventListener('touchstart',e=>{e.preventDefault();},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(gameOver){
+    if(e.code==='Enter'){restart();}
+    return;
+  }
+  if(!active)return;
+  if(e.code==='Tab'||e.code==='ArrowDown'||e.code==='ArrowRight'){
+    e.preventDefault();
+    const unpatched=leaks.map((l,i)=>i).filter(i=>!l.patched);
+    if(unpatched.length){
+      const cur=unpatched.indexOf(selected);
+      selected=unpatched[(Math.max(0,cur)+1)%unpatched.length];
+    }
+  }else if(e.code==='ArrowUp'||e.code==='ArrowLeft'){
+    e.preventDefault();
+    const unpatched=leaks.map((l,i)=>i).filter(i=>!l.patched);
+    if(unpatched.length){
+      const cur=unpatched.indexOf(selected);
+      selected=unpatched[(cur-1+unpatched.length)%unpatched.length];
+    }
+    if(leaks[selected]&&leaks[selected].patched&&leaks[selected].smoothed<1)rubAt(selected,0.12);
+  }else if(e.code==='Enter'||e.code==='Space'){
+    e.preventDefault();
+    const l=leaks[selected];
+    if(l&&!l.patched)patchSelected();
+    else if(l&&l.smoothed<1)rubAt(selected,0.18);
+  }
+});
+
+updateHud();
+newRound();
+</script></body></html>

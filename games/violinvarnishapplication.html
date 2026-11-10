@@ -1,0 +1,331 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Violin Varnish Application</title><meta name="description" content="Play Violin Varnish Application free online — Brush thin, even coats of varnish onto a violin body, catching drips and waiting out dry time between coats."><link rel="canonical" href="https://games.multiportllc.com/games/violinvarnishapplication"><meta property="og:title" content="Violin Varnish Application - Multiport Games"><meta property="og:description" content="Play Violin Varnish Application free online — Brush thin, even coats of varnish onto a violin body, catching drips and waiting out dry time between coats."><meta property="og:url" content="https://games.multiportllc.com/games/violinvarnishapplication"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Violin Varnish Application - Multiport Games"><meta name="twitter:description" content="Play Violin Varnish Application free online — Brush thin, even coats of varnish onto a violin body, catching drips and waiting out dry time between coats."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Violin Varnish Application","description":"Play Violin Varnish Application free online instantly. Drag a brush over a violin body to spread an even coat of varnish across every cell without pooling too thick in one spot. Catch drips before they run off the edge and let each coat dry fully before starting the next. Finish more coats with trickier color layering each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/violinvarnishapplication","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1b140d;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#f0c98a;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#dryWrap{max-width:600px;margin:0 auto 6px;background:#241a10;border-radius:10px;padding:4px;display:none}
+#dryBar{height:12px;border-radius:8px;background:linear-gradient(90deg,#8a5a2a,#f0c98a);width:0%;transition:width .1s}
+#status{color:#ffd54f;text-align:center;font-weight:700;min-height:1.4em;margin-bottom:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Violin Varnish Application</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Coat 1/3</span>
+    </div>
+    <div id="status">&nbsp;</div>
+    <div id="dryWrap"><div id="dryBar"></div></div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Drag your mouse or finger over the violin body (or move with the <b>Arrow Keys</b> and hold <b>Space</b>) to spread a thin, even coat of varnish across every panel. Linger too long in one spot and it pools into a drip — catch the falling drip with your brush before it reaches the bottom edge! Once the coat looks even, wait for it to fully dry (don't brush while drying) before the next coat begins. More coats and trickier color layers each round — lose all 3 lives and the finish is ruined.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320;
+const COLS=22,ROWS=12,CELLW=W/COLS,CELLH=(H-20)/ROWS,TOPY=16;
+let hi=parseInt(localStorage.getItem('violinvarnishapplication_hi')||'0',10);
+let score=0,lives=3,level=1,coatIdx=0,coatsNeeded=3,gameOver=false,started=false;
+let coverage=[],inside=[],drips=[],dryTimer=0,drying=false,keys={},brush={x:400,y:160};
+const PALETTE=[[170,90,30],[150,60,20],[190,120,40],[120,40,15]];
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('coat_label','Coat {c}/{t}').replace('{c}',coatIdx+1).replace('{t}',coatsNeeded);
+}
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function buildShape(){
+  inside=[];
+  for(let r=0;r<ROWS;r++){
+    const row=[];
+    for(let col=0;col<COLS;col++){
+      const yN=r/(ROWS-1);
+      const upper=Math.sin(Math.PI*Math.min(1,yN*2.1))*0.42+0.2;
+      const lower=Math.sin(Math.PI*Math.max(0,(yN-0.45)/0.55))*0.46+0.18;
+      const waist=0.22+0.30*Math.abs(yN-0.5)*2;
+      const halfWidth=Math.max(waist,yN<0.47?upper:lower)*0.9;
+      const cx=COLS/2;
+      row.push(Math.abs(col-cx+0.5)<=halfWidth*COLS/2);
+    }
+    inside.push(row);
+  }
+}
+
+function newCoat(){
+  coverage=[];
+  for(let r=0;r<ROWS;r++)coverage.push(new Array(COLS).fill(0));
+  drips=[];
+  drying=false;
+  dryTimer=0;
+  document.getElementById('dryWrap').style.display='none';
+  setStatus(I18N.t('brush_hint','Brush an even coat across the body'));
+  setHud();
+}
+
+function newLevel(){
+  coatsNeeded=2+level;
+  coatIdx=0;
+  buildShape();
+  newCoat();
+}
+
+function startGame(){
+  score=0;lives=3;level=1;gameOver=false;started=true;
+  newLevel();
+}
+function reset(){startGame();}
+
+function cellAt(cx,cy){
+  const col=Math.floor(cx/CELLW),row=Math.floor((cy-TOPY)/CELLH);
+  if(row<0||row>=ROWS||col<0||col>=COLS)return null;
+  if(!inside[row][col])return null;
+  return {row,col};
+}
+
+function brushPaint(cx,cy,dt){
+  if(drying||gameOver||!started)return;
+  const radius=1.3;
+  const centerCol=cx/CELLW,centerRow=(cy-TOPY)/CELLH;
+  for(let r=0;r<ROWS;r++){
+    for(let col=0;col<COLS;col++){
+      if(!inside[r][col])continue;
+      const d=Math.hypot(col+0.5-centerCol,r+0.5-centerRow);
+      if(d>radius)continue;
+      const falloff=1-d/radius;
+      coverage[r][col]+=0.045*falloff*dt;
+      if(coverage[r][col]>1.9){
+        triggerDrip(r,col);
+      }
+    }
+  }
+  catchDrips(cx,cy);
+}
+
+function triggerDrip(r,col){
+  if(drips.some(d=>d.col===col&&Math.abs(d.row-r)<2))return;
+  drips.push({row:r,col,y:TOPY+r*CELLH+CELLH/2,speed:40+level*6,caught:false});
+  coverage[r][col]=1.5;
+  SFX.tick();
+}
+
+function catchDrips(cx,cy){
+  drips.forEach(d=>{
+    if(d.caught)return;
+    const dx=Math.abs(cx-(d.col*CELLW+CELLW/2));
+    const dy=Math.abs(cy-d.y);
+    if(dx<CELLW*1.1&&dy<CELLH*1.1){
+      d.caught=true;
+      SFX.catch();
+    }
+  });
+}
+
+function updateDrips(dt){
+  drips.forEach(d=>{
+    if(d.caught)return;
+    d.y+=d.speed*0.4*dt;
+    if(d.y>H-10){
+      d.gone=true;
+      loseLife();
+    }
+  });
+  drips=drips.filter(d=>!d.gone&&d.y<H+10);
+}
+
+function loseLife(){
+  lives--;
+  SFX.hit();
+  setHud();
+  if(lives<=0)endGame();
+}
+
+function coverageStats(){
+  let sum=0,count=0,min=Infinity;
+  for(let r=0;r<ROWS;r++)for(let col=0;col<COLS;col++){
+    if(!inside[r][col])continue;
+    sum+=coverage[r][col];count++;
+    if(coverage[r][col]<min)min=coverage[r][col];
+  }
+  return {avg:sum/count,min,count};
+}
+
+function checkCoatDone(){
+  if(drying||gameOver||!started)return;
+  const st=coverageStats();
+  if(st.avg>=0.82&&st.min>=0.45&&drips.filter(d=>!d.caught).length===0){
+    startDrying();
+  }
+}
+
+function startDrying(){
+  drying=true;dryTimer=0;
+  document.getElementById('dryWrap').style.display='block';
+  setStatus(I18N.t('dry_hint',"Wet coat applied — don't touch, let it dry"));
+  SFX.success();
+}
+
+function finishDrying(){
+  drying=false;
+  document.getElementById('dryWrap').style.display='none';
+  score+=40+level*8;
+  if(score>hi){hi=score;localStorage.setItem('violinvarnishapplication_hi',String(hi));}
+  coatIdx++;
+  if(coatIdx>=coatsNeeded){
+    SFX.levelup();
+    level++;
+    newLevel();
+  }else{
+    newCoat();
+  }
+  setHud();
+}
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem('violinvarnishapplication_hi',String(hi));}
+  SFX.lose();
+  setStatus(I18N.t('ruined_hint','The finish is ruined'));
+}
+
+// Pointer controls
+let pointerDown=false;
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  return {x:(e.clientX-r.left)*(W/r.width),y:(e.clientY-r.top)*(H/r.height)};
+}
+c.addEventListener('pointerdown',e=>{
+  if(gameOver){reset();return;}
+  if(!started){startGame();return;}
+  pointerDown=true;
+  const p=pointerPos(e);brush.x=p.x;brush.y=p.y;
+  if(drying){smearPenalty();}
+});
+c.addEventListener('pointermove',e=>{
+  const p=pointerPos(e);brush.x=p.x;brush.y=p.y;
+  if(!pointerDown)return;
+  if(drying){smearPenalty();return;}
+});
+window.addEventListener('pointerup',()=>{pointerDown=false;});
+
+let smearCooldown=0;
+function smearPenalty(){
+  if(smearCooldown>0)return;
+  smearCooldown=40;
+  loseLife();
+  SFX.error();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space','Enter'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Enter'){
+    if(gameOver)reset();
+    else if(!started)startGame();
+  }
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function updateKeyboard(dt){
+  if(!started||gameOver)return;
+  if(keys['ArrowLeft'])brush.x=Math.max(0,brush.x-220*dt/60);
+  if(keys['ArrowRight'])brush.x=Math.min(W,brush.x+220*dt/60);
+  if(keys['ArrowUp'])brush.y=Math.max(TOPY,brush.y-220*dt/60);
+  if(keys['ArrowDown'])brush.y=Math.min(H,brush.y+220*dt/60);
+  if(keys['Space']){
+    if(drying)smearPenalty();
+    else{brushPaint(brush.x,brush.y,dt);pointerDown=true;}
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#1b140d';ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#f0c98a';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Space to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  const col=PALETTE[(level-1)%PALETTE.length];
+  for(let r=0;r<ROWS;r++){
+    for(let cI=0;cI<COLS;cI++){
+      if(!inside[r][cI])continue;
+      const v=Math.min(1,coverage[r][cI]);
+      const x=cI*CELLW,y=TOPY+r*CELLH;
+      const base=[60,40,28];
+      const rr=base[0]+(col[0]-base[0])*v;
+      const gg=base[1]+(col[1]-base[1])*v;
+      const bb=base[2]+(col[2]-base[2])*v;
+      ctx.fillStyle=`rgb(${rr|0},${gg|0},${bb|0})`;
+      ctx.fillRect(x,y,CELLW+0.5,CELLH+0.5);
+      if(coverage[r][cI]>1.5){
+        ctx.fillStyle='rgba(255,255,255,0.18)';
+        ctx.fillRect(x,y,CELLW+0.5,CELLH+0.5);
+      }
+    }
+  }
+
+  // drips
+  drips.forEach(d=>{
+    if(d.caught)return;
+    ctx.fillStyle='#d9a85a';
+    ctx.beginPath();ctx.ellipse(d.col*CELLW+CELLW/2,d.y,CELLW*0.3,CELLH*0.6,0,0,Math.PI*2);ctx.fill();
+  });
+
+  // brush cursor
+  ctx.strokeStyle='#ffe9c4';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(brush.x,brush.y,14,0,Math.PI*2);ctx.stroke();
+
+  if(drying){
+    dryTimer+=1;
+    const need=90+level*15;
+    const pct=Math.min(100,dryTimer/need*100);
+    document.getElementById('dryBar').style.width=pct+'%';
+    if(pct>=100)finishDrying();
+  }else{
+    checkCoatDone();
+  }
+
+  if(smearCooldown>0)smearCooldown--;
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+24);
+  }
+}
+
+let lastTime=null;
+function loop(now){
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  if(started&&!gameOver){
+    updateKeyboard(dt);
+    if(pointerDown&&!drying)brushPaint(brush.x,brush.y,dt);
+    updateDrips(dt);
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+setHud();
+requestAnimationFrame(loop);
+</script></body></html>

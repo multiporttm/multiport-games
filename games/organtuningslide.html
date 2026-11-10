@@ -1,0 +1,278 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Organ Tuning Slide</title><meta name="description" content="Play Organ Tuning Slide free online — Slide the pipe's tuning collar up or down to match the target pitch by ear and by eye before time runs out, across trickier pitches and pipe lengths."><link rel="canonical" href="https://games.multiportllc.com/games/organtuningslide"><meta property="og:title" content="Organ Tuning Slide - Multiport Games"><meta property="og:description" content="Play Organ Tuning Slide free online — Slide the pipe's tuning collar up or down to match the target pitch by ear and by eye before time runs out, across trickier pitches and pipe lengths."><meta property="og:url" content="https://games.multiportllc.com/games/organtuningslide"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Organ Tuning Slide - Multiport Games"><meta name="twitter:description" content="Play Organ Tuning Slide free online — Slide the pipe's tuning collar up or down to match the target pitch by ear and by eye before time runs out, across trickier pitches and pipe lengths."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Organ Tuning Slide","description":"Play Organ Tuning Slide free online instantly. Slide the pipe's tuning collar up or down to match the target pitch by ear and by eye before time runs out, across trickier target pitches and pipe lengths. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/organtuningslide","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#131a24;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#6fc3df;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Organ Tuning Slide</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Drag the <b>tuning collar</b> with your mouse or finger, or press <b>Up/Down Arrow</b>, to slide it along the pipe and change its pitch. Watch the needle and listen to the tone — slide it into the glowing target band, then press <b>Space</b> / tap <b>LOCK</b> to lock the tuning while the timer runs. Lock inside the band to tune the pipe; miss it and you lose a life. Target pitches and pipe lengths get trickier every round!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const scoreDisplay=document.getElementById('score-display');
+const HI_KEY='organtuningslide_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+
+let score=0,lives=3,level=1,gameOver=false,started=false;
+let collar=0.5; // 0..1 along slide, 0=fully extended (low pitch), 1=fully in (high pitch)
+let targetLo=0,targetHi=0,timeLeft=0,roundMsg='',roundMsgTimer=0,flashGood=false;
+let keyUp=false,keyDown=false;
+let pipeBaseFreq=220;
+
+// audio
+let audioCtx=null,pipeOsc=null,pipeGain=null,targetOsc=null,targetGain=null;
+function ensureAudio(){
+  if(audioCtx)return;
+  const AC=window.AudioContext||window.webkitAudioContext;
+  if(!AC)return;
+  audioCtx=new AC();
+  pipeGain=audioCtx.createGain();pipeGain.gain.value=0.07;pipeGain.connect(audioCtx.destination);
+  pipeOsc=audioCtx.createOscillator();pipeOsc.type='sine';pipeOsc.frequency.value=220;
+  pipeOsc.connect(pipeGain);pipeOsc.start();
+}
+function pipeFreq(){
+  // collar near 0 = long pipe = low pitch; near 1 = short pipe = high pitch
+  return pipeBaseFreq*(0.6+collar*0.9);
+}
+function targetFreq(){
+  return pipeBaseFreq*(0.6+((targetLo+targetHi)/2)*0.9);
+}
+function playTargetBlip(){
+  if(!audioCtx||SFX.isMuted())return;
+  const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+  o.type='triangle';o.frequency.value=targetFreq();
+  g.gain.setValueAtTime(0.14,audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001,audioCtx.currentTime+0.5);
+  o.connect(g);g.connect(audioCtx.destination);
+  o.start();o.stop(audioCtx.currentTime+0.52);
+}
+
+function levelConfig(lv){
+  const halfWidth=Math.max(0.018,0.075-lv*0.006);
+  const center=0.2+Math.random()*0.6;
+  const roundTime=Math.max(5,10-lv*0.4);
+  return {halfWidth,center,roundTime};
+}
+let cfg=levelConfig(level);
+
+function newRound(){
+  cfg=levelConfig(level);
+  targetLo=Math.max(0,cfg.center-cfg.halfWidth);
+  targetHi=Math.min(1,cfg.center+cfg.halfWidth);
+  pipeBaseFreq=180+Math.random()*220;
+  collar=Math.random()<0.5?0.05:0.95;
+  timeLeft=cfg.roundTime;
+  roundMsg='';roundMsgTimer=0;
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;
+  newRound();
+}
+reset();
+
+function lockIn(){
+  const inZone=collar>=targetLo&&collar<=targetHi;
+  if(inZone){
+    const acc=1-Math.abs(collar-(targetLo+targetHi)/2)/((targetHi-targetLo)/2||1);
+    const bonus=Math.round(60+acc*80)+level*15;
+    score+=bonus;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    SFX.success();
+    roundMsg=I18N.t('tuned_well','Perfectly tuned! +{b}').replace('{b}',bonus);
+    flashGood=true;
+    level++;
+  }else{
+    lives--;
+    SFX.fail();
+    roundMsg=I18N.t('out_of_tune','Out of tune!');
+    flashGood=false;
+    if(lives<=0){gameOver=true;SFX.lose();roundMsgTimer=90;return;}
+  }
+  roundMsgTimer=80;
+  setTimeout(()=>{ if(!gameOver) newRound(); },30);
+}
+
+function handleAction(){
+  ensureAudio();
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  lockIn();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowUp'){e.preventDefault();keyUp=true;ensureAudio();}
+  if(e.code==='ArrowDown'){e.preventDefault();keyDown=true;ensureAudio();}
+  if(e.code==='Space'){e.preventDefault();handleAction();}
+  if(e.code==='KeyT'){ensureAudio();playTargetBlip();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp')keyUp=false;
+  if(e.code==='ArrowDown')keyDown=false;
+});
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+let dragging=false;
+const slideTop=80,slideBottom=320;
+c.addEventListener('pointerdown',e=>{
+  ensureAudio();
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  const p=pointerPos(e);
+  if(p.x>300&&p.x<500){
+    dragging=true;
+    collar=1-Math.max(0,Math.min(1,(p.y-slideTop)/(slideBottom-slideTop)));
+  }else if(p.y>340){
+    handleAction();
+  }
+});
+c.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const p=pointerPos(e);
+  collar=1-Math.max(0,Math.min(1,(p.y-slideTop)/(slideBottom-slideTop)));
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+function updateHud(){
+  scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#19222e');bg.addColorStop(1,'#0d1218');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  ctx.textAlign='center';
+  ctx.fillStyle='#6fc3df';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('level_label','Round {n}').replace('{n}',level),W/2,28);
+  ctx.fillStyle='#ff6b6b';ctx.font='bold 14px Arial';
+  ctx.fillText(I18N.t('lives_label','Lives: {l}').replace('{l}',lives),W/2,48);
+
+  if(!started){
+    ctx.fillStyle='#6fc3df99';ctx.font='bold 24px Arial';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-30);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),W/2,H/2+10);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+44);
+    if(pipeOsc&&pipeGain)pipeGain.gain.value=0;
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(keyUp)collar+=0.006*dt;
+  if(keyDown)collar-=0.006*dt;
+  collar=Math.max(0,Math.min(1,collar));
+
+  // live tone
+  if(pipeOsc&&pipeGain){
+    pipeOsc.frequency.setTargetAtTime(pipeFreq(),audioCtx.currentTime,0.05);
+    pipeGain.gain.setTargetAtTime(SFX.isMuted()?0:0.07,audioCtx.currentTime,0.05);
+  }
+
+  // pipe body
+  ctx.fillStyle='#8a97a8';
+  ctx.fillRect(360,40,80,340);
+  ctx.fillStyle='#657185';
+  ctx.fillRect(360,40,12,340);
+
+  // slide track
+  ctx.strokeStyle='#445';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(400,slideTop);ctx.lineTo(400,slideBottom);ctx.stroke();
+
+  // target band on track
+  const tY1=slideBottom-targetHi*(slideBottom-slideTop);
+  const tY2=slideBottom-targetLo*(slideBottom-slideTop);
+  ctx.fillStyle='rgba(111,195,223,0.35)';
+  ctx.fillRect(330,tY1,140,tY2-tY1);
+
+  // collar
+  const cY=slideBottom-collar*(slideBottom-slideTop);
+  const inZone=collar>=targetLo&&collar<=targetHi;
+  ctx.fillStyle=inZone?'#7ec850':'#e0a458';
+  ctx.fillRect(330,cY-14,140,28);
+  ctx.strokeStyle='#1a1a2e';ctx.lineWidth=2;ctx.strokeRect(330,cY-14,140,28);
+
+  // needle meter
+  const meterX=620,meterY1=80,meterY2=320;
+  ctx.strokeStyle='#445';ctx.fillStyle='#0b0f14';
+  ctx.fillRect(meterX-30,meterY1,60,meterY2-meterY1);
+  ctx.strokeRect(meterX-30,meterY1,60,meterY2-meterY1);
+  ctx.fillStyle='rgba(111,195,223,0.35)';
+  ctx.fillRect(meterX-30,meterY2-targetHi*(meterY2-meterY1),60,(targetHi-targetLo)*(meterY2-meterY1));
+  const needleY=meterY2-collar*(meterY2-meterY1);
+  ctx.strokeStyle=inZone?'#7ec850':'#ff6b35';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(meterX-34,needleY);ctx.lineTo(meterX+34,needleY);ctx.stroke();
+
+  ctx.fillStyle='#aaa';ctx.font='12px Arial';
+  ctx.fillText(I18N.t('pitch_meter_label','PITCH'),meterX,meterY1-10);
+
+  // timer bar
+  timeLeft-=dt/60;
+  if(timeLeft<=0){
+    lives--;
+    SFX.fail();
+    roundMsg=I18N.t('ran_out_time','Time ran out!');
+    flashGood=false;
+    roundMsgTimer=80;
+    if(lives<=0){gameOver=true;SFX.lose();}
+    else setTimeout(()=>{ if(!gameOver) newRound(); },30);
+    timeLeft=999;
+  }
+  const barW=(timeLeft/cfg.roundTime)*300;
+  ctx.fillStyle='#333';ctx.fillRect(W/2-150,360,300,14);
+  ctx.fillStyle='#6fc3df';ctx.fillRect(W/2-150,360,Math.max(0,Math.min(300,barW)),14);
+
+  ctx.fillStyle='#ddd';ctx.font='14px Arial';
+  ctx.fillText(I18N.t('tune_hint','Slide into the glowing band, then LOCK (Space)'),W/2,400);
+
+  // Lock button
+  ctx.fillStyle=inZone?'#4caf50':'#555';
+  ctx.fillRect(W/2-90,340,180,34);
+  ctx.fillStyle='#fff';ctx.font='bold 14px Arial';
+  ctx.fillText(I18N.t('lock_label','LOCK (Space)'),W/2,363);
+
+  if(roundMsgTimer>0){
+    roundMsgTimer-=dt;
+    ctx.fillStyle=flashGood?'#7ec850':'#ff6b6b';
+    ctx.font='bold 20px Arial';
+    ctx.fillText(roundMsg,W/2,100);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
