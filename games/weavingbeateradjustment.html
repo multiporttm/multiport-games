@@ -1,0 +1,230 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Weaving Beater Adjustment</title><meta name="description" content="Play Weaving Beater Adjustment free online — Swing and squeeze the beater with the right timing and pressure to pack each weft row at an even density."><link rel="canonical" href="https://games.multiportllc.com/games/weavingbeateradjustment"><meta property="og:title" content="Weaving Beater Adjustment - Multiport Games"><meta property="og:description" content="Play Weaving Beater Adjustment free online — Swing and squeeze the beater with the right timing and pressure to pack each weft row at an even density."><meta property="og:url" content="https://games.multiportllc.com/games/weavingbeateradjustment"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Weaving Beater Adjustment - Multiport Games"><meta name="twitter:description" content="Play Weaving Beater Adjustment free online — Swing and squeeze the beater with the right timing and pressure to pack each weft row at an even density."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Weaving Beater Adjustment","description":"Play Weaving Beater Adjustment free online instantly. Hold to charge the beater's swing pressure and release exactly as the swing crosses the glowing beat-up window, packing the weft row at the target density. Rows that are too loose or too tight throw off the fabric, and three bad beats end the run, while the timing window and pressure tolerance tighten every level. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/weavingbeateradjustment","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2e160f;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#f0c9a0;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Weaving Beater Adjustment</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Beat 1</span>
+    </div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Hold down <b>Space</b>, <b>click</b>, or <b>touch</b> to swing and charge the beater's pressure, watching the power meter and the swinging marker. Release right as the marker crosses the glowing beat-up window with the pressure meter in the highlighted target band to pack an even row. Bad beats cost a life; the window and pressure band shrink every level.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const GID='weavingbeateradjustment';
+let score=0,hi=parseInt(localStorage.getItem(GID+'_hi')||'0',10);
+let lives=3,level=1,gameOver=false,started=false,won=false;
+const MAXLVL=6;
+const LEVELS=[
+  {zoneW:70,pressTol:30,freq:0.045,need:5},
+  {zoneW:58,pressTol:25,freq:0.055,need:6},
+  {zoneW:48,pressTol:21,freq:0.065,need:6},
+  {zoneW:40,pressTol:17,freq:0.075,need:7},
+  {zoneW:33,pressTol:14,freq:0.085,need:7},
+  {zoneW:27,pressTol:11,freq:0.095,need:8}
+];
+const TMIN=130,TMAX=670,CENTER=(TMIN+TMAX)/2,AMP=(TMAX-TMIN)/2;
+const ZONE_PEAK_FRAC=0.82;
+const PRESS_TARGET=64,CHARGE_RATE=1.55;
+
+let t=0,freq=0.045,zoneW=70,pressTol=30,need=5,progress=0;
+let holding=false,power=0;
+let fabric=[],flashT=0,flashKind='';
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('beat_num_label','Beat {l}').replace('{l}',level);
+}
+
+function saveHi(){ if(score>hi){hi=score;localStorage.setItem(GID+'_hi',hi);} }
+
+function applyLevel(){
+  const cfg=LEVELS[Math.min(level,LEVELS.length)-1];
+  zoneW=cfg.zoneW;pressTol=cfg.pressTol;freq=cfg.freq;need=cfg.need;
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;won=false;
+  t=0;power=0;holding=false;progress=0;fabric=[];
+  applyLevel();
+  setHud();
+}
+
+function markerX(){ return CENTER+AMP*Math.sin(t); }
+function zoneCenterX(){ return CENTER+AMP*ZONE_PEAK_FRAC; }
+
+function startHold(){
+  if(!started){started=true;applyLevel();setHud();return;}
+  if(gameOver||won){reset();return;}
+  if(holding)return;
+  holding=true;power=0;
+}
+
+function release(){
+  if(!started||gameOver||won||!holding)return;
+  holding=false;
+  const x=markerX();
+  const zc=zoneCenterX();
+  const timingErr=Math.min(1,Math.abs(x-zc)/zoneW);
+  const pressErr=Math.min(1,Math.abs(power-PRESS_TARGET)/pressTol);
+  const combined=(timingErr+pressErr)/2;
+  if(combined<0.28){
+    score+=30+level*5;progress+=2;
+    flashT=16;flashKind='perfect';
+    SFX.success();
+    fabric.push('#7ec850');
+  }else if(combined<0.68){
+    score+=10;progress+=1;
+    flashT=16;flashKind='uneven';
+    SFX.hit();
+    fabric.push('#e8c979');
+  }else{
+    lives--;
+    flashT=16;flashKind='bad';
+    SFX.error();
+    fabric.push('#e94560');
+    if(lives<=0){gameOver=true;saveHi();SFX.lose();setHud();return;}
+  }
+  if(fabric.length>40)fabric.shift();
+  setHud();
+  if(progress>=need){
+    score+=90*level;
+    SFX.levelup();saveHi();setHud();
+    setTimeout(()=>{
+      if(gameOver)return;
+      if(level>=MAXLVL){won=true;SFX.win();saveHi();setHud();}
+      else{level++;progress=0;applyLevel();setHud();}
+    },550);
+  }
+  power=0;
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();if(!holding)startHold();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){e.preventDefault();release();}
+});
+c.addEventListener('mousedown',e=>{e.preventDefault();startHold();});
+window.addEventListener('mouseup',()=>{release();});
+c.addEventListener('touchstart',e=>{e.preventDefault();startHold();},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();release();},{passive:false});
+
+function drawFabric(){
+  const x0=40,y0=270,w=720,h=26,n=40;
+  ctx.fillStyle='#1a0d08';ctx.fillRect(x0,y0,w,h);
+  const cw=w/n;
+  for(let i=0;i<fabric.length;i++){
+    ctx.fillStyle=fabric[i];
+    ctx.fillRect(x0+i*cw,y0,cw-1,h);
+  }
+  ctx.strokeStyle='#ffffff33';ctx.strokeRect(x0,y0,w,h);
+}
+
+function drawTrack(){
+  const y=120;
+  ctx.strokeStyle='#ffffff33';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(TMIN,y);ctx.lineTo(TMAX,y);ctx.stroke();
+  const zc=zoneCenterX();
+  ctx.fillStyle='#ffd54f33';
+  ctx.fillRect(zc-zoneW/2,y-20,zoneW,40);
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;
+  ctx.strokeRect(zc-zoneW/2,y-20,zoneW,40);
+  const x=markerX();
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle='#8a5a3a';
+  ctx.fillRect(-6,-28,12,56);
+  ctx.fillStyle='#d9a066';
+  ctx.beginPath();ctx.arc(0,0,10,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawPowerMeter(){
+  const x=740,y=70,w=28,h=180;
+  ctx.fillStyle='#1a0d08';ctx.fillRect(x,y,w,h);
+  const loY=y+h-(Math.min(100,PRESS_TARGET+pressTol)/100)*h;
+  const hiY=y+h-(Math.max(0,PRESS_TARGET-pressTol)/100)*h;
+  ctx.fillStyle='#ffd54f44';
+  ctx.fillRect(x,loY,w,hiY-loY);
+  const fillY=y+h-(Math.min(100,power)/100)*h;
+  ctx.fillStyle=power>0?'#ff6b35':'#555';
+  ctx.fillRect(x,fillY,w,h-(fillY-y));
+  ctx.strokeStyle='#fff6';ctx.strokeRect(x,y,w,h);
+  ctx.fillStyle='#f0c9a0';ctx.font='12px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('pressure_label','Pressure'),x+w/2,y-8);
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,320);
+  ctx.fillStyle='#2e160f';ctx.fillRect(0,0,800,320);
+
+  if(!started){
+    ctx.fillStyle='#f0c9a0';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Hold Space / Tap to start'),400,170);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','FABRIC RUINED'),400,110);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,145);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,175);
+    drawFabric();
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#7ec850';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('win_title','PERFECTLY BEATEN CLOTH! 🔨'),400,100);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,135);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,165);
+    drawFabric();
+    requestAnimationFrame(loop);return;
+  }
+
+  t+=freq;
+  if(holding)power=Math.min(100,power+CHARGE_RATE);
+
+  ctx.fillStyle='#f0c9a0';ctx.font='14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('beat_progress_label','Rows this level: {p}/{n}').replace('{p}',progress).replace('{n}',need),400,30);
+
+  drawTrack();
+  drawPowerMeter();
+  drawFabric();
+
+  if(flashT>0){
+    flashT--;
+    const col=flashKind==='perfect'?'rgba(126,200,80,0.22)':flashKind==='uneven'?'rgba(232,201,121,0.2)':'rgba(233,69,96,0.22)';
+    ctx.fillStyle=col;ctx.fillRect(0,0,800,320);
+  }
+
+  requestAnimationFrame(loop);
+}
+reset();
+setHud();
+requestAnimationFrame(loop);
+</script></body></html>
