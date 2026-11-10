@@ -1,0 +1,370 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Honeycomb Extraction</title><meta name="description" content="Play Honeycomb Extraction free online — Uncap wax from honeycomb frames with a hot knife, then spin them in an extractor at the right speed to spin out honey without breaking the comb."><link rel="canonical" href="https://games.multiportllc.com/games/honeycombextraction"><meta property="og:title" content="Honeycomb Extraction - Multiport Games"><meta property="og:description" content="Play Honeycomb Extraction free online — Uncap wax from honeycomb frames with a hot knife, then spin them in an extractor at the right speed to spin out honey without breaking the comb."><meta property="og:url" content="https://games.multiportllc.com/games/honeycombextraction"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Honeycomb Extraction - Multiport Games"><meta name="twitter:description" content="Play Honeycomb Extraction free online — Uncap wax from honeycomb frames with a hot knife, then spin them in an extractor at the right speed to spin out honey without breaking the comb."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Honeycomb Extraction","description":"Play Honeycomb Extraction free online instantly. Uncap wax from honeycomb frames with a hot knife, then spin them in an extractor at the right speed to spin out honey without breaking the comb. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/honeycombextraction","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a1d10;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffd54f;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#lives-display{color:#ff6b6b;font-size:1rem;text-align:center;padding-bottom:4px;letter-spacing:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Honeycomb Extraction</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <div id="lives-display">🍯🍯🍯</div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Step 1: <b>hold and drag the knife</b> left-right across the frame to shave off the wax caps evenly (don't dig in too deep!). Step 2: once uncapped, use <b>Left/Right Arrow or A/D</b> to control the extractor's spin speed and keep the needle in the <b>green zone</b> until the honey spins out. Too slow wastes time, too fast cracks the comb!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreEl=document.getElementById('score-display'),livesEl=document.getElementById('lives-display');
+const HI_KEY='honeycombextraction_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+
+let state='start'; // start|uncap|spin|result|gameover
+let level=1, framesThisLevel=0, framesNeeded=3, score=0, lives=3;
+let shake=0;
+
+// Uncapping
+let capDamage=0; // wax not yet removed, 0..100 (100 = fully uncapped target)
+let knifeX=400, knifeDown=false, knifePrevX=400;
+let waxCols=40, waxRemoved=[]; // per-column removal amount 0..1
+let gougeAmount=0; // accumulated damage from going too deep/fast
+
+// Spinning
+let spinSpeed=0; // 0..100
+let targetMin=0, targetMax=0;
+let spinProgress=0; // 0..100 honey extracted
+let spinTime=0, spinTimeMax=0;
+let crackRisk=0;
+
+let resultTimer=0, resultGood=null, resultReason='';
+
+function newLevel(){
+  framesNeeded=Math.min(3+level,7);
+  framesThisLevel=0;
+}
+
+function newFrame(){
+  waxCols=40;
+  waxRemoved=new Array(waxCols).fill(0);
+  gougeAmount=0;
+  knifeX=400; knifePrevX=400; knifeDown=false;
+  state='uncap';
+}
+
+function startSpin(){
+  const zoneW=Math.max(10,28-level*2); // narrower target zone as levels increase
+  const center=30+Math.random()*40;
+  targetMin=Math.max(5,center-zoneW/2);
+  targetMax=Math.min(95,center+zoneW/2);
+  spinSpeed=0;
+  spinProgress=0;
+  spinTime=0;
+  spinTimeMax=5+level*0.6;
+  crackRisk=0;
+  state='spin';
+}
+
+function toCanvasCoords(e){
+  const r=c.getBoundingClientRect();
+  const sx=c.width/r.width, sy=c.height/r.height;
+  let cx,cy;
+  if(e.touches&&e.touches.length){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else{cx=e.clientX;cy=e.clientY;}
+  return {x:(cx-r.left)*sx,y:(cy-r.top)*sy};
+}
+
+function uncapAt(x){
+  const fx=100,fw=600;
+  const col=Math.floor(((x-fx)/fw)*waxCols);
+  const dx=Math.abs(x-knifePrevX);
+  if(col>=0&&col<waxCols){
+    const inc=Math.min(0.14,0.03+dx*0.01);
+    if(waxRemoved[col]<1){
+      waxRemoved[col]=Math.min(1,waxRemoved[col]+inc);
+      SFX.tick();
+    } else {
+      // scraping already-clean wax too hard = gouge risk
+      if(dx>18){gougeAmount+=0.8;}
+    }
+  }
+  knifePrevX=x;
+}
+
+function checkUncapDone(){
+  const done=waxRemoved.filter(v=>v>=0.95).length;
+  if(done>=waxCols*0.92){
+    SFX.success();
+    startSpin();
+  }
+}
+
+c.addEventListener('mousedown',e=>{
+  if(state==='uncap'){const p=toCanvasCoords(e);knifeDown=true;knifeX=p.x;knifePrevX=p.x;SFX.click();}
+});
+c.addEventListener('mousemove',e=>{
+  if(state==='uncap'&&knifeDown){const p=toCanvasCoords(e);knifeX=p.x;uncapAt(p.x);checkUncapDone();}
+});
+window.addEventListener('mouseup',()=>{knifeDown=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(state==='uncap'){const p=toCanvasCoords(e);knifeDown=true;knifeX=p.x;knifePrevX=p.x;SFX.click();}},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(state==='uncap'&&knifeDown){const p=toCanvasCoords(e);knifeX=p.x;uncapAt(p.x);checkUncapDone();}},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();knifeDown=false;},{passive:false});
+
+let keyLeft=false, keyRight=false;
+document.addEventListener('keydown',e=>{
+  if(state==='gameover'&&(e.code==='Space'||e.code==='Enter')){resetGame();return;}
+  if(state==='start'&&(e.code==='Space'||e.code==='Enter')){newFrame();return;}
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keyLeft=true;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keyRight=true;
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'||e.code==='KeyA')keyLeft=false;
+  if(e.code==='ArrowRight'||e.code==='KeyD')keyRight=false;
+});
+c.addEventListener('click',e=>{
+  if(state==='gameover'){resetGame();return;}
+  if(state==='start'){newFrame();return;}
+  if(state==='spin'){
+    const p=toCanvasCoords(e);
+    if(p.y>330&&p.y<380){
+      if(p.x<370)keyLeft=true,setTimeout(()=>keyLeft=false,120);
+      else if(p.x>430)keyRight=true,setTimeout(()=>keyRight=false,120);
+    }
+  }
+});
+
+function loseLife(reason){
+  lives--;
+  resultReason=reason;
+  if(lives<=0){
+    state='gameover';
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  }
+}
+
+function finishSpin(success,reason){
+  resultGood=success;
+  resultReason=reason;
+  resultTimer=1.1;
+  if(success){
+    score+=15+level*3;
+    SFX.success();
+  } else {
+    loseLife(reason);
+    SFX.fail();
+    shake=10;
+  }
+  state='result';
+}
+
+function afterResult(){
+  framesThisLevel++;
+  if(lives<=0)return;
+  if(framesThisLevel>=framesNeeded){
+    level++;
+    SFX.levelup();
+    newLevel();
+  }
+  newFrame();
+}
+
+function resetGame(){
+  level=1;score=0;lives=3;
+  newLevel();
+  newFrame();
+}
+
+function drawFrameBack(){
+  const grad=ctx.createLinearGradient(0,0,0,400);
+  grad.addColorStop(0,'#1d1409');grad.addColorStop(1,'#3a2a16');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,800,400);
+}
+
+function drawUncap(){
+  drawFrameBack();
+  const fx=100,fy=90,fw=600,fh=180;
+  ctx.fillStyle='#8a5a22';ctx.fillRect(fx,fy,fw,fh);
+  const colW=fw/waxCols;
+  for(let i=0;i<waxCols;i++){
+    const remaining=1-waxRemoved[i];
+    if(remaining>0.02){
+      ctx.fillStyle='#f4e4b0';
+      ctx.fillRect(fx+i*colW,fy,colW+0.5,fh*remaining);
+    }
+  }
+  ctx.strokeStyle='#1d1409';ctx.lineWidth=4;
+  ctx.strokeRect(fx,fy,fw,fh);
+  // knife
+  ctx.fillStyle='#ccc';
+  ctx.fillRect(knifeX-3,fy-30,6,fh+60);
+  ctx.fillStyle='#888';
+  ctx.fillRect(knifeX-14,fy-40,28,12);
+  ctx.fillStyle='#fff';ctx.font='16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('uncap_hint','Hold & drag the hot knife across the wax caps'),400,45);
+  // gouge meter
+  ctx.fillStyle='#111';ctx.fillRect(250,310,300,16);
+  ctx.fillStyle=gougeAmount>60?'#ff4040':gougeAmount>30?'#ffb347':'#7ec850';
+  ctx.fillRect(250,310,300*Math.min(1,gougeAmount/100),16);
+  ctx.strokeStyle='#fff';ctx.strokeRect(250,310,300,16);
+  ctx.fillStyle='#fff';ctx.font='13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('gouge_label',"Comb damage — don't scrape too hard!"),400,303);
+  if(gougeAmount>=100&&state==='uncap'){
+    finishSpin(false,I18N.t('reason_gouge','You gouged the comb apart!'));
+  }
+  // progress
+  const done=waxRemoved.filter(v=>v>=0.95).length;
+  ctx.fillStyle='#fff';ctx.font='14px Arial';
+  ctx.fillText(I18N.t('uncap_progress','Uncapped: {p}%').replace('{p}',Math.round(done/waxCols*100)),400,350);
+}
+
+function drawSpin(){
+  drawFrameBack();
+  const cx=400,cy=170,r=100;
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.rotate((performance.now()/1000)*spinSpeed*0.3);
+  ctx.fillStyle='#c98f2e';
+  ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#5c3d1e';ctx.lineWidth=6;ctx.stroke();
+  ctx.fillStyle='#5c3d1e';
+  for(let i=0;i<4;i++){
+    ctx.save();ctx.rotate(i*Math.PI/2);
+    ctx.fillRect(-4,-r+8,8,r-16);
+    ctx.restore();
+  }
+  ctx.restore();
+  // honey droplets flying when fast enough
+  if(spinSpeed>targetMin){
+    ctx.fillStyle='rgba(244,180,0,0.6)';
+    for(let i=0;i<6;i++){
+      const a=(performance.now()/300+i)*1.7;
+      const rr=r+10+Math.sin(performance.now()/150+i)*6;
+      ctx.beginPath();ctx.arc(cx+Math.cos(a)*rr,cy+Math.sin(a)*rr,3,0,Math.PI*2);ctx.fill();
+    }
+  }
+  ctx.fillStyle='#fff';ctx.font='16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('spin_hint','Hold ←/A or →/D to keep speed in the green zone'),400,300);
+
+  // speed gauge
+  const gx=200,gy=315,gw=400,gh=24;
+  ctx.fillStyle='#111';ctx.fillRect(gx,gy,gw,gh);
+  ctx.fillStyle='#4caf50';
+  ctx.fillRect(gx+gw*(targetMin/100),gy,gw*((targetMax-targetMin)/100),gh);
+  ctx.strokeStyle='#fff';ctx.strokeRect(gx,gy,gw,gh);
+  const nx=gx+gw*(spinSpeed/100);
+  ctx.fillStyle='#ffd54f';
+  ctx.fillRect(nx-3,gy-6,6,gh+12);
+  ctx.fillStyle='#fff';ctx.font='12px Arial';
+  ctx.fillText(I18N.t('speed_label','Spin speed'),400,gy-10);
+
+  // progress bar
+  ctx.fillStyle='#16213e';ctx.fillRect(gx,gy+36,gw,14);
+  ctx.fillStyle='#ffd54f';ctx.fillRect(gx,gy+36,gw*(spinProgress/100),14);
+  ctx.strokeStyle='#fff';ctx.strokeRect(gx,gy+36,gw,14);
+
+  // time bar
+  ctx.fillStyle='#111';ctx.fillRect(gx,gy+58,gw,8);
+  ctx.fillStyle=(spinTimeMax-spinTime)<1.5?'#ff4040':'#7ec850';
+  ctx.fillRect(gx,gy+58,gw*Math.max(0,1-spinTime/spinTimeMax),8);
+}
+
+function drawResult(){
+  if(state==='result'&&resultGood!==null){
+    if(resultGood)drawSpin(); else drawSpin();
+  }
+  ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,800,400);
+  ctx.font='bold 36px Arial';ctx.textAlign='center';
+  if(resultGood){
+    ctx.fillStyle='#7ec850';
+    ctx.fillText(I18N.t('extracted_label','HONEY EXTRACTED!'),400,180);
+  } else {
+    ctx.fillStyle='#ff6b6b';
+    ctx.fillText(I18N.t('wrong_label','OOPS!'),400,170);
+    ctx.font='20px Arial';
+    ctx.fillText(resultReason,400,205);
+  }
+}
+
+function drawStart(){
+  drawFrameBack();
+  ctx.fillStyle='#ffd54f';ctx.font='bold 30px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('game_title_card','HONEYCOMB EXTRACTION'),400,160);
+  ctx.fillStyle='#fff';ctx.font='18px Arial';
+  ctx.fillText(I18N.t('start_hint','Click / Tap / Press Space to begin'),400,210);
+}
+
+function drawGameOver(){
+  drawFrameBack();
+  ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,800,400);
+  ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,170);
+  ctx.font='20px Arial';
+  ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),400,210);
+  ctx.fillText(I18N.t('restart_hint','Click / Tap / Space to restart'),400,245);
+}
+
+function updateHud(){
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  livesEl.textContent='🍯'.repeat(Math.max(0,lives))+'💔'.repeat(Math.max(0,3-lives));
+}
+
+let lastT=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastT===null?1/60:Math.min((now-lastT)/1000,0.05);
+  lastT=now;
+
+  ctx.save();
+  if(shake>0){
+    shake-=dt*60;
+    ctx.translate((Math.random()-0.5)*shake,(Math.random()-0.5)*shake);
+  }
+
+  if(state==='start')drawStart();
+  else if(state==='uncap')drawUncap();
+  else if(state==='spin'){
+    if(keyLeft)spinSpeed=Math.max(0,spinSpeed-dt*60);
+    if(keyRight)spinSpeed=Math.min(100,spinSpeed+dt*60);
+    if(!keyLeft&&!keyRight)spinSpeed=Math.max(0,spinSpeed-dt*18);
+    spinTime+=dt;
+    if(spinSpeed>=targetMin&&spinSpeed<=targetMax){
+      spinProgress+=dt*22;
+      crackRisk=Math.max(0,crackRisk-dt*20);
+    } else if(spinSpeed>targetMax){
+      crackRisk+=dt*(30+level*4);
+    } else {
+      crackRisk=Math.max(0,crackRisk-dt*10);
+    }
+    if(crackRisk>=100){
+      finishSpin(false,I18N.t('reason_crack','Spun too fast — comb cracked!'));
+    } else if(spinProgress>=100){
+      finishSpin(true,'');
+    } else if(spinTime>=spinTimeMax){
+      finishSpin(false,I18N.t('reason_slow','Ran out of time — too little honey!'));
+    }
+    drawSpin();
+  }
+  else if(state==='result'){
+    resultTimer-=dt;
+    drawResult();
+    if(resultTimer<=0){afterResult();}
+  }
+  else if(state==='gameover')drawGameOver();
+
+  ctx.restore();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+newLevel();
+state='start';
+loop();
+</script></body></html>

@@ -1,0 +1,380 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Orchard Ladder Safety</title><meta name="description" content="Play Orchard Ladder Safety free online — Position your ladder at a safe angle against the tree, climb carefully, and pick the high fruit without tipping over."><link rel="canonical" href="https://games.multiportllc.com/games/orchardladdersafety"><meta property="og:title" content="Orchard Ladder Safety - Multiport Games"><meta property="og:description" content="Play Orchard Ladder Safety free online — Position your ladder at a safe angle against the tree, climb carefully, and pick the high fruit without tipping over."><meta property="og:url" content="https://games.multiportllc.com/games/orchardladdersafety"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Orchard Ladder Safety - Multiport Games"><meta name="twitter:description" content="Play Orchard Ladder Safety free online — Position your ladder at a safe angle against the tree, climb carefully, and pick the high fruit without tipping over."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Orchard Ladder Safety","description":"Play Orchard Ladder Safety free online instantly. Lean your ladder against the tree at a safe angle, climb rung by rung while keeping your balance, and reach the high fruit without letting the ladder tip or slide out from under you. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/orchardladdersafety","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0f1f2a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#bfe8ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#balWrap{max-width:600px;margin:0 auto 8px;background:#132038;border-radius:10px;padding:4px}
+#balBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#7ec8ff,#d7f0ff);width:50%;margin-left:25%;transition:width .08s,margin-left .08s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Orchard Ladder Safety</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span class="lives" id="livesLbl">❤❤❤</span>
+      <span id="levelLbl">Tree 1</span>
+    </div>
+    <div id="balWrap"><div id="balBar"></div></div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Use <b>Left/Right Arrow</b> (or tap the left/right sides) to set the ladder's foot position against the tree, aiming for the safe-angle zone, then press <b>Space</b> or tap the top to plant it. Once planted, climb with <b>Up Arrow</b> or tap, and correct your balance with <b>Left/Right</b> as wind and reaching for fruit rock the ladder. Let it tip past the edge and you lose a life. Clear enough fruit to move on to a taller tree.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const GID='orchardladdersafety';
+let score=0,hi=parseInt(localStorage.getItem(GID+'_hi')||'0',10);
+let lives=3,level=1,gameOver=false,started=false,won=false;
+const MAXLVL=6;
+
+const GROUND=400;
+const TREE_X=560;
+
+let phase='aim'; // aim -> planted -> climbing -> picking
+let footX=250,footDir=1,footSpeed=2.2;
+let safeMin=0,safeMax=0,treeTopY=0,ladderLen=0;
+let angle=0; // degrees from vertical, computed from footX
+let climbY=0; // 0..1 fraction up the ladder
+let balance=0; // -1..1, 0 = centered
+let balVel=0;
+let windPhase=0,windStrength=0;
+let fruits=[];
+let fruitsNeeded=0,fruitsCollected=0;
+let shakeT=0;
+let pickCooldown=0;
+
+function treeTopForLevel(lvl){ return 140-lvl*8; }
+
+function setupLevel(lvl){
+  treeTopY=treeTopForLevel(lvl);
+  ladderLen=GROUND-treeTopY-20;
+  const half=Math.max(10,34-lvl*3);
+  safeMin=TREE_X-200-half*2+60;
+  safeMax=TREE_X-200+half*2-60;
+  // safe zone centered a bit left of tree base, width shrinks with level
+  const center=TREE_X-150;
+  const halfW=Math.max(16,46-lvl*5);
+  safeMin=center-halfW;
+  safeMax=center+halfW;
+  footX=120+Math.random()*40;
+  footDir=1;
+  footSpeed=1.6+lvl*0.3;
+  phase='aim';
+  climbY=0;
+  balance=0;balVel=0;
+  windStrength=0.15+lvl*0.07;
+  windPhase=Math.random()*6.28;
+  pickCooldown=0;
+  fruitsNeeded=4+Math.min(4,lvl);
+  fruitsCollected=0;
+  fruits=[];
+  for(let i=0;i<fruitsNeeded;i++){
+    fruits.push({t:0.3+Math.random()*0.65,side:Math.random()<0.5?-1:1,got:false,x:0,y:0});
+  }
+  layoutFruits();
+}
+
+function layoutFruits(){
+  const footCenter=(safeMin+safeMax)/2;
+  fruits.forEach(f=>{
+    const lx=footCenter+(TREE_X-footCenter)*f.t;
+    const ly=GROUND-(GROUND-treeTopY)*f.t;
+    f.x=lx+f.side*(26+Math.random()*14);
+    f.y=ly-10;
+  });
+}
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('tree_num_label','Tree {l}').replace('{l}',level);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;won=false;
+  setupLevel(level);
+  setHud();
+}
+
+function loseLife(){
+  lives--;shakeT=18;
+  SFX.hit();SFX.fail();
+  setHud();
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(GID+'_hi',hi);}
+    SFX.lose();
+  }else{
+    setupLevel(level);
+  }
+}
+
+function plantLadder(){
+  if(footX>=safeMin&&footX<=safeMax){
+    phase='climbing';
+    score+=15;
+    SFX.success();
+  }else{
+    phase='climbing';
+    balance=(footX<safeMin)? -0.55 : 0.55;
+    SFX.error();
+  }
+  setHud();
+}
+
+function checkLevelDone(){
+  if(fruitsCollected>=fruitsNeeded){
+    score+=40*level;
+    SFX.levelup();SFX.coin();
+    setHud();
+    setTimeout(()=>{
+      if(gameOver)return;
+      if(level>=MAXLVL){
+        won=true;
+        if(score>hi){hi=score;localStorage.setItem(GID+'_hi',hi);}
+        SFX.win();setHud();
+      }else{
+        level++;setupLevel(level);setHud();
+      }
+    },700);
+    phase='done';
+  }
+}
+
+function tryPick(){
+  if(phase!=='climbing'||pickCooldown>0)return;
+  const footCenter=(safeMin+safeMax)/2;
+  const myX=footCenter+(TREE_X-footCenter)*climbY;
+  const myY=GROUND-(GROUND-treeTopY)*climbY;
+  let best=null,bestD=9999;
+  fruits.forEach(f=>{
+    if(f.got)return;
+    const d=Math.hypot(f.x-myX,f.y-myY);
+    if(d<bestD){bestD=d;best=f;}
+  });
+  if(best&&bestD<46){
+    best.got=true;
+    fruitsCollected++;
+    score+=10;
+    SFX.point();
+    pickCooldown=18;
+    balVel+=(Math.random()-0.5)*0.35;
+    checkLevelDone();
+  }
+}
+
+function startAction(){
+  if(!started){started=true;setupLevel(level);setHud();return;}
+  if(gameOver||won){reset();return;}
+  if(phase==='aim')plantLadder();
+  else if(phase==='climbing')tryPick();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code))e.preventDefault();
+  if(!started||gameOver||won){
+    if(e.code==='Space'){startAction();}
+    return;
+  }
+  if(phase==='aim'){
+    if(e.code==='ArrowLeft'){footX=Math.max(40,footX-10);footDir=-1;}
+    if(e.code==='ArrowRight'){footX=Math.min(TREE_X-80,footX+10);footDir=1;}
+    if(e.code==='Space')plantLadder();
+  }else if(phase==='climbing'){
+    if(e.code==='ArrowUp'){climbY=Math.min(1,climbY+0.045);SFX.tick();}
+    if(e.code==='ArrowLeft')balVel-=0.05;
+    if(e.code==='ArrowRight')balVel+=0.05;
+    if(e.code==='Space')tryPick();
+  }
+});
+
+c.addEventListener('mousedown',onTap);
+c.addEventListener('touchstart',e=>{e.preventDefault();onTap(e);},{passive:false});
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  return cx*(800/rect.width);
+}
+function onTap(e){
+  if(!started){started=true;setupLevel(level);setHud();return;}
+  if(gameOver||won){reset();return;}
+  const px=pointerPos(e);
+  if(phase==='aim'){
+    if(px<400)footX=Math.max(40,footX-16);
+    else if(px>400&&px<700)plantLadder();
+    else footX=Math.min(TREE_X-80,footX+16);
+  }else if(phase==='climbing'){
+    if(px>350&&px<450){climbY=Math.min(1,climbY+0.09);SFX.tick();}
+    else if(px<350)balVel-=0.08;
+    else tryPick();
+  }
+}
+
+function autoClimb(){
+  if(phase==='climbing'&&climbY<1){
+    climbY=Math.min(1,climbY+0.0022);
+  }
+}
+
+function update(){
+  if(!started||gameOver||won)return;
+  if(phase==='aim'){
+    footX+=footDir*footSpeed;
+    if(footX>TREE_X-80){footX=TREE_X-80;footDir=-1;}
+    if(footX<40){footX=40;footDir=1;}
+  }else if(phase==='climbing'||phase==='done'){
+    windPhase+=0.045;
+    const wind=Math.sin(windPhase)*windStrength*0.02;
+    balVel+=wind;
+    balVel*=0.94;
+    balance+=balVel;
+    balance=Math.max(-1.3,Math.min(1.3,balance));
+    autoClimb();
+    if(pickCooldown>0)pickCooldown--;
+    const bar=document.getElementById('balBar');
+    const pct=Math.max(0,Math.min(100,50+balance*40));
+    bar.style.width='50%';
+    bar.style.marginLeft=(pct-25)+'%';
+    bar.style.background=Math.abs(balance)>0.85?'#ff6b35':'#7ec8ff';
+    if(Math.abs(balance)>=1.15){
+      loseLife();
+    }
+  }
+  if(shakeT>0)shakeT--;
+}
+
+function drawLadderAndClimber(shiftX,shiftY){
+  const footCenter=(safeMin+safeMax)/2;
+  const fx = phase==='aim'?footX:footCenter + balance*18;
+  const fy=GROUND;
+  const tx=TREE_X,ty=treeTopY;
+  ctx.save();
+  ctx.translate(shiftX,shiftY);
+
+  // tree trunk
+  ctx.fillStyle='#4a2f1a';
+  ctx.fillRect(TREE_X-14,treeTopY,28,GROUND-treeTopY+30);
+  ctx.fillStyle='#2d5a27';
+  ctx.beginPath();ctx.arc(TREE_X,treeTopY-10,70-level*2,0,6.283);ctx.fill();
+  ctx.fillStyle='#3a7a30';
+  ctx.beginPath();ctx.arc(TREE_X-10,treeTopY+10,50-level,0,6.283);ctx.fill();
+
+  // safe zone marker (aim phase)
+  if(phase==='aim'){
+    ctx.fillStyle='rgba(126,200,80,0.25)';
+    ctx.fillRect(safeMin,GROUND-6,safeMax-safeMin,12);
+    ctx.strokeStyle='#7ec850';ctx.lineWidth=2;
+    ctx.strokeRect(safeMin,GROUND-6,safeMax-safeMin,12);
+  }
+
+  // ladder rails
+  const dx=tx-fx,dy=ty-fy;
+  const len=Math.hypot(dx,dy);
+  const nx=-dy/len,ny=dx/len;
+  const railOff=12;
+  ctx.strokeStyle='#d9a441';ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(fx+nx*railOff,fy+ny*railOff);ctx.lineTo(tx+nx*railOff,ty+ny*railOff);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(fx-nx*railOff,fy-ny*railOff);ctx.lineTo(tx-nx*railOff,ty-ny*railOff);ctx.stroke();
+  ctx.strokeStyle='#b5812c';ctx.lineWidth=4;
+  const rungs=12;
+  for(let i=1;i<rungs;i++){
+    const t=i/rungs;
+    const rx=fx+(tx-fx)*t,ry=fy+(ty-fy)*t;
+    ctx.beginPath();ctx.moveTo(rx+nx*railOff,ry+ny*railOff);ctx.lineTo(rx-nx*railOff,ry-ny*railOff);ctx.stroke();
+  }
+
+  // foot indicator while aiming
+  if(phase==='aim'){
+    ctx.fillStyle='#ff6b35';
+    ctx.beginPath();ctx.arc(fx,fy,7,0,6.283);ctx.fill();
+  }
+
+  // fruits
+  fruits.forEach(f=>{
+    if(f.got)return;
+    ctx.fillStyle='#e94f37';
+    ctx.beginPath();ctx.arc(f.x,f.y,9,0,6.283);ctx.fill();
+    ctx.fillStyle='#4a2f1a';ctx.fillRect(f.x-1,f.y-13,2,6);
+  });
+
+  // climber on ladder
+  if(phase==='climbing'||phase==='done'){
+    const climberX=fx+(tx-fx)*climbY;
+    const climberY=fy+(ty-fy)*climbY;
+    ctx.save();
+    ctx.translate(climberX,climberY);
+    const tilt=balance*0.5;
+    ctx.rotate(tilt);
+    ctx.fillStyle='#2b6cb0';
+    ctx.fillRect(-8,-24,16,24);
+    ctx.fillStyle='#f0c48a';
+    ctx.beginPath();ctx.arc(0,-30,7,0,6.283);ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+function loop(){
+  update();
+  ctx.clearRect(0,0,800,440);
+  const sky=ctx.createLinearGradient(0,0,0,440);
+  sky.addColorStop(0,'#0c2436');sky.addColorStop(1,'#0f1f2a');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,440);
+  ctx.fillStyle='#16321f';
+  ctx.fillRect(0,GROUND+24,800,16);
+  ctx.textAlign='center';
+
+  if(!started){
+    ctx.fillStyle='#bfe8ff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Arrows to aim, Space to plant & climb — Tap to start'),400,210);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','LADDER DOWN!'),400,170);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,205);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,235);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#7ec8ff';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','ALL TREES CLEARED! 🪜'),400,160);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,195);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,225);
+    requestAnimationFrame(loop);return;
+  }
+
+  let ox=0,oy=0;
+  if(shakeT>0){ox=(Math.random()-0.5)*10;oy=(Math.random()-0.5)*10;}
+  drawLadderAndClimber(ox,oy);
+
+  ctx.fillStyle='#bfe8ff';ctx.font='14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('fruit_progress','Fruit: {a}/{b}').replace('{a}',fruitsCollected).replace('{b}',fruitsNeeded),20,24);
+  ctx.textAlign='center';
+
+  if(phase==='aim'){
+    ctx.fillStyle='#bfe8ff';ctx.font='15px Arial';
+    ctx.fillText(I18N.t('aim_hint','Line up the safe zone, then plant!'),400,24);
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

@@ -1,0 +1,352 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bee Swarm Capture</title><meta name="description" content="Play Bee Swarm Capture free online — Lure and gently guide a swarm of bees into a capture box using smoke and calm movements, without agitating them into scattering."><link rel="canonical" href="https://games.multiportllc.com/games/beeswarmcapture"><meta property="og:title" content="Bee Swarm Capture - Multiport Games"><meta property="og:description" content="Play Bee Swarm Capture free online — Lure and gently guide a swarm of bees into a capture box using smoke and calm movements, without agitating them into scattering."><meta property="og:url" content="https://games.multiportllc.com/games/beeswarmcapture"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Bee Swarm Capture - Multiport Games"><meta name="twitter:description" content="Play Bee Swarm Capture free online — Lure and gently guide a swarm of bees into a capture box using smoke and calm movements, without agitating them into scattering."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bee Swarm Capture","description":"Play Bee Swarm Capture free online instantly. Lure and gently guide a swarm of bees into a capture box using smoke and calm movements, without agitating them into scattering. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/beeswarmcapture","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a2a12;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffd54f;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+#lives-display{color:#ff6b6b;font-size:1rem;text-align:center;padding-bottom:4px;letter-spacing:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bee Swarm Capture</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <div id="lives-display">📦📦📦</div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move the <b>smoker</b> with <b>Arrow Keys / WASD</b> (or drag/touch) to gently puff smoke near the swarm and herd it toward the <b>capture box</b>. Move slowly and keep your distance — get too close too fast and the bees will <b>scatter in panic</b>! Guide the whole swarm inside before you run out of attempts.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreEl=document.getElementById('score-display'),livesEl=document.getElementById('lives-display');
+const HI_KEY='beeswarmcapture_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+
+let state='start'; // start|play|result|gameover
+let level=1, score=0, lives=3;
+let shake=0;
+
+let smoker={x:400,y:350,vx:0,vy:0};
+let box={x:0,y:0,w:110,h:80};
+let bees=[]; // {x,y,vx,vy,calm,captured}
+let panicGlobal=0;
+let timeLeft=0, timeMax=0;
+let smokePuffs=[];
+let resultTimer=0, resultGood=null, resultReason='';
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(state==='gameover'&&(e.code==='Space'||e.code==='Enter')){resetGame();return;}
+  if(state==='start'&&(e.code==='Space'||e.code==='Enter')){newLevel();return;}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+let pointerActive=false;
+function toCanvasCoords(e){
+  const r=c.getBoundingClientRect();
+  const sx=c.width/r.width, sy=c.height/r.height;
+  let cx,cy;
+  if(e.touches&&e.touches.length){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else{cx=e.clientX;cy=e.clientY;}
+  return {x:(cx-r.left)*sx,y:(cy-r.top)*sy};
+}
+let pointerTarget=null;
+c.addEventListener('mousedown',e=>{
+  if(state==='start'){newLevel();return;}
+  if(state==='gameover'){resetGame();return;}
+  pointerActive=true;pointerTarget=toCanvasCoords(e);
+});
+c.addEventListener('mousemove',e=>{ if(pointerActive)pointerTarget=toCanvasCoords(e); });
+window.addEventListener('mouseup',()=>{pointerActive=false;pointerTarget=null;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(state==='start'){newLevel();return;}
+  if(state==='gameover'){resetGame();return;}
+  pointerActive=true;pointerTarget=toCanvasCoords(e);
+},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault(); if(pointerActive)pointerTarget=toCanvasCoords(e); },{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerActive=false;pointerTarget=null;},{passive:false});
+
+function newLevel(){
+  const n=Math.min(5+level,14);
+  const nervousness=Math.min(0.4+level*0.08,1.4);
+  box={x:650+Math.random()*60-30,y:150+Math.random()*80-40,w:110,h:80};
+  box.x=Math.max(60,Math.min(630,box.x));
+  box.y=Math.max(40,Math.min(260,box.y));
+  bees=[];
+  const cx=200+Math.random()*100, cy=150+Math.random()*120;
+  for(let i=0;i<n;i++){
+    bees.push({
+      x:cx+(Math.random()-0.5)*80,
+      y:cy+(Math.random()-0.5)*80,
+      vx:0,vy:0,
+      calm:1,
+      captured:false,
+      nerv:nervousness*(0.8+Math.random()*0.4)
+    });
+  }
+  smoker={x:400,y:380,vx:0,vy:0};
+  panicGlobal=0;
+  timeMax=18+level*2;
+  timeLeft=timeMax;
+  smokePuffs=[];
+  state='play';
+}
+
+function stepBees(dt){
+  for(const b of bees){
+    if(b.captured)continue;
+    const dx=b.x-smoker.x, dy=b.y-smoker.y;
+    const dist=Math.max(1,Math.hypot(dx,dy));
+    // flee from smoker if too close, otherwise drift calmly toward box with some wander
+    let fx=0,fy=0;
+    const scareRadius=90;
+    if(dist<scareRadius){
+      const force=(scareRadius-dist)/scareRadius*b.nerv*140;
+      fx+=dx/dist*force;
+      fy+=dy/dist*force;
+      b.calm=Math.max(0,b.calm-dt*0.9);
+    } else {
+      b.calm=Math.min(1,b.calm+dt*0.3);
+    }
+    // gentle lure toward box when calm-ish, smoker nearby but not too close acts as herding nudge
+    if(dist<220&&dist>=scareRadius){
+      const bx=box.x+box.w/2-b.x, by=box.y+box.h/2-b.y;
+      const bd=Math.max(1,Math.hypot(bx,by));
+      const herd=(1-b.calm*0.4)*18;
+      fx+=bx/bd*herd;
+      fy+=by/bd*herd;
+    }
+    // wander
+    fx+=(Math.random()-0.5)*20*b.nerv;
+    fy+=(Math.random()-0.5)*20*b.nerv;
+    // mild cohesion toward swarm centroid
+    let cxs=0,cys=0,cnt=0;
+    for(const o of bees){ if(o!==b&&!o.captured){cxs+=o.x;cys+=o.y;cnt++;} }
+    if(cnt>0){
+      cxs/=cnt;cys/=cnt;
+      fx+=(cxs-b.x)*0.06;
+      fy+=(cys-b.y)*0.06;
+    }
+    b.vx=(b.vx+fx*dt)*0.9;
+    b.vy=(b.vy+fy*dt)*0.9;
+    b.x+=b.vx*dt;
+    b.y+=b.vy*dt;
+    b.x=Math.max(10,Math.min(790,b.x));
+    b.y=Math.max(10,Math.min(390,b.y));
+
+    if(b.x>box.x+8&&b.x<box.x+box.w-8&&b.y>box.y+8&&b.y<box.y+box.h-8){
+      b.captured=true;
+      SFX.point();
+    }
+    if(b.calm<=0.05){
+      panicGlobal+=dt*8;
+    } else {
+      panicGlobal=Math.max(0,panicGlobal-dt*4);
+    }
+  }
+}
+
+function loseLife(reason){
+  lives--;
+  resultReason=reason;
+  if(lives<=0){
+    state='gameover';
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  }
+}
+
+function finishLevel(success,reason){
+  resultGood=success;
+  resultReason=reason;
+  resultTimer=1.1;
+  if(success){
+    score+=20+level*4;
+    SFX.success();
+  } else {
+    loseLife(reason);
+    SFX.fail();
+    shake=10;
+  }
+  state='result';
+}
+
+function afterResult(){
+  if(lives<=0)return;
+  level++;
+  SFX.levelup();
+  newLevel();
+}
+
+function resetGame(){
+  level=1;score=0;lives=3;
+  newLevel();
+}
+
+function drawBack(){
+  const grad=ctx.createLinearGradient(0,0,0,400);
+  grad.addColorStop(0,'#17230f');grad.addColorStop(1,'#2d4219');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,800,400);
+}
+
+function drawPlay(){
+  drawBack();
+  // box
+  ctx.fillStyle='#8a5a22';
+  ctx.fillRect(box.x,box.y,box.w,box.h);
+  ctx.strokeStyle='#4a2d10';ctx.lineWidth=4;
+  ctx.strokeRect(box.x,box.y,box.w,box.h);
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.fillRect(box.x+8,box.y+8,box.w-16,box.h-16);
+  ctx.fillStyle='#fff';ctx.font='13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('box_label','CAPTURE BOX'),box.x+box.w/2,box.y-8);
+
+  // bees
+  let remaining=0;
+  for(const b of bees){
+    if(b.captured)continue;
+    remaining++;
+    ctx.fillStyle = b.calm>0.6?'#ffd54f': b.calm>0.3?'#ffb347':'#ff6b6b';
+    ctx.beginPath();ctx.arc(b.x,b.y,5,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#2a2a2a';ctx.lineWidth=1;ctx.stroke();
+  }
+
+  // smoker
+  ctx.fillStyle='#555';
+  ctx.fillRect(smoker.x-10,smoker.y-16,20,30);
+  ctx.fillStyle='#ccc';
+  ctx.beginPath();ctx.arc(smoker.x,smoker.y-22,8,0,Math.PI*2);ctx.fill();
+  if(Math.random()<0.4){
+    smokePuffs.push({x:smoker.x+(Math.random()-0.5)*6,y:smoker.y-28,r:3,a:0.5});
+  }
+  for(let i=smokePuffs.length-1;i>=0;i--){
+    const p=smokePuffs[i];
+    p.y-=0.5;p.r+=0.15;p.a-=0.012;
+    if(p.a<=0){smokePuffs.splice(i,1);continue;}
+    ctx.fillStyle=`rgba(220,220,220,${p.a})`;
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();
+  }
+
+  // panic meter
+  ctx.fillStyle='#111';ctx.fillRect(250,330,300,16);
+  ctx.fillStyle=panicGlobal>60?'#ff4040':panicGlobal>30?'#ffb347':'#7ec850';
+  ctx.fillRect(250,330,300*Math.min(1,panicGlobal/100),16);
+  ctx.strokeStyle='#fff';ctx.strokeRect(250,330,300,16);
+  ctx.fillStyle='#fff';ctx.font='13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('panic_label','Swarm panic — stay calm & slow!'),400,323);
+
+  // timer
+  ctx.fillStyle='#111';ctx.fillRect(250,355,300,10);
+  ctx.fillStyle=timeLeft<4?'#ff4040':'#4caf50';
+  ctx.fillRect(250,355,300*Math.max(0,timeLeft/timeMax),10);
+
+  ctx.fillStyle='#fff';ctx.font='14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('remaining_label','Bees remaining: {n}').replace('{n}',remaining),20,25);
+
+  if(panicGlobal>=100){
+    finishLevel(false,I18N.t('reason_scatter','The swarm scattered in panic!'));
+  } else if(remaining===0){
+    finishLevel(true,'');
+  } else if(timeLeft<=0){
+    finishLevel(false,I18N.t('reason_time','Ran out of time!'));
+  }
+}
+
+function drawResult(){
+  drawPlay();
+  ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,800,400);
+  ctx.font='bold 36px Arial';ctx.textAlign='center';
+  if(resultGood){
+    ctx.fillStyle='#7ec850';
+    ctx.fillText(I18N.t('captured_label','SWARM CAPTURED!'),400,180);
+  } else {
+    ctx.fillStyle='#ff6b6b';
+    ctx.fillText(I18N.t('wrong_label','OH NO!'),400,170);
+    ctx.font='20px Arial';
+    ctx.fillText(resultReason,400,205);
+  }
+}
+
+function drawStart(){
+  drawBack();
+  ctx.fillStyle='#ffd54f';ctx.font='bold 30px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('game_title_card','BEE SWARM CAPTURE'),400,160);
+  ctx.fillStyle='#fff';ctx.font='18px Arial';
+  ctx.fillText(I18N.t('start_hint','Click / Tap / Press Space to begin'),400,210);
+}
+
+function drawGameOver(){
+  drawBack();
+  ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,800,400);
+  ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,170);
+  ctx.font='20px Arial';
+  ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),400,210);
+  ctx.fillText(I18N.t('restart_hint','Click / Tap / Space to restart'),400,245);
+}
+
+function updateHud(){
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  livesEl.textContent='📦'.repeat(Math.max(0,lives))+'💔'.repeat(Math.max(0,3-lives));
+}
+
+let lastT=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastT===null?1/60:Math.min((now-lastT)/1000,0.05);
+  lastT=now;
+
+  ctx.save();
+  if(shake>0){
+    shake-=dt*60;
+    ctx.translate((Math.random()-0.5)*shake,(Math.random()-0.5)*shake);
+  }
+
+  if(state==='start')drawStart();
+  else if(state==='play'){
+    const spd=130;
+    let mx=0,my=0;
+    if(keys['ArrowLeft']||keys['KeyA'])mx-=1;
+    if(keys['ArrowRight']||keys['KeyD'])mx+=1;
+    if(keys['ArrowUp']||keys['KeyW'])my-=1;
+    if(keys['ArrowDown']||keys['KeyS'])my+=1;
+    if(mx||my){
+      const len=Math.hypot(mx,my);
+      smoker.x+=mx/len*spd*dt;
+      smoker.y+=my/len*spd*dt;
+    } else if(pointerTarget){
+      const dx=pointerTarget.x-smoker.x, dy=pointerTarget.y-smoker.y;
+      const d=Math.hypot(dx,dy);
+      if(d>4){
+        smoker.x+=dx/d*spd*dt;
+        smoker.y+=dy/d*spd*dt;
+      }
+    }
+    smoker.x=Math.max(16,Math.min(784,smoker.x));
+    smoker.y=Math.max(16,Math.min(394,smoker.y));
+    timeLeft-=dt;
+    stepBees(dt);
+    drawPlay();
+  }
+  else if(state==='result'){
+    resultTimer-=dt;
+    drawResult();
+    if(resultTimer<=0){afterResult();}
+  }
+  else if(state==='gameover')drawGameOver();
+
+  ctx.restore();
+  updateHud();
+  requestAnimationFrame(loop);
+}
+state='start';
+loop();
+</script></body></html>

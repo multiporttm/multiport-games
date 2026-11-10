@@ -1,0 +1,309 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Orchard Harvest Sorting</title><meta name="description" content="Play Orchard Harvest Sorting free online — Sort picked fruit by size, ripeness, and quality into the correct bins on a moving line before it passes by."><link rel="canonical" href="https://games.multiportllc.com/games/orchardharvestsorting"><meta property="og:title" content="Orchard Harvest Sorting - Multiport Games"><meta property="og:description" content="Play Orchard Harvest Sorting free online — Sort picked fruit by size, ripeness, and quality into the correct bins on a moving line before it passes by."><meta property="og:url" content="https://games.multiportllc.com/games/orchardharvestsorting"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Orchard Harvest Sorting - Multiport Games"><meta name="twitter:description" content="Play Orchard Harvest Sorting free online — Sort picked fruit by size, ripeness, and quality into the correct bins on a moving line before it passes by."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Orchard Harvest Sorting","description":"Play Orchard Harvest Sorting free online instantly. Watch fruit roll by on a moving sorting line and flick each piece into the correct bin by size, ripeness, and quality before it passes out of reach, across faster lines with trickier grading criteria. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/orchardharvestsorting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#241a12;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#ffe0b0;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Orchard Harvest Sorting</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span class="lives" id="livesLbl">❤❤❤</span>
+      <span id="levelLbl">Line 1</span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Fruit rolls down the belt labeled with its grade. Press <b>1</b>, <b>2</b>, or <b>3</b> (or tap/click a bin) to send the <b>highlighted</b> piece of fruit into the matching bin — <b>Premium</b>, <b>Standard</b>, or <b>Juice/Reject</b> — before it rolls off the end. Use <b>Left/Right Arrow</b> to change which piece is highlighted. A wrong bin or a missed piece costs a life. The belt speeds up and grading gets trickier each line.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const GID='orchardharvestsorting';
+let score=0,hi=parseInt(localStorage.getItem(GID+'_hi')||'0',10);
+let lives=3,level=1,gameOver=false,started=false,won=false;
+const MAXLVL=6;
+const LANE_Y=220,LANE_H=80;
+const BELT_X0=40,BELT_X1=760;
+const BIN_X=[40,370,700]; // premium, standard, reject approx positions (bin catch zone starts near x>700)
+const BINS=[
+  {label:'bin_premium','name':'Premium',color:'#ffd27e',x:720},
+  {label:'bin_standard','name':'Standard',color:'#b7e08a',x:720},
+  {label:'bin_reject','name':'Juice',color:'#9ab0c8',x:720}
+];
+
+let fruits=[];
+let spawnTimer=0,spawnInterval=1.4;
+let beltSpeed=70;
+let selIndex=0;
+let flashT=0,flashGood=true;
+let scoredCount=0,needed=10,missCount=0;
+
+const FRUIT_KINDS=[
+  {grade:0,label:'Premium',color:'#e94f37',size:16},
+  {grade:1,label:'Standard',color:'#f0a830',size:13},
+  {grade:2,label:'Reject',color:'#8a6d4a',size:11}
+];
+
+function spawnFruit(){
+  const lvl=level;
+  // trickier grading: at higher levels some fruit look similar but grade differently (color variance)
+  const r=Math.random();
+  let grade;
+  if(r<0.4)grade=0; else if(r<0.75)grade=1; else grade=2;
+  const base=FRUIT_KINDS[grade];
+  const jitter=lvl>=3?0.12:0;
+  fruits.push({
+    x:BELT_X0-20,
+    y:LANE_Y+LANE_H/2,
+    grade,
+    size:base.size+(Math.random()-0.5)*6,
+    hueShift:(Math.random()-0.5)*jitter,
+    sorted:false
+  });
+}
+
+function setupLevel(lvl){
+  fruits=[];
+  spawnTimer=0;
+  beltSpeed=70+lvl*16;
+  spawnInterval=Math.max(0.55,1.4-lvl*0.14);
+  needed=8+lvl*2;
+  scoredCount=0;missCount=0;
+  selIndex=0;
+}
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('line_num_label','Line {l}').replace('{l}',level);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;won=false;
+  setupLevel(level);
+  setHud();
+}
+
+function loseLife(){
+  lives--;flashT=14;flashGood=false;
+  SFX.hit();SFX.fail();
+  setHud();
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(GID+'_hi',hi);}
+    SFX.lose();
+  }
+}
+
+function checkLevelDone(){
+  if(scoredCount>=needed){
+    score+=50*level;
+    SFX.levelup();SFX.coin();
+    setHud();
+    setTimeout(()=>{
+      if(gameOver)return;
+      if(level>=MAXLVL){
+        won=true;
+        if(score>hi){hi=score;localStorage.setItem(GID+'_hi',hi);}
+        SFX.win();setHud();
+      }else{
+        level++;setupLevel(level);setHud();
+      }
+    },700);
+  }
+}
+
+function sortSelected(binGrade){
+  if(!started||gameOver||won)return;
+  const onBelt=fruits.filter(f=>!f.sorted&&f.x>BELT_X0);
+  if(onBelt.length===0)return;
+  if(selIndex>=onBelt.length)selIndex=onBelt.length-1;
+  const f=onBelt[selIndex];
+  f.sorted=true;
+  if(f.grade===binGrade){
+    score+=10;
+    scoredCount++;
+    SFX.point();
+    flashT=10;flashGood=true;
+    checkLevelDone();
+  }else{
+    SFX.error();
+    loseLife();
+  }
+  fruits=fruits.filter(ff=>ff!==f);
+}
+
+document.addEventListener('keydown',e=>{
+  if(!started){
+    if(e.code==='Space'){started=true;setupLevel(level);setHud();}
+    return;
+  }
+  if(gameOver||won){
+    if(e.code==='Space')reset();
+    return;
+  }
+  if(e.code==='Digit1'){e.preventDefault();sortSelected(0);}
+  if(e.code==='Digit2'){e.preventDefault();sortSelected(1);}
+  if(e.code==='Digit3'){e.preventDefault();sortSelected(2);}
+  if(e.code==='ArrowLeft'){e.preventDefault();selIndex=Math.max(0,selIndex-1);SFX.select();}
+  if(e.code==='ArrowRight'){e.preventDefault();selIndex=selIndex+1;SFX.select();}
+  if(e.code==='Space')e.preventDefault();
+});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(800/rect.width),y:cy*(440/rect.height)};
+}
+c.addEventListener('mousedown',onTap);
+c.addEventListener('touchstart',e=>{e.preventDefault();onTap(e);},{passive:false});
+function onTap(e){
+  if(!started){started=true;setupLevel(level);setHud();return;}
+  if(gameOver||won){reset();return;}
+  const p=pointerPos(e);
+  if(p.y>320&&p.y<420){
+    if(p.x<300)sortSelected(0);
+    else if(p.x<540)sortSelected(1);
+    else sortSelected(2);
+  }else{
+    // tap a fruit directly on belt to select it
+    const onBelt=fruits.filter(f=>!f.sorted&&f.x>BELT_X0);
+    let best=-1,bestD=9999;
+    onBelt.forEach((f,i)=>{
+      const d=Math.hypot(f.x-p.x,f.y-p.y);
+      if(d<bestD){bestD=d;best=i;}
+    });
+    if(best>=0&&bestD<40)selIndex=best;
+  }
+}
+
+let lastTime=null;
+function update(dt){
+  if(!started||gameOver||won)return;
+  spawnTimer-=dt;
+  if(spawnTimer<=0){
+    spawnFruit();
+    spawnTimer=spawnInterval;
+  }
+  fruits.forEach(f=>{
+    if(f.sorted)return;
+    f.x+=beltSpeed*dt;
+  });
+  const missed=fruits.filter(f=>!f.sorted&&f.x>BELT_X1);
+  if(missed.length){
+    missed.forEach(()=>{loseLife();});
+    fruits=fruits.filter(f=>!(!f.sorted&&f.x>BELT_X1));
+  }
+  const onBelt=fruits.filter(f=>!f.sorted&&f.x>BELT_X0);
+  if(selIndex>=onBelt.length)selIndex=Math.max(0,onBelt.length-1);
+  if(flashT>0)flashT--;
+}
+
+function gradeColor(grade,hueShift){
+  const base=FRUIT_KINDS[grade].color;
+  return base;
+}
+
+function drawFruit(f,idx,isSel){
+  ctx.save();
+  ctx.translate(f.x,f.y);
+  ctx.fillStyle=gradeColor(f.grade,f.hueShift);
+  ctx.beginPath();ctx.arc(0,0,f.size,0,6.283);ctx.fill();
+  ctx.fillStyle='#355b2a';ctx.fillRect(-1,-f.size-5,2,6);
+  if(isSel){
+    ctx.strokeStyle='#fff';ctx.lineWidth=3;
+    ctx.beginPath();ctx.arc(0,0,f.size+6,0,6.283);ctx.stroke();
+    ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='center';
+    ctx.fillText('▼',0,-f.size-14);
+  }
+  ctx.restore();
+}
+
+function loop(ts){
+  if(lastTime==null)lastTime=ts;
+  const dt=Math.min(0.08,(ts-lastTime)/1000);
+  lastTime=ts;
+  update(dt);
+
+  ctx.clearRect(0,0,800,440);
+  ctx.fillStyle='#241a12';ctx.fillRect(0,0,800,440);
+  ctx.textAlign='center';
+
+  if(!started){
+    ctx.fillStyle='#ffe0b0';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','1/2/3 to sort, Arrows to pick fruit — Tap or Space to start'),400,220);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','LINE JAMMED!'),400,170);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,205);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,235);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#b7e08a';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','HARVEST FULLY SORTED! 📦'),400,160);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,195);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,225);
+    requestAnimationFrame(loop);return;
+  }
+
+  // belt
+  ctx.fillStyle='#3a2a1a';
+  ctx.fillRect(0,LANE_Y,800,LANE_H);
+  ctx.strokeStyle='#5a4228';ctx.lineWidth=2;
+  const beltScroll=(performance.now()/30)%20;
+  for(let x=-20+beltScroll;x<800;x+=20){
+    ctx.beginPath();ctx.moveTo(x,LANE_Y);ctx.lineTo(x-10,LANE_Y+LANE_H);ctx.stroke();
+  }
+
+  // bins
+  const binNames=[I18N.t('bin_premium','Premium'),I18N.t('bin_standard','Standard'),I18N.t('bin_reject','Juice')];
+  const binColors=['#ffd27e','#b7e08a','#9ab0c8'];
+  const binXs=[0,270,540];
+  for(let i=0;i<3;i++){
+    ctx.fillStyle=binColors[i];
+    ctx.globalAlpha=0.22;
+    ctx.fillRect(binXs[i]+20,330,240,90);
+    ctx.globalAlpha=1;
+    ctx.strokeStyle=binColors[i];ctx.lineWidth=3;
+    ctx.strokeRect(binXs[i]+20,330,240,90);
+    ctx.fillStyle=binColors[i];ctx.font='bold 16px Arial';
+    ctx.fillText(binNames[i]+' ('+(i+1)+')',binXs[i]+140,378);
+  }
+
+  const onBelt=fruits.filter(f=>!f.sorted&&f.x>BELT_X0);
+  onBelt.forEach((f,i)=>drawFruit(f,i,i===selIndex));
+
+  ctx.fillStyle='#ffe0b0';ctx.font='14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('sort_progress','Sorted: {a}/{b}').replace('{a}',scoredCount).replace('{b}',needed),20,24);
+  ctx.textAlign='center';
+
+  if(flashT>0){
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.18)':'rgba(255,60,60,0.22)';
+    ctx.fillRect(0,0,800,440);
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

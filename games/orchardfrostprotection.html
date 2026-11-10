@@ -1,0 +1,322 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Orchard Frost Protection</title><meta name="description" content="Play Orchard Frost Protection free online — Run wind machines and sprinklers at the right moments overnight to protect blossoms from frost without wasting resources."><link rel="canonical" href="https://games.multiportllc.com/games/orchardfrostprotection"><meta property="og:title" content="Orchard Frost Protection - Multiport Games"><meta property="og:description" content="Play Orchard Frost Protection free online — Run wind machines and sprinklers at the right moments overnight to protect blossoms from frost without wasting resources."><meta property="og:url" content="https://games.multiportllc.com/games/orchardfrostprotection"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Orchard Frost Protection - Multiport Games"><meta name="twitter:description" content="Play Orchard Frost Protection free online — Run wind machines and sprinklers at the right moments overnight to protect blossoms from frost without wasting resources."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Orchard Frost Protection","description":"Play Orchard Frost Protection free online instantly. Watch the overnight temperature drop and switch on wind machines and irrigation sprinklers at the right moments to keep blossoms above freezing, across colder and longer frost events, without burning through your limited fuel and water. No download or signup required.","genre":"Strategy","url":"https://games.multiportllc.com/games/orchardfrostprotection","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0a1626;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#cfe8ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#resWrap{max-width:600px;margin:0 auto 8px;display:flex;gap:10px;justify-content:center}
+.resBar{flex:1;background:#132038;border-radius:10px;padding:4px;max-width:280px}
+.resFill{height:12px;border-radius:8px;transition:width .15s}
+#fuelFill{background:linear-gradient(90deg,#ff9f45,#ffd27e)}
+#waterFill{background:linear-gradient(90deg,#45b4ff,#9fe0ff)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Orchard Frost Protection</div>
+  <div class="game-frame" style="padding:14px">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span class="lives" id="livesLbl">❤❤❤</span>
+      <span id="levelLbl">Night 1</span>
+    </div>
+    <div id="resWrap">
+      <div class="resBar"><div id="fuelFill" class="resFill" style="width:100%"></div></div>
+      <div class="resBar"><div id="waterFill" class="resFill" style="width:100%"></div></div>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Press <b>W</b> or tap the left fan icon to toggle the <b>wind machines</b>, and <b>S</b> or tap the right sprinkler icon to toggle <b>irrigation sprinklers</b>. Watch the blossom temperature — when it nears freezing, turn on the right protection to hold it up. Running equipment burns fuel or water, shown in the bars below, so switch off when you don't need it. Let blossoms freeze too many times and you lose a life. Survive the night using as little fuel/water as possible for a higher score.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const GID='orchardfrostprotection';
+let score=0,hi=parseInt(localStorage.getItem(GID+'_hi')||'0',10);
+let lives=3,level=1,gameOver=false,started=false,won=false;
+const MAXLVL=6;
+const NIGHT_LEN=62; // seconds of game-night per level
+
+let simT=0,outsideTemp=0,blossomTemp=0;
+let windOn=false,sprinklerOn=false;
+let fuel=100,water=100;
+let frostDipDone=0,frostDipsNeeded=0;
+let freezeFlash=0;
+let dangerT=0;
+let ambientProfile=[];
+
+function buildNight(lvl){
+  simT=0;
+  blossomTemp=38;
+  fuel=100;water=100;
+  windOn=false;sprinklerOn=false;
+  freezeFlash=0;dangerT=0;
+  frostDipsNeeded=2+Math.min(3,Math.floor(lvl/2));
+  frostDipDone=0;
+  // build a temperature profile: multiple dips below freeze line as night progresses
+  ambientProfile=[];
+  const dips=frostDipsNeeded+1;
+  for(let i=0;i<dips;i++){
+    const center=(NIGHT_LEN*0.15)+(i/(dips))*NIGHT_LEN*0.8+Math.random()*4;
+    const depth=10+lvl*1.6+Math.random()*4; // how far below 32F
+    const width=5+Math.random()*3-lvl*0.15;
+    ambientProfile.push({center,depth,width:Math.max(3,width)});
+  }
+}
+
+function ambientTempAt(t){
+  let base=40-level*1.5;
+  ambientProfile.forEach(d=>{
+    const x=(t-d.center)/d.width;
+    base-=d.depth*Math.exp(-x*x);
+  });
+  return base;
+}
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('night_num_label','Night {l}').replace('{l}',level);
+  document.getElementById('fuelFill').style.width=Math.max(0,fuel)+'%';
+  document.getElementById('waterFill').style.width=Math.max(0,water)+'%';
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;won=false;
+  buildNight(level);
+  setHud();
+}
+
+function loseLife(){
+  lives--;freezeFlash=20;
+  SFX.hit();SFX.fail();
+  setHud();
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(GID+'_hi',hi);}
+    SFX.lose();
+  }
+}
+
+function toggleWind(){
+  if(!started||gameOver||won)return;
+  if(!windOn&&fuel<=0)return;
+  windOn=!windOn;
+  SFX.click();
+}
+function toggleSprinkler(){
+  if(!started||gameOver||won)return;
+  if(!sprinklerOn&&water<=0)return;
+  sprinklerOn=!sprinklerOn;
+  SFX.click();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='KeyW'){e.preventDefault();toggleWind();}
+  if(e.code==='KeyS'){e.preventDefault();toggleSprinkler();}
+  if(e.code==='Space'){
+    e.preventDefault();
+    if(!started){started=true;buildNight(level);setHud();}
+    else if(gameOver||won)reset();
+  }
+});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  return cx*(800/rect.width);
+}
+c.addEventListener('mousedown',onTap);
+c.addEventListener('touchstart',e=>{e.preventDefault();onTap(e);},{passive:false});
+function onTap(e){
+  if(!started){started=true;buildNight(level);setHud();return;}
+  if(gameOver||won){reset();return;}
+  const px=pointerPos(e);
+  if(px<270)toggleWind();
+  else if(px>530)toggleSprinkler();
+}
+
+function checkNightDone(){
+  if(simT>=NIGHT_LEN){
+    const bonus=Math.floor((fuel+water)/2);
+    score+=60*level+bonus;
+    SFX.success();SFX.coin();
+    setHud();
+    setTimeout(()=>{
+      if(gameOver)return;
+      if(level>=MAXLVL){
+        won=true;
+        if(score>hi){hi=score;localStorage.setItem(GID+'_hi',hi);}
+        SFX.win();setHud();
+      }else{
+        level++;buildNight(level);setHud();
+      }
+    },800);
+    phaseLock=true;
+    setTimeout(()=>{phaseLock=false;},800);
+  }
+}
+let phaseLock=false;
+
+function update(dt){
+  if(!started||gameOver||won||phaseLock)return;
+  simT+=dt;
+  outsideTemp=ambientTempAt(simT);
+
+  // protection effect: wind machines mix warmer air down (helps on radiational frost),
+  // sprinklers release latent heat as water freezes on blossoms (helps near 32F).
+  let protect=0;
+  if(windOn){
+    protect+=4.5;
+    fuel-=dt*2.2;
+    if(fuel<0)fuel=0;
+    if(fuel<=0)windOn=false;
+  }
+  if(sprinklerOn){
+    protect+=6.5;
+    water-=dt*2.6;
+    if(water<0)water=0;
+    if(sprinklerOn&&water<=0)sprinklerOn=false;
+  }
+
+  const target=outsideTemp+protect;
+  blossomTemp+=(target-blossomTemp)*Math.min(1,dt*0.9);
+
+  if(blossomTemp<32){
+    dangerT+=dt;
+    if(dangerT>1.4){
+      dangerT=0;
+      frostDipDone++;
+      loseLife();
+    }
+  }else{
+    dangerT=0;
+  }
+
+  setHud();
+  checkNightDone();
+}
+
+let lastTime=null;
+function loop(ts){
+  if(lastTime==null)lastTime=ts;
+  const dt=Math.min(0.1,(ts-lastTime)/1000);
+  lastTime=ts;
+  update(dt);
+
+  ctx.clearRect(0,0,800,440);
+  const nightProg=started?Math.min(1,simT/NIGHT_LEN):0;
+  const sky=ctx.createLinearGradient(0,0,0,440);
+  const dark=0.08+0.05*Math.sin(nightProg*3.14);
+  sky.addColorStop(0,'#030712');sky.addColorStop(1,`rgba(20,30,50,1)`);
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,440);
+
+  // stars
+  ctx.fillStyle='rgba(255,255,255,0.5)';
+  for(let i=0;i<40;i++){
+    const sx=(i*53+17)%800, sy=(i*97+31)%180;
+    ctx.fillRect(sx,sy,2,2);
+  }
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='#cfe8ff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','W = wind machines, S = sprinklers — Tap or Space to start'),400,220);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','BLOSSOMS FROZEN!'),400,170);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,205);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,235);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#9fe0ff';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','ORCHARD SAVED! ❄️🌸'),400,160);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,195);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,225);
+    requestAnimationFrame(loop);return;
+  }
+
+  // orchard rows (trees)
+  for(let i=0;i<6;i++){
+    const tx=80+i*120;
+    ctx.fillStyle='#1a2f22';
+    ctx.fillRect(tx-6,330,12,60);
+    ctx.fillStyle=blossomTemp<32?'#5a7a9a':'#e8bfe0';
+    ctx.beginPath();ctx.arc(tx,315,26,0,6.283);ctx.fill();
+  }
+  ctx.fillStyle='#16321f';ctx.fillRect(0,388,800,52);
+
+  // wind machine icon (left)
+  ctx.save();
+  ctx.translate(140,150);
+  ctx.fillStyle=windOn?'#ffd27e':'#55606f';
+  ctx.beginPath();ctx.arc(0,0,34,0,6.283);ctx.fill();
+  ctx.strokeStyle='#1a1a2e';ctx.lineWidth=3;
+  const spin=windOn?performance.now()/120:0;
+  for(let i=0;i<3;i++){
+    ctx.save();ctx.rotate(spin+i*2.094);
+    ctx.beginPath();ctx.ellipse(0,-16,7,16,0,0,6.283);ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+  ctx.fillStyle='#cfe8ff';ctx.font='14px Arial';
+  ctx.fillText(I18N.t('wind_label','WIND (W)'),140,205);
+
+  // sprinkler icon (right)
+  ctx.save();
+  ctx.translate(660,150);
+  ctx.fillStyle=sprinklerOn?'#9fe0ff':'#55606f';
+  ctx.fillRect(-6,10,12,30);
+  ctx.beginPath();ctx.arc(0,0,16,0,6.283);ctx.fill();
+  if(sprinklerOn){
+    ctx.strokeStyle='#9fe0ff';ctx.lineWidth=2;
+    for(let i=0;i<5;i++){
+      const ang=-2.4+i*1.2+Math.sin(performance.now()/300+i)*0.1;
+      ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(ang)*30,Math.sin(ang)*30-10);ctx.stroke();
+    }
+  }
+  ctx.restore();
+  ctx.fillStyle='#cfe8ff';ctx.font='14px Arial';
+  ctx.fillText(I18N.t('sprinkler_label','SPRINKLER (S)'),660,205);
+
+  // temperature readout
+  ctx.textAlign='left';
+  ctx.font='bold 16px Arial';
+  ctx.fillStyle=blossomTemp<34?'#ff8a65':'#cfe8ff';
+  ctx.fillText(I18N.t('blossom_temp_label','Blossom: {t}°F').replace('{t}',blossomTemp.toFixed(1)),30,260);
+  ctx.fillStyle='#8fb8e0';
+  ctx.fillText(I18N.t('outside_temp_label','Outside: {t}°F').replace('{t}',outsideTemp.toFixed(1)),30,282);
+
+  // night progress bar
+  ctx.fillStyle='#132038';ctx.fillRect(30,300,740,10);
+  ctx.fillStyle='#45b4ff';ctx.fillRect(30,300,740*nightProg,10);
+  ctx.strokeStyle='#ff6b35';ctx.lineWidth=2;
+  const freezeY=300;
+  ctx.textAlign='left';
+
+  if(freezeFlash>0){
+    ctx.fillStyle='rgba(120,180,255,0.25)';
+    ctx.fillRect(0,0,800,440);
+    freezeFlash--;
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

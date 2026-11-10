@@ -1,0 +1,304 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mushroom Spore Culture</title><meta name="description" content="Play Mushroom Spore Culture free online — Drag or steer the inoculation loop along the streak path to transfer a spore print onto the agar plate. Stray outside the sterile zone and you contaminate the culture!"><link rel="canonical" href="https://games.multiportllc.com/games/mushroomsporeculture"><meta property="og:title" content="Mushroom Spore Culture - Multiport Games"><meta property="og:description" content="Play Mushroom Spore Culture free online — Drag or steer the inoculation loop along the streak path to transfer a spore print onto the agar plate. Stray outside the sterile zone and you contaminate the culture!"><meta property="og:url" content="https://games.multiportllc.com/games/mushroomsporeculture"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Mushroom Spore Culture - Multiport Games"><meta name="twitter:description" content="Play Mushroom Spore Culture free online — Drag or steer the inoculation loop along the streak path to transfer a spore print onto the agar plate. Stray outside the sterile zone and you contaminate the culture!"><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mushroom Spore Culture","description":"Play Mushroom Spore Culture free online instantly. Drag or steer the inoculation loop along the streak path to transfer a spore print onto the agar plate. Stray outside the sterile zone and you contaminate the culture! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/mushroomsporeculture","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#10151a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#bfe9a8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lives{color:#ff6b6b}
+#hud span.level{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mushroom Spore Culture</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span class="lives" id="lives-display">♥♥♥</span>
+      <span class="level" id="level-display">Round 1</span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the <b>loop</b> with your mouse or finger (or steer it with the Arrow Keys) along the dotted streak path from the spore print to the agar plate. Stay inside the pale <b>sterile corridor</b> the whole way — wandering outside it contaminates the culture and costs a life. Each new species gives you a narrower, twistier path!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisplay=document.getElementById('score-display');
+const livesDisplay=document.getElementById('lives-display');
+const levelDisplay=document.getElementById('level-display');
+const HI_KEY='mushroomsporeculture_hi';
+
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),lives=3,level=1;
+let gameOver=false,started=false,lastTime=null;
+let path=[],tolerance=34,progressIdx=0,progressFrac=0,plateDone=false;
+let loopX=100,loopY=210,targetX=100,targetY=210,contamFlash=0,successFlash=0;
+let keys={up:false,down:false,left:false,right:false};
+
+function buildPath(lv){
+  // zig-zag streak pattern across the plate, gets longer/windier with level
+  const segs=Math.min(8,4+Math.floor(lv/2));
+  const pts=[];
+  const left=120,right=680,top=110,bottom=330;
+  let x=left,y=top+ (bottom-top)/2*0;
+  pts.push({x:left,y:top});
+  for(let i=0;i<segs;i++){
+    const yy = i%2===0?bottom:top;
+    const xx = left + (right-left)*((i+1)/segs);
+    pts.push({x:xx,y:yy});
+  }
+  return pts;
+}
+
+function pathLength(p){
+  let d=0;
+  for(let i=1;i<p.length;i++){
+    d+=Math.hypot(p[i].x-p[i-1].x,p[i].y-p[i-1].y);
+  }
+  return d;
+}
+
+function resetPlate(){
+  path=buildPath(level);
+  tolerance=Math.max(13,32-level*1.6);
+  progressIdx=0;progressFrac=0;plateDone=false;
+  loopX=path[0].x;loopY=path[0].y;
+  targetX=loopX;targetY=loopY;
+}
+
+function resetGame(){
+  score=0;lives=3;level=1;gameOver=false;started=false;lastTime=null;
+  contamFlash=0;successFlash=0;
+  resetPlate();
+  updateHud();
+}
+
+function updateHud(){
+  scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  livesDisplay.textContent='♥'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+  levelDisplay.textContent=I18N.t('round_label','Round {n}').replace('{n}',level);
+}
+
+// distance from point to segment, plus projected progress fraction along it
+function closestOnSegment(px,py,a,b){
+  const abx=b.x-a.x,aby=b.y-a.y;
+  const len2=abx*abx+aby*aby;
+  let t=len2>0?((px-a.x)*abx+(py-a.y)*aby)/len2:0;
+  t=Math.max(0,Math.min(1,t));
+  return {x:a.x+abx*t,y:a.y+aby*t,t};
+}
+
+function evaluatePosition(px,py){
+  // find nearest segment ahead of (or at) current progressIdx, allow slight lookback
+  let best=null,bestDist=Infinity,bestSeg=progressIdx,bestT=0;
+  const lo=Math.max(0,progressIdx-1), hi=Math.min(path.length-2,progressIdx+1);
+  for(let i=lo;i<=hi;i++){
+    const cp=closestOnSegment(px,py,path[i],path[i+1]);
+    const d=Math.hypot(px-cp.x,py-cp.y);
+    if(d<bestDist){bestDist=d;best=cp;bestSeg=i;bestT=cp.t;}
+  }
+  return {dist:bestDist,seg:bestSeg,t:bestT};
+}
+
+function contaminate(){
+  lives--;
+  contamFlash=1;
+  SFX.error();
+  SFX.hurt();
+  if(lives<=0){ gameOver=true; SFX.lose(); }
+  else { resetPlate(); }
+  updateHud();
+}
+
+function completePlate(){
+  plateDone=true;
+  successFlash=1;
+  score+=30+level*5;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  SFX.success();
+  updateHud();
+  setTimeout(()=>{
+    level++;
+    SFX.levelup();
+    resetPlate();
+    updateHud();
+  },700);
+}
+
+function handleStartTap(){
+  if(!started){started=true;return true;}
+  if(gameOver){resetGame();started=true;return true;}
+  return false;
+}
+
+function canvasPos(evt){
+  const rect=c.getBoundingClientRect();
+  const t=evt.touches&&evt.touches[0];
+  const cx=(t?t.clientX:evt.clientX)-rect.left;
+  const cy=(t?t.clientY:evt.clientY)-rect.top;
+  return {x:cx*(800/rect.width),y:cy*(420/rect.height)};
+}
+
+let dragging=false;
+c.addEventListener('mousedown',e=>{ if(handleStartTap())return; dragging=true; const p=canvasPos(e); targetX=p.x;targetY=p.y; });
+c.addEventListener('touchstart',e=>{ e.preventDefault(); if(handleStartTap())return; dragging=true; const p=canvasPos(e); targetX=p.x;targetY=p.y; },{passive:false});
+window.addEventListener('mousemove',e=>{ if(!dragging)return; const p=canvasPos(e); targetX=p.x;targetY=p.y; });
+window.addEventListener('touchmove',e=>{ if(!dragging)return; e.preventDefault(); const p=canvasPos(e); targetX=p.x;targetY=p.y; },{passive:false});
+window.addEventListener('mouseup',()=>{dragging=false;});
+window.addEventListener('touchend',()=>{dragging=false;});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Enter'||e.code==='Space'){ e.preventDefault(); handleStartTap(); }
+  else if(e.code==='ArrowUp'){ e.preventDefault(); keys.up=true; }
+  else if(e.code==='ArrowDown'){ e.preventDefault(); keys.down=true; }
+  else if(e.code==='ArrowLeft'){ e.preventDefault(); keys.left=true; }
+  else if(e.code==='ArrowRight'){ e.preventDefault(); keys.right=true; }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp')keys.up=false;
+  else if(e.code==='ArrowDown')keys.down=false;
+  else if(e.code==='ArrowLeft')keys.left=false;
+  else if(e.code==='ArrowRight')keys.right=false;
+});
+
+function drawPlate(){
+  ctx.save();
+  ctx.beginPath();ctx.arc(400,220,185,0,Math.PI*2);
+  ctx.fillStyle='#c9a35e';ctx.fill();
+  ctx.beginPath();ctx.arc(400,220,170,0,Math.PI*2);
+  ctx.fillStyle='#d8bb7a';ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.3)';ctx.lineWidth=3;
+  ctx.beginPath();ctx.arc(400,220,185,0,Math.PI*2);ctx.stroke();
+  ctx.restore();
+}
+
+function drawPath(){
+  ctx.save();
+  ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();
+  ctx.moveTo(path[0].x,path[0].y);
+  for(let i=1;i<path.length;i++) ctx.lineTo(path[i].x,path[i].y);
+  ctx.strokeStyle='rgba(255,255,255,0.18)';
+  ctx.lineWidth=tolerance*2;
+  ctx.stroke();
+  ctx.setLineDash([10,8]);
+  ctx.strokeStyle='rgba(255,255,255,0.55)';
+  ctx.lineWidth=2;
+  ctx.stroke();
+  ctx.setLineDash([]);
+  // start / end markers
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(path[0].x,path[0].y,10,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#4caf50';
+  ctx.beginPath();ctx.arc(path[path.length-1].x,path[path.length-1].y,10,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawLoop(ok){
+  ctx.save();
+  ctx.strokeStyle=ok?'#bfe9a8':'#e94560';
+  ctx.lineWidth=4;
+  ctx.beginPath();ctx.arc(loopX,loopY,13,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(loopX+9,loopY+9);ctx.lineTo(loopX+28,loopY+28);ctx.stroke();
+  ctx.fillStyle=ok?'rgba(191,233,168,0.3)':'rgba(233,69,96,0.3)';
+  ctx.beginPath();ctx.arc(loopX,loopY,13,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  ctx.clearRect(0,0,800,420);
+  const bg=ctx.createLinearGradient(0,0,0,420);
+  bg.addColorStop(0,'#0b1620');bg.addColorStop(1,'#13202a');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,420);
+
+  if(!started){
+    ctx.fillStyle='#bfe9a8';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_spore','Click / Tap / Enter to start'),400,210);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  drawPlate();
+  drawPath();
+
+  if(!gameOver && !plateDone){
+    // keyboard steering
+    const spd=220*dt;
+    if(keys.up)targetY-=spd;
+    if(keys.down)targetY+=spd;
+    if(keys.left)targetX-=spd;
+    if(keys.right)targetX+=spd;
+    targetX=Math.max(40,Math.min(760,targetX));
+    targetY=Math.max(60,Math.min(380,targetY));
+    // smooth follow (hand steadiness)
+    loopX+=(targetX-loopX)*Math.min(1,dt*9);
+    loopY+=(targetY-loopY)*Math.min(1,dt*9);
+
+    const ev=evaluatePosition(loopX,loopY);
+    if(ev.dist>tolerance){
+      contaminate();
+    }else{
+      if(ev.seg>progressIdx || (ev.seg===progressIdx && ev.t>progressFrac)){
+        progressIdx=ev.seg; progressFrac=ev.t;
+      }
+      const total=path.length-1;
+      const overall=(progressIdx+progressFrac)/total;
+      if(overall>0.985){
+        completePlate();
+      }
+    }
+  }
+
+  drawLoop(!gameOver);
+
+  // progress bar
+  const total=path.length-1;
+  const overall=Math.min(1,(progressIdx+progressFrac)/total);
+  ctx.save();
+  ctx.fillStyle='rgba(255,255,255,0.1)';
+  ctx.fillRect(140,380,520,12);
+  ctx.fillStyle='#4caf50';
+  ctx.fillRect(140,380,520*overall,12);
+  ctx.strokeStyle='rgba(255,255,255,0.3)';ctx.strokeRect(140,380,520,12);
+  ctx.restore();
+
+  if(contamFlash>0){
+    ctx.save();
+    ctx.globalAlpha=contamFlash;
+    ctx.fillStyle='#e94560';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('contaminated','Contaminated!'),400,70);
+    ctx.restore();
+    contamFlash-=0.03;
+  }
+  if(successFlash>0){
+    ctx.save();
+    ctx.globalAlpha=successFlash;
+    ctx.fillStyle='#4caf50';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('culture_transferred','Culture Transferred!'),400,70);
+    ctx.restore();
+    successFlash-=0.03;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,800,420);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,190);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),400,230);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,262);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+resetGame();
+loop();
+</script></body></html>

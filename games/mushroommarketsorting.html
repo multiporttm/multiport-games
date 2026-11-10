@@ -1,0 +1,338 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mushroom Market Sorting</title><meta name="description" content="Play Mushroom Market Sorting free online — Drag each mushroom into the bin matching its size and quality grade before the ring timer runs out. Bigger harvests and trickier grading standards every round!"><link rel="canonical" href="https://games.multiportllc.com/games/mushroommarketsorting"><meta property="og:title" content="Mushroom Market Sorting - Multiport Games"><meta property="og:description" content="Play Mushroom Market Sorting free online — Drag each mushroom into the bin matching its size and quality grade before the ring timer runs out. Bigger harvests and trickier grading standards every round!"><meta property="og:url" content="https://games.multiportllc.com/games/mushroommarketsorting"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Mushroom Market Sorting - Multiport Games"><meta name="twitter:description" content="Play Mushroom Market Sorting free online — Drag each mushroom into the bin matching its size and quality grade before the ring timer runs out. Bigger harvests and trickier grading standards every round!"><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mushroom Market Sorting","description":"Play Mushroom Market Sorting free online instantly. Drag each mushroom into the bin matching its size and quality grade before the ring timer runs out. Bigger harvests and trickier grading standards every round! No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/mushroommarketsorting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#10151a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#bfe9a8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lives{color:#ff6b6b}
+#hud span.level{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mushroom Market Sorting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span class="lives" id="lives-display">♥♥♥</span>
+      <span class="level" id="level-display">Round 1</span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag each mushroom into the <b>bin</b> that matches its size (small/large) and quality (clean cap/spotted cap) before its ring timer empties. Or press <b>Tab</b>/Arrow keys to select a mushroom and a number key <b>1-4</b> to send it to that bin. Wrong bins and expired mushrooms cost a life — harvests get bigger and the grading gets subtler each round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisplay=document.getElementById('score-display');
+const livesDisplay=document.getElementById('lives-display');
+const levelDisplay=document.getElementById('level-display');
+const HI_KEY='mushroommarketsorting_hi';
+
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),lives=3,level=1;
+let gameOver=false,started=false,lastTime=null;
+let items=[],spawnTimer=0,selectedId=0,nextId=1,sorted=0,roundNeed=8;
+
+const BINS=[
+  {x:60, y:330,w:150,h:70,size:'S',q:'clean',  label:'1',color:'#2d6cad'},
+  {x:230,y:330,w:150,h:70,size:'S',q:'spotted',label:'2',color:'#8a5a2b'},
+  {x:420,y:330,w:150,h:70,size:'L',q:'clean',  label:'3',color:'#2f8f5b'},
+  {x:590,y:330,w:150,h:70,size:'L',q:'spotted',label:'4',color:'#b23b3b'},
+];
+
+const SLOTS=(()=>{
+  const s=[];
+  for(let r=0;r<2;r++) for(let col=0;col<5;col++)
+    s.push({x:70+col*135,y:60+r*95,w:110,h:80,used:false});
+  return s;
+})();
+
+function difficultyForLevel(lv){
+  return {
+    spawnInterval:Math.max(0.7,2.2-lv*0.14),
+    lifeTime:Math.max(5,11-lv*0.5),
+    sizeDelta:Math.max(4,13-lv*1.0),     // small vs large radius gap shrinks = harder
+    spotCount:Math.max(1,6-lv),          // fewer spots on 'spotted' = subtler = harder
+    spotAlpha:Math.max(0.3,0.9-lv*0.06),
+  };
+}
+
+function freeSlot(){
+  const free=SLOTS.filter(s=>!s.used);
+  if(!free.length)return null;
+  return free[Math.floor(Math.random()*free.length)];
+}
+
+function resetGame(){
+  score=0;lives=3;level=1;gameOver=false;started=false;lastTime=null;
+  items=[];spawnTimer=0;selectedId=0;nextId=1;sorted=0;roundNeed=8;
+  SLOTS.forEach(s=>s.used=false);
+  updateHud();
+}
+
+function updateHud(){
+  scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  livesDisplay.textContent='♥'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+  levelDisplay.textContent=I18N.t('round_label','Round {n}').replace('{n}',level);
+}
+
+function spawnItem(){
+  const slot=freeSlot();
+  if(!slot)return;
+  const d=difficultyForLevel(level);
+  slot.used=true;
+  items.push({
+    id:nextId++,slot,age:0,lifeTime:d.lifeTime,
+    size:Math.random()<0.5?'S':'L',
+    q:Math.random()<0.5?'clean':'spotted',
+    resolved:false,flashT:0,flashColor:null,flashText:''
+  });
+}
+
+function binFor(it){
+  return BINS.find(b=>b.size===it.size&&b.q===it.q);
+}
+
+function resolveItem(it,bin){
+  if(it.resolved)return;
+  it.resolved=true;it.flashT=1;
+  const correct=binFor(it);
+  if(bin===correct){
+    score+=12+level*2;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    sorted++;
+    it.flashColor='#4caf50';it.flashText=I18N.t('sorted_ok','Sorted!');
+    SFX.coin();
+  }else{
+    lives--;
+    it.flashColor='#e94560';it.flashText=I18N.t('wrong_bin','Wrong Bin!');
+    SFX.error();
+    if(lives<=0){gameOver=true;SFX.lose();}
+  }
+  updateHud();
+  setTimeout(()=>{
+    it.slot.used=false;
+    items=items.filter(x=>x!==it);
+    if(!gameOver && sorted>=roundNeed){
+      level++;
+      roundNeed=8+Math.floor(level*2.2);
+      sorted=0;
+      SFX.levelup();
+      updateHud();
+    }
+  },350);
+}
+
+function expireItem(it){
+  if(it.resolved)return;
+  it.resolved=true;it.flashT=1;
+  lives--;
+  it.flashColor='#e94560';it.flashText=I18N.t('missed_truck','Missed!');
+  SFX.hurt();
+  if(lives<=0){gameOver=true;SFX.lose();}
+  updateHud();
+  setTimeout(()=>{
+    it.slot.used=false;
+    items=items.filter(x=>x!==it);
+  },350);
+}
+
+function handleStartTap(){
+  if(!started){started=true;return true;}
+  if(gameOver){resetGame();started=true;return true;}
+  return false;
+}
+
+function canvasPos(evt){
+  const rect=c.getBoundingClientRect();
+  const t=evt.touches&&evt.touches[0];
+  const cx=(t?t.clientX:evt.clientX)-rect.left;
+  const cy=(t?t.clientY:evt.clientY)-rect.top;
+  return {x:cx*(800/rect.width),y:cy*(420/rect.height)};
+}
+
+function itemCenter(it){
+  return {x:it.slot.x+it.slot.w/2,y:it.slot.y+it.slot.h/2};
+}
+
+function itemAt(p){
+  for(const it of items){
+    if(it.resolved)continue;
+    const cc=itemCenter(it);
+    if(Math.hypot(p.x-cc.x,p.y-cc.y)<=26) return it;
+  }
+  return null;
+}
+
+function binAt(p){
+  return BINS.find(b=>p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h) || null;
+}
+
+let dragItem=null,dragX=0,dragY=0;
+
+function pointerDown(evt){
+  evt.preventDefault();
+  if(handleStartTap())return;
+  const p=canvasPos(evt);
+  const it=itemAt(p);
+  if(it){ dragItem=it; selectedId=it.id; dragX=p.x; dragY=p.y; SFX.click(); }
+}
+function pointerMove(evt){
+  if(!dragItem)return;
+  const p=canvasPos(evt);
+  dragX=p.x; dragY=p.y;
+}
+function pointerUp(evt){
+  if(!dragItem)return;
+  const p=canvasPos(evt&&evt.changedTouches?{clientX:evt.changedTouches[0].clientX,clientY:evt.changedTouches[0].clientY}:evt||{clientX:dragX,clientY:dragY});
+  const bin=binAt(p);
+  if(bin) resolveItem(dragItem,bin);
+  dragItem=null;
+}
+
+c.addEventListener('mousedown',pointerDown);
+c.addEventListener('touchstart',pointerDown,{passive:false});
+window.addEventListener('mousemove',pointerMove);
+window.addEventListener('touchmove',e=>{ if(dragItem){e.preventDefault();pointerMove(e);} },{passive:false});
+window.addEventListener('mouseup',pointerUp);
+window.addEventListener('touchend',pointerUp,{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Enter'||e.code==='Space'){ e.preventDefault(); handleStartTap(); return; }
+  if(gameOver||!started)return;
+  const active=items.filter(it=>!it.resolved);
+  if(!active.length)return;
+  if(e.code==='Tab'||e.code==='ArrowRight'){
+    e.preventDefault();
+    const idx=active.findIndex(it=>it.id===selectedId);
+    selectedId=active[(idx+1+active.length)%active.length].id;
+  }else if(e.code==='ArrowLeft'){
+    e.preventDefault();
+    const idx=active.findIndex(it=>it.id===selectedId);
+    selectedId=active[(idx-1+active.length)%active.length].id;
+  }else if(['Digit1','Digit2','Digit3','Digit4'].includes(e.code)){
+    e.preventDefault();
+    const binIdx=parseInt(e.code.slice(-1),10)-1;
+    const it=active.find(it=>it.id===selectedId)||active[0];
+    if(it) resolveItem(it,BINS[binIdx]);
+  }
+});
+
+function drawCap(cx,cy,size,q,d){
+  const r = size==='S' ? 14 : 14+d.sizeDelta;
+  ctx.save();
+  ctx.fillStyle='#b5651d';
+  ctx.beginPath();ctx.arc(cx,cy,r*0.55,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(cx,cy-r*0.3,r,r*0.75,0,Math.PI,0);
+  ctx.fillStyle='#d98a3d';
+  ctx.fill();
+  if(q==='spotted'){
+    ctx.fillStyle=`rgba(255,255,255,${d.spotAlpha})`;
+    for(let i=0;i<d.spotCount;i++){
+      const ang=(i/d.spotCount)*Math.PI*2;
+      const sx=cx+Math.cos(ang)*r*0.5;
+      const sy=cy-r*0.3+Math.sin(ang)*r*0.3;
+      ctx.beginPath();ctx.arc(sx,sy,2.5,0,Math.PI*2);ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function drawItem(it){
+  const s=it.slot;
+  const d=difficultyForLevel(level);
+  ctx.save();
+  ctx.strokeStyle= it.id===selectedId && !it.resolved ? '#ffd54f' : 'rgba(255,255,255,0.15)';
+  ctx.lineWidth= it.id===selectedId && !it.resolved ? 3 : 2;
+  ctx.beginPath();ctx.roundRect(s.x,s.y,s.w,s.h,8);ctx.stroke();
+
+  const cx = (dragItem===it) ? dragX : s.x+s.w/2;
+  const cy = (dragItem===it) ? dragY : s.y+s.h/2+6;
+  if(!it.resolved) drawCap(cx,cy,it.size,it.q,d);
+
+  if(!it.resolved){
+    const cx2=s.x+s.w/2,cyr=s.y+10,r=9;
+    const frac=Math.min(1,it.age/it.lifeTime);
+    ctx.beginPath();ctx.arc(cx2,cyr,r,0,Math.PI*2);ctx.strokeStyle='rgba(255,255,255,0.15)';ctx.lineWidth=4;ctx.stroke();
+    ctx.beginPath();ctx.arc(cx2,cyr,r,-Math.PI/2,-Math.PI/2+frac*Math.PI*2);
+    ctx.strokeStyle= frac>0.75 ? '#e94560':'#4caf50';ctx.lineWidth=4;ctx.stroke();
+  }
+
+  if(it.flashT>0){
+    ctx.globalAlpha=it.flashT;
+    ctx.fillStyle=it.flashColor;
+    ctx.font='bold 13px Arial';ctx.textAlign='center';
+    ctx.fillText(it.flashText,s.x+s.w/2,s.y+s.h+14);
+    ctx.globalAlpha=1;
+    it.flashT-=0.05;
+  }
+  ctx.restore();
+}
+
+function drawBin(b){
+  ctx.save();
+  ctx.beginPath();ctx.roundRect(b.x,b.y,b.w,b.h,10);
+  ctx.fillStyle=b.color;ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.4)';ctx.lineWidth=2;ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  const sizeLabel = b.size==='S'?I18N.t('size_small','Small'):I18N.t('size_large','Large');
+  const qLabel = b.q==='clean'?I18N.t('quality_clean','Clean'):I18N.t('quality_spotted','Spotted');
+  ctx.fillText('['+b.label+'] '+sizeLabel,b.x+b.w/2,b.y+26);
+  ctx.fillText(qLabel,b.x+b.w/2,b.y+46);
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  ctx.clearRect(0,0,800,420);
+  const bg=ctx.createLinearGradient(0,0,0,420);
+  bg.addColorStop(0,'#0b1620');bg.addColorStop(1,'#16241a');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,420);
+
+  if(!started){
+    ctx.fillStyle='#bfe9a8';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_market','Click / Tap / Enter to start'),400,210);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(!gameOver){
+    const d=difficultyForLevel(level);
+    spawnTimer+=dt;
+    if(spawnTimer>=d.spawnInterval){ spawnTimer=0; spawnItem(); }
+    items.forEach(it=>{
+      if(!it.resolved){
+        it.age+=dt;
+        it.lifeTime=d.lifeTime;
+        if(it.age>=it.lifeTime) expireItem(it);
+      }
+    });
+  }
+
+  BINS.forEach(drawBin);
+  items.forEach(it=>{ if(it!==dragItem) drawItem(it); });
+  if(dragItem) drawItem(dragItem);
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,800,420);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,190);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),400,230);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,262);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+resetGame();
+loop();
+</script></body></html>

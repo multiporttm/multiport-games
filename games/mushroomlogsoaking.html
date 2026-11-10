@@ -1,0 +1,291 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mushroom Log Soaking</title><meta name="description" content="Play Mushroom Log Soaking free online — Click or tap a soaking tank to pull its log out. Watch the timer ring on each log and pull it the moment it turns green. Too early or too late costs a life!"><link rel="canonical" href="https://games.multiportllc.com/games/mushroomlogsoaking"><meta property="og:title" content="Mushroom Log Soaking - Multiport Games"><meta property="og:description" content="Play Mushroom Log Soaking free online — Click or tap a soaking tank to pull its log out. Watch the timer ring on each log and pull it the moment it turns green. Too early or too late costs a life!"><meta property="og:url" content="https://games.multiportllc.com/games/mushroomlogsoaking"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Mushroom Log Soaking - Multiport Games"><meta name="twitter:description" content="Play Mushroom Log Soaking free online — Click or tap a soaking tank to pull its log out. Watch the timer ring on each log and pull it the moment it turns green. Too early or too late costs a life!"><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mushroom Log Soaking","description":"Play Mushroom Log Soaking free online instantly. Click or tap a soaking tank to pull its log out. Watch the timer ring on each log and pull it the moment it turns green. Too early or too late costs a life! No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/mushroomlogsoaking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a2e1f;display:block;border-radius:8px;touch-action:none}
+#hud{color:#bfe9a8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span.lives{color:#ff6b6b}
+#hud span.level{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mushroom Log Soaking</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span class="lives" id="lives-display">♥♥♥</span>
+      <span class="level" id="level-display">Round 1</span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click or tap a <b>soaking tank</b> to pull its log out. Each log has its own ring timer — pull it the moment the ring turns <b>green</b> (the fruiting window). Too early (still soaking) or too late (rotted) costs a life. More tanks and faster timers appear each round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisplay=document.getElementById('score-display');
+const livesDisplay=document.getElementById('lives-display');
+const levelDisplay=document.getElementById('level-display');
+const HI_KEY='mushroomlogsoaking_hi';
+
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),lives=3,level=1;
+let tanks=[],gameOver=false,started=false,spawnTimer=0,lastTime=null,roundLogsNeeded=6,roundLogsDone=0;
+
+const TANK_COLS=3,TANK_ROWS=2;
+const TANK_W=200,TANK_H=160,TANK_PAD=20;
+
+function layoutTanks(){
+  const slots=[];
+  const startX=(800-(TANK_COLS*TANK_W+(TANK_COLS-1)*TANK_PAD))/2;
+  const startY=60;
+  for(let r=0;r<TANK_ROWS;r++){
+    for(let col=0;col<TANK_COLS;col++){
+      slots.push({x:startX+col*(TANK_W+TANK_PAD),y:startY+r*(TANK_H+TANK_PAD),w:TANK_W,h:TANK_H});
+    }
+  }
+  return slots;
+}
+const SLOTS=layoutTanks();
+
+function resetGame(){
+  score=0;lives=3;level=1;tanks=[];gameOver=false;started=false;spawnTimer=0;lastTime=null;
+  roundLogsNeeded=6;roundLogsDone=0;
+  SLOTS.forEach(s=>s.occupied=false);
+  updateHud();
+}
+
+function updateHud(){
+  scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  livesDisplay.textContent='♥'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+  levelDisplay.textContent=I18N.t('round_label','Round {n}').replace('{n}',level);
+}
+
+function difficultyForLevel(lv){
+  // soak window shrinks, fruiting window shrinks, spawn rate increases
+  const totalDur=Math.max(5.5,10-lv*0.4);
+  const fruitFrac=Math.max(0.12,0.3-lv*0.015);
+  const spawnInterval=Math.max(0.9,2.4-lv*0.12);
+  return {totalDur,fruitFrac,spawnInterval};
+}
+
+function freeSlot(){
+  const free=SLOTS.filter(s=>!s.occupied);
+  if(!free.length)return null;
+  return free[Math.floor(Math.random()*free.length)];
+}
+
+function spawnLog(){
+  const slot=freeSlot();
+  if(!slot)return;
+  const d=difficultyForLevel(level);
+  slot.occupied=true;
+  const fruitStart=d.totalDur*(1-d.fruitFrac)*(0.55+Math.random()*0.3);
+  const fruitDur=d.totalDur*d.fruitFrac;
+  tanks.push({
+    slot,age:0,totalDur:d.totalDur,fruitStart,fruitEnd:fruitStart+fruitDur,
+    resolved:false,resultFlash:0,resultColor:null,resultText:''
+  });
+}
+
+function stateOf(t){
+  if(t.age<t.fruitStart)return 'soaking';
+  if(t.age<=t.fruitEnd)return 'ready';
+  return 'rotted';
+}
+
+function pullLog(t){
+  if(t.resolved)return;
+  const st=stateOf(t);
+  t.resolved=true;
+  t.resultFlash=1;
+  if(st==='ready'){
+    score+=10+level*2;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    roundLogsDone++;
+    t.resultColor='#4caf50';t.resultText=I18N.t('fruited','Fruited!');
+    SFX.success();
+  }else{
+    lives--;
+    t.resultColor='#e94560';
+    t.resultText= st==='soaking'?I18N.t('too_early','Too early!'):I18N.t('too_late','Rotted!');
+    SFX.fail();
+    if(lives<=0){
+      gameOver=true;
+      SFX.lose();
+    }
+  }
+  updateHud();
+  setTimeout(()=>{
+    t.slot.occupied=false;
+    tanks=tanks.filter(x=>x!==t);
+    if(!gameOver && roundLogsDone>=roundLogsNeeded){
+      level++;
+      roundLogsNeeded=6+Math.floor(level*1.5);
+      roundLogsDone=0;
+      SFX.levelup();
+      updateHud();
+    }
+  },500);
+}
+
+function handlePointer(x,y){
+  if(!started){started=true;return;}
+  if(gameOver){resetGame();started=true;return;}
+  for(const t of tanks){
+    if(t.resolved)continue;
+    const s=t.slot;
+    if(x>=s.x&&x<=s.x+s.w&&y>=s.y&&y<=s.y+s.h){
+      pullLog(t);
+      break;
+    }
+  }
+}
+
+function canvasPos(evt){
+  const rect=c.getBoundingClientRect();
+  const cx=(evt.touches?evt.touches[0].clientX:evt.clientX)-rect.left;
+  const cy=(evt.touches?evt.touches[0].clientY:evt.clientY)-rect.top;
+  return {x:cx*(800/rect.width),y:cy*(420/rect.height)};
+}
+
+c.addEventListener('click',e=>{const p=canvasPos(e);handlePointer(p.x,p.y);});
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=canvasPos(e);handlePointer(p.x,p.y);},{passive:false});
+
+let selectedIdx=0;
+document.addEventListener('keydown',e=>{
+  if(e.code==='Enter'||e.code==='Space'){
+    e.preventDefault();
+    if(!started){started=true;return;}
+    if(gameOver){resetGame();started=true;return;}
+    const active=tanks.filter(t=>!t.resolved);
+    if(active.length){
+      selectedIdx=((selectedIdx%active.length)+active.length)%active.length;
+      pullLog(active[selectedIdx]);
+    }
+  }else if(e.code==='ArrowRight'){
+    selectedIdx++;
+  }else if(e.code==='ArrowLeft'){
+    selectedIdx--;
+  }
+});
+
+function drawTank(t){
+  const s=t.slot;
+  ctx.save();
+  // tank body
+  ctx.fillStyle='#0d3b1e';
+  ctx.strokeStyle='#2d5a27';
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.roundRect(s.x,s.y,s.w,s.h,10);
+  ctx.fill();ctx.stroke();
+
+  const st=stateOf(t);
+  // water
+  ctx.fillStyle = st==='ready' ? 'rgba(126,200,80,0.35)' : st==='rotted' ? 'rgba(130,60,30,0.4)' : 'rgba(60,110,170,0.35)';
+  ctx.fillRect(s.x+8,s.y+40,s.w-16,s.h-50);
+
+  // log
+  ctx.fillStyle='#8a5a2b';
+  ctx.fillRect(s.x+s.w/2-45,s.y+s.h/2+5,90,26);
+  ctx.fillStyle='#6b431f';
+  ctx.beginPath();ctx.ellipse(s.x+s.w/2-45,s.y+s.h/2+18,10,13,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(s.x+s.w/2+45,s.y+s.h/2+18,10,13,0,0,Math.PI*2);ctx.fill();
+
+  // ring timer
+  const cx=s.x+s.w/2,cy=s.y+22,r=14;
+  const frac=Math.min(1,t.age/t.totalDur);
+  ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.strokeStyle='rgba(255,255,255,0.15)';ctx.lineWidth=5;ctx.stroke();
+  let ringColor = st==='soaking' ? '#56a8e1' : st==='ready' ? '#4caf50' : '#e94560';
+  ctx.beginPath();ctx.arc(cx,cy,r,-Math.PI/2,-Math.PI/2+frac*Math.PI*2);ctx.strokeStyle=ringColor;ctx.lineWidth=5;ctx.stroke();
+
+  // label
+  ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  let label = st==='soaking' ? I18N.t('soaking','Soaking…') : st==='ready' ? I18N.t('pull_now','PULL NOW!') : I18N.t('rotted_label','Rotted');
+  ctx.fillText(label,cx,s.y+s.h-10);
+
+  if(t.resultFlash>0){
+    ctx.globalAlpha=t.resultFlash;
+    ctx.fillStyle=t.resultColor;
+    ctx.font='bold 20px Arial';
+    ctx.fillText(t.resultText,cx,s.y+s.h/2-10);
+    ctx.globalAlpha=1;
+    t.resultFlash-=0.05;
+  }
+  ctx.restore();
+}
+
+function drawEmptySlot(s){
+  ctx.save();
+  ctx.strokeStyle='rgba(255,255,255,0.12)';
+  ctx.lineWidth=2;
+  ctx.setLineDash([6,6]);
+  ctx.beginPath();ctx.roundRect(s.x,s.y,s.w,s.h,10);ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='rgba(255,255,255,0.25)';
+  ctx.font='14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('empty_tank','empty tank'),s.x+s.w/2,s.y+s.h/2);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,420);
+  const bg=ctx.createLinearGradient(0,0,0,420);
+  bg.addColorStop(0,'#0b2414');bg.addColorStop(1,'#163a22');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,420);
+
+  if(!started){
+    ctx.fillStyle='#bfe9a8';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_logs','Click / Tap / Enter to start'),400,210);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    SLOTS.forEach(s=>s.occupied && drawEmptySlot(s));
+    tanks.forEach(drawTank);
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,800,420);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,190);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),400,230);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,262);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  const d=difficultyForLevel(level);
+  spawnTimer+=dt;
+  if(spawnTimer>=d.spawnInterval){
+    spawnTimer=0;
+    spawnLog();
+  }
+
+  tanks.forEach(t=>{
+    if(!t.resolved){
+      t.age+=dt;
+      if(t.age>t.totalDur+1.5 && !t.resolved){
+        // auto-rot penalty if left completely unattended
+        pullLog(t);
+      }
+    }
+  });
+
+  SLOTS.forEach(s=>{ if(!s.occupied) drawEmptySlot(s); });
+  tanks.forEach(drawTank);
+
+  requestAnimationFrame(loop);
+}
+
+resetGame();
+loop();
+</script></body></html>

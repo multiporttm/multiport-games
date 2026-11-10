@@ -1,0 +1,303 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Orchard Pest Scouting</title><meta name="description" content="Play Orchard Pest Scouting free online — Scan the rows of trees for pest damage (holes, discoloration, webbing) and tap the infested trees before scouting time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/orchardpestscouting"><meta property="og:title" content="Orchard Pest Scouting - Multiport Games"><meta property="og:description" content="Play Orchard Pest Scouting free online — Scan the rows of trees for pest damage (holes, discoloration, webbing) and tap the infested trees before scouting time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/orchardpestscouting"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Orchard Pest Scouting - Multiport Games"><meta name="twitter:description" content="Play Orchard Pest Scouting free online — Scan the rows of trees for pest damage (holes, discoloration, webbing) and tap the infested trees before scouting time runs out."><link rel="apple-touch-icon" href="../icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Orchard Pest Scouting","description":"Play Orchard Pest Scouting free online instantly. Scan the rows of trees for pest damage (holes, discoloration, webbing) and tap the infested trees before scouting time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/orchardpestscouting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0d3b1e;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;gap:10px;color:#9be37c;font-size:1.05rem;font-weight:700;padding:8px 4px;max-width:800px;margin:0 auto}
+#hud span{white-space:nowrap}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Orchard Pest Scouting</div>
+  <div class="game-frame">
+    <div id="hud"><span id="score-display">Score: 0 | Hi: 0</span><span id="lives-display">Lives: ❤❤❤</span><span id="level-display">Orchard: 1</span></div>
+    <canvas id="c" width="800" height="440" tabindex="0"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Scan the rows of fruit trees for pest damage — <b>holes, discoloration, or webbing</b>. <b>Click/Tap</b> the infested trees to tag them before scouting time runs out. Use <b>Arrow Keys + Enter/Space</b> to select and tag a tree with the keyboard. Wrongly tagging a healthy tree, or missing an infested one when time runs out, costs a life. Larger orchards with subtler signs await at higher levels!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+let score=0,hi=parseInt(localStorage.getItem('orchardpestscouting_hi')||'0',10),lives=3,level=1;
+let trees=[],rows=2,cols=4,timeLeft=0,timeLimit=0,gameOver=false,won=false,started=false;
+let cursor={r:0,c:0};
+let flashMsg='',flashTimer=0;
+const MAX_LEVEL=8;
+
+function levelConfig(lv){
+  rows=Math.min(2+Math.floor((lv-1)/2),5);
+  cols=Math.min(4+Math.floor((lv-1)/2),7);
+  const total=rows*cols;
+  const infestedCount=Math.min(total-2,2+Math.floor(lv*1.3));
+  const limit=Math.max(9,18-lv*1.1);
+  const subtlety=Math.min(0.85,0.15+lv*0.08); // higher = subtler (lower contrast/smaller marker)
+  return {rows,cols,infestedCount,limit,subtlety};
+}
+
+function layoutTrees(cfg){
+  trees=[];
+  const padX=40,padY=20;
+  const cw=(W-padX*2)/cfg.cols, ch=(H-padY*2-30)/cfg.rows;
+  const idxs=[];
+  for(let i=0;i<cfg.rows*cfg.cols;i++)idxs.push(i);
+  for(let i=idxs.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[idxs[i],idxs[j]]=[idxs[j],idxs[i]];}
+  const infestedSet=new Set(idxs.slice(0,cfg.infestedCount));
+  let n=0;
+  for(let r=0;r<cfg.rows;r++){
+    for(let cc=0;cc<cfg.cols;cc++){
+      const infested=infestedSet.has(n);
+      trees.push({
+        r,c:cc,
+        x:padX+cc*cw+cw/2, y:padY+30+r*ch+ch/2,
+        w:cw*0.78,h:ch*0.78,
+        infested, tagged:false,
+        signType:infested?['hole','discolor','web'][Math.floor(Math.random()*3)]:null,
+        signSeed:Math.random()*1000
+      });
+      n++;
+    }
+  }
+}
+
+function startLevel(lv){
+  const cfg=levelConfig(lv);
+  layoutTrees(cfg);
+  timeLimit=cfg.limit; timeLeft=cfg.limit;
+  cursor={r:0,c:0};
+  flashMsg='';flashTimer=0;
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;won=false;started=false;
+  startLevel(level);
+}
+reset();
+
+function treeAt(px,py){
+  return trees.find(t=>Math.abs(px-t.x)<t.w/2 && Math.abs(py-t.y)<t.h/2);
+}
+
+function tagTree(t){
+  if(!t||t.tagged)return;
+  t.tagged=true;
+  if(t.infested){
+    score+=10;
+    flashMsg=I18N.t('pest_found','Pest found! +10');
+    SFX.success();
+    if(score>hi){hi=score;localStorage.setItem('orchardpestscouting_hi',String(hi));}
+    checkRoundClear();
+  } else {
+    SFX.hit();
+    flashMsg=I18N.t('pest_wrong','That tree was healthy! -1 life');
+    loseLife();
+  }
+  flashTimer=60;
+}
+
+function checkRoundClear(){
+  if(trees.filter(t=>t.infested).every(t=>t.tagged)){
+    flashMsg=I18N.t('pest_cleared','Orchard cleared!');
+    flashTimer=70;
+    SFX.levelup();
+    nextLevel();
+  }
+}
+
+function loseLife(){
+  lives--;
+  if(lives<=0){
+    gameOver=true;SFX.lose();
+  }
+}
+
+function nextLevel(){
+  level++;
+  if(level>MAX_LEVEL){
+    won=true;SFX.win();
+    return;
+  }
+  setTimeout(()=>{ if(!gameOver&&!won) startLevel(level); },650);
+}
+
+function handleTimeout(){
+  const missed=trees.filter(t=>t.infested&&!t.tagged).length;
+  if(missed>0){
+    flashMsg=I18N.t('pest_timeout','Time’s up! Missed {n} pest(s)').replace('{n}',missed);
+    flashTimer=70;
+    loseLife();
+    if(!gameOver)setTimeout(()=>{ if(!gameOver&&!won) startLevel(level); },700);
+  } else {
+    checkRoundClear();
+  }
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const sx=W/rect.width, sy=H/rect.height;
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*sx,y:cy*sy};
+}
+
+function onPointer(e){
+  e.preventDefault();
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();return;}
+  const p=pointerPos(e);
+  const t=treeAt(p.x,p.y);
+  if(t){tagTree(t);}
+}
+c.addEventListener('mousedown',onPointer);
+c.addEventListener('touchstart',onPointer,{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','Enter'].includes(e.key))e.preventDefault();
+  if(!started){ if(e.key===' '||e.key==='Enter'){started=true;} return; }
+  if(gameOver||won){ if(e.key===' '||e.key==='Enter')reset(); return; }
+  if(e.key==='ArrowUp')cursor.r=(cursor.r-1+rows)%rows;
+  else if(e.key==='ArrowDown')cursor.r=(cursor.r+1)%rows;
+  else if(e.key==='ArrowLeft')cursor.c=(cursor.c-1+cols)%cols;
+  else if(e.key==='ArrowRight')cursor.c=(cursor.c+1)%cols;
+  else if(e.key===' '||e.key==='Enter'){
+    const t=trees.find(tt=>tt.r===cursor.r&&tt.c===cursor.c);
+    tagTree(t);
+  }
+});
+c.addEventListener('click',()=>c.focus());
+
+function drawTree(t){
+  ctx.save();
+  // canopy
+  const baseColor = t.tagged ? (t.infested?'#3a7d2e':'#555') : '#3a7d2e';
+  ctx.fillStyle='#6b4a2a';
+  ctx.fillRect(t.x-4,t.y+t.h*0.18,8,t.h*0.3);
+  ctx.beginPath();
+  ctx.fillStyle=baseColor;
+  ctx.arc(t.x,t.y,t.w*0.46,0,Math.PI*2);
+  ctx.fill();
+
+  if(t.infested){
+    ctx.save();
+    ctx.globalAlpha=1-Math.min(0.78,levelConfig(level).subtlety*0.0+ (0.0)); // base visible, subtlety reduces marker size instead
+    const subtlety=levelConfig(level).subtlety;
+    const markerAlpha=Math.max(0.35,1-subtlety);
+    ctx.globalAlpha=markerAlpha;
+    if(t.signType==='hole'){
+      ctx.fillStyle='#1a1a1a';
+      for(let i=0;i<4;i++){
+        const ang=t.signSeed+i*1.6;
+        const rr=t.w*0.46*0.5;
+        ctx.beginPath();
+        ctx.arc(t.x+Math.cos(ang)*rr,t.y+Math.sin(ang)*rr,3+subtlety*1.5,0,Math.PI*2);
+        ctx.fill();
+      }
+    } else if(t.signType==='discolor'){
+      ctx.fillStyle='#c98a2b';
+      ctx.beginPath();
+      ctx.arc(t.x+t.w*0.12,t.y-t.h*0.1,t.w*0.18*(1-subtlety*0.5),0,Math.PI*2);
+      ctx.fill();
+    } else {
+      ctx.strokeStyle='rgba(230,230,230,0.9)';
+      ctx.lineWidth=1.2;
+      for(let i=0;i<3;i++){
+        ctx.beginPath();
+        ctx.moveTo(t.x-10+i*8,t.y-t.h*0.3);
+        ctx.lineTo(t.x+6+i*6,t.y+t.h*0.15);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  if(t.tagged){
+    ctx.fillStyle=t.infested?'#ffd54f':'#e94560';
+    ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(t.infested?'✓':'✕',t.x,t.y-t.h*0.55);
+  }
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0d3b1e');sky.addColorStop(1,'#1c5c33');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  trees.forEach(drawTree);
+
+  // cursor highlight
+  if(started&&!gameOver&&!won){
+    const t=trees.find(tt=>tt.r===cursor.r&&tt.c===cursor.c);
+    if(t){
+      ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+      ctx.strokeRect(t.x-t.w/2,t.y-t.h/2,t.w,t.h);
+    }
+  }
+
+  // timer bar
+  const barW=W-60;
+  ctx.fillStyle='rgba(255,255,255,0.15)';ctx.fillRect(30,6,barW,10);
+  const pct=Math.max(0,timeLeft/timeLimit);
+  ctx.fillStyle=pct>0.3?'#7ec850':'#e94560';
+  ctx.fillRect(30,6,barW*pct,10);
+
+  if(flashTimer>0){
+    ctx.fillStyle='rgba(0,0,0,0.0)';
+    ctx.font='bold 20px Arial';ctx.textAlign='center';ctx.fillStyle='#fff';
+    ctx.fillText(flashMsg,W/2,H-14);
+    flashTimer--;
+  }
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.textAlign='center';
+    ctx.font='bold 28px Arial';
+    ctx.fillText(I18N.t('pest_start_title','Orchard Pest Scouting'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('start_hint_click','Click/Tap or press Space to start scouting'),W/2,H/2+16);
+  } else if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.textAlign='center';
+    ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint_click','Click/Tap or press Space to restart'),W/2,H/2+26);
+  } else if(won){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffd54f';ctx.textAlign='center';
+    ctx.font='bold 32px Arial';
+    ctx.fillText(I18N.t('pest_win_title','ORCHARD FULLY SCOUTED!'),W/2,H/2-10);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('restart_hint_click','Click/Tap or press Space to restart'),W/2,H/2+26);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('lives-display').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','❤'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives)));
+  document.getElementById('level-display').textContent=I18N.t('orchard_level_label','Orchard: {lv}').replace('{lv}',level);
+}
+
+let last=null;
+function loop(ts){
+  if(started&&!gameOver&&!won){
+    if(last===null)last=ts;
+    const dt=(ts-last)/1000;
+    last=ts;
+    timeLeft-=dt;
+    if(timeLeft<=0){
+      timeLeft=0;
+      handleTimeout();
+    }
+  } else {
+    last=ts;
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>
