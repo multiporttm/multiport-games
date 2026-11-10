@@ -1,0 +1,242 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Siege Trebuchet Counterweight</title><meta name="description" content="Play Siege Trebuchet Counterweight free online — Set the counterweight with the slider or Up/Down arrows, then press Space, click, or tap to release the arm at the right moment in its swing and land the projectile on the target. Watch the wind!"><link rel="canonical" href="https://games.multiportllc.com/games/siegetrebuchetcounterweight"><meta property="og:title" content="Siege Trebuchet Counterweight - Multiport Games"><meta property="og:description" content="Play Siege Trebuchet Counterweight free online — Set the counterweight with the slider or Up/Down arrows, then press Space, click, or tap to release the arm at the right moment in its swing and land the projectile on the target. Watch the wind!"><meta property="og:url" content="https://games.multiportllc.com/games/siegetrebuchetcounterweight"><meta property="og:type" content="website"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="Siege Trebuchet Counterweight - Multiport Games"><meta name="twitter:description" content="Play Siege Trebuchet Counterweight free online — Set the counterweight with the slider or Up/Down arrows, then press Space, click, or tap to release the arm at the right moment in its swing and land the projectile on the target. Watch the wind!"><link rel="apple-touch-icon" href="../icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Siege Trebuchet Counterweight","description":"Play Siege Trebuchet Counterweight free online instantly. Dial in the counterweight and time the arm release to land your shot on the target across trickier distances and winds. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/siegetrebuchetcounterweight","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a2a1f;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#hud{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;align-items:center;color:#f0d9a8;font-weight:700;padding:6px 0;font-size:.95rem}
+#hud span{background:rgba(0,0,0,.35);padding:4px 10px;border-radius:8px}
+#panel{display:flex;flex-direction:column;align-items:center;gap:8px;margin-top:10px}
+#cwRow{display:flex;align-items:center;gap:10px;color:#f0d9a8;font-weight:700}
+#cwSlider{width:220px}
+#panel button{padding:9px 20px;background:#b5651d;border:none;border-radius:20px;color:#fff;font-weight:800;cursor:pointer;font-size:1rem}
+#panel button:disabled{opacity:.4;cursor:not-allowed}
+#status{min-height:1.6em;color:#ffd54f;font-weight:800;text-align:center}
+#lives{letter-spacing:3px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Siege Trebuchet Counterweight</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreDisp">Score: 0 | Hi: 0</span>
+      <span id="levelDisp">Level 1</span>
+      <span id="livesDisp">Lives: ❤❤❤</span>
+    </div>
+    <canvas id="c" width="800" height="320"></canvas>
+    <div id="status">Set your counterweight, then Launch!</div>
+    <div id="panel">
+      <div id="cwRow"><span id="cwLabel">Counterweight: 1500 kg</span><input type="range" id="cwSlider" min="300" max="3000" step="10" value="1500"></div>
+      <button id="launchBtn">Launch Swing</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Set the counterweight with the slider or <b>Up/Down</b> arrows, then press <b>Space</b>, <b>click</b>, or <b>tap</b> to release the arm at the right moment in its swing and land the projectile on the target. Watch the wind!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisp=document.getElementById('scoreDisp'),levelDisp=document.getElementById('levelDisp'),livesDisp=document.getElementById('livesDisp');
+const statusEl=document.getElementById('status'),cwSlider=document.getElementById('cwSlider'),cwLabel=document.getElementById('cwLabel');
+const launchBtn=document.getElementById('launchBtn');
+const G=9.8;
+let score=0,hi=parseInt(localStorage.getItem('siegetrebuchetcounterweight_hi')||'0',10),level=1,lives=3;
+let hitsThisLevel=0;
+let state='aim'; // aim, swinging, flying, result, over
+let targetDist=0,wind=0,tolerance=0,period=2600;
+let swingStart=0,releaseAngleDeg=0,counterweight=1500;
+let proj=null; // {startX, startY, vx, vy, t}
+let flightLanded=null;
+
+function worldMaxDist(){return 500;} // meters mapped across canvas width minus margins
+const originX=90,groundY=260,pxPerM=(700)/worldMaxDist();
+
+function newRound(){
+  const base=80+level*22;
+  targetDist=Math.min(460, base+Math.random()*(60+level*10));
+  wind=(Math.random()*2-1)*(2+level*1.6); // m/s, +tailwind -headwind
+  tolerance=Math.max(10,34-level*2.2);
+  period=Math.max(1100,2600-level*110);
+  state='aim';
+  proj=null;flightLanded=null;
+  launchBtn.disabled=false;
+  statusEl.textContent=I18N.t('treb_aim','Target {d}m, wind {w} m/s — dial in power, then Launch!').replace('{d}',Math.round(targetDist)).replace('{w}',(wind>=0?'+':'')+wind.toFixed(1));
+}
+
+function updateHud(){
+  scoreDisp.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  levelDisp.textContent=I18N.t('level_label','Level {n}').replace('{n}',level);
+  livesDisp.textContent=I18N.t('lives_label','Lives: {h}').replace('{h}','❤'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives)));
+}
+
+cwSlider.addEventListener('input',()=>{
+  counterweight=parseInt(cwSlider.value,10);
+  cwLabel.textContent=I18N.t('cw_label','Counterweight: {v} kg').replace('{v}',counterweight);
+});
+document.addEventListener('keydown',e=>{
+  if(state==='aim'&&(e.code==='ArrowUp'||e.code==='ArrowDown')){
+    e.preventDefault();
+    counterweight=Math.max(300,Math.min(3000,counterweight+(e.code==='ArrowUp'?20:-20)));
+    cwSlider.value=counterweight;
+    cwLabel.textContent=I18N.t('cw_label','Counterweight: {v} kg').replace('{v}',counterweight);
+  }
+  if(e.code==='Space'){
+    e.preventDefault();
+    if(state==='aim')startSwing();
+    else if(state==='swinging')release();
+    else if(state==='result'||state==='over')nextOrRestart();
+  }
+});
+launchBtn.addEventListener('click',()=>{if(state==='aim')startSwing();});
+c.addEventListener('pointerdown',()=>{
+  if(state==='swinging')release();
+  else if(state==='result')nextOrRestart();
+  else if(state==='over')nextOrRestart();
+});
+
+function startSwing(){
+  state='swinging';
+  swingStart=performance.now();
+  launchBtn.disabled=true;
+  statusEl.textContent=I18N.t('treb_release','Release now! Tap, click or Space!');
+  SFX.tick();
+}
+
+function armAngleAt(tMs){
+  const phase=(tMs%period)/period; // 0..1
+  // sweep from 10deg to 80deg and back
+  const a=10+70*(0.5-0.5*Math.cos(phase*Math.PI*2));
+  return a;
+}
+
+function release(){
+  if(state!=='swinging')return;
+  const now=performance.now();
+  const elapsed=now-swingStart;
+  const angleDeg=armAngleAt(elapsed);
+  releaseAngleDeg=angleDeg;
+  const angleRad=angleDeg*Math.PI/180;
+  const powerV=8+ (counterweight/3000)*34; // base velocity m/s
+  const vx=powerV*Math.cos(angleRad);
+  const vy=powerV*Math.sin(angleRad);
+  // time of flight
+  const tFlight=(2*vy)/G;
+  let dist=vx*tFlight;
+  dist+=wind*tFlight; // wind pushes/pulls horizontal distance
+  dist=Math.max(5,dist);
+  flightLanded=dist;
+  proj={vx,vy,t0:now,tFlight,dist};
+  state='flying';
+  SFX.swoosh();
+}
+
+function evaluate(){
+  const diff=Math.abs(flightLanded-targetDist);
+  if(diff<=tolerance){
+    const precisionBonus=Math.round((1-diff/tolerance)*50);
+    score+=100+level*10+precisionBonus;
+    hitsThisLevel++;
+    if(score>hi){hi=score;localStorage.setItem('siegetrebuchetcounterweight_hi',String(hi));}
+    statusEl.textContent=I18N.t('treb_hit','Direct hit! Landed {d}m (target {t}m). +{p}').replace('{d}',Math.round(flightLanded)).replace('{t}',Math.round(targetDist)).replace('{p}',100+level*10+precisionBonus);
+    SFX.success();
+    state='result';
+    if(hitsThisLevel>=3){hitsThisLevel=0;level++;SFX.levelup();}
+  } else {
+    lives--;
+    statusEl.textContent=I18N.t('treb_miss','Missed! Landed {d}m (target {t}m, needed within {tol}m).').replace('{d}',Math.round(flightLanded)).replace('{t}',Math.round(targetDist)).replace('{tol}',Math.round(tolerance));
+    SFX.fail();
+    state='result';
+    if(lives<=0){
+      state='over';
+      statusEl.textContent=I18N.t('treb_over','GAME OVER — Final Score: {s}. Tap/Space to try again.').replace('{s}',score);
+      SFX.lose();
+    }
+  }
+  updateHud();
+}
+
+function nextOrRestart(){
+  if(state==='over'){
+    score=0;level=1;lives=3;hitsThisLevel=0;
+    updateHud();
+    newRound();
+    return;
+  }
+  newRound();
+}
+
+function drawScene(){
+  ctx.clearRect(0,0,800,320);
+  const sky=ctx.createLinearGradient(0,0,0,groundY);
+  sky.addColorStop(0,'#1a1430');sky.addColorStop(1,'#4a3a2a');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,groundY);
+  ctx.fillStyle='#5a4a2a';ctx.fillRect(0,groundY,800,60);
+  ctx.fillStyle='#3d3018';ctx.fillRect(0,groundY,800,4);
+
+  // target marker
+  const tx=originX+targetDist*pxPerM;
+  ctx.save();
+  ctx.strokeStyle='#ff4444';ctx.lineWidth=3;
+  ctx.beginPath();ctx.arc(tx,groundY-2,16,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='#ff4444';ctx.beginPath();ctx.arc(tx,groundY-2,5,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffcc88';ctx.font='12px Arial';ctx.textAlign='center';
+  ctx.fillText(Math.round(targetDist)+'m',tx,groundY-26);
+  ctx.restore();
+
+  // trebuchet base
+  ctx.fillStyle='#6b4a2a';
+  ctx.fillRect(originX-40,groundY-50,80,50);
+  ctx.fillStyle='#8a6a3a';
+  ctx.beginPath();ctx.moveTo(originX-40,groundY-50);ctx.lineTo(originX,groundY-120);ctx.lineTo(originX+40,groundY-50);ctx.closePath();ctx.fill();
+
+  let angle=10;
+  if(state==='swinging')angle=armAngleAt(performance.now()-swingStart);
+  else if(state!=='aim')angle=releaseAngleDeg;
+  const pivotX=originX,pivotY=groundY-120;
+  const armLen=90;
+  const angRad=angle*Math.PI/180;
+  const tipX=pivotX+Math.cos(angRad)*armLen;
+  const tipY=pivotY-Math.sin(angRad)*armLen;
+  const cwX=pivotX-Math.cos(angRad)*35;
+  const cwY=pivotY+Math.sin(angRad)*35;
+  ctx.strokeStyle='#caa46b';ctx.lineWidth=8;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(cwX,cwY);ctx.lineTo(tipX,tipY);ctx.stroke();
+  ctx.fillStyle='#3a2a1a';ctx.beginPath();ctx.arc(cwX,cwY,14,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#999';ctx.beginPath();ctx.arc(pivotX,pivotY,7,0,Math.PI*2);ctx.fill();
+
+  if(state!=='flying'){
+    ctx.fillStyle='#4a3a2a';ctx.beginPath();ctx.arc(tipX,tipY,9,0,Math.PI*2);ctx.fill();
+  }
+
+  if(state==='flying'&&proj){
+    const el=(performance.now()-proj.t0)/1000;
+    const frac=Math.min(1,el/proj.tFlight);
+    const px=pivotX+proj.dist*pxPerM*frac;
+    const py=pivotY-(proj.vy*el-0.5*G*el*el)*6;
+    ctx.fillStyle='#4a3a2a';
+    ctx.beginPath();ctx.arc(px,Math.max(40,py),9,0,Math.PI*2);ctx.fill();
+    if(frac>=1){
+      evaluate();
+    }
+  }
+
+  // swing progress readout
+  if(state==='swinging'){
+    ctx.fillStyle='#f0d9a8';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('treb_angle','Angle: {a}°').replace('{a}',Math.round(angle)),400,30);
+  }
+  if(state==='over'){
+    ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,800,320);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,150);
+  }
+}
+
+function loop(){drawScene();requestAnimationFrame(loop);}
+updateHud();
+newRound();
+loop();
+</script></body></html>

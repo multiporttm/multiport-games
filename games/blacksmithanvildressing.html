@@ -1,0 +1,262 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Blacksmith Anvil Dressing</title><meta name="description" content="Play Blacksmith Anvil Dressing free online — Grind and file the worn anvil face back to flat, checking your work with a straightedge across the whole surface."><link rel="canonical" href="https://games.multiportllc.com/games/blacksmithanvildressing"><meta property="og:title" content="Blacksmith Anvil Dressing - Multiport Games"><meta property="og:description" content="Play Blacksmith Anvil Dressing free online — Grind and file the worn anvil face back to flat, checking your work with a straightedge across the whole surface."><meta property="og:url" content="https://games.multiportllc.com/games/blacksmithanvildressing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Blacksmith Anvil Dressing","description":"Play Blacksmith Anvil Dressing free online instantly. Grind and file the worn anvil face back to flat, checking your work with a straightedge across the whole surface. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/blacksmithanvildressing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#17181c;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#score-display{color:#ff8c42;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#hud{display:flex;justify-content:center;gap:18px;color:#eee;font-size:.95rem;margin-bottom:4px}
+#hud span b{color:#ffb74d}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Blacksmith Anvil Dressing</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <div id="hud"><span data-i18n-skip>Lives: <b id="lives">3</b></span><span data-i18n-skip>Anvil: <b id="level">1</b></span></div>
+    <canvas id="c" width="800" height="420"></canvas>
+    <div style="text-align:center;margin-top:10px">
+      <button id="checkBtn" style="padding:9px 22px;background:#ff8c42;border:none;border-radius:20px;color:#1a1410;font-weight:700;cursor:pointer;font-size:1rem" data-i18n="check_btn">Check with Straightedge</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click/tap and drag (or use <b>Arrow Keys</b>) to sweep the grinder over the anvil face, wearing down the red high spots. Press <b>Enter</b> or tap the <b>Check with Straightedge</b> button to check your progress — it only passes once the whole face reads flat and smooth. Grinding the same spot too long gouges it, costing a life. Dress progressively more battered anvils!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const GAME_ID='blacksmithanvildressing';
+const HI_KEY=GAME_ID+'_hi';
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let lives=3,level=1,gameOver=false,started=false,won=false;
+
+const GRID_W=24,GRID_H=10;
+const FACE_X=120,FACE_Y=120,FACE_W=560,FACE_H=220;
+let height=[]; // 0 = flat/good, >0 = high spot (needs grinding), <0 = gouged (bad)
+let toolX=400,toolY=230;
+let grinding=false;
+let flashTimer=0,flashGood=false;
+let keyDX=0,keyDY=0;
+let checkCooldown=0;
+const MAX_LEVEL=8;
+
+function cellAt(x,y){
+  const gx=Math.floor((x-FACE_X)/(FACE_W/GRID_W));
+  const gy=Math.floor((y-FACE_Y)/(FACE_H/GRID_H));
+  if(gx<0||gy<0||gx>=GRID_W||gy>=GRID_H)return null;
+  return {gx,gy};
+}
+
+function setupLevel(){
+  height=[];
+  const roughness=Math.min(0.95,0.35+level*0.08);
+  for(let y=0;y<GRID_H;y++){
+    const row=[];
+    for(let x=0;x<GRID_W;x++){
+      row.push(Math.random()<roughness ? (0.4+Math.random()*0.6) : 0);
+    }
+    height.push(row);
+  }
+  toolX=FACE_X+FACE_W/2;toolY=FACE_Y+FACE_H/2;
+  checkCooldown=0;
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;won=false;
+  setupLevel();
+}
+reset();
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const scaleX=c.width/r.width, scaleY=c.height/r.height;
+  const cxp=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cyp=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cxp*scaleX,y:cyp*scaleY};
+}
+
+function grindAt(x,y){
+  const cell=cellAt(x,y);
+  if(!cell)return;
+  const {gx,gy}=cell;
+  for(let dy=-1;dy<=1;dy++){
+    for(let dx=-1;dx<=1;dx++){
+      const nx=gx+dx,ny=gy+dy;
+      if(nx<0||ny<0||nx>=GRID_W||ny>=GRID_H)continue;
+      const falloff = (dx===0&&dy===0)?1:0.4;
+      const h=height[ny][nx];
+      if(h>0){
+        height[ny][nx]=Math.max(-0.3,h-0.045*falloff*gw2());
+        if(height[ny][nx]<0){
+          // gouged! penalize
+          height[ny][nx]=-0.25;
+        }
+      }
+    }
+  }
+}
+function gw2(){ return 1+level*0.05; } // grind a bit faster/riskier on later levels (more precision needed)
+
+function startGrind(e){
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  grinding=true;
+  const p=pointerPos(e);
+  toolX=p.x;toolY=p.y;
+}
+function moveGrind(e){
+  if(!grinding||gameOver)return;
+  const p=pointerPos(e);
+  toolX=p.x;toolY=p.y;
+}
+function endGrind(){grinding=false;}
+
+c.addEventListener('mousedown',e=>{e.preventDefault();startGrind(e);});
+window.addEventListener('mousemove',moveGrind);
+window.addEventListener('mouseup',endGrind);
+c.addEventListener('touchstart',e=>{e.preventDefault();startGrind(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();moveGrind(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();endGrind();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(!started&&e.code.startsWith('Arrow')){started=true;}
+  if(gameOver&&(e.code.startsWith('Arrow')||e.code==='Enter')){reset();return;}
+  if(e.code==='ArrowLeft'){keyDX=-1;e.preventDefault();}
+  if(e.code==='ArrowRight'){keyDX=1;e.preventDefault();}
+  if(e.code==='ArrowUp'){keyDY=-1;e.preventDefault();}
+  if(e.code==='ArrowDown'){keyDY=1;e.preventDefault();}
+  if(e.code==='Enter'){e.preventDefault();checkStraightedge();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'||e.code==='ArrowRight')keyDX=0;
+  if(e.code==='ArrowUp'||e.code==='ArrowDown')keyDY=0;
+});
+
+function checkStraightedge(){
+  if(!started||gameOver||checkCooldown>0)return;
+  checkCooldown=30;
+  let gouges=0,highspots=0;
+  for(let y=0;y<GRID_H;y++)for(let x=0;x<GRID_W;x++){
+    const h=height[y][x];
+    if(h<-0.05)gouges++;
+    else if(h>0.08)highspots++;
+  }
+  if(gouges>0){
+    SFX.error();
+    flashTimer=16;flashGood=false;
+    loseLife();
+    return;
+  }
+  if(highspots===0){
+    finishLevel();
+  } else {
+    SFX.click();
+    flashTimer=10;flashGood=false;
+  }
+}
+
+function loseLife(){
+  lives--;
+  SFX.fail();
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+    SFX.lose();
+  }
+}
+
+function finishLevel(){
+  score+=120+level*20;
+  SFX.success();
+  flashTimer=20;flashGood=true;
+  level++;
+  if(level>MAX_LEVEL){
+    won=true;gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+    SFX.win();
+    return;
+  }
+  setupLevel();
+  SFX.levelup();
+}
+
+function cellColor(h){
+  if(h<-0.05){
+    const t=Math.min(1,-h/0.3);
+    return `rgb(${Math.floor(90+t*60)},${Math.floor(30)},${Math.floor(30)})`;
+  }
+  if(h<=0.02)return '#6b7078';
+  const t=Math.min(1,h);
+  return `rgb(${Math.floor(140+t*110)},${Math.floor(70-t*40)},${Math.floor(40-t*30)})`;
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,420);
+  const sky=ctx.createLinearGradient(0,0,0,420);
+  sky.addColorStop(0,'#17181c');sky.addColorStop(1,'#232429');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,420);
+
+  if(checkCooldown>0)checkCooldown--;
+
+  if(started&&!gameOver){
+    toolX+=keyDX*4.5;toolY+=keyDY*4.5;
+    toolX=Math.max(FACE_X,Math.min(FACE_X+FACE_W,toolX));
+    toolY=Math.max(FACE_Y,Math.min(FACE_Y+FACE_H,toolY));
+    if(grinding||keyDX!==0||keyDY!==0){
+      grindAt(toolX,toolY);
+      score+=0.08;
+    }
+  }
+
+  // draw anvil face grid
+  const cw=FACE_W/GRID_W, ch=FACE_H/GRID_H;
+  for(let y=0;y<GRID_H;y++){
+    for(let x=0;x<GRID_W;x++){
+      ctx.fillStyle=cellColor(height[y][x]);
+      ctx.fillRect(FACE_X+x*cw,FACE_Y+y*ch,cw-1,ch-1);
+    }
+  }
+  ctx.strokeStyle='#000';ctx.lineWidth=4;
+  ctx.strokeRect(FACE_X,FACE_Y,FACE_W,FACE_H);
+
+  // grinder tool
+  ctx.beginPath();ctx.arc(toolX,toolY,16,0,Math.PI*2);
+  ctx.fillStyle=(grinding||keyDX!==0||keyDY!==0)?'#ffd54f':'#aaa';
+  ctx.fill();
+  ctx.strokeStyle='#333';ctx.lineWidth=3;ctx.stroke();
+
+  // straightedge button area hint
+  ctx.fillStyle='#ddd';ctx.font='15px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('ad_hint','Drag to grind the red high spots — press Enter / tap below to check'),400,370);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,208,80,'+(flashTimer/24)+')':'rgba(230,70,70,'+(flashTimer/24)+')';
+    ctx.fillRect(0,0,800,420);
+  }
+
+  if(!started){
+    ctx.fillStyle='#ff8c4299';ctx.font='bold 24px Arial';
+    ctx.fillText(I18N.t('start_hint_ad','Drag / Arrow Keys to start grinding'),400,100);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,800,420);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(won?I18N.t('win_title_ad','ALL ANVILS DRESSED!'):I18N.t('game_over_title','GAME OVER'),400,190);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,228);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  document.getElementById('lives').textContent=Math.max(0,lives);
+  document.getElementById('level').textContent=Math.min(level,MAX_LEVEL);
+  requestAnimationFrame(loop);
+}
+loop();
+
+document.getElementById('checkBtn').addEventListener('click',e=>{e.preventDefault();checkStraightedge();});
+</script></body></html>

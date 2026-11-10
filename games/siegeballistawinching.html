@@ -1,0 +1,387 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Siege Ballista Winching</title><meta name="description" content="Play Siege Ballista Winching free online — Winch back the bowstring to the right tension, aim for drop and wind, then fire to hit the target. Hold winch, release to lock draw, then click or press Space to fire."><link rel="canonical" href="https://games.multiportllc.com/games/siegeballistawinching"><meta property="og:title" content="Siege Ballista Winching - Multiport Games"><meta property="og:description" content="Play Siege Ballista Winching free online — Winch back the bowstring to the right tension, aim for drop and wind, then fire to hit the target. Hold winch, release to lock draw, then click or press Space to fire."><meta property="og:url" content="https://games.multiportllc.com/games/siegeballistawinching"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Siege Ballista Winching","description":"Play Siege Ballista Winching free online instantly. Winch back the bowstring to the right tension, aim for projectile drop and wind, then fire to hit the target. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/siegeballistawinching","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a2634;display:block;border-radius:8px;touch-action:none}
+#hud{color:#e9c46a;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span{color:#f4a261}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Siege Ballista Winching</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div data-i18n="hud_score">Score: <span id="score">0</span></div>
+      <div data-i18n="hud_lives">Lives: <span id="lives">3</span></div>
+      <div data-i18n="hud_round">Round: <span id="round">1</span></div>
+      <div data-i18n="hud_hi">Hi: <span id="hi">0</span></div>
+    </div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>Hold Mouse/Touch (or Space)</b> on the winch to draw back the bowstring — release at the right tension (the glowing band). Then <b>aim</b> with your mouse or <b>Left/Right Arrow keys</b> to account for drop and wind, and <b>click/tap or press Space</b> again to fire. Hit the target before you run out of shots!
+  </div>
+</div>
+<script>
+(function(){
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+const ID='siegeballistawinching';
+const scoreEl=document.getElementById('score'),livesEl=document.getElementById('lives'),roundEl=document.getElementById('round'),hiEl=document.getElementById('hi');
+
+let hi=parseInt(localStorage.getItem(ID+'_hi')||'0',10);
+hiEl.textContent=hi;
+
+let score=0,lives=3,round=1,shotsLeft=0,gameOver=false,won=false,started=false;
+let state='aim'; // 'aim' -> 'winching' -> 'locked' -> 'flying' -> result
+let tension=0,drawSpeed=0,targetBandLo=0,targetBandHi=0,drawLocked=0;
+let aimAngle=0,wind=0,projectile=null,particles=[],message='',messageTimer=0;
+let target=null,hitFlash=0;
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function newRound(){
+  shotsLeft=5;
+  const difficulty=round-1;
+  const dist=rand(380,440)+difficulty*18;
+  const ty=rand(180,260)-difficulty*4;
+  const moving=difficulty>=2;
+  target={
+    x:Math.min(760,120+dist),
+    y:Math.max(80,ty),
+    w:Math.max(26,46-difficulty*3),
+    h:34,
+    vx:moving?(Math.random()<0.5?-1:1)*(1+difficulty*0.3):0,
+    baseX:Math.min(760,120+dist),
+    range:moving?40+difficulty*6:0
+  };
+  wind=rand(-1,1)*(0.4+difficulty*0.25);
+  // tension band shrinks with difficulty
+  const bandW=Math.max(0.05,0.16-difficulty*0.015);
+  const bandCenter=rand(0.45,0.85);
+  targetBandLo=Math.max(0,bandCenter-bandW/2);
+  targetBandHi=Math.min(1,bandCenter+bandW/2);
+  state='aim';
+  tension=0;drawSpeed=0;drawLocked=0;
+  aimAngle=0;
+  projectile=null;
+}
+
+function reset(){
+  score=0;lives=3;round=1;gameOver=false;won=false;started=false;
+  newRound();
+}
+reset();
+
+function setMsg(t,dur){message=t;messageTimer=dur||90;}
+
+function startWinch(){
+  if(gameOver){reset();return;}
+  if(!started){started=true;}
+  if(state==='aim'){
+    state='winching';
+    drawSpeed=0.016;
+    SFX.click();
+  } else if(state==='locked'){
+    fire();
+  }
+}
+function releaseWinch(){
+  if(state==='winching'){
+    drawLocked=tension;
+    if(tension>=targetBandLo&&tension<=targetBandHi){
+      SFX.powerup();
+      setMsg(I18N.t('perfect_draw','Perfect tension!'),60);
+    } else {
+      SFX.click();
+    }
+    state='locked';
+  }
+}
+
+function fire(){
+  if(state!=='locked')return;
+  state='flying';
+  shotsLeft--;
+  const power=8+drawLocked*9;
+  const rad=aimAngle*Math.PI/180;
+  projectile={
+    x:130,y:300,
+    vx:Math.cos(rad)*power,
+    vy:-Math.sin(rad)*power-2,
+    trail:[]
+  };
+  SFX.swoosh();
+}
+
+let keys={};
+document.addEventListener('keydown',e=>{
+  if(['Space','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
+  if(e.code==='Space'){ if(!keys.space){keys.space=true;startWinch();} }
+  if(e.code==='ArrowLeft')keys.left=true;
+  if(e.code==='ArrowRight')keys.right=true;
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){keys.space=false;releaseWinch();}
+  if(e.code==='ArrowLeft')keys.left=false;
+  if(e.code==='ArrowRight')keys.right=false;
+});
+
+let pointerDown=false;
+c.addEventListener('mousedown',e=>{pointerDown=true;startWinch();});
+window.addEventListener('mouseup',e=>{if(pointerDown){pointerDown=false;releaseWinch();}});
+c.addEventListener('mousemove',e=>{
+  const r=c.getBoundingClientRect();
+  const mx=(e.clientX-r.left)/r.width*W;
+  const my=(e.clientY-r.top)/r.height*H;
+  if(state==='aim'||state==='winching'||state==='locked'){
+    const dx=mx-130,dy=300-my;
+    aimAngle=Math.max(5,Math.min(80,Math.atan2(dy,dx)*180/Math.PI));
+  }
+});
+c.addEventListener('touchstart',e=>{e.preventDefault();pointerDown=true;startWinch();
+  const t=e.touches[0];const r=c.getBoundingClientRect();
+  const mx=(t.clientX-r.left)/r.width*W,my=(t.clientY-r.top)/r.height*H;
+  const dx=mx-130,dy=300-my;aimAngle=Math.max(5,Math.min(80,Math.atan2(dy,dx)*180/Math.PI));
+},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();
+  const t=e.touches[0];const r=c.getBoundingClientRect();
+  const mx=(t.clientX-r.left)/r.width*W,my=(t.clientY-r.top)/r.height*H;
+  const dx=mx-130,dy=300-my;aimAngle=Math.max(5,Math.min(80,Math.atan2(dy,dx)*180/Math.PI));
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();if(pointerDown){pointerDown=false;releaseWinch();}},{passive:false});
+
+function missShot(){
+  lives--;
+  livesEl.textContent=lives;
+  SFX.fail();
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(ID+'_hi',String(hi));}
+    hiEl.textContent=hi;
+    setMsg(I18N.t('game_over','GAME OVER'),99999);
+  } else {
+    setMsg(I18N.t('miss','Missed! Shots remaining: {n}').replace('{n}',shotsLeft),70);
+  }
+}
+
+function hitShot(){
+  const diff=round-1;
+  const pts=100+diff*20;
+  score+=pts;
+  scoreEl.textContent=score;
+  SFX.success();
+  setMsg(I18N.t('hit','Direct hit! +{p}').replace('{p}',pts),70);
+  hitFlash=20;
+  round++;
+  roundEl.textContent=round;
+  if(round>8){
+    won=true;gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(ID+'_hi',String(hi));}
+    hiEl.textContent=hi;
+    setMsg(I18N.t('victory','VICTORY! All targets destroyed!'),99999);
+    SFX.win();
+  } else {
+    newRound();
+  }
+}
+
+function rectHit(px,py,t){
+  const tx=t.x+Math.sin(performance.now()/500)*t.range;
+  return px>tx-t.w/2&&px<tx+t.w/2&&py>t.y-t.h/2&&py<t.y+t.h/2;
+}
+
+function update(dt){
+  if(gameOver)return;
+  if(target&&target.vx){
+    target.x=target.baseX+Math.sin(performance.now()/500)*target.range;
+  }
+  if(state==='winching'){
+    tension+=drawSpeed*dt;
+    if(tension>=1){tension=1;}
+  }
+  if(state==='flying'&&projectile){
+    const p=projectile;
+    p.trail.push({x:p.x,y:p.y});
+    if(p.trail.length>18)p.trail.shift();
+    p.vy+=0.28*dt;
+    p.vx+=wind*0.03*dt;
+    p.x+=p.vx*dt;
+    p.y+=p.vy*dt;
+    if(rectHit(p.x,p.y,target)){
+      hitShot();
+      state='aim';
+      return;
+    }
+    if(p.y>340||p.x>W+20||p.x<-20){
+      state='aim';
+      if(shotsLeft<=0){
+        missShot();
+        if(!gameOver)newRound();
+      } else {
+        setMsg(I18N.t('miss2','Shot missed — adjust your aim!'),60);
+      }
+      tension=0;drawLocked=0;
+    }
+  }
+  if(messageTimer>0)messageTimer-=dt;
+  if(hitFlash>0)hitFlash-=dt;
+}
+
+function drawWinch(){
+  ctx.save();
+  ctx.translate(130,300);
+  // base
+  ctx.fillStyle='#5c4228';
+  ctx.fillRect(-40,0,80,30);
+  ctx.fillStyle='#4a3420';
+  ctx.fillRect(-10,-40,20,40);
+  // arms
+  const rad=aimAngle*Math.PI/180;
+  ctx.strokeStyle='#8a6a3f';ctx.lineWidth=8;
+  ctx.beginPath();
+  ctx.moveTo(-50*Math.cos(rad+0.5),-50*Math.sin(rad+0.5));
+  ctx.lineTo(50*Math.cos(rad-0.5)* -1,0);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(50*Math.cos(rad+0.5),-50*Math.sin(rad+0.5));
+  ctx.lineTo(50,0);
+  ctx.stroke();
+  // string pulled back
+  const pull=(state==='winching'?tension:(state==='locked'||state==='flying')?drawLocked:0);
+  ctx.strokeStyle='#ddd';ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(-40*Math.cos(rad),-40*Math.sin(rad));
+  ctx.lineTo(-20-pull*30,0);
+  ctx.lineTo(40*Math.cos(rad),-40*Math.sin(rad));
+  ctx.stroke();
+  // barrel/track
+  ctx.strokeStyle='#6b4e2e';ctx.lineWidth=10;
+  ctx.beginPath();ctx.moveTo(-20,0);ctx.lineTo(80*Math.cos(rad),-80*Math.sin(rad));ctx.stroke();
+  // bolt
+  if(state!=='flying'){
+    ctx.save();
+    ctx.translate(-20-pull*30,0);
+    ctx.rotate(-rad);
+    ctx.fillStyle='#caa472';
+    ctx.fillRect(0,-3,36,6);
+    ctx.fillStyle='#999';
+    ctx.beginPath();ctx.moveTo(36,-5);ctx.lineTo(46,0);ctx.lineTo(36,5);ctx.closePath();ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawTensionMeter(){
+  const mx=620,my=40,mw=150,mh=18;
+  ctx.fillStyle='#222';
+  ctx.fillRect(mx,my,mw,mh);
+  ctx.fillStyle='rgba(76,175,80,.55)';
+  ctx.fillRect(mx+targetBandLo*mw,my,(targetBandHi-targetBandLo)*mw,mh);
+  const cur=(state==='winching')?tension:drawLocked;
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(mx+Math.max(0,Math.min(1,cur))*mw-2,my-4,4,mh+8);
+  ctx.strokeStyle='#fff';ctx.lineWidth=1;
+  ctx.strokeRect(mx,my,mw,mh);
+  ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('tension_label','TENSION'),mx+mw/2,my-10);
+}
+
+function drawTarget(){
+  if(!target)return;
+  ctx.save();
+  ctx.fillStyle=hitFlash>0?'#ffeb3b':'#c0392b';
+  ctx.fillRect(target.x-target.w/2,target.y-target.h/2,target.w,target.h);
+  ctx.strokeStyle='#7f1d1d';ctx.lineWidth=3;
+  ctx.strokeRect(target.x-target.w/2,target.y-target.h/2,target.w,target.h);
+  // bullseye rings
+  ctx.beginPath();ctx.arc(target.x,target.y,target.w/4,0,Math.PI*2);
+  ctx.fillStyle='#ffd54f';ctx.fill();
+  ctx.restore();
+}
+
+function drawWindIndicator(){
+  ctx.save();
+  ctx.translate(680,100);
+  ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('wind_label','WIND'),0,-18);
+  ctx.strokeStyle='#90caf9';ctx.lineWidth=3;
+  ctx.beginPath();
+  const len=Math.min(40,Math.abs(wind)*40);
+  const dir=wind>=0?1:-1;
+  ctx.moveTo(-len*dir,0);ctx.lineTo(len*dir,0);
+  ctx.lineTo(len*dir-8*dir,-5);ctx.moveTo(len*dir,0);ctx.lineTo(len*dir-8*dir,5);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawProjectile(){
+  if(!projectile)return;
+  ctx.save();
+  projectile.trail.forEach((t,i)=>{
+    ctx.globalAlpha=i/projectile.trail.length*0.4;
+    ctx.fillStyle='#ffd54f';
+    ctx.beginPath();ctx.arc(t.x,t.y,3,0,Math.PI*2);ctx.fill();
+  });
+  ctx.globalAlpha=1;
+  ctx.fillStyle='#e9c46a';
+  ctx.save();
+  ctx.translate(projectile.x,projectile.y);
+  ctx.rotate(Math.atan2(projectile.vy,projectile.vx));
+  ctx.fillRect(-14,-2,28,4);
+  ctx.restore();
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,340);
+  sky.addColorStop(0,'#1a2634');sky.addColorStop(1,'#3a4a5c');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,340);
+  ctx.fillStyle='#4a3a2a';ctx.fillRect(0,340,W,60);
+  ctx.fillStyle='#2e2316';ctx.fillRect(0,340,W,5);
+
+  drawWindIndicator();
+  drawTarget();
+  drawWinch();
+  drawProjectile();
+  drawTensionMeter();
+
+  ctx.fillStyle='#fff';ctx.font='13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('shots_label','Shots left: {n}').replace('{n}',shotsLeft),20,30);
+
+  if(message&&messageTimer>0){
+    ctx.textAlign='center';
+    ctx.font='bold 26px Arial';
+    ctx.fillStyle=gameOver?(won?'#4caf50':'#e94560'):'#ffd54f';
+    ctx.fillText(message,W/2,H/2-20);
+    if(gameOver){
+      ctx.font='18px Arial';
+      ctx.fillStyle='#fff';
+      ctx.fillText(I18N.t('restart_hint','Click/Tap or Space to play again'),W/2,H/2+16);
+    }
+  } else if(!started){
+    ctx.textAlign='center';ctx.font='bold 20px Arial';ctx.fillStyle='#e9c46a99';
+    ctx.fillText(I18N.t('start_hint','Hold to winch, aim, then fire!'),W/2,60);
+  }
+}
+
+let lastTime=null;
+function loop(t){
+  const dt=lastTime===null?1:Math.min((t-lastTime)/16.6667,3);
+  lastTime=t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+})();
+</script></body></html>

@@ -1,0 +1,307 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Knife Edge Honing</title><meta name="description" content="Play Knife Edge Honing free online — Use Left/Right arrows, drag, or swipe to hold the blade angle inside the glowing target zone, then press Space, click, or tap to make a honing stroke. Clear enough good strokes on each grit before the stone wears out. Hone all 5 steels to win!"><link rel="canonical" href="https://games.multiportllc.com/games/knifeedgehoning"><meta property="og:title" content="Knife Edge Honing - Multiport Games"><meta property="og:description" content="Play Knife Edge Honing free online — Use Left/Right arrows, drag, or swipe to hold the blade angle inside the glowing target zone, then press Space, click, or tap to make a honing stroke. Clear enough good strokes on each grit before the stone wears out. Hone all 5 steels to win!"><meta property="og:url" content="https://games.multiportllc.com/games/knifeedgehoning"><meta property="og:type" content="website"><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Knife Edge Honing","description":"Play Knife Edge Honing free online instantly. Use Left/Right arrows, drag, or swipe to hold the blade angle inside the glowing target zone, then press Space, click, or tap to make a honing stroke through progressively finer grits. Hone all 5 steels to win. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/knifeedgehoning","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#10151a;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:space-between;gap:10px;color:#eee;font-size:1rem;font-weight:700;padding:6px 4px;flex-wrap:wrap}
+.hv-lives{color:#ff6b6b}
+.hv-level{color:#ffd54f}
+.hv-score{color:#7ec850}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Knife Edge Honing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span class="hv-score" id="score-display">Score: 0 | Hi: 0</span>
+      <span class="hv-level" id="level-display">Level 1</span>
+      <span class="hv-lives" id="lives-display">♥♥♥</span>
+    </div>
+    <canvas id="c" width="800" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Left/Right arrows</b>, drag, or swipe to hold the blade angle inside the glowing target zone, then press <b>Space</b>, <b>click</b>, or <b>tap</b> to make a honing stroke. Clear enough good strokes on each grit before the stone wears out. Hone all 5 steels to win!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreEl=document.getElementById('score-display');
+const levelEl=document.getElementById('level-display');
+const livesEl=document.getElementById('lives-display');
+const HI_KEY='knifeedgehoning_hi';
+
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let level=1,lives=3;
+let phase='honing'; // honing | testing | levelup | gameover | win
+let flashTimer=0,flashMsg='',flashColor='#fff';
+let lastTime=null,shakeTimer=0,started=false;
+
+const STEELS=['1095 Carbon','5160 Spring','O1 Tool','D2 Tool','S30V Powder'];
+const GRITS=['Coarse','Medium','Fine'];
+
+let angle=90,target=90,drift=0,gritIdx=0,gritProgress=0,burrRisk=0,needPerGrit=5;
+let testT=0;
+
+function levelParams(lv){
+  return {
+    zoneHalf:Math.max(5,20-lv*2.4),
+    driftSpeed:0.3+lv*0.18,
+    driftAmp:6+lv*2,
+    moveStep:1.6+lv*0.15,
+    needPerGrit:4+Math.floor(lv/2)
+  };
+}
+
+function startGrit(){
+  gritProgress=0;
+  burrRisk=0;
+  angle=target;
+}
+
+function resetLevel(){
+  gritIdx=0;
+  needPerGrit=levelParams(level).needPerGrit;
+  startGrit();
+  phase='honing';
+}
+
+function reset(){
+  score=0;level=1;lives=3;resetLevel();started=false;
+}
+reset();
+
+function flash(msg,color,dur){flashMsg=msg;flashColor=color||'#fff';flashTimer=dur||50;}
+
+function loseLife(msg,color){
+  lives--;
+  SFX.fail();
+  flash(msg,color,40);
+  shakeTimer=14;
+  if(lives<=0){
+    phase='gameover';
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  } else {
+    resetLevel();
+  }
+}
+
+function levelComplete(){
+  SFX.levelup();
+  flash(I18N.t('edge_honed','EDGE HONED!'),'#7ec850',50);
+  if(level>=5){
+    phase='win';
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    return;
+  }
+  level++;
+  resetLevel();
+}
+
+function doStroke(){
+  if(!started){started=true;return;}
+  if(phase==='gameover'||phase==='win'){reset();return;}
+  const p=levelParams(level);
+  if(phase==='honing'){
+    const dist=Math.abs(angle-target);
+    if(dist<=p.zoneHalf){
+      const perfect=dist<=p.zoneHalf*0.35;
+      gritProgress++;
+      score+=perfect?20*level:10*level;
+      SFX.success();
+      flash(perfect?I18N.t('crisp_stroke','Crisp stroke!'):I18N.t('ok_stroke','Stroke OK'),'#7ec850',22);
+      shakeTimer=6;
+      if(gritProgress>=needPerGrit){
+        gritIdx++;
+        if(gritIdx>=GRITS.length){
+          phase='testing';testT=0;
+        } else {
+          startGrit();
+        }
+      }
+    } else {
+      burrRisk+=28;
+      SFX.fail();
+      flash(I18N.t('bad_angle','BAD ANGLE!'),'#ff6b6b',26);
+      if(burrRisk>=100){
+        loseLife(I18N.t('edge_burred','EDGE BURRED!'),'#ff6b6b');
+      }
+    }
+  } else if(phase==='testing'){
+    const zoneHalf=Math.max(4,10-level);
+    const pos=50+45*Math.sin(testT*0.12);
+    const dist=Math.abs(pos-50);
+    if(dist<=zoneHalf){
+      score+=40*level;
+      levelComplete();
+    } else {
+      loseLife(I18N.t('still_dull','STILL DULL!'),'#ff6b6b');
+    }
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='Enter'){e.preventDefault();doStroke();return;}
+  if(phase==='honing'){
+    const p=levelParams(level);
+    if(e.code==='ArrowLeft'){e.preventDefault();angle-=p.moveStep*2;started=true;}
+    if(e.code==='ArrowRight'){e.preventDefault();angle+=p.moveStep*2;started=true;}
+  }
+});
+
+let dragging=false,dragStartX=0,dragStartAngle=90;
+function clampAngle(a){return Math.max(0,Math.min(180,a));}
+c.addEventListener('mousedown',e=>{
+  started=true;
+  if(phase==='honing'){dragging=true;dragStartX=e.clientX;dragStartAngle=angle;}
+  else doStroke();
+});
+window.addEventListener('mousemove',e=>{
+  if(dragging&&phase==='honing'){
+    angle=clampAngle(dragStartAngle+(e.clientX-dragStartX)*0.3);
+  }
+});
+window.addEventListener('mouseup',()=>{
+  if(dragging&&phase==='honing'){dragging=false;doStroke();}
+  dragging=false;
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();started=true;
+  const touch=e.touches[0];
+  if(phase==='honing'){dragging=true;dragStartX=touch.clientX;dragStartAngle=angle;}
+  else doStroke();
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(dragging&&phase==='honing'){
+    const touch=e.touches[0];
+    angle=clampAngle(dragStartAngle+(touch.clientX-dragStartX)*0.3);
+  }
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  e.preventDefault();
+  if(dragging&&phase==='honing'){dragging=false;doStroke();}
+  dragging=false;
+},{passive:false});
+
+function drawGauge(){
+  const p=levelParams(level);
+  const cx=400,cy=230,r=140;
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.strokeStyle='#333';ctx.lineWidth=18;
+  ctx.beginPath();ctx.arc(0,0,r,Math.PI,Math.PI*2);ctx.stroke();
+  // target zone
+  const a0=Math.PI+((target-p.zoneHalf)/180)*Math.PI;
+  const a1=Math.PI+((target+p.zoneHalf)/180)*Math.PI;
+  ctx.strokeStyle='rgba(255,213,79,0.7)';ctx.lineWidth=18;
+  ctx.beginPath();ctx.arc(0,0,r,a0,a1);ctx.stroke();
+  // needle
+  const na=Math.PI+(angle/180)*Math.PI;
+  ctx.strokeStyle='#ff6b35';ctx.lineWidth=5;
+  ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(na)*r*0.85,Math.sin(na)*r*0.85);ctx.stroke();
+  ctx.fillStyle='#eee';ctx.beginPath();ctx.arc(0,0,8,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+  ctx.fillStyle='#ccc';ctx.font='14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('angle_label','Hold the angle in the gold zone'),400,320);
+}
+
+function drawBurr(){
+  ctx.fillStyle='#333';ctx.fillRect(560,60,120,16);
+  ctx.fillStyle='#ff6b35';
+  ctx.fillRect(560,60,120*(burrRisk/100),16);
+  ctx.strokeStyle='#777';ctx.strokeRect(560,60,120,16);
+  ctx.fillStyle='#ccc';ctx.font='12px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('burr_label','BURR RISK'),560,54);
+}
+
+function drawGritInfo(){
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='left';
+  ctx.fillText(STEELS[(level-1)%STEELS.length]+' — '+I18N.t('grit_label','Grit: ')+GRITS[gritIdx],120,50);
+  ctx.font='13px Arial';ctx.fillStyle='#aaa';
+  ctx.fillText(I18N.t('progress_label','Strokes: {n}/{m}').replace('{n}',gritProgress).replace('{m}',needPerGrit),120,70);
+}
+
+function drawTest(){
+  ctx.fillStyle='#ccc';ctx.font='bold 20px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('sharpness_test','SHARPNESS TEST — strike the zone!'),400,110);
+  const zoneHalf=Math.max(4,10-level);
+  const trackX0=200,trackX1=600,trackY=200;
+  ctx.fillStyle='#2a2a2a';ctx.fillRect(trackX0,trackY,trackX1-trackX0,18);
+  const zoneW=(trackX1-trackX0)*(zoneHalf*2/100);
+  const zoneX=trackX0+(trackX1-trackX0)*0.5-zoneW/2;
+  ctx.fillStyle='rgba(255,213,79,0.6)';
+  ctx.fillRect(zoneX,trackY,zoneW,18);
+  const pos=50+45*Math.sin(testT*0.12);
+  const ix=trackX0+(trackX1-trackX0)*(pos/100);
+  ctx.fillStyle='#ff6b35';
+  ctx.beginPath();ctx.arc(ix,trackY+9,9,0,Math.PI*2);ctx.fill();
+}
+
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  ctx.clearRect(0,0,800,340);
+  const bg=ctx.createLinearGradient(0,0,0,340);
+  bg.addColorStop(0,'#0e1a22');bg.addColorStop(1,'#16242e');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,340);
+
+  if(shakeTimer>0){
+    ctx.save();
+    ctx.translate((Math.random()-0.5)*shakeTimer,0);
+    shakeTimer--;
+  }
+
+  if(started&&phase==='honing'){
+    const p=levelParams(level);
+    drift+=0.016*dt;
+    target=90+Math.sin(drift*p.driftSpeed)*p.driftAmp;
+    burrRisk=Math.max(0,burrRisk-0.1*dt);
+  }
+
+  if(phase==='honing'){drawGritInfo();drawGauge();drawBurr();}
+  else if(phase==='testing'){testT+=dt;drawTest();}
+
+  if(shakeTimer>0)ctx.restore();
+
+  if(flashTimer>0){
+    flashTimer-=dt;
+    ctx.fillStyle=flashColor;ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.globalAlpha=Math.min(1,flashTimer/20);
+    ctx.fillText(flashMsg,400,300);
+    ctx.globalAlpha=1;
+  }
+
+  if(!started){
+    ctx.fillStyle='#ffd54fcc';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_hone','Arrows/Drag to aim, Space to stroke'),400,290);
+  }
+
+  if(phase==='gameover'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,800,340);
+    ctx.fillStyle='#fff';ctx.font='bold 38px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,160);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap, Click, or Space to restart'),400,196);
+  }
+  if(phase==='win'){
+    ctx.fillStyle='rgba(0,30,0,0.6)';ctx.fillRect(0,0,800,340);
+    ctx.fillStyle='#ffd54f';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('win_title_hone','RAZOR SHARP! ALL STEELS HONED!'),400,160);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('restart_hint','Tap, Click, or Space to restart'),400,196);
+  }
+
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  levelEl.textContent=I18N.t('level_label','Level {n}').replace('{n}',level);
+  document.getElementById('lives-display').textContent='♥'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

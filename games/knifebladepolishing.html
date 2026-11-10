@@ -1,0 +1,287 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Knife Blade Polishing</title><meta name="description" content="Play Knife Blade Polishing free online — Drag the blade across the belt sander through progressively finer grits, covering every inch while watching the heat gauge so you do not burn the temper."><link rel="canonical" href="https://games.multiportllc.com/games/knifebladepolishing"><meta property="og:title" content="Knife Blade Polishing - Multiport Games"><meta property="og:description" content="Play Knife Blade Polishing free online — Drag the blade across the belt sander through progressively finer grits, covering every inch while watching the heat gauge so you do not burn the temper."><meta property="og:url" content="https://games.multiportllc.com/games/knifebladepolishing"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Knife Blade Polishing - Multiport Games"><meta name="twitter:description" content="Play Knife Blade Polishing free online — Drag the blade across the belt sander through progressively finer grits, covering every inch while watching the heat gauge so you do not burn the temper."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Knife Blade Polishing","description":"Play Knife Blade Polishing free online instantly. Drag the blade across the belt sander through progressively finer grits, covering every inch while watching the heat gauge so you do not burn the temper. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/knifebladepolishing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1c1f24;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#score-display{color:#9fd3ff;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#lives-display{color:#ff6b6b;font-size:1rem;text-align:center;padding:2px 0 6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Knife Blade Polishing</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <div id="lives-display">Lives: ❤️❤️❤️</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag your pointer (or use <b>Arrow Keys</b>) to move the blade left/right across the belt sander and polish every section <b>evenly</b>. Watch the heat gauge — holding one spot too long overheats the steel and ruins the temper. Fully polish each grit stage to advance through increasingly tricky blade shapes before you overheat three times!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+let score=0,hi=parseInt(localStorage.getItem('knifebladepolishing_hi')||'0',10);
+let lives=3,level=1,gameOver=false,started=false,won=false;
+const GRITS=[
+  {name:'220 grit (coarse)',color:'#777'},
+  {name:'400 grit',color:'#999'},
+  {name:'800 grit',color:'#bbb'},
+  {name:'1500 grit',color:'#d5d5d5'},
+  {name:'3000 grit (mirror)',color:'#eaeaea'},
+];
+const BLADE_SHAPES=['straight','drop-point','recurve','tanto','kukri','dagger'];
+let gritIdx=0;
+let coverage=[]; // array across blade length 0..1 coverage amount
+const SEG=40;
+let heat=0,overheatLimit=1.0;
+let toolX=400; // position of sander head
+let keys={};
+let pointerActive=false,pointerX=400;
+let flashMsg='',flashTimer=0;
+
+function shapeProfile(){
+  // returns function x(0..1)->local half-width multiplier for drawing & difficulty (not used for scoring directly)
+  const shape=BLADE_SHAPES[Math.min(level-1,BLADE_SHAPES.length-1)];
+  return shape;
+}
+
+function updateHud(){
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  document.getElementById('lives-display').textContent=I18N.t('lives_label','Lives: {hearts}').replace('{hearts}','❤️'.repeat(Math.max(0,lives)));
+}
+
+function setupLevel(){
+  gritIdx=0;
+  coverage=new Array(SEG).fill(0);
+  heat=0;
+  overheatLimit=Math.max(0.55,1.0-level*0.07);
+  toolX=400;pointerX=400;
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;won=false;
+  setupLevel();
+  updateHud();
+}
+reset();
+
+function flash(msg){flashMsg=msg;flashTimer=60;}
+
+function bladeRect(){ return {x:160,y:180,w:480,h:40}; }
+
+function segAt(x){
+  const b=bladeRect();
+  const t=(x-b.x)/b.w;
+  return Math.max(0,Math.min(SEG-1,Math.floor(t*SEG)));
+}
+
+document.addEventListener('keydown',e=>{
+  if(!started){started=true;}
+  keys[e.key]=true;
+  if(e.key==='ArrowLeft'||e.key==='ArrowRight')e.preventDefault();
+  if(gameOver&&(e.key===' '||e.code==='Space')){reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.key]=false;});
+
+c.addEventListener('pointerdown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  pointerActive=true;
+  updatePointerFromEvent(e);
+});
+c.addEventListener('pointermove',e=>{ if(pointerActive)updatePointerFromEvent(e); });
+window.addEventListener('pointerup',()=>{pointerActive=false;});
+function updatePointerFromEvent(e){
+  const r=c.getBoundingClientRect();
+  pointerX=(e.clientX-r.left)*(W/r.width);
+}
+
+function finishLevel(){
+  score+=60*level;
+  SFX.levelup();
+  level++;
+  if(level>BLADE_SHAPES.length){
+    won=true;gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem('knifebladepolishing_hi',String(Math.floor(hi)));}
+    SFX.win();
+  } else {
+    flash(I18N.t('level_clear','Grit stage complete — moving to finer grit shape!'));
+    setupLevel();
+  }
+  updateHud();
+}
+
+function overheat(){
+  lives--;
+  SFX.error();
+  flash(I18N.t('overheat_bad','Overheated! The temper is compromised.'));
+  heat=0;
+  if(lives<=0){
+    gameOver=true;SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('knifebladepolishing_hi',String(Math.floor(hi)));}
+  }
+  updateHud();
+}
+
+function step(){
+  if(!started||gameOver)return;
+  const b=bladeRect();
+  // movement
+  if(pointerActive){
+    toolX+=(pointerX-toolX)*0.25;
+  } else {
+    const spd=5+level*0.3;
+    if(keys['ArrowLeft'])toolX-=spd;
+    if(keys['ArrowRight'])toolX+=spd;
+  }
+  toolX=Math.max(b.x+10,Math.min(b.x+b.w-10,toolX));
+
+  const idx=segAt(toolX);
+  const before=coverage[idx];
+  coverage[idx]=Math.min(1,coverage[idx]+0.025);
+  if(coverage[idx]>before){
+    score+=0.3;
+  }
+  // heat builds while sanding same spot (low local variance), decays with movement
+  const moving=Math.abs(toolX-(step.lastX||toolX))>1.2;
+  step.lastX=toolX;
+  if(moving){ heat=Math.max(0,heat-0.018); }
+  else { heat+=0.014+level*0.0015; }
+  if(heat>=overheatLimit){
+    overheat();
+  }
+
+  if(coverage.every(v=>v>=1)){
+    finishLevel();
+  }
+  updateHud();
+}
+
+function drawBladeShapeOutline(){
+  const b=bladeRect();
+  const shape=shapeProfile();
+  ctx.save();
+  ctx.beginPath();
+  const steps=60;
+  const topPts=[],botPts=[];
+  for(let i=0;i<=steps;i++){
+    const t=i/steps;
+    let wob=0;
+    if(shape==='drop-point')wob=Math.sin(t*Math.PI)*6*t;
+    else if(shape==='recurve')wob=Math.sin(t*Math.PI*2)*8;
+    else if(shape==='tanto')wob=(t>0.75)?(t-0.75)*4*40*0.25:0;
+    else if(shape==='kukri')wob=Math.sin(t*Math.PI*1.3)*14*(0.5+t);
+    else if(shape==='dagger')wob=Math.sin(t*Math.PI)*10;
+    topPts.push({x:b.x+t*b.w,y:b.y-wob});
+    botPts.push({x:b.x+t*b.w,y:b.y+b.h+wob*0.6});
+  }
+  ctx.moveTo(topPts[0].x,topPts[0].y);
+  topPts.forEach(p=>ctx.lineTo(p.x,p.y));
+  botPts.slice().reverse().forEach(p=>ctx.lineTo(p.x,p.y));
+  ctx.closePath();
+  ctx.clip();
+  // fill per-segment coverage shading
+  for(let i=0;i<SEG;i++){
+    const segW=b.w/SEG;
+    const x=b.x+i*segW;
+    const c0=GRITS[0].color;
+    const c1=GRITS[gritIdx].color;
+    const covered=coverage[i];
+    ctx.fillStyle=covered>=1?c1:(covered>0.02?blend(c0,c1,covered):'#555');
+    ctx.fillRect(x,b.y-30,segW+1,b.h+60);
+  }
+  ctx.restore();
+  ctx.strokeStyle='#222';ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.moveTo(topPts[0].x,topPts[0].y);
+  topPts.forEach(p=>ctx.lineTo(p.x,p.y));
+  botPts.slice().reverse().forEach(p=>ctx.lineTo(p.x,p.y));
+  ctx.closePath();
+  ctx.stroke();
+}
+
+function blend(c0,c1,t){
+  const p=(h)=>({r:parseInt(h.slice(1,3),16),g:parseInt(h.slice(3,5),16),b:parseInt(h.slice(5,7),16)});
+  const a=p(toHex(c0)),b2=p(toHex(c1));
+  const r=Math.round(a.r+(b2.r-a.r)*t),g=Math.round(a.g+(b2.g-a.g)*t),bl=Math.round(a.b+(b2.b-a.b)*t);
+  return `rgb(${r},${g},${bl})`;
+}
+function toHex(c){
+  if(c[0]==='#'&&c.length===4){ // shorthand not used here but just in case
+    return '#'+c[1]+c[1]+c[2]+c[2]+c[3]+c[3];
+  }
+  return c[0]==='#'?c:'#777777';
+}
+
+function drawTool(){
+  ctx.fillStyle='#ffdd55';
+  ctx.fillRect(toolX-14,140,28,120);
+  ctx.strokeStyle='#a88a2a';ctx.lineWidth=2;ctx.strokeRect(toolX-14,140,28,120);
+  ctx.fillStyle='#333';ctx.font='11px Arial';ctx.textAlign='center';
+}
+
+function drawHeat(){
+  const bx=250,by=360,bw=300,bh=22;
+  ctx.fillStyle='#111';ctx.fillRect(bx,by,bw,bh);
+  const w=Math.min(1,heat/overheatLimit)*bw;
+  ctx.fillStyle=heat/overheatLimit>0.8?'#ff4444':(heat/overheatLimit>0.5?'#ffaa33':'#7ec850');
+  ctx.fillRect(bx,by,w,bh);
+  ctx.strokeStyle='#666';ctx.lineWidth=2;ctx.strokeRect(bx,by,bw,bh);
+  ctx.fillStyle='#ccc';ctx.font='13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('heat_label','Heat — keep moving to avoid overheating!'),bx+bw/2,by-8);
+}
+
+function drawCoverageBar(){
+  const avg=coverage.reduce((a,b)=>a+b,0)/SEG;
+  const bx=250,by=320,bw=300,bh=14;
+  ctx.fillStyle='#111';ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle='#9fd3ff';ctx.fillRect(bx,by,bw*avg,bh);
+  ctx.strokeStyle='#555';ctx.lineWidth=1;ctx.strokeRect(bx,by,bw,bh);
+  ctx.fillStyle='#bbb';ctx.font='12px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('coverage_label','Coverage: {pct}%').replace('{pct}',Math.floor(avg*100)),bx+bw/2,by+bh+14);
+}
+
+function loop(){
+  step();
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#1c1f24';ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#9fd3ff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Drag / Arrow Keys to start polishing'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  drawBladeShapeOutline();
+  drawTool();
+  drawCoverageBar();
+  drawHeat();
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('win_title','MIRROR FINISH MASTER!'):I18N.t('game_over_title','TEMPER RUINED'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+26);
+    requestAnimationFrame(loop);return;
+  }
+
+  ctx.fillStyle='#999';ctx.font='13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('grit_level_label','Shape {l}/{t} — {g}').replace('{l}',level).replace('{t}',BLADE_SHAPES.length).replace('{g}',I18N.t('grit_'+level,GRITS[Math.min(level-1,GRITS.length-1)].name)),16,20);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=`rgba(255,221,85,${Math.min(1,flashTimer/30)})`;
+    ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,40);
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
