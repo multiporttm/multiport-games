@@ -1,0 +1,303 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Chess Set Wood Turning</title><meta name="description" content="Play Chess Set Wood Turning free online — Spin the lathe and press or hold the cutter key to shave the blank down to match the glowing target silhouette for each chess piece."><link rel="canonical" href="https://games.multiportllc.com/games/chesssetwoodturning"><meta property="og:title" content="Chess Set Wood Turning - Multiport Games"><meta property="og:description" content="Play Chess Set Wood Turning free online — Spin the lathe and press or hold the cutter key to shave the blank down to match the glowing target silhouette for each chess piece."><meta property="og:url" content="https://games.multiportllc.com/games/chesssetwoodturning"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Chess Set Wood Turning","description":"Play Chess Set Wood Turning free online instantly. Turn a spinning wood blank on a lathe by holding the cutter in at the right radius to carve each chess piece down to match its target profile silhouette, working through pawn, rook, knight, bishop, queen and king. Cut too deep and you ruin the blank; cut too shallow and the piece will not pass inspection. Profiles get trickier and the safe margin narrows with every piece. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/chesssetwoodturning","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a1e14;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#e8c99b;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#meterWrap{max-width:600px;margin:0 auto 8px;background:#1b130a;border-radius:10px;padding:4px}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#d79a4d,#f4d9a0);width:100%;transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Chess Set Wood Turning</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Piece 1/6</span>
+    </div>
+    <div id="meterWrap"><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="300"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A cutter sweeps back and forth across the spinning blank. Hold <b>Space</b>, click, or touch-and-hold to push the cutter inward and carve the wood down; release to pull it back out. Keep the carved radius tracking the glowing target profile as the cutter sweeps along the piece from base to top. Straying too far from the target drains your finish meter — empty it and you gouge the blank, costing a life. Finish all six pieces (pawn, rook, knight, bishop, queen, king) to complete the set; the profiles get fussier and the tolerance narrows each time. Lose all 3 lives and the blank is scrapped!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const TOTAL=6;
+const NAMES=['Pawn','Rook','Knight','Bishop','Queen','King'];
+let hi=parseInt(localStorage.getItem('chesssetwoodturning_hi')||'0',10);
+let score=0,lives=3,idx=0,gameOver=false,started=false,won=false;
+let t=0,speed=0.0022,tolerance=34,finish=100,profile=[],carved=[];
+let flashTimer=0,flashGood=true;
+let cutting=false;
+const PX0=180,PX1=680,PY_BASE=270,PY_TOP=40;
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('piece_label','Piece {n}/{t}: {name}').replace('{n}',Math.min(idx+1,TOTAL)).replace('{t}',TOTAL).replace('{name}',I18N.t('piece_'+idx,NAMES[idx]));
+}
+
+function buildProfile(){
+  // profile[i] = target radius (half-width) at height step i, 0..100
+  profile=[];
+  const n=100;
+  const seedA=20+((idx*17)%40);
+  const seedB=10+((idx*11)%30);
+  const bumps=2+idx%3;
+  for(let i=0;i<=n;i++){
+    const u=i/n;
+    let r=28+seedA*Math.sin(u*Math.PI)+seedB*Math.sin(u*Math.PI*bumps+idx);
+    r=Math.max(10,Math.min(70,r));
+    profile.push(r);
+  }
+  carved=profile.map(()=>75); // start as uncut cylinder (wide) radius
+}
+
+function setupPiece(){
+  t=0;
+  speed=0.0016+idx*0.00032;
+  tolerance=Math.max(9,30-idx*3.2);
+  finish=100;
+  buildProfile();
+}
+
+function reset(){
+  score=0;lives=3;idx=0;gameOver=false;started=false;won=false;flashTimer=0;
+  setupPiece();
+  setHud();
+}
+
+function cutterIndex(){
+  return Math.min(profile.length-1,Math.floor(t*(profile.length-1)));
+}
+
+function failPiece(){
+  lives--;
+  SFX.error();
+  flashTimer=20;flashGood=false;
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem('chesssetwoodturning_hi',hi);}
+    setHud();
+    return true;
+  }
+  idx++;
+  if(idx>=TOTAL){idx=TOTAL-1;}
+  setupPiece();
+  setHud();
+  return false;
+}
+
+function completePiece(){
+  score+=Math.round(70+finish*1.5);
+  SFX.success();
+  flashTimer=20;flashGood=true;
+  idx++;
+  if(idx>=TOTAL){
+    won=true;
+    SFX.win();
+    if(score>hi){hi=score;localStorage.setItem('chesssetwoodturning_hi',hi);}
+    setHud();
+    return;
+  }
+  setupPiece();
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();}
+}
+
+function setCutting(v){
+  if(!started){startOrRestart();}
+  else if(gameOver||won){reset();return;}
+  cutting=v;
+}
+
+c.addEventListener('mousedown',e=>{setCutting(true);});
+window.addEventListener('mouseup',()=>{cutting=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();setCutting(true);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();cutting=false;},{passive:false});
+c.addEventListener('touchcancel',e=>{cutting=false;},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();setCutting(true);}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){cutting=false;}
+});
+
+function drawLathe(){
+  // ways/bed
+  ctx.fillStyle='#1b130a';
+  ctx.fillRect(60,PY_BASE+18,700,16);
+  // headstock & tailstock
+  ctx.fillStyle='#4a3420';
+  ctx.fillRect(130,PY_BASE-20,55,38);
+  ctx.fillRect(640,PY_BASE-20,55,38);
+}
+
+function drawProfileGuide(){
+  const n=profile.length;
+  ctx.save();
+  ctx.strokeStyle='rgba(255,215,130,0.5)';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  for(let i=0;i<n;i++){
+    const x=PX0+(PX1-PX0)*(i/(n-1));
+    const y=PY_BASE-profile[i];
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  for(let i=n-1;i>=0;i--){
+    const x=PX0+(PX1-PX0)*(i/(n-1));
+    const y=PY_BASE+profile[i];
+    ctx.lineTo(x,y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBlank(){
+  const n=carved.length;
+  const spin=Math.sin(t*160)*2; // visual wobble
+  ctx.save();
+  const grad=ctx.createLinearGradient(PX0,0,PX1,0);
+  grad.addColorStop(0,'#c99a5b');grad.addColorStop(0.5,'#deb67f');grad.addColorStop(1,'#c99a5b');
+  ctx.fillStyle=grad;
+  ctx.beginPath();
+  for(let i=0;i<n;i++){
+    const x=PX0+(PX1-PX0)*(i/(n-1));
+    const y=PY_BASE-carved[i]+spin*0.2;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  for(let i=n-1;i>=0;i--){
+    const x=PX0+(PX1-PX0)*(i/(n-1));
+    const y=PY_BASE+carved[i]+spin*0.2;
+    ctx.lineTo(x,y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,0.25)';
+  ctx.lineWidth=1;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCutter(){
+  const ci=cutterIndex();
+  const x=PX0+(PX1-PX0)*(ci/(profile.length-1));
+  const r=carved[ci];
+  ctx.save();
+  ctx.fillStyle=cutting?'#ff6b6b':'#999';
+  ctx.beginPath();
+  ctx.moveTo(x-6,PY_BASE-r-18);
+  ctx.lineTo(x+6,PY_BASE-r-18);
+  ctx.lineTo(x,PY_BASE-r-2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,300);
+  const sky=ctx.createLinearGradient(0,0,0,300);
+  sky.addColorStop(0,'#1b140b');sky.addColorStop(1,'#2a1e14');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,300);
+
+  drawLathe();
+
+  if(gameOver){
+    drawProfileGuide();drawBlank();
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,140);
+    ctx.font='18px Arial';ctx.fillText(I18N.t('restart_hint','Tap, Click or Space to restart'),400,172);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    drawProfileGuide();drawBlank();
+    ctx.fillStyle='#ffd54f';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('set_complete_title','SET COMPLETE!'),400,140);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('restart_hint','Tap, Click or Space to restart'),400,172);
+    requestAnimationFrame(loop);return;
+  }
+  if(!started){
+    drawProfileGuide();drawBlank();
+    ctx.fillStyle='#f4d9a0';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Hold Space / Click / Touch to cut'),400,140);
+    requestAnimationFrame(loop);return;
+  }
+
+  t+=speed;
+  if(t>=1){
+    t=1;
+    const ci=profile.length-1;
+    const diff=Math.abs(carved[ci]-profile[ci]);
+    completePieceOrFail(diff);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const ci=cutterIndex();
+  if(cutting){
+    carved[ci]=Math.max(6,carved[ci]-0.55);
+    SFXtick();
+  }
+  const diff=Math.abs(carved[ci]-profile[ci]);
+  if(diff>tolerance){
+    finish-=1.4;
+  } else {
+    finish=Math.min(100,finish+0.15);
+    score+=0.08;
+  }
+  if(finish<=0){
+    const stop=failPiece();
+    if(stop){requestAnimationFrame(loop);return;}
+  }
+
+  drawProfileGuide();
+  drawBlank();
+  drawCutter();
+
+  document.getElementById('meterBar').style.width=Math.max(0,finish)+'%';
+  if(diff>tolerance){
+    document.getElementById('meterBar').style.background='linear-gradient(90deg,#e05252,#ff9b9b)';
+  } else {
+    document.getElementById('meterBar').style.background='linear-gradient(90deg,#d79a4d,#f4d9a0)';
+  }
+  setHud();
+  requestAnimationFrame(loop);
+}
+
+let tickCooldown=0;
+function SFXtick(){
+  tickCooldown--;
+  if(tickCooldown<=0){SFX.tick();tickCooldown=4;}
+}
+
+function completePieceOrFail(diff){
+  if(diff<=tolerance*1.4){
+    completePiece();
+  } else {
+    failPiece();
+  }
+}
+
+reset();
+loop();
+</script></body></html>
