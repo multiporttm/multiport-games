@@ -1,0 +1,329 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Harbor Pilot Ship Boarding</title><meta name="description" content="Play Harbor Pilot Ship Boarding free online — Time your pilot boat alongside a moving ship in rough seas, then climb the ladder in rhythm without falling."><link rel="canonical" href="https://games.multiportllc.com/games/harborpilotshipboarding"><meta property="og:title" content="Harbor Pilot Ship Boarding - Multiport Games"><meta property="og:description" content="Play Harbor Pilot Ship Boarding free online — Time your pilot boat alongside a moving ship in rough seas, then climb the ladder in rhythm without falling."><meta property="og:url" content="https://games.multiportllc.com/games/harborpilotshipboarding"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Harbor Pilot Ship Boarding","description":"Play Harbor Pilot Ship Boarding free online instantly. Match your pilot boat's bob to a moving ship's boarding platform as both rock on the swell, grab the ladder at the right moment, then climb rung by rung in rhythm without losing your footing. Sea state gets rougher with every ship. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/harborpilotshipboarding","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0b3d5c;display:block;border-radius:8px;touch-action:none}
+#hud{color:#bfe6ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#ctrlRow{display:flex;justify-content:center;gap:10px;margin:10px 0;flex-wrap:wrap}
+#ctrlRow button{padding:12px 20px;background:#4ecdc4;border:none;border-radius:12px;color:#07241c;font-weight:800;font-size:1rem;cursor:pointer;min-width:84px;touch-action:none}
+#ctrlRow button#actionBtn{background:#ffb703}
+#ctrlRow button:active{transform:scale(.92)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Harbor Pilot Ship Boarding</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Sea State 1</span>
+    </div>
+    <canvas id="c" width="800" height="300"></canvas>
+    <div id="ctrlRow">
+      <button data-act="up">▲ Up (↑)</button>
+      <button data-act="down">▼ Down (↓)</button>
+      <button id="actionBtn" data-act="action">Board! (Space)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Both boats bob on the swell. Use <b>↑ / ↓</b> (or drag) to raise or lower your pilot boat until it lines up with the ship's boarding platform, then press <b>Space / tap / Board!</b> at the right moment to grab the ladder. Once aboard, press <b>Space / tap / Climb!</b> in rhythm as the timing marker sweeps through the green zone to climb rung by rung. Mistime it and you fall — 3 falls ends your shift. Sea state gets rougher with every ship.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=300;
+const BOAT_X=160,SHIP_X=560;
+let score=0,hi=parseInt(localStorage.getItem('harborpilotshipboarding_hi')||'0',10);
+let lives=3,level=1,gameOver=false,started=false,won=false;
+const MAX_LEVEL=6;
+let phase,t,boat,shipPhase,approachLimit,tol;
+let climb,climbIndicator,climbDir,climbTarget,climbZoneHalf;
+let flashT;
+
+function seaAmp(){ return 24+level*6; }
+function seaFreq(){ return 0.03+level*0.006; }
+function toleranceFor(){ return Math.max(12,30-level*2.5); }
+function rungsNeeded(){ return 4+level; }
+function climbSpeedFor(){ return 0.045+level*0.006; }
+function zoneHalfFor(){ return Math.max(6,16-level*1.3); }
+
+function shipYAt(tt){ return H/2 + Math.sin(tt*seaFreq())*seaAmp(); }
+function boatBobAt(tt){ return Math.sin(tt*seaFreq()*1.6+shipPhase)*(seaAmp()*0.35); }
+
+function startApproach(){
+  phase='approach';
+  t=0;
+  shipPhase=Math.random()*Math.PI*2;
+  boat={y:H/2,vy:0};
+  approachLimit=Math.max(260,460-level*24);
+  tol=toleranceFor();
+  flashT=0;
+  updateActionLabel();
+}
+
+function startClimb(){
+  phase='climb';
+  climb=0;
+  climbIndicator=0;
+  climbDir=1;
+  climbZoneHalf=zoneHalfFor();
+  climbTarget=30+Math.random()*40;
+  flashT=0;
+  updateActionLabel();
+}
+
+function updateActionLabel(){
+  const btn=document.getElementById('actionBtn');
+  btn.textContent = phase==='climb'
+    ? I18N.t('climb_btn','Climb! (Space)')
+    : I18N.t('board_btn','Board! (Space)');
+}
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('sea_state_label','Sea State {l}').replace('{l}',level);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;won=false;
+  startApproach();
+  setHud();
+}
+
+function fail(reason){
+  lives--;SFX.hit();
+  flashT=24;
+  if(lives<=0){endRun(false);return;}
+  startApproach();
+  setHud();
+}
+
+function boarded(){
+  SFX.catch();
+  score+=40*level;
+  if(score>hi){hi=score;localStorage.setItem('harborpilotshipboarding_hi',hi);}
+  startClimb();
+  setHud();
+}
+
+function rungGained(){
+  climb++;
+  score+=15*level;
+  SFX.tick();
+  if(climb>=rungsNeeded()){
+    SFX.success();
+    if(score>hi){hi=score;localStorage.setItem('harborpilotshipboarding_hi',hi);}
+    if(level>=MAX_LEVEL){endRun(true);return;}
+    level++;
+    startApproach();
+    setHud();
+    return;
+  }
+  climbTarget=Math.max(10,Math.min(90,climbTarget+(Math.random()*40-20)));
+  setHud();
+}
+
+function endRun(didWin){
+  gameOver=!didWin;won=didWin;
+  if(didWin)SFX.win();else SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem('harborpilotshipboarding_hi',hi);}
+  setHud();
+}
+
+function doAction(){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();return;}
+  if(phase==='approach'){
+    const shipY=shipYAt(t);
+    const boatY=boat.y+boatBobAt(t);
+    if(Math.abs(boatY-shipY)<=tol){
+      boarded();
+    }else{
+      SFX.error();
+    }
+  }else if(phase==='climb'){
+    if(Math.abs(climbIndicator-climbTarget)<=climbZoneHalf){
+      rungGained();
+    }else{
+      fail('mistimed');
+    }
+  }
+}
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();doAction();return;}
+  if(e.code==='ArrowUp'){e.preventDefault(); if(!started){started=true;return;} keys.up=true;}
+  if(e.code==='ArrowDown'){e.preventDefault(); if(!started){started=true;return;} keys.down=true;}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp')keys.up=false;
+  if(e.code==='ArrowDown')keys.down=false;
+});
+document.querySelectorAll('#ctrlRow button').forEach(b=>{
+  const act=b.dataset.act;
+  if(act==='action'){
+    b.addEventListener('pointerdown',ev=>{ev.preventDefault();doAction();});
+    return;
+  }
+  const on=ev=>{ev.preventDefault(); if(!started){started=true;return;} keys[act]=true;};
+  const off=ev=>{ev.preventDefault();keys[act]=false;};
+  b.addEventListener('pointerdown',on);
+  b.addEventListener('pointerup',off);
+  b.addEventListener('pointerleave',off);
+  b.addEventListener('pointercancel',off);
+});
+
+let dragY=null;
+c.addEventListener('pointerdown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();return;}
+  const r=c.getBoundingClientRect();
+  dragY=(e.clientY-r.top)*(H/r.height);
+});
+c.addEventListener('pointermove',e=>{
+  if(dragY==null)return;
+  const r=c.getBoundingClientRect();
+  dragY=(e.clientY-r.top)*(H/r.height);
+});
+window.addEventListener('pointerup',()=>{
+  if(dragY!=null)doAction();
+  dragY=null;
+});
+
+function drawShip(shipY){
+  ctx.fillStyle='#e0e6ea';
+  ctx.fillRect(SHIP_X-70,shipY-30,140,60);
+  ctx.fillStyle='#2e3b45';
+  ctx.fillRect(SHIP_X-10,shipY-50,30,24);
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(SHIP_X-70,shipY-30);ctx.lineTo(SHIP_X-70,shipY-6);ctx.stroke();
+}
+
+function drawBoat(boatY,flash){
+  ctx.fillStyle=flash?'#ff6b6b':'#ffb703';
+  ctx.beginPath();
+  ctx.moveTo(BOAT_X-34,boatY);
+  ctx.lineTo(BOAT_X+34,boatY);
+  ctx.lineTo(BOAT_X+22,boatY+18);
+  ctx.lineTo(BOAT_X-22,boatY+18);
+  ctx.closePath();ctx.fill();
+  ctx.fillStyle='#07241c';
+  ctx.fillRect(BOAT_X-10,boatY-14,20,14);
+}
+
+function drawWaves(tt){
+  ctx.strokeStyle='rgba(255,255,255,0.12)';ctx.lineWidth=2;
+  for(let i=0;i<5;i++){
+    ctx.beginPath();
+    for(let x=0;x<=W;x+=10){
+      const yy=H-30+i*18+Math.sin(x*0.03+tt*seaFreq()*2+i)*6;
+      if(x===0)ctx.moveTo(x,yy);else ctx.lineTo(x,yy);
+    }
+    ctx.stroke();
+  }
+}
+
+function drawClimb(){
+  ctx.fillStyle='#2e3b45';
+  ctx.fillRect(W/2-60,40,120,200);
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('climbing_label','Climbing...'),W/2,30);
+  const barX=W/2-50,barY=70,barW=100,barH=160;
+  ctx.fillStyle='#1a1a2e';ctx.fillRect(barX,barY,barW,barH);
+  const zoneY=barY+barH-(climbTarget/100*barH)-(climbZoneHalf/100*barH);
+  ctx.fillStyle='#7ec85099';
+  ctx.fillRect(barX,zoneY,barW,(climbZoneHalf*2/100*barH));
+  const indY=barY+barH-(climbIndicator/100*barH);
+  ctx.fillStyle='#fff';
+  ctx.fillRect(barX-6,indY-3,barW+12,6);
+  ctx.fillStyle='#ffd54f';ctx.font='bold 16px Arial';
+  ctx.fillText(climb+' / '+rungsNeeded(),W/2,barY+barH+26);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#08304a');sky.addColorStop(1,'#0b3d5c');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  ctx.textAlign='center';
+  if(!started){
+    drawWaves(0);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to start'),400,40);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    drawWaves(t||0);
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','MAN OVERBOARD'),400,120);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,155);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,185);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    drawWaves(t||0);
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#7ec850';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','PILOT ACES IT! 🏆'),400,110);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,145);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,175);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(flashT>0)flashT--;
+
+  if(phase==='approach'){
+    t++;
+    if(keys.up)boat.vy-=0.3;
+    if(keys.down)boat.vy+=0.3;
+    if(dragY!=null)boat.vy+=Math.max(-0.4,Math.min(0.4,(dragY-boat.y)*0.03));
+    boat.vy*=0.9;
+    boat.y+=boat.vy;
+    boat.y=Math.max(40,Math.min(H-40,boat.y));
+
+    drawWaves(t);
+    const shipY=shipYAt(t);
+    const boatY=boat.y+boatBobAt(t);
+    drawShip(shipY);
+    drawBoat(boatY,flashT>0&&Math.floor(flashT/4)%2===0);
+
+    const aligned=Math.abs(boatY-shipY)<=tol;
+    ctx.fillStyle=aligned?'#7ec850':'#ffd54f';
+    ctx.font='bold 16px Arial';ctx.textAlign='left';
+    ctx.fillText(aligned?I18N.t('aligned_label','ALIGNED — press Board!'):I18N.t('align_hint','Match the ladder height'),14,24);
+    ctx.textAlign='right';
+    ctx.fillStyle='#fff';
+    ctx.fillText(Math.max(0,Math.ceil((approachLimit-t)/60))+'s',W-14,24);
+
+    if(t>=approachLimit){
+      fail('timeout');
+    }
+  }else if(phase==='climb'){
+    climbIndicator+=climbDir*climbSpeedFor()*100;
+    if(climbIndicator>=100){climbIndicator=100;climbDir=-1;}
+    if(climbIndicator<=0){climbIndicator=0;climbDir=1;}
+    drawWaves((t||0));
+    drawClimb();
+  }
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

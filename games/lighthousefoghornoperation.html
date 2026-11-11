@@ -1,0 +1,306 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Lighthouse Foghorn Operation</title><meta name="description" content="Play Lighthouse Foghorn Operation free online — Sound the foghorn in the regulation blast pattern as fog rolls in, and keep the air compressor pressure topped up."><link rel="canonical" href="https://games.multiportllc.com/games/lighthousefoghornoperation"><meta property="og:title" content="Lighthouse Foghorn Operation - Multiport Games"><meta property="og:description" content="Play Lighthouse Foghorn Operation free online — Sound the foghorn in the regulation blast pattern as fog rolls in, and keep the air compressor pressure topped up."><meta property="og:url" content="https://games.multiportllc.com/games/lighthousefoghornoperation"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Lighthouse Foghorn Operation - Multiport Games"><meta name="twitter:description" content="Play Lighthouse Foghorn Operation free online — Sound the foghorn in the regulation blast pattern as fog rolls in, and keep the air compressor pressure topped up."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Lighthouse Foghorn Operation","description":"Play Lighthouse Foghorn Operation free online instantly. Sound the foghorn in the regulation blast pattern as fog rolls in, and keep the air compressor pressure topped up, across trickier blast patterns and thicker fog events. No download or signup required.","genre":"Rhythm","url":"https://games.multiportllc.com/games/lighthousefoghornoperation","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a2733;display:block;border-radius:8px}
+#score-display{color:#ffb74d;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#lives-display{color:#ff7043;font-size:1rem;font-weight:700;text-align:center;padding:0 0 6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Lighthouse Foghorn Operation</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <div id="lives-display">Lives: ♥♥♥</div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Space</b> (or <b>press and hold</b> the horn button) to blast the foghorn for exactly as long as each marker shows, and pump the <b>compressor</b> with <b>↑ Arrow / tap</b> to keep pressure up. Miss a blast or run out of pressure three times and the watch ends!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+const HI_KEY='lighthousefoghornoperation_hi';
+
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),lives=3,gameOver=false,started=false,win=false;
+let level=1;
+let pressure=100,pressureDrain=0.06;
+let fogDensity=0.3;
+let pattern=[]; // array of required blast durations (frames @60fps equivalent in "beats")
+let patternIdx=0;
+let state='waiting'; // waiting, blasting, gap, done
+let stateTimer=0;
+let targetDur=0;
+let blastStart=0;
+let holding=false;
+let shakeT=0;
+let lastTime=null;
+let roundsCleared=0;
+let feedback='';
+let feedbackT=0;
+let compressorBtnFlash=0;
+let hornBtnFlash=0;
+
+function setHi(v){hi=v;localStorage.setItem(HI_KEY,String(Math.floor(hi)));}
+
+function BEAT(){ return 42; } // frames per "unit" of blast duration at 60fps baseline
+
+function genPattern(){
+  // pattern of blast-length "units": short=1 unit, long=2 units. Regulation style alternating.
+  const len=3+Math.min(4,level);
+  const p=[];
+  for(let i=0;i<len;i++){
+    p.push(Math.random()<0.5?1:2);
+  }
+  return p;
+}
+
+function newRound(){
+  pattern=genPattern();
+  patternIdx=0;
+  state='waiting';
+  stateTimer=60; // lead-in
+}
+
+function reset(){
+  score=0;lives=3;gameOver=false;started=false;win=false;level=1;
+  pressure=100;pressureDrain=0.06;fogDensity=0.3;roundsCleared=0;
+  lastTime=null;feedback='';feedbackT=0;
+  newRound();
+}
+reset();
+
+function nextLevel(){
+  level++;
+  pressureDrain=0.06+level*0.015;
+  fogDensity=Math.min(0.9,0.3+level*0.1);
+  if(level>6){win=true;gameOver=true;SFX.win();if(score>hi)setHi(score);return;}
+  newRound();
+  SFX.levelup();
+}
+
+function loseLife(){
+  lives--;
+  shakeT=18;
+  SFX.hurt();
+  if(lives<=0){
+    gameOver=true;win=false;SFX.lose();
+    if(score>hi)setHi(score);
+  } else {
+    pressure=Math.max(pressure,40);
+    newRound();
+  }
+}
+
+function startBlast(){
+  if(gameOver){reset();return;}
+  if(!started){started=true;return;}
+  if(state==='waiting'&&!holding){
+    holding=true;
+    blastStart=performance.now();
+    hornBtnFlash=10;
+    SFX.swoosh();
+  }
+}
+function endBlast(){
+  if(!holding)return;
+  holding=false;
+  const durMs=performance.now()-blastStart;
+  const durUnits=durMs/ (BEAT()*16.6667);
+  const expected=pattern[patternIdx];
+  const tolerance=0.45;
+  if(Math.abs(durUnits-expected)<=tolerance){
+    score+=20*level;
+    feedback=I18N.t('horn_good','Good blast!');
+    feedbackT=40;
+    SFX.success();
+    patternIdx++;
+    if(patternIdx>=pattern.length){
+      roundsCleared++;
+      feedback=I18N.t('horn_pattern_done','Pattern complete!');
+      score+=40*level;
+      if(roundsCleared>=3){
+        nextLevel();
+        roundsCleared=0;
+      } else {
+        newRound();
+      }
+    } else {
+      state='waiting';
+      stateTimer=50;
+    }
+  } else {
+    feedback=I18N.t('horn_miss','Mistimed blast!');
+    feedbackT=40;
+    SFX.error();
+    loseLife();
+  }
+}
+
+function pumpCompressor(){
+  if(!started)started=true;
+  if(gameOver){reset();return;}
+  pressure=Math.min(100,pressure+8);
+  compressorBtnFlash=10;
+  SFX.click();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();startBlast();}
+  if(e.code==='ArrowUp'){e.preventDefault();pumpCompressor();}
+  if(e.code==='Enter'&&gameOver){reset();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space'){e.preventDefault();endBlast();}
+});
+
+function hornBtnRect(){ return {x:150,y:300,w:220,h:60}; }
+function pumpBtnRect(){ return {x:430,y:300,w:220,h:60}; }
+
+c.addEventListener('pointerdown',e=>{
+  const rect=c.getBoundingClientRect();
+  const x=(e.clientX-rect.left)*(W/rect.width);
+  const y=(e.clientY-rect.top)*(H/rect.height);
+  const hb=hornBtnRect(),pb=pumpBtnRect();
+  if(x>=hb.x&&x<=hb.x+hb.w&&y>=hb.y&&y<=hb.y+hb.h){startBlast();}
+  else if(x>=pb.x&&x<=pb.x+pb.w&&y>=pb.y&&y<=pb.y+pb.h){pumpCompressor();}
+  else if(gameOver){reset();}
+  else if(!started){started=true;}
+});
+c.addEventListener('pointerup',()=>{endBlast();});
+c.addEventListener('pointerleave',()=>{endBlast();});
+c.addEventListener('touchstart',e=>{e.preventDefault();},{passive:false});
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  let sx=0,sy=0;
+  if(shakeT>0){sx=(Math.random()-0.5)*6;sy=(Math.random()-0.5)*6;shakeT--;}
+  ctx.save();ctx.translate(sx,sy);
+
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0d1b26');sky.addColorStop(1,'#223b4d');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  // fog banks
+  ctx.save();
+  ctx.globalAlpha=fogDensity;
+  for(let i=0;i<5;i++){
+    const fy=60+i*40;
+    const fx=((performance.now()/20)+i*160)%(W+200)-200;
+    ctx.fillStyle='#cfd8dc';
+    ctx.beginPath();
+    ctx.ellipse(fx,fy,140,28,0,0,Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Pattern track
+  ctx.fillStyle='#e0e0e0';ctx.font='bold 16px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('horn_level_label','Fog event: {n}').replace('{n}',level),20,30);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('horn_round_label','Patterns cleared: {r}/3').replace('{r}',roundsCleared),780,30);
+
+  ctx.textAlign='center';
+  ctx.font='14px Arial';
+  ctx.fillStyle='#bbb';
+  ctx.fillText(I18N.t('horn_pattern_label','Required pattern (short=1 beat, long=2 beats):'),400,65);
+  const boxW=50,gap=10,totalW=pattern.length*boxW+(pattern.length-1)*gap;
+  const startX=400-totalW/2;
+  pattern.forEach((units,i)=>{
+    const bx=startX+i*(boxW+gap);
+    const bh=20+units*20;
+    ctx.fillStyle= i<patternIdx?'#66bb6a': (i===patternIdx?'#ffd54f':'#546e7a');
+    ctx.fillRect(bx,100-bh/2+10,boxW,bh);
+    ctx.strokeStyle='#263238';ctx.strokeRect(bx,100-bh/2+10,boxW,bh);
+  });
+
+  // current hold progress bar
+  if(holding){
+    const durMs=performance.now()-blastStart;
+    const durUnits=durMs/(BEAT()*16.6667);
+    ctx.fillStyle='#ffd54f';
+    ctx.fillRect(startX,160,Math.min(totalW,durUnits*60),14);
+  }
+  ctx.strokeStyle='#888';ctx.strokeRect(startX,160,totalW,14);
+
+  // Pressure gauge
+  ctx.textAlign='left';
+  ctx.fillStyle='#ccc';ctx.font='14px Arial';
+  ctx.fillText(I18N.t('horn_pressure_label','Compressor pressure'),150,195);
+  ctx.strokeStyle='#555';ctx.strokeRect(150,202,220,18);
+  ctx.fillStyle= pressure<25?'#e53935':(pressure<55?'#ffb300':'#66bb6a');
+  ctx.fillRect(152,204,Math.max(0,216*(pressure/100)),14);
+
+  // feedback text
+  if(feedbackT>0){
+    ctx.globalAlpha=Math.min(1,feedbackT/20);
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(feedback,400,240);
+    ctx.globalAlpha=1;
+    feedbackT--;
+  }
+
+  // Buttons
+  const hb=hornBtnRect();
+  ctx.fillStyle= hornBtnFlash>0||holding?'#ff8a65':'#37474f';
+  ctx.fillRect(hb.x,hb.y,hb.w,hb.h);
+  ctx.strokeStyle='#aaa';ctx.strokeRect(hb.x,hb.y,hb.w,hb.h);
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('horn_blast_btn','HOLD TO BLAST (Space)'),hb.x+hb.w/2,hb.y+hb.h/2+5);
+  if(hornBtnFlash>0)hornBtnFlash--;
+
+  const pb=pumpBtnRect();
+  ctx.fillStyle= compressorBtnFlash>0?'#4fc3f7':'#37474f';
+  ctx.fillRect(pb.x,pb.y,pb.w,pb.h);
+  ctx.strokeStyle='#aaa';ctx.strokeRect(pb.x,pb.y,pb.w,pb.h);
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('horn_pump_btn','PUMP (↑ / Tap)'),pb.x+pb.w/2,pb.y+pb.h/2+5);
+  if(compressorBtnFlash>0)compressorBtnFlash--;
+
+  ctx.restore();
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='#ffb74d99';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('horn_start_hint','Hold Space to blast, Up Arrow to pump pressure'),400,280);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(win?I18N.t('horn_win_title','FOG CLEARS!'):I18N.t('game_over_title','GAME OVER'),400,170);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi)),400,210);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,245);
+  }
+
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  document.getElementById('lives-display').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','♥'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives)));
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(started&&!gameOver){
+    pressure-=pressureDrain*dt;
+    if(pressure<=0){
+      pressure=0;
+      feedback=I18N.t('horn_out_of_pressure','Out of pressure!');
+      feedbackT=40;
+      loseLife();
+    }
+    if(state==='waiting'&&stateTimer>0){ stateTimer-=dt; }
+    if(score>hi)hi=score;
+  }
+
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

@@ -1,0 +1,294 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Harbor Pilot Tide Calculation</title><meta name="description" content="Play Harbor Pilot Tide Calculation free online — Read the tide curve, calculate under-keel clearance for a deep-draft ship, and pick the safe window to cross the bar."><link rel="canonical" href="https://games.multiportllc.com/games/harborpilottidecalculation"><meta property="og:title" content="Harbor Pilot Tide Calculation - Multiport Games"><meta property="og:description" content="Play Harbor Pilot Tide Calculation free online — Read the tide curve, calculate under-keel clearance for a deep-draft ship, and pick the safe window to cross the bar."><meta property="og:url" content="https://games.multiportllc.com/games/harborpilottidecalculation"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Harbor Pilot Tide Calculation","description":"Play Harbor Pilot Tide Calculation free online instantly. Study a ship's draft, a shallow bar's charted depth, the required under-keel clearance and the tide curve, then scrub the timeline to find a safe window and send the ship across the bar at the right moment. Tide margins get tighter and the numbers trickier with every ship. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/harborpilottidecalculation","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0b3d5c;display:block;border-radius:8px;touch-action:none}
+#hud{color:#bfe6ff;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#info{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;color:#fff;font-size:.95rem;font-weight:700;background:rgba(0,0,0,.25);border-radius:10px;padding:8px 14px;margin:0 auto 8px;max-width:760px}
+#info span b{color:#ffd54f}
+#ctrlRow{display:flex;justify-content:center;gap:10px;margin:10px 0;flex-wrap:wrap}
+#ctrlRow button{padding:12px 20px;background:#4ecdc4;border:none;border-radius:12px;color:#07241c;font-weight:800;font-size:1rem;cursor:pointer;min-width:84px;touch-action:none}
+#ctrlRow button#sendBtn{background:#ffb703}
+#ctrlRow button:active{transform:scale(.92)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Harbor Pilot Tide Calculation</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Level 1</span>
+    </div>
+    <div id="info">
+      <span id="draftLbl">Draft: —</span>
+      <span id="depthLbl">Bar depth: —</span>
+      <span id="clearLbl">Required clearance: —</span>
+      <span id="squatLbl" style="display:none">Squat allowance: —</span>
+      <span id="tideLbl">Tide height here: —</span>
+    </div>
+    <canvas id="c" width="800" height="260"></canvas>
+    <div id="ctrlRow">
+      <button data-act="left">◀ Earlier (←)</button>
+      <button data-act="right">Later ▶ (→)</button>
+      <button id="sendBtn" data-act="send">Send Ship! (Space)</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Each ship gives you its <b>draft</b>, the shallow bar's <b>charted depth</b> and the <b>required clearance</b> it needs underneath the keel. Drag the timeline (or use <b>← / →</b>) to scrub through the tide curve and watch the live tide height readout. Mentally add the tide height to the bar depth, subtract the draft, and check it clears the requirement — then press <b>Space / tap / Send Ship!</b> only when it is truly safe. Send it during an unsafe window and you run aground. Margins get tighter and the numbers trickier with every ship.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=260;
+const GRAPH_L=60,GRAPH_R=W-20,GRAPH_T=30,GRAPH_B=H-40;
+let score=0,hi=parseInt(localStorage.getItem('harborpilottidecalculation_hi')||'0',10);
+let lives=3,level=1,gameOver=false,started=false,won=false;
+const WIN_SENDS=8;
+let sends=0;
+let draft,barDepth,reqClear,squat,amp,period,phase,decimals;
+let cursorT,roundTimer,roundLimit,flashT;
+
+function rnd(lo,hi){return lo+Math.random()*(hi-lo);}
+function round(v,d){const p=Math.pow(10,d);return Math.round(v*p)/p;}
+
+function newRound(){
+  decimals = level<3?1:2;
+  draft = round(rnd(8,14),decimals);
+  barDepth = round(rnd(2,7),decimals);
+  reqClear = round(rnd(0.5,2.0),decimals);
+  squat = level>=3 ? round(0.1+level*0.05,decimals) : 0;
+  amp = round(Math.max(0.7,rnd(1.6,3.2)-level*0.12),decimals);
+  period = rnd(8,16);
+  phase = Math.random()*Math.PI*2;
+  cursorT = 12;
+  roundTimer = 0;
+  roundLimit = Math.max(260,760-level*55);
+  flashT=0;
+  updateInfoPanel();
+}
+
+function tideHeightAt(th){ return amp + amp*Math.sin(2*Math.PI*th/period+phase); }
+
+function updateInfoPanel(){
+  document.getElementById('draftLbl').textContent=I18N.t('draft_label','Draft: {v} m').replace('{v}',draft.toFixed(decimals));
+  document.getElementById('depthLbl').textContent=I18N.t('bar_depth_label','Bar depth: {v} m').replace('{v}',barDepth.toFixed(decimals));
+  document.getElementById('clearLbl').textContent=I18N.t('req_clear_label','Required clearance: {v} m').replace('{v}',reqClear.toFixed(decimals));
+  const sq=document.getElementById('squatLbl');
+  if(squat>0){
+    sq.style.display='';
+    sq.textContent=I18N.t('squat_label','Squat allowance: {v} m').replace('{v}',squat.toFixed(decimals));
+  }else{
+    sq.style.display='none';
+  }
+}
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('level_label','Level {l}').replace('{l}',level);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;won=false;sends=0;
+  newRound();
+  setHud();
+}
+
+function isSafe(th){
+  const avail = barDepth + tideHeightAt(th) - draft - squat;
+  return avail >= reqClear;
+}
+
+function ground(){
+  lives--;SFX.hit();
+  flashT=30;
+  if(lives<=0){endRun(false);return;}
+  newRound();
+  setHud();
+}
+
+function sendShip(){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();return;}
+  const safe=isSafe(cursorT);
+  if(safe){
+    sends++;
+    const bonus=Math.max(0,Math.floor((roundLimit-roundTimer)/10));
+    score+=100*level+bonus;
+    SFX.success();
+    if(score>hi){hi=score;localStorage.setItem('harborpilottidecalculation_hi',hi);}
+    if(sends>=WIN_SENDS){endRun(true);return;}
+    if(sends%2===0)level=Math.min(8,level+1);
+    newRound();
+    setHud();
+  }else{
+    ground();
+  }
+}
+
+function endRun(didWin){
+  gameOver=!didWin;won=didWin;
+  if(didWin)SFX.win();else SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem('harborpilottidecalculation_hi',hi);}
+  setHud();
+}
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();sendShip();return;}
+  if(e.code==='ArrowLeft'){e.preventDefault(); if(!started){started=true;return;} keys.left=true;}
+  if(e.code==='ArrowRight'){e.preventDefault(); if(!started){started=true;return;} keys.right=true;}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft')keys.left=false;
+  if(e.code==='ArrowRight')keys.right=false;
+});
+document.querySelectorAll('#ctrlRow button').forEach(b=>{
+  const act=b.dataset.act;
+  if(act==='send'){
+    b.addEventListener('pointerdown',ev=>{ev.preventDefault();sendShip();});
+    return;
+  }
+  const on=ev=>{ev.preventDefault(); if(!started){started=true;return;} keys[act]=true;};
+  const off=ev=>{ev.preventDefault();keys[act]=false;};
+  b.addEventListener('pointerdown',on);
+  b.addEventListener('pointerup',off);
+  b.addEventListener('pointerleave',off);
+  b.addEventListener('pointercancel',off);
+});
+
+let dragging=false;
+function setCursorFromX(px){
+  const r=c.getBoundingClientRect();
+  const x=(px-r.left)*(W/r.width);
+  const frac=Math.max(0,Math.min(1,(x-GRAPH_L)/(GRAPH_R-GRAPH_L)));
+  cursorT=frac*24;
+}
+c.addEventListener('pointerdown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();return;}
+  dragging=true;
+  setCursorFromX(e.clientX);
+});
+c.addEventListener('pointermove',e=>{ if(dragging)setCursorFromX(e.clientX); });
+window.addEventListener('pointerup',()=>{dragging=false;});
+
+function fmtTime(th){
+  let h=Math.floor(th)%24; if(h<0)h+=24;
+  const m=Math.floor((th-Math.floor(th))*60);
+  return (h<10?'0':'')+h+':'+(m<10?'0':'')+m;
+}
+
+function drawGraph(){
+  ctx.strokeStyle='#ffffff33';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(GRAPH_L,GRAPH_T);ctx.lineTo(GRAPH_L,GRAPH_B);ctx.lineTo(GRAPH_R,GRAPH_B);ctx.stroke();
+  const maxH=amp*2+0.5;
+  ctx.fillStyle='#bfe6ff';ctx.font='11px Arial';ctx.textAlign='right';
+  for(let i=0;i<=4;i++){
+    const val=maxH*i/4;
+    const yy=GRAPH_B-(val/maxH)*(GRAPH_B-GRAPH_T);
+    ctx.fillText(val.toFixed(1),GRAPH_L-6,yy+3);
+    ctx.strokeStyle='#ffffff14';
+    ctx.beginPath();ctx.moveTo(GRAPH_L,yy);ctx.lineTo(GRAPH_R,yy);ctx.stroke();
+  }
+  ctx.beginPath();
+  for(let px=0;px<=GRAPH_R-GRAPH_L;px+=4){
+    const th=(px/(GRAPH_R-GRAPH_L))*24;
+    const hgt=tideHeightAt(th);
+    const x=GRAPH_L+px;
+    const y=GRAPH_B-(hgt/maxH)*(GRAPH_B-GRAPH_T);
+    if(px===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.strokeStyle='#4ecdc4';ctx.lineWidth=2.5;ctx.stroke();
+
+  ctx.fillStyle='#bfe6ff';ctx.font='11px Arial';ctx.textAlign='center';
+  for(let hh=0;hh<=24;hh+=6){
+    const x=GRAPH_L+(hh/24)*(GRAPH_R-GRAPH_L);
+    ctx.fillText(fmtTime(hh),x,GRAPH_B+16);
+  }
+
+  const cx=GRAPH_L+(cursorT/24)*(GRAPH_R-GRAPH_L);
+  const safe=isSafe(cursorT);
+  ctx.strokeStyle=safe?'#7ec850':'#ff6b6b';
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(cx,GRAPH_T);ctx.lineTo(cx,GRAPH_B);ctx.stroke();
+  const ch=tideHeightAt(cursorT);
+  const cy=GRAPH_B-(ch/maxH)*(GRAPH_B-GRAPH_T);
+  ctx.fillStyle=safe?'#7ec850':'#ff6b6b';
+  ctx.beginPath();ctx.arc(cx,cy,6,0,Math.PI*2);ctx.fill();
+
+  ctx.textAlign='left';ctx.font='bold 14px Arial';
+  ctx.fillStyle='#fff';
+  ctx.fillText(I18N.t('time_label','Time: ')+fmtTime(cursorT),GRAPH_L,20);
+  ctx.textAlign='right';
+  ctx.fillStyle=safe?'#7ec850':'#ff6b6b';
+  ctx.fillText(I18N.t('guess_label',' '),GRAPH_R,20);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#08304a');sky.addColorStop(1,'#0b3d5c');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to start'),400,H/2);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';
+    ctx.fillText(I18N.t('game_over_title','RAN AGROUND'),400,110);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,145);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,175);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#7ec850';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','MASTER PILOT! 🏆'),400,100);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,135);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,165);
+    requestAnimationFrame(loop);return;
+  }
+
+  roundTimer++;
+  if(keys.left)cursorT-=0.12;
+  if(keys.right)cursorT+=0.12;
+  cursorT=Math.max(0,Math.min(24,cursorT));
+
+  drawGraph();
+
+  document.getElementById('tideLbl').textContent=I18N.t('tide_here_label','Tide height here: {v} m').replace('{v}',tideHeightAt(cursorT).toFixed(decimals));
+
+  ctx.fillStyle=flashT>0&&Math.floor(flashT/4)%2===0?'#ff6b6b55':'transparent';
+  if(flashT>0){ctx.fillRect(0,0,W,H);flashT--;}
+
+  ctx.textAlign='center';ctx.font='13px Arial';ctx.fillStyle='#ffd54f';
+  const timeLeft=Math.max(0,Math.ceil((roundLimit-roundTimer)/60));
+  ctx.fillText(I18N.t('sends_label','Safe crossings: {s} / {t}  •  Decide in {sec}s').replace('{s}',sends).replace('{t}',WIN_SENDS).replace('{sec}',timeLeft),400,H-6);
+
+  if(roundTimer>=roundLimit){
+    ground();
+  }
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

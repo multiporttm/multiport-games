@@ -1,0 +1,344 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Shipwreck Metal Detector Sweep</title><meta name="description" content="Play Shipwreck Metal Detector Sweep free online — Move your mouse, drag your finger, or use the arrow keys to sweep a metal detector in overlapping passes across the sediment, uncovering buried coins and artifacts while dodging sharp wreck debris, before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/shipwreckmetaldetectorsweep"><meta property="og:title" content="Shipwreck Metal Detector Sweep - Multiport Games"><meta property="og:description" content="Play Shipwreck Metal Detector Sweep free online — Move your mouse, drag your finger, or use the arrow keys to sweep a metal detector in overlapping passes across the sediment, uncovering buried coins and artifacts while dodging sharp wreck debris, before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/shipwreckmetaldetectorsweep"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Shipwreck Metal Detector Sweep - Multiport Games"><meta name="twitter:description" content="Play Shipwreck Metal Detector Sweep free online — Move your mouse, drag your finger, or use the arrow keys to sweep a metal detector in overlapping passes across the sediment, uncovering buried coins and artifacts while dodging sharp wreck debris, before time runs out."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Shipwreck Metal Detector Sweep","description":"Play Shipwreck Metal Detector Sweep free online instantly. Sweep a metal detector in overlapping passes across a wreck site's sediment grid to fully cover the search area, uncovering buried coins and artifacts while avoiding sharp sunken debris, before the dive clock runs out. Search grids get larger and the clock tighter each level. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/shipwreckmetaldetectorsweep","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#14202a;display:block;border-radius:8px;margin:0 auto;touch-action:none}
+#hud{display:flex;justify-content:space-between;gap:10px;color:#eee;font-size:1rem;font-weight:700;padding:6px 4px;flex-wrap:wrap}
+.hv-lives{color:#ff6b6b}
+.hv-level{color:#ffd54f}
+.hv-score{color:#7ec850}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Shipwreck Metal Detector Sweep</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span class="hv-score" id="score-display">Score: 0 | Hi: 0</span>
+      <span class="hv-level" id="level-display">Level 1</span>
+      <span class="hv-lives" id="lives-display">♥♥♥</span>
+    </div>
+    <canvas id="c" width="800" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move your mouse, drag your finger, or use the <b>Arrow keys</b> to sweep the metal detector in overlapping passes across the sediment grid. Fully cover each patch to find buried coins and artifacts, watch for sharp wreck debris, and clear enough of the site before the dive clock runs out.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreEl=document.getElementById('score-display');
+const levelEl=document.getElementById('level-display');
+const livesEl=document.getElementById('lives-display');
+const HI_KEY='shipwreckmetaldetectorsweep_hi';
+const WIN_LEVEL=5;
+const FIELD_X=40,FIELD_Y=56,FIELD_W=720,FIELD_H=250;
+const REQUIRED_COVERAGE=0.9;
+
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let level=1,lives=3;
+let phase='sweeping'; // sweeping | levelup | gameover | win
+let flashTimer=0,flashMsg='',flashColor='#fff';
+let lastTime=null,shakeTimer=0,started=false;
+
+let cols=9,rows=5,cellW=80,cellH=50,cells=[],detector={x:400,y:180};
+let timeLeft=40,coveredCount=0,artifactsFound=0,totalArtifacts=0;
+const keys={};
+
+function levelParams(lv){
+  const cols=8+lv;
+  const rows=5+Math.floor(lv/2);
+  return {
+    cols,rows,
+    sweepRadius:Math.max(30,50-lv*2.4),
+    coverNeeded:10+lv,
+    numArtifacts:3+lv,
+    numHazards:1+Math.floor(lv/2),
+    timeLimit:Math.round((cols*rows)*0.42+9),
+    speed:(230+lv*8)
+  };
+}
+
+function resetLevel(){
+  const p=levelParams(level);
+  cols=p.cols;rows=p.rows;
+  cellW=FIELD_W/cols;cellH=FIELD_H/rows;
+  cells=[];
+  for(let r=0;r<rows;r++){
+    for(let col=0;col<cols;col++){
+      cells.push({r,col,coverage:0,covered:false,hasArtifact:false,collected:false,hasHazard:false,hazardTriggered:false});
+    }
+  }
+  totalArtifacts=Math.min(cells.length-2,p.numArtifacts);
+  let placed=0;
+  while(placed<totalArtifacts){
+    const idx=Math.floor(Math.random()*cells.length);
+    if(!cells[idx].hasArtifact&&!cells[idx].hasHazard){cells[idx].hasArtifact=true;placed++;}
+  }
+  let hplaced=0;
+  while(hplaced<p.numHazards){
+    const idx=Math.floor(Math.random()*cells.length);
+    if(!cells[idx].hasArtifact&&!cells[idx].hasHazard){cells[idx].hasHazard=true;hplaced++;}
+  }
+  coveredCount=0;artifactsFound=0;
+  detector.x=FIELD_X+FIELD_W/2;detector.y=FIELD_Y+FIELD_H/2;
+  timeLeft=p.timeLimit;
+  phase='sweeping';
+}
+
+function reset(){
+  score=0;level=1;lives=3;started=false;resetLevel();
+}
+reset();
+
+function flash(msg,color,dur){flashMsg=msg;flashColor=color||'#fff';flashTimer=dur||50;}
+
+function loseLife(msg,color){
+  lives--;
+  SFX.hit();
+  flash(msg,color,44);
+  shakeTimer=16;
+  if(lives<=0){
+    phase='gameover';
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  } else {
+    resetLevel();
+  }
+}
+
+function levelComplete(){
+  SFX.levelup();
+  score+=Math.round(timeLeft*4*level)+artifactsFound*15;
+  flash(I18N.t('site_cleared','SITE CLEARED!'),'#7ec850',50);
+  if(level>=WIN_LEVEL){
+    phase='win';
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    return;
+  }
+  level++;
+  resetLevel();
+}
+
+function cellCenter(cell){
+  return {x:FIELD_X+cell.col*cellW+cellW/2,y:FIELD_Y+cell.r*cellH+cellH/2};
+}
+
+function clampDetector(){
+  detector.x=Math.max(FIELD_X,Math.min(FIELD_X+FIELD_W,detector.x));
+  detector.y=Math.max(FIELD_Y,Math.min(FIELD_Y+FIELD_H,detector.y));
+}
+
+function tick(dt){
+  if(!started||phase!=='sweeping')return;
+  const p=levelParams(level);
+  const speedPerFrame=(p.speed/60)*dt;
+  if(keys.ArrowLeft)detector.x-=speedPerFrame;
+  if(keys.ArrowRight)detector.x+=speedPerFrame;
+  if(keys.ArrowUp)detector.y-=speedPerFrame;
+  if(keys.ArrowDown)detector.y+=speedPerFrame;
+  clampDetector();
+
+  timeLeft-=dt/60;
+
+  for(const cell of cells){
+    const ctr=cellCenter(cell);
+    const dx=ctr.x-detector.x,dy=ctr.y-detector.y;
+    const dist=Math.sqrt(dx*dx+dy*dy);
+    if(dist<=p.sweepRadius){
+      cell.coverage+=dt;
+      if(!cell.covered&&cell.coverage>=p.coverNeeded){
+        cell.covered=true;
+        coveredCount++;
+        if(cell.hasArtifact&&!cell.collected){
+          cell.collected=true;
+          artifactsFound++;
+          score+=110*level;
+          SFX.coin();
+          flash(I18N.t('artifact_found','ARTIFACT FOUND!'),'#ffd54f',24);
+        }
+      }
+    }
+    if(cell.hasHazard&&!cell.hazardTriggered){
+      const hitR=Math.min(cellW,cellH)*0.42;
+      if(dist<=hitR){
+        cell.hazardTriggered=true;
+        loseLife(I18N.t('hit_debris','HIT SUNKEN DEBRIS!'),'#ff6b6b');
+        return;
+      }
+    }
+  }
+
+  const coveragePct=coveredCount/cells.length;
+  if(coveragePct>=REQUIRED_COVERAGE){
+    levelComplete();
+    return;
+  }
+  if(timeLeft<=0){
+    loseLife(I18N.t('time_up_sweep',"TIME'S UP — AREA NOT CLEARED!"),'#ff6b6b');
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.code)){
+    e.preventDefault();
+    keys[e.code]=true;
+    started=true;
+    if(phase==='gameover'||phase==='win'){reset();}
+  } else if(e.code==='Space'||e.code==='Enter'){
+    e.preventDefault();
+    if(phase==='gameover'||phase==='win'){reset();}
+    else started=true;
+  }
+});
+document.addEventListener('keyup',e=>{ keys[e.code]=false; });
+
+function canvasPos(clientX,clientY){
+  const r=c.getBoundingClientRect();
+  return {x:(clientX-r.left)*(c.width/r.width),y:(clientY-r.top)*(c.height/r.height)};
+}
+c.addEventListener('mousemove',e=>{
+  if(phase!=='sweeping')return;
+  started=true;
+  const p=canvasPos(e.clientX,e.clientY);
+  detector.x=p.x;detector.y=p.y;clampDetector();
+});
+c.addEventListener('mousedown',()=>{
+  if(phase==='gameover'||phase==='win'){reset();return;}
+  started=true;
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(phase==='gameover'||phase==='win'){reset();return;}
+  started=true;
+  const t=e.touches[0];
+  const p=canvasPos(t.clientX,t.clientY);
+  detector.x=p.x;detector.y=p.y;clampDetector();
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(phase!=='sweeping')return;
+  const t=e.touches[0];
+  const p=canvasPos(t.clientX,t.clientY);
+  detector.x=p.x;detector.y=p.y;clampDetector();
+},{passive:false});
+
+function drawScene(){
+  const p=levelParams(level);
+  const bg=ctx.createLinearGradient(0,0,0,340);
+  bg.addColorStop(0,'#17313d');bg.addColorStop(1,'#0c1a22');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,340);
+
+  for(const cell of cells){
+    const x=FIELD_X+cell.col*cellW,y=FIELD_Y+cell.r*cellH;
+    const covFrac=Math.min(1,cell.coverage/p.coverNeeded);
+    const sandBase=cell.covered?[86,140,96]:[64,54,40];
+    const r=Math.round(sandBase[0]+(cell.covered?0:covFrac*40));
+    const g=Math.round(sandBase[1]+(cell.covered?0:covFrac*30));
+    const b=Math.round(sandBase[2]+(cell.covered?0:covFrac*20));
+    ctx.fillStyle='rgb('+r+','+g+','+b+')';
+    ctx.fillRect(x,y,cellW-1,cellH-1);
+    if(cell.collected){
+      ctx.fillStyle='#ffd54f';
+      ctx.beginPath();ctx.arc(x+cellW/2,y+cellH/2,Math.min(cellW,cellH)*0.22,0,Math.PI*2);ctx.fill();
+    }
+    if(cell.hasHazard&&!cell.hazardTriggered){
+      ctx.strokeStyle='#ff6b35';ctx.lineWidth=2;
+      ctx.beginPath();
+      const cx=x+cellW/2,cy=y+cellH/2,rr=Math.min(cellW,cellH)*0.28;
+      for(let i=0;i<6;i++){
+        const a=i/6*Math.PI*2;
+        ctx.moveTo(cx,cy);
+        ctx.lineTo(cx+Math.cos(a)*rr,cy+Math.sin(a)*rr);
+      }
+      ctx.stroke();
+    }
+  }
+
+  // grid lines
+  ctx.strokeStyle='rgba(255,255,255,0.08)';
+  for(let i=0;i<=cols;i++){ ctx.beginPath();ctx.moveTo(FIELD_X+i*cellW,FIELD_Y);ctx.lineTo(FIELD_X+i*cellW,FIELD_Y+FIELD_H);ctx.stroke(); }
+  for(let j=0;j<=rows;j++){ ctx.beginPath();ctx.moveTo(FIELD_X,FIELD_Y+j*cellH);ctx.lineTo(FIELD_X+FIELD_W,FIELD_Y+j*cellH);ctx.stroke(); }
+
+  // detector
+  ctx.strokeStyle='rgba(126,222,255,0.55)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(detector.x,detector.y,p.sweepRadius,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(detector.x,detector.y,6,0,Math.PI*2);ctx.fill();
+
+  // time bar
+  const timePct=Math.max(0,timeLeft/p.timeLimit);
+  ctx.fillStyle='#333';ctx.fillRect(FIELD_X,20,220,12);
+  ctx.fillStyle=timePct<0.3?'#ff6b6b':'#4fd1ff';
+  ctx.fillRect(FIELD_X,20,220*timePct,12);
+  ctx.strokeStyle='#777';ctx.strokeRect(FIELD_X,20,220,12);
+  ctx.fillStyle='#ccc';ctx.font='12px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('time_label','TIME: {t}s').replace('{t}',Math.max(0,Math.ceil(timeLeft))),FIELD_X,16);
+
+  // coverage bar
+  const covPct=coveredCount/cells.length;
+  ctx.fillStyle='#333';ctx.fillRect(FIELD_X+600-FIELD_X,20,0,0);
+  ctx.fillStyle='#333';ctx.fillRect(560,20,180,12);
+  ctx.fillStyle='#7ec850';ctx.fillRect(560,20,180*covPct,12);
+  ctx.strokeStyle='#777';ctx.strokeRect(560,20,180,12);
+  ctx.fillStyle='#ccc';
+  ctx.fillText(I18N.t('coverage_label','COVERAGE: {p}%').replace('{p}',Math.round(covPct*100)),560,16);
+}
+
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  ctx.clearRect(0,0,800,340);
+
+  if(shakeTimer>0){
+    ctx.save();
+    ctx.translate((Math.random()-0.5)*shakeTimer,0);
+    shakeTimer--;
+  }
+
+  if(phase==='sweeping')tick(dt);
+  drawScene();
+
+  if(shakeTimer>0)ctx.restore();
+
+  if(flashTimer>0){
+    flashTimer-=dt;
+    ctx.fillStyle=flashColor;ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.globalAlpha=Math.min(1,flashTimer/20);
+    ctx.fillText(flashMsg,400,320);
+    ctx.globalAlpha=1;
+  }
+
+  if(!started&&phase==='sweeping'){
+    ctx.fillStyle='#ffd54fcc';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_sweep','Move cursor / drag / arrows to sweep'),400,330);
+  }
+
+  if(phase==='gameover'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,800,340);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,160);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap, Click, or Space to restart'),400,196);
+  }
+  if(phase==='win'){
+    ctx.fillStyle='rgba(0,30,0,0.6)';ctx.fillRect(0,0,800,340);
+    ctx.fillStyle='#ffd54f';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('win_title_sweep','SITE FULLY MAPPED!'),400,160);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('restart_hint','Tap, Click, or Space to restart'),400,196);
+  }
+
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  levelEl.textContent=I18N.t('level_label','Level {n}').replace('{n}',level);
+  livesEl.textContent='♥'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

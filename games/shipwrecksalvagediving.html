@@ -1,0 +1,277 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Shipwreck Salvage Diving</title><meta name="description" content="Play Shipwreck Salvage Diving free online — Guide your diver through the sunken wreck with Arrow Keys / WASD, or drag on touch. Collect glowing cargo, grab air bubbles before your tank runs dry, and avoid the eels. Clear all 4 decks to win!"><link rel="canonical" href="https://games.multiportllc.com/games/shipwrecksalvagediving"><meta property="og:title" content="Shipwreck Salvage Diving - Multiport Games"><meta property="og:description" content="Play Shipwreck Salvage Diving free online — Guide your diver through the sunken wreck with Arrow Keys / WASD, or drag on touch. Collect glowing cargo, grab air bubbles before your tank runs dry, and avoid the eels. Clear all 4 decks to win!"><meta property="og:url" content="https://games.multiportllc.com/games/shipwrecksalvagediving"><meta property="og:type" content="website"><link rel="apple-touch-icon" href="../icons/icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Shipwreck Salvage Diving","description":"Play Shipwreck Salvage Diving free online instantly. Guide your diver through the sunken wreck with Arrow Keys / WASD, or drag on touch. Collect glowing cargo, grab air bubbles before your tank runs dry, and avoid the eels. Clear all 4 decks to win! No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/shipwrecksalvagediving","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#021018}
+#c{background:#04131f;display:block;border-radius:8px}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#9fe8ff;font-size:1rem;font-weight:700;padding:8px 10px;flex-wrap:wrap;gap:6px}
+#airWrap{flex:1;min-width:140px;max-width:260px;height:14px;background:#06283a;border-radius:7px;overflow:hidden;border:1px solid #124a63;margin:0 10px}
+#airBar{height:100%;background:linear-gradient(90deg,#1fd1ff,#4cffcf);width:100%;transition:width .15s}
+#lives{color:#ff6b6b}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Shipwreck Salvage Diving</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <div id="airWrap"><div id="airBar"></div></div>
+      <span id="lives">❤❤❤</span>
+    </div>
+    <canvas id="c" width="800" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Arrow Keys / WASD</b> or <b>drag</b> on touch/mouse to steer your diver through the wreck. Collect glowing <b>cargo</b> for points and grab <b>air bubbles</b> before your tank empties. Avoid the <b>eels</b> — you have 3 lives. Clear all 4 decks to win!</div>
+</div>
+<script>
+const CID='shipwrecksalvagediving';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480;
+const HI_KEY=CID+'_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+
+const LEVELS=[{cols:11,rows:9,cargo:4,eels:1,drain:0.055},
+              {cols:15,rows:11,cargo:5,eels:2,drain:0.07},
+              {cols:17,rows:13,cargo:6,eels:3,drain:0.085},
+              {cols:21,rows:15,cargo:8,eels:4,drain:0.1}];
+
+let level=0,score=0,lives=3,air=100,state='start',invuln=0,cell=0,offX=0,offY=0,maze=null,cargo=[],bubbles=[],eels=[],diver=null,lastTime=null;
+
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+function genMaze(cols,rows){
+  const grid=Array.from({length:rows},()=>Array(cols).fill(1));
+  function carve(cx,cy){
+    grid[cy][cx]=0;
+    const dirs=shuffle([[0,-2],[0,2],[-2,0],[2,0]]);
+    for(const [dx,dy] of dirs){
+      const nx=cx+dx,ny=cy+dy;
+      if(ny>0&&ny<rows-1&&nx>0&&nx<cols-1&&grid[ny][nx]===1){
+        grid[cy+dy/2][cx+dx/2]=0;
+        carve(nx,ny);
+      }
+    }
+  }
+  carve(1,1);
+  return grid;
+}
+
+function openCells(){
+  const res=[];
+  for(let y=0;y<maze.length;y++)for(let x=0;x<maze[0].length;x++)if(maze[y][x]===0)res.push({x,y});
+  return res;
+}
+
+function cellCenter(cx,cy){ return {x:offX+cx*cell+cell/2, y:offY+cy*cell+cell/2}; }
+
+function startLevel(i){
+  const L=LEVELS[i];
+  maze=genMaze(L.cols,L.rows);
+  cell=Math.floor(Math.min((W-20)/L.cols,(H-70)/L.rows));
+  offX=(W-cell*L.cols)/2; offY=60+(H-70-cell*L.rows)/2;
+  const opens=shuffle(openCells().filter(p=>!(p.x===1&&p.y===1)));
+  cargo=[]; for(let k=0;k<L.cargo&&k<opens.length;k++)cargo.push({...opens[k],got:false,phase:Math.random()*6.28});
+  bubbles=[]; for(let k=0;k<2;k++){const p=opens[L.cargo+k]; if(p)bubbles.push({...p,got:false});}
+  eels=[];
+  for(let k=0;k<L.eels;k++){
+    const p=opens[opens.length-1-k]||opens[0];
+    eels.push({x:p.x,y:p.y,dir:Math.random()<0.5?'h':'v',t:Math.random()*100,speed:1.2+level*0.15});
+  }
+  const start=cellCenter(1,1);
+  diver={x:start.x,y:start.y,r:cell*0.32};
+  air=100; invuln=0;
+  state='play';
+}
+
+function resetGame(){ level=0; score=0; lives=3; startLevel(0); }
+
+function wallAt(px,py){
+  const cx=Math.floor((px-offX)/cell), cy=Math.floor((py-offY)/cell);
+  if(cy<0||cy>=maze.length||cx<0||cx>=maze[0].length)return true;
+  return maze[cy][cx]===1;
+}
+
+function tryMove(nx,ny,r){
+  const pts=[[nx-r,ny-r],[nx+r,ny-r],[nx-r,ny+r],[nx+r,ny+r]];
+  for(const [px,py] of pts) if(wallAt(px,py)) return false;
+  return true;
+}
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(state==='over'||state==='win')resetGame();
+  if(state==='start')startLevel(0);
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+let touchVec=null,touchStart=null;
+function pointerDown(x,y){
+  if(state==='over'||state==='win'){resetGame();return;}
+  if(state==='start'){startLevel(0);return;}
+  touchStart={x,y};
+}
+function pointerMove(x,y){
+  if(!touchStart)return;
+  touchVec={dx:x-touchStart.x,dy:y-touchStart.y};
+}
+function pointerUp(){ touchStart=null; touchVec=null; }
+
+function canvasPos(e,touch){
+  const rect=c.getBoundingClientRect();
+  const cx=(touch?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(touch?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width), y:cy*(H/rect.height)};
+}
+c.addEventListener('mousedown',e=>{const p=canvasPos(e,false);pointerDown(p.x,p.y);});
+c.addEventListener('mousemove',e=>{const p=canvasPos(e,false);pointerMove(p.x,p.y);});
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=canvasPos(e,true);pointerDown(p.x,p.y);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();const p=canvasPos(e,true);pointerMove(p.x,p.y);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerUp();},{passive:false});
+
+function loseLife(){
+  lives--; SFX.hit();
+  if(lives<=0){ state='over'; SFX.fail(); if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);} return; }
+  const start=cellCenter(1,1);
+  diver.x=start.x; diver.y=start.y;
+  air=Math.min(100,air+40);
+  invuln=90;
+}
+
+function update(dt){
+  if(state!=='play')return;
+  let vx=0,vy=0;
+  if(keys['arrowleft']||keys['a'])vx-=1;
+  if(keys['arrowright']||keys['d'])vx+=1;
+  if(keys['arrowup']||keys['w'])vy-=1;
+  if(keys['arrowdown']||keys['s'])vy+=1;
+  if(touchVec){
+    const len=Math.hypot(touchVec.dx,touchVec.dy);
+    if(len>8){ vx+=touchVec.dx/len; vy+=touchVec.dy/len; }
+  }
+  const len=Math.hypot(vx,vy);
+  if(len>0){ vx/=len; vy/=len; }
+  const spd=2.6*dt*(cell/40);
+  const nx=diver.x+vx*spd, ny=diver.y+vy*spd;
+  if(tryMove(nx,diver.y,diver.r))diver.x=nx;
+  if(tryMove(diver.x,ny,diver.r))diver.y=ny;
+
+  air-=LEVELS[level].drain*dt;
+  if(air<=0){ air=0; loseLife(); return; }
+
+  if(invuln>0)invuln-=dt;
+
+  cargo.forEach(it=>{
+    if(it.got)return;
+    const p=cellCenter(it.x,it.y);
+    if(Math.hypot(diver.x-p.x,diver.y-p.y)<cell*0.5){ it.got=true; score+=10*(level+1); SFX.coin(); }
+  });
+  bubbles.forEach(b=>{
+    if(b.got)return;
+    const p=cellCenter(b.x,b.y);
+    if(Math.hypot(diver.x-p.x,diver.y-p.y)<cell*0.5){ b.got=true; air=Math.min(100,air+35); SFX.powerup(); }
+  });
+
+  eels.forEach(ee=>{
+    ee.t+=dt*0.05*ee.speed;
+    const range=1.6;
+    if(ee.dir==='h')ee.px=ee.x+Math.sin(ee.t)*range; else ee.px=ee.x;
+    if(ee.dir==='v')ee.py=ee.y+Math.sin(ee.t)*range; else ee.py=ee.y;
+    const p=cellCenter(ee.px===undefined?ee.x:ee.px, ee.py===undefined?ee.y:ee.py);
+    ee.drawX=p.x; ee.drawY=p.y;
+    if(invuln<=0&&Math.hypot(diver.x-p.x,diver.y-p.y)<cell*0.4) loseLife();
+  });
+
+  if(cargo.every(it=>it.got)){
+    if(level>=LEVELS.length-1){ state='win'; SFX.win(); if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);} }
+    else { level++; SFX.levelup(); startLevel(level); }
+  }
+}
+
+function drawMaze(){
+  for(let y=0;y<maze.length;y++)for(let x=0;x<maze[0].length;x++){
+    const px=offX+x*cell, py=offY+y*cell;
+    ctx.fillStyle=maze[y][x]===1?'#0a3650':'#0e2436';
+    ctx.fillRect(px,py,cell,cell);
+    if(maze[y][x]===1){ ctx.strokeStyle='#145270'; ctx.strokeRect(px,py,cell,cell); }
+  }
+}
+
+function draw(t){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#021826'; ctx.fillRect(0,0,W,H);
+  drawMaze();
+
+  cargo.forEach(it=>{
+    if(it.got)return;
+    const p=cellCenter(it.x,it.y);
+    const bob=Math.sin(t/300+it.phase)*3;
+    ctx.fillStyle='#ffd54f';
+    ctx.beginPath(); ctx.arc(p.x,p.y+bob,cell*0.22,0,6.28); ctx.fill();
+    ctx.strokeStyle='#caa43a'; ctx.lineWidth=2; ctx.stroke();
+  });
+  bubbles.forEach(b=>{
+    if(b.got)return;
+    const p=cellCenter(b.x,b.y);
+    ctx.strokeStyle='#4cffcf'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(p.x,p.y,cell*0.2,0,6.28); ctx.stroke();
+    ctx.beginPath(); ctx.arc(p.x-cell*0.07,p.y-cell*0.07,cell*0.06,0,6.28); ctx.strokeStyle='#bffff0'; ctx.stroke();
+  });
+  eels.forEach(ee=>{
+    const x=ee.drawX!==undefined?ee.drawX:cellCenter(ee.x,ee.y).x;
+    const y=ee.drawY!==undefined?ee.drawY:cellCenter(ee.x,ee.y).y;
+    ctx.fillStyle='#ff6b6b';
+    ctx.beginPath(); ctx.ellipse(x,y,cell*0.34,cell*0.16,0,0,6.28); ctx.fill();
+    ctx.fillStyle='#2a0a0a'; ctx.beginPath(); ctx.arc(x+cell*0.22,y-cell*0.03,2,0,6.28); ctx.fill();
+  });
+
+  if(diver){
+    ctx.save();
+    if(invuln>0&&Math.floor(invuln/6)%2===0)ctx.globalAlpha=0.4;
+    ctx.fillStyle='#4cc9ff';
+    ctx.beginPath(); ctx.arc(diver.x,diver.y,diver.r,0,6.28); ctx.fill();
+    ctx.fillStyle='#eafcff';
+    ctx.beginPath(); ctx.arc(diver.x+diver.r*0.3,diver.y-diver.r*0.3,diver.r*0.35,0,6.28); ctx.fill();
+    ctx.restore();
+  }
+
+  if(state==='start'){
+    ctx.fillStyle='#9fe8ffcc'; ctx.textAlign='center';
+    ctx.font='bold 26px Arial';
+    ctx.fillText(I18N.t('dive_start','Tap / Press any key to dive'),W/2,H/2);
+  }
+  if(state==='over'){
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff6b6b'; ctx.textAlign='center'; ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.fillStyle='#fff'; ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press a key to try again'),W/2,H/2+20);
+  }
+  if(state==='win'){
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#4cffcf'; ctx.textAlign='center'; ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('wreck_cleared','WRECK FULLY SALVAGED!'),W/2,H/2-20);
+    ctx.fillStyle='#fff'; ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap or press a key to dive again'),W/2,H/2+20);
+  }
+
+  document.getElementById('airBar').style.width=Math.max(0,air)+'%';
+  document.getElementById('lives').textContent='❤'.repeat(Math.max(0,lives));
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+
+function loop(now){
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  update(dt);
+  draw(now);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

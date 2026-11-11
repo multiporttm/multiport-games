@@ -1,0 +1,202 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Shipwreck Artifact Recovery</title><meta name="description" content="Play Shipwreck Artifact Recovery free online — Hold Up Arrow / W / Space, or press and hold on screen, to lift the fragile artifact out of the silt. Keep your lift speed steady — too fast cracks it, too slow stirs up silt. Recover all 4 artifacts to win!"><link rel="canonical" href="https://games.multiportllc.com/games/shipwreckartifactrecovery"><meta property="og:title" content="Shipwreck Artifact Recovery - Multiport Games"><meta property="og:description" content="Play Shipwreck Artifact Recovery free online — Hold Up Arrow / W / Space, or press and hold on screen, to lift the fragile artifact out of the silt. Keep your lift speed steady — too fast cracks it, too slow stirs up silt. Recover all 4 artifacts to win!"><meta property="og:url" content="https://games.multiportllc.com/games/shipwreckartifactrecovery"><meta property="og:type" content="website"><link rel="apple-touch-icon" href="../icons/icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Shipwreck Artifact Recovery","description":"Play Shipwreck Artifact Recovery free online instantly. Hold Up Arrow / W / Space, or press and hold on screen, to lift the fragile artifact out of the silt. Keep your lift speed steady — too fast cracks it, too slow stirs up silt. Recover all 4 artifacts to win! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/shipwreckartifactrecovery","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0c0a06}
+#c{background:#1a1408;display:block;border-radius:8px;cursor:pointer}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#e8d9b5;font-size:1rem;font-weight:700;padding:8px 10px;flex-wrap:wrap;gap:8px}
+.meterWrap{flex:1;min-width:110px;max-width:220px}
+.meterLbl{font-size:.72rem;font-weight:600;color:#c9b887;margin-bottom:2px}
+.meterBar{height:12px;background:#2a2112;border-radius:6px;overflow:hidden;border:1px solid #4a3a1c}
+.meterFill{height:100%;width:0%;transition:width .12s}
+#stressFill{background:linear-gradient(90deg,#ffb347,#ff4747)}
+#clarityFill{background:linear-gradient(90deg,#4caf50,#9fe870);width:100%}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Shipwreck Artifact Recovery</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <div class="meterWrap"><div class="meterLbl">Crack risk</div><div class="meterBar"><div class="meterFill" id="stressFill"></div></div></div>
+      <div class="meterWrap"><div class="meterLbl">Clarity</div><div class="meterBar"><div class="meterFill" id="clarityFill"></div></div></div>
+      <span id="lives">❤❤❤</span>
+    </div>
+    <canvas id="c" width="800" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Up Arrow / W / Space</b>, or <b>press and hold</b> on screen, to lift the artifact. Keep your speed inside the glowing safe band shown on the gauge — rise too fast and it cracks, stall too long and silt ruins visibility. Release to let it sink and recover. Recover all 4 artifacts to win!</div>
+</div>
+<script>
+const CID='shipwreckartifactrecovery';
+const HI_KEY=CID+'_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480;
+
+const ARTIFACTS=['pottery','coin','bottle'];
+const ROUNDS=[
+  {name:'pottery',fragility:1.0,safeMin:0.9,safeMax:2.2,time:34,depth:360},
+  {name:'coin',fragility:1.3,safeMin:0.8,safeMax:1.9,time:30,depth:380},
+  {name:'bottle',fragility:1.6,safeMin:0.7,safeMax:1.7,time:27,depth:400},
+  {name:'pottery',fragility:2.1,safeMin:0.65,safeMax:1.45,time:24,depth:420},
+];
+
+let round=0,score=0,lives=3,state='start',lastTime=null;
+let artY=0,vel=0,timeLeft=0,stress=0,clarity=100,held=false,silt=[];
+const SURFACE_Y=70, BOTTOM_Y=430;
+
+function initRound(i){
+  const r=ROUNDS[i];
+  artY=BOTTOM_Y; vel=0; stress=0; clarity=100; timeLeft=r.time; held=false;
+  silt=[]; for(let k=0;k<40;k++)silt.push({x:Math.random()*W,y:100+Math.random()*350,r:1+Math.random()*2,vx:(Math.random()-0.5)*0.2});
+  state='play';
+}
+function resetGame(){ round=0; score=0; lives=3; initRound(0); }
+
+function loseLife(reason){
+  lives--;
+  if(reason==='crack')SFX.hit(); else SFX.hurt();
+  if(lives<=0){ state='over'; SFX.fail(); if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);} return; }
+  initRound(round);
+}
+
+function startInput(){
+  if(state==='over'||state==='win'){resetGame();return;}
+  if(state==='start'){initRound(0);return;}
+  held=true;
+}
+function endInput(){ held=false; }
+
+document.addEventListener('keydown',e=>{
+  const k=e.key.toLowerCase();
+  if(['arrowup','w',' '].includes(k)){ e.preventDefault(); startInput(); }
+});
+document.addEventListener('keyup',e=>{
+  const k=e.key.toLowerCase();
+  if(['arrowup','w',' '].includes(k)) endInput();
+});
+c.addEventListener('mousedown',startInput);
+window.addEventListener('mouseup',endInput);
+c.addEventListener('touchstart',e=>{e.preventDefault();startInput();},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();endInput();},{passive:false});
+
+function update(dt){
+  if(state!=='play')return;
+  const r=ROUNDS[round];
+  const targetVel = held ? -2.6 : 1.8;
+  vel += (targetVel-vel)*0.12*dt;
+  artY += vel*dt;
+  if(artY>BOTTOM_Y){ artY=BOTTOM_Y; vel=0; }
+
+  const speed=Math.abs(vel);
+  if(vel<0){
+    if(speed>r.safeMax){ stress += (speed-r.safeMax)*2.2*r.fragility*dt; }
+    else if(speed<r.safeMin){ clarity -= (r.safeMin-speed)*0.9*dt; }
+    else { clarity = Math.min(100, clarity + 0.15*dt); }
+  } else {
+    clarity -= 0.12*dt;
+  }
+  stress = Math.max(0,Math.min(100,stress));
+  clarity = Math.max(0,Math.min(100,clarity));
+
+  timeLeft -= dt/60;
+
+  silt.forEach(s=>{ s.x+=s.vx*dt; if(s.x<0)s.x=W; if(s.x>W)s.x=0; });
+
+  if(stress>=100){ loseLife('crack'); return; }
+  if(clarity<=0){ loseLife('silt'); return; }
+  if(timeLeft<=0){ loseLife('time'); return; }
+
+  if(artY<=SURFACE_Y){
+    const bonus=Math.round(timeLeft*4 + (100-stress)*0.6 + clarity*0.6);
+    score += 50*(round+1) + bonus;
+    SFX.success();
+    if(round>=ROUNDS.length-1){ state='win'; SFX.win(); if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);} }
+    else { round++; SFX.levelup(); initRound(round); }
+  }
+}
+
+function drawArtifact(x,y,name){
+  ctx.save(); ctx.translate(x,y);
+  if(name==='pottery'){
+    ctx.fillStyle='#c97b3d';
+    ctx.beginPath(); ctx.moveTo(-18,20); ctx.quadraticCurveTo(-24,-10,-8,-24); ctx.lineTo(8,-24); ctx.quadraticCurveTo(24,-10,18,20); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='#8a4e22'; ctx.lineWidth=2; ctx.stroke();
+  } else if(name==='coin'){
+    ctx.fillStyle='#ffd54f'; ctx.beginPath(); ctx.arc(0,0,16,0,6.28); ctx.fill();
+    ctx.strokeStyle='#caa43a'; ctx.lineWidth=3; ctx.stroke();
+    ctx.fillStyle='#caa43a'; ctx.font='bold 14px Arial'; ctx.textAlign='center'; ctx.fillText('$',0,5);
+  } else {
+    ctx.fillStyle='#3f9e7d99';
+    ctx.beginPath(); ctx.moveTo(-6,-26); ctx.lineTo(6,-26); ctx.lineTo(6,-14); ctx.lineTo(14,2); ctx.lineTo(14,22); ctx.lineTo(-14,22); ctx.lineTo(-14,2); ctx.lineTo(-6,-14); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='#2c7a5e'; ctx.lineWidth=2; ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function draw(t){
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0a2a3a'); sky.addColorStop(1,'#1a1408');
+  ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(255,255,255,0.08)'; ctx.fillRect(0,0,W,SURFACE_Y);
+  ctx.fillStyle='#3a2a12'; ctx.fillRect(0,BOTTOM_Y+30,W,H-BOTTOM_Y-30);
+
+  ctx.fillStyle='rgba(120,100,60,'+(0.15+ (100-clarity)/260)+')';
+  silt.forEach(s=>{ ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,6.28); ctx.fill(); });
+
+  if(state==='play'||state==='start'){
+    const r=ROUNDS[round];
+    drawArtifact(W/2, artY, r.name);
+
+    const gx=W-70, gy0=SURFACE_Y, gy1=BOTTOM_Y;
+    ctx.fillStyle='#2a2112'; ctx.fillRect(gx-14,gy0,28,gy1-gy0);
+    const maxV=3.0;
+    const safeTop=gy0+(gy1-gy0)*(1-r.safeMax/maxV);
+    const safeBot=gy0+(gy1-gy0)*(1-r.safeMin/maxV);
+    ctx.fillStyle='rgba(76,201,255,0.35)'; ctx.fillRect(gx-14,safeTop,28,safeBot-safeTop);
+    const curSpeed=Math.max(0,Math.min(maxV,vel<0?-vel:0));
+    const markerY=gy0+(gy1-gy0)*(1-curSpeed/maxV);
+    ctx.fillStyle='#fff'; ctx.fillRect(gx-18,markerY-2,36,4);
+    ctx.strokeStyle='#8a6a2c'; ctx.strokeRect(gx-14,gy0,28,gy1-gy0);
+  }
+
+  if(state==='start'){
+    ctx.fillStyle='#e8d9b5cc'; ctx.textAlign='center'; ctx.font='bold 24px Arial';
+    ctx.fillText(I18N.t('recovery_start','Hold / tap to start lifting'),W/2,H/2);
+  }
+  if(state==='over'){
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff6b6b'; ctx.textAlign='center'; ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.fillStyle='#fff'; ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press a key to try again'),W/2,H/2+20);
+  }
+  if(state==='win'){
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#9fe870'; ctx.textAlign='center'; ctx.font='bold 32px Arial';
+    ctx.fillText(I18N.t('all_recovered','ALL ARTIFACTS RECOVERED!'),W/2,H/2-20);
+    ctx.fillStyle='#fff'; ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Tap or press a key to dive again'),W/2,H/2+20);
+  }
+
+  document.getElementById('stressFill').style.width=stress+'%';
+  document.getElementById('clarityFill').style.width=clarity+'%';
+  document.getElementById('lives').textContent='❤'.repeat(Math.max(0,lives));
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+
+function loop(now){
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  update(dt);
+  draw(now);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>
