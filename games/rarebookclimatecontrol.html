@@ -1,0 +1,316 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Rare Book Climate Control</title><meta name="description" content="Play Rare Book Climate Control free online — Click shelves to nudge their heater, cooler, humidifier, or dehumidifier and keep every shelf's temperature and humidity in the safe preservation range."><link rel="canonical" href="https://games.multiportllc.com/games/rarebookclimatecontrol"><meta property="og:title" content="Rare Book Climate Control - Multiport Games"><meta property="og:description" content="Play Rare Book Climate Control free online — Click shelves to nudge their heater, cooler, humidifier, or dehumidifier and keep every shelf's temperature and humidity in the safe preservation range."><meta property="og:url" content="https://games.multiportllc.com/games/rarebookclimatecontrol"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Rare Book Climate Control","description":"Play Rare Book Climate Control free online instantly. Monitor temperature and humidity gauges on multiple shelves of a rare book storage vault and click each shelf's heater, cooler, humidifier, or dehumidifier to nudge its reading back into the safe preservation band before it drifts out of range, through a run of increasingly volatile seasonal swings. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/rarebookclimatecontrol","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#10151f;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#a9d6e5;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Rare Book Climate Control</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Season 1/6</span>
+    </div>
+    <canvas id="c" width="800" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Each shelf shows a temperature gauge and a humidity gauge, both drifting with the seasons. Click/tap a shelf's <b>heater</b>, <b>cooler</b>, <b>humidifier</b>, or <b>dehumidifier</b> button (or select a shelf with <b>1-4</b> and a control with the <b>Arrow Keys</b>, confirm with <b>Enter</b>/<b>Space</b>) to nudge that reading back toward the safe green band. Any shelf left outside its safe band too long damages its books and costs a life. Later seasons swing faster and the safe bands narrow — lose all 3 lives and the collection is damaged beyond repair!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const TOTAL_SEASONS=6;
+const SHELF_COUNT=4;
+let hi=parseInt(localStorage.getItem('rarebookclimatecontrol_hi')||'0',10);
+let score=0,lives=3,seasonIndex=0,gameOver=false,started=false,won=false;
+let shelves=[],seasonTime=0,seasonDuration=0,flashTimer=0,flashGood=true;
+let selectedShelf=0,selectedCtrl=0;
+const keys={};
+
+const TEMP_SAFE=[16,20],HUM_SAFE=[40,50];
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.round(score)).replace('{h}',Math.round(hi));
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('season_label','Season {n}/{t}').replace('{n}',Math.min(seasonIndex+1,TOTAL_SEASONS)).replace('{t}',TOTAL_SEASONS);
+}
+
+function setupSeason(){
+  const difficulty=seasonIndex;
+  const tempBand=[TEMP_SAFE[0]+Math.min(2,difficulty*0.3),TEMP_SAFE[1]-Math.min(2,difficulty*0.3)];
+  const humBand=[HUM_SAFE[0]+Math.min(5,difficulty*0.8),HUM_SAFE[1]-Math.min(5,difficulty*0.8)];
+  shelves=[];
+  for(let i=0;i<SHELF_COUNT;i++){
+    shelves.push({
+      temp:(tempBand[0]+tempBand[1])/2+(Math.random()-0.5)*2,
+      hum:(humBand[0]+humBand[1])/2+(Math.random()-0.5)*6,
+      tempBand:tempBand.slice(),
+      humBand:humBand.slice(),
+      tempDrift:(Math.random()<0.5?-1:1)*(0.15+difficulty*0.04),
+      humDrift:(Math.random()<0.5?-1:1)*(0.3+difficulty*0.08),
+      dangerTime:0,
+      danger:false
+    });
+  }
+  seasonTime=0;
+  seasonDuration=22+difficulty*3;
+}
+
+function reset(){
+  score=0;lives=3;seasonIndex=0;gameOver=false;started=false;won=false;flashTimer=0;
+  setupSeason();
+  setHud();
+}
+
+function inBand(v,band){return v>=band[0]&&v<=band[1];}
+
+function applyControl(shelfIdx,ctrlIdx){
+  const s=shelves[shelfIdx];
+  if(!s)return;
+  SFX.click();
+  if(ctrlIdx===0)s.temp+=1.6; // heater
+  else if(ctrlIdx===1)s.temp-=1.6; // cooler
+  else if(ctrlIdx===2)s.hum+=3.2; // humidifier
+  else if(ctrlIdx===3)s.hum-=3.2; // dehumidifier
+}
+
+function failSeason(reason){
+  lives--;
+  SFX.error();
+  flashTimer=18;flashGood=false;
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem('rarebookclimatecontrol_hi',hi);}
+    setHud();
+    SFX.lose();
+    return true;
+  }
+  setupSeason();
+  setHud();
+  return false;
+}
+
+function completeSeason(){
+  score+=Math.round(100+seasonDuration*2);
+  SFX.success();
+  flashTimer=20;flashGood=true;
+  seasonIndex++;
+  if(seasonIndex>=TOTAL_SEASONS){
+    won=true;
+    SFX.win();
+    if(score>hi){hi=score;localStorage.setItem('rarebookclimatecontrol_hi',hi);}
+    setHud();
+    return;
+  }
+  setupSeason();
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();started=true;}
+}
+
+function shelfRect(i){
+  const w=170,h=260,gap=20;
+  const totalW=SHELF_COUNT*w+(SHELF_COUNT-1)*gap;
+  const x0=(800-totalW)/2;
+  return {x:x0+i*(w+gap),y:40,w,h};
+}
+
+function ctrlRects(shelfRectObj){
+  const r=shelfRectObj;
+  const bw=(r.w-12)/2,bh=24;
+  return [
+    {x:r.x+2,y:r.y+r.h-62,w:bw,h:bh,label:'🔥',name:'heat'},
+    {x:r.x+bw+10,y:r.y+r.h-62,w:bw,h:bh,label:'❄️',name:'cool'},
+    {x:r.x+2,y:r.y+r.h-32,w:bw,h:bh,label:'💧',name:'humid'},
+    {x:r.x+bw+10,y:r.y+r.h-32,w:bw,h:bh,label:'🏜️',name:'dehum'}
+  ];
+}
+
+function canvasPos(ev){
+  const r=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return {x:cx*(800/r.width),y:cy*(340/r.height)};
+}
+
+function clickAt(x,y){
+  if(!started||gameOver||won)return;
+  for(let i=0;i<SHELF_COUNT;i++){
+    const r=shelfRect(i);
+    const ctrls=ctrlRects(r);
+    for(let ci=0;ci<ctrls.length;ci++){
+      const cr=ctrls[ci];
+      if(x>cr.x&&x<cr.x+cr.w&&y>cr.y&&y<cr.y+cr.h){
+        applyControl(i,ci);
+        selectedShelf=i;selectedCtrl=ci;
+        return;
+      }
+    }
+  }
+}
+
+c.addEventListener('mousedown',e=>{startOrRestart();if(started&&!gameOver&&!won){const p=canvasPos(e);clickAt(p.x,p.y);}});
+c.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();if(started&&!gameOver&&!won){const p=canvasPos(e);clickAt(p.x,p.y);}},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['Digit1','Digit2','Digit3','Digit4','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'&&(!started||gameOver||won)){startOrRestart();return;}
+  if(!started||gameOver||won)return;
+  if(e.code==='Digit1')selectedShelf=0;
+  if(e.code==='Digit2')selectedShelf=1;
+  if(e.code==='Digit3')selectedShelf=2;
+  if(e.code==='Digit4')selectedShelf=3;
+  if(e.code==='ArrowLeft'||e.code==='ArrowUp'){selectedCtrl=(selectedCtrl+3)%4;SFX.tick();}
+  if(e.code==='ArrowRight'||e.code==='ArrowDown'){selectedCtrl=(selectedCtrl+1)%4;SFX.tick();}
+  if(e.code==='Enter'){applyControl(selectedShelf,selectedCtrl);}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function drawGauge(x,y,w,h,value,min,max,band,label,unit){
+  ctx.fillStyle='#1b2838';
+  ctx.fillRect(x,y,w,h);
+  const bandY1=y+h*(1-(band[1]-min)/(max-min));
+  const bandY2=y+h*(1-(band[0]-min)/(max-min));
+  ctx.fillStyle='rgba(126,200,80,0.35)';
+  ctx.fillRect(x,bandY1,w,bandY2-bandY1);
+  const vClamped=Math.max(min,Math.min(max,value));
+  const vy=y+h*(1-(vClamped-min)/(max-min));
+  const safe=inBand(value,band);
+  ctx.fillStyle=safe?'#7ec850':'#e94560';
+  ctx.fillRect(x,vy,w,y+h-vy);
+  ctx.strokeStyle='#5a6b7d';ctx.lineWidth=1;
+  ctx.strokeRect(x,y,w,h);
+  ctx.fillStyle=safe?'#dfffe0':'#ffd7d7';
+  ctx.font='bold 11px Arial';ctx.textAlign='center';
+  ctx.fillText(label+' '+value.toFixed(1)+unit,x+w/2,y-4);
+}
+
+let lastTime=null;
+function loop(){
+  ctx.clearRect(0,0,800,340);
+  const sky=ctx.createLinearGradient(0,0,0,340);
+  sky.addColorStop(0,'#0a0f17');sky.addColorStop(1,'#10151f');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,340);
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Space to start'),400,20);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';
+    ctx.fillText(I18N.t('game_over_title','COLLECTION DAMAGED'),400,150);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+Math.round(score),400,185);
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,215);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#7ec850';ctx.font='bold 28px Arial';
+    ctx.fillText(I18N.t('win_title','VAULT PRESERVED! 🏛️'),400,140);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+Math.round(score),400,175);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,205);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  seasonTime+=dt;
+  score+=dt*2;
+  if(score>hi)hi=score;
+
+  let anyDanger=false;
+  shelves.forEach(s=>{
+    s.temp+=s.tempDrift*dt;
+    s.hum+=s.humDrift*dt;
+    if(s.temp<5||s.temp>35){s.tempDrift*=-1;}
+    if(s.hum<10||s.hum>90){s.humDrift*=-1;}
+    // random drift reversal to keep things dynamic
+    if(Math.random()<0.004)s.tempDrift*=-1;
+    if(Math.random()<0.004)s.humDrift*=-1;
+
+    const safe=inBand(s.temp,s.tempBand)&&inBand(s.hum,s.humBand);
+    if(!safe){
+      s.dangerTime+=dt;
+      anyDanger=true;
+    }else{
+      s.dangerTime=Math.max(0,s.dangerTime-dt*2);
+    }
+    s.danger=s.dangerTime>4;
+  });
+
+  const anyRuined=shelves.some(s=>s.dangerTime>6);
+  if(anyRuined){
+    if(!failSeason()){ requestAnimationFrame(loop);return; }
+  }else if(seasonTime>=seasonDuration){
+    completeSeason();
+  }
+
+  ctx.fillStyle='#a9d6e5';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('climate_hint','Keep every shelf in the green band'),400,16);
+
+  for(let i=0;i<SHELF_COUNT;i++){
+    const s=shelves[i];
+    const r=shelfRect(i);
+    ctx.fillStyle=selectedShelf===i?'rgba(255,255,255,0.08)':'rgba(255,255,255,0.03)';
+    ctx.fillRect(r.x,r.y,r.w,r.h);
+    ctx.strokeStyle=s.danger?'#e94560':'#2d3e50';
+    ctx.lineWidth=s.danger?3:1;
+    ctx.strokeRect(r.x,r.y,r.w,r.h);
+
+    ctx.fillStyle='#fff';ctx.font='bold 12px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('shelf_label','Shelf {n}').replace('{n}',i+1),r.x+r.w/2,r.y+16);
+
+    drawGauge(r.x+16,r.y+36,50,120,s.temp,0,40,s.tempBand,'°C','');
+    drawGauge(r.x+r.w-66,r.y+36,50,120,s.hum,0,100,s.humBand,'%','');
+
+    const ctrls=ctrlRects(r);
+    ctrls.forEach((cr,ci)=>{
+      ctx.fillStyle=(selectedShelf===i&&selectedCtrl===ci)?'#3a6ea5':'#223549';
+      ctx.fillRect(cr.x,cr.y,cr.w,cr.h);
+      ctx.strokeStyle='#5a6b7d';ctx.strokeRect(cr.x,cr.y,cr.w,cr.h);
+      ctx.font='14px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText(cr.label,cr.x+cr.w/2,cr.y+cr.h/2+1);
+    });
+    ctx.textBaseline='alphabetic';
+
+    if(s.danger){
+      ctx.fillStyle='#e94560';ctx.font='bold 11px Arial';
+      ctx.fillText(I18N.t('danger_label','DANGER!'),r.x+r.w/2,r.y+r.h-70);
+    }
+  }
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.2)':'rgba(255,80,100,0.2)';
+    ctx.fillRect(0,0,800,340);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+setHud();
+loop();
+</script></body></html>
