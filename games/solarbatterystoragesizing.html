@@ -1,0 +1,271 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Solar Battery Storage Sizing</title><meta name="description" content="Play Solar Battery Storage Sizing free online — Read each customer's generation, usage and usage profile, then press 1-4 or tap the matching battery option before time runs out. Pick the capacity that actually covers their needs!"><link rel="canonical" href="https://games.multiportllc.com/games/solarbatterystoragesizing"><meta property="og:title" content="Solar Battery Storage Sizing - Multiport Games"><meta property="og:description" content="Play Solar Battery Storage Sizing free online — Read each customer's generation, usage and usage profile, then press 1-4 or tap the matching battery option before time runs out. Pick the capacity that actually covers their needs!"><meta property="og:url" content="https://games.multiportllc.com/games/solarbatterystoragesizing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Solar Battery Storage Sizing","description":"Play Solar Battery Storage Sizing free online instantly. Read each customer's generation, usage and usage profile, then press 1-4 or tap the matching battery option before time runs out. Pick the capacity that actually covers their needs! No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/solarbatterystoragesizing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#102a1d;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffd54f;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#hud{display:flex;justify-content:center;gap:14px;color:#fff;font-size:.92rem;padding:0 8px 6px;flex-wrap:wrap}
+#hud span{background:rgba(255,255,255,.08);border-radius:10px;padding:4px 12px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Solar Battery Storage Sizing</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <div id="hud"><span id="round-label">Round 1</span><span id="q-label">Q 1/5</span><span id="lives-label">Lives: 3</span></div>
+    <canvas id="c" width="760" height="460"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Read each customer's generation, usage and usage profile, then press <b>1-4</b> or tap the matching battery option before time runs out. Pick the capacity that actually covers their needs!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=460;
+const scoreEl=document.getElementById('score-display');
+const roundEl=document.getElementById('round-label');
+const qEl=document.getElementById('q-label');
+const livesEl=document.getElementById('lives-label');
+const HI_KEY='solarbatterystoragesizing_hi';
+
+const PROFILES=[
+  {key:'evening',label:'Mostly evening use',night:0.75},
+  {key:'daytime',label:'Heavy daytime AC load',night:0.35},
+  {key:'night',label:'Overnight shift / always on',night:0.85},
+  {key:'mixed',label:'Mixed day and night use',night:0.55},
+  {key:'weekend',label:'Weekend-heavy usage',night:0.60},
+];
+
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10)||0;
+let score=0,lives=3,round=1,qIndex=0,correctCount=0,state='ready'; // ready, playing, feedback, roundend, gameover, win
+let usage,generation,profile,autonomy,ideal,options=[],correctIdx=-1,chosenIdx=-1;
+let timeLeft=0,timeLimit=10;
+let msg='',msgTimer=0;
+const BTN=[];
+
+function roundRand(min,max){return min+Math.random()*(max-min);}
+
+function genQuestion(){
+  usage=Math.round(roundRand(8,16+round*2.5));
+  generation=Math.round(roundRand(6,12+round*2));
+  profile=PROFILES[Math.floor(Math.random()*PROFILES.length)];
+  autonomy=round<=2?1:(round<=5?(Math.random()<0.5?1:2):2);
+  ideal=usage*profile.night*autonomy*1.15;
+  ideal=Math.round(ideal*2)/2;
+  const spreadFar=Math.max(0.18,0.55-(round-1)*0.055);
+  const mults=[1, 1-spreadFar,1+spreadFar,1+spreadFar*2];
+  let vals=mults.map(m=>Math.max(1,Math.round(ideal*m*2)/2));
+  const seen=new Set();vals=vals.map(v=>{while(seen.has(v))v+=0.5;seen.add(v);return v;});
+  const idxArr=[0,1,2,3];
+  for(let i=idxArr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[idxArr[i],idxArr[j]]=[idxArr[j],idxArr[i]];}
+  options=idxArr.map(i=>vals[i]);
+  correctIdx=idxArr.indexOf(0);
+  chosenIdx=-1;
+  timeLimit=Math.max(5,10-(round-1)*0.5);
+  timeLeft=timeLimit;
+}
+
+function resetRound(n){
+  round=n;qIndex=0;correctCount=0;
+  genQuestion();
+  state='playing';
+  roundEl.textContent=I18N.t('round_label','Round {n}').replace('{n}',n);
+}
+
+function startGame(){
+  score=0;lives=3;msg='';msgTimer=0;
+  resetRound(1);
+}
+
+function setMsg(t,dur){msg=t;msgTimer=dur||1.3;}
+
+function choose(i){
+  if(state!=='playing'||chosenIdx!==-1)return;
+  chosenIdx=i;
+  if(i===correctIdx){
+    const speedBonus=Math.max(0,timeLeft/timeLimit);
+    score+=Math.round(80+speedBonus*60);
+    if(score>hi)hi=score;
+    correctCount++;
+    SFX.success();
+    setMsg(I18N.t('correct_label','Correct! {v} kWh fits best.').replace('{v}',options[correctIdx]),1.1);
+  } else {
+    lives--;
+    SFX.error();
+    setMsg(I18N.t('wrong_label','Not quite — {v} kWh was the better fit.').replace('{v}',options[correctIdx]),1.3);
+  }
+  state='feedback';
+}
+
+document.addEventListener('keydown',e=>{
+  if(state==='ready'){ if(e.code==='Space'||e.code==='Enter'){startGame();} return; }
+  if(state==='gameover'||state==='win'){ if(e.code==='Space'||e.code==='Enter'){startGame();} return; }
+  if(state!=='playing')return;
+  if(e.code==='Digit1'||e.code==='Numpad1')choose(0);
+  else if(e.code==='Digit2'||e.code==='Numpad2')choose(1);
+  else if(e.code==='Digit3'||e.code==='Numpad3')choose(2);
+  else if(e.code==='Digit4'||e.code==='Numpad4')choose(3);
+});
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+c.addEventListener('pointerdown',e=>{
+  if(state==='ready'||state==='gameover'||state==='win'){startGame();return;}
+  if(state!=='playing')return;
+  const p=getPos(e);
+  for(let i=0;i<BTN.length;i++){
+    const b=BTN[i];
+    if(p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h){choose(i);break;}
+  }
+});
+c.addEventListener('touchstart',e=>{e.preventDefault();},{passive:false});
+
+function drawWrapped(text,x,y,maxW,lh){
+  const words=text.split(' ');let line='';let yy=y;
+  for(const w of words){
+    const test=line+w+' ';
+    if(ctx.measureText(test).width>maxW&&line){ctx.fillText(line,x,yy);line=w+' ';yy+=lh;}
+    else line=test;
+  }
+  ctx.fillText(line,x,yy);
+  return yy;
+}
+
+function drawScenario(){
+  ctx.textAlign='left';
+  ctx.fillStyle='#fff';ctx.font='bold 20px Arial';
+  ctx.fillText(I18N.t('customer_label','Customer Request'),30,50);
+  ctx.font='16px Arial';ctx.fillStyle='#bfe9c7';
+  ctx.fillText(I18N.t('gen_label','Daily generation: {g} kWh').replace('{g}',generation),30,84);
+  ctx.fillText(I18N.t('use_label','Daily usage: {u} kWh').replace('{u}',usage),30,108);
+  ctx.fillText(I18N.t('autonomy_label','Backup needed: {a} day(s)').replace('{a}',autonomy),30,132);
+  ctx.fillStyle='#ffd54f';
+  drawWrapped(I18N.t('profile_'+profile.key,profile.label),30,160,480,20);
+  ctx.fillStyle='#fff';ctx.font='bold 17px Arial';
+  ctx.fillText(I18N.t('pick_battery','Pick the battery capacity that fits:'),30,200);
+}
+
+function drawOptions(){
+  BTN.length=0;
+  const bw=330,bh=64,gap=16,startX=30,startY=222;
+  for(let i=0;i<4;i++){
+    const col=i%2,row=Math.floor(i/2);
+    const x=startX+col*(bw+gap),y=startY+row*(bh+gap);
+    BTN.push({x,y,w:bw,h:bh});
+    let fill='#1b3b2b';
+    if(chosenIdx!==-1){
+      if(i===correctIdx)fill='#2e7d32';
+      else if(i===chosenIdx)fill='#8e2436';
+    }
+    ctx.fillStyle=fill;
+    ctx.fillRect(x,y,bw,bh);
+    ctx.strokeStyle='rgba(255,255,255,.3)';ctx.strokeRect(x,y,bw,bh);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='left';
+    ctx.fillText((i+1)+'. '+options[i]+' kWh',x+16,y+bh/2+7);
+  }
+}
+
+function drawTimer(){
+  const bw=700,bh=10,bx=30,by=10;
+  ctx.fillStyle='rgba(255,255,255,.15)';ctx.fillRect(bx,by,bw,bh);
+  const f=Math.max(0,timeLeft/timeLimit);
+  ctx.fillStyle=f>0.4?'#4caf50':'#e94560';
+  ctx.fillRect(bx,by,bw*f,bh);
+}
+
+function drawCenterText(lines,sub){
+  ctx.save();ctx.textAlign='center';
+  ctx.fillStyle='#fff';ctx.font='bold 30px Arial';
+  ctx.fillText(lines,W/2,H/2-10);
+  if(sub){ctx.font='17px Arial';ctx.fillStyle='#ffd54f';ctx.fillText(sub,W/2,H/2+26);}
+  ctx.restore();
+}
+
+function updateHud(){
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  livesEl.textContent=I18N.t('lives_label','Lives: {n}').replace('{n}',lives);
+  qEl.textContent=I18N.t('q_label','Q {a}/5').replace('{a}',Math.min(qIndex+1,5));
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.05);
+  lastTime=now;
+
+  ctx.fillStyle='#0d2217';ctx.fillRect(0,0,W,H);
+
+  if(state==='ready'){
+    drawCenterText(I18N.t('tap_to_start','Tap / Space to Start'),I18N.t('battery_hint','Size each battery to match generation and usage'));
+  } else if(state==='playing'){
+    drawTimer();
+    drawScenario();
+    drawOptions();
+    timeLeft-=dt;
+    if(timeLeft<=0){ choose(-999); } // triggers wrong-answer path via mismatch
+  } else if(state==='feedback'){
+    drawTimer();
+    drawScenario();
+    drawOptions();
+    msgTimer-=dt;
+    ctx.save();ctx.textAlign='center';ctx.font='bold 18px Arial';ctx.fillStyle='#fff';
+    ctx.fillRect(0,H-40,W,40);
+    ctx.fillStyle='#0d2217';ctx.fillRect(0,H-40,W,40);
+    ctx.fillStyle='#ffd54f';ctx.fillText(msg,W/2,H-14);
+    ctx.restore();
+    if(msgTimer<=0){
+      if(lives<=0){
+        state='gameover';
+        if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(Math.floor(hi)));}
+        SFX.lose();
+      } else {
+        qIndex++;
+        if(qIndex>=5){
+          if(correctCount>=4){
+            setMsg(I18N.t('round_passed','Round {n} complete!').replace('{n}',round),1.3);
+            state='roundend';
+          } else {
+            setMsg(I18N.t('round_failed','Not enough correct sizing — try again.'),1.3);
+            state='roundend';
+          }
+        } else {
+          genQuestion();
+          state='playing';
+        }
+      }
+    }
+  } else if(state==='roundend'){
+    msgTimer-=dt;
+    drawCenterText(msg);
+    if(msgTimer<=0){
+      if(round>=8 && msg.indexOf('complete')>=0){
+        state='win';
+        if(score>hi)hi=score;
+        localStorage.setItem(HI_KEY,String(Math.floor(hi)));
+        SFX.win();
+      } else if(msg.indexOf('complete')>=0){
+        resetRound(round+1);
+      } else {
+        resetRound(round);
+      }
+    }
+  } else if(state==='gameover'){
+    drawCenterText(I18N.t('game_over_title','GAME OVER'),I18N.t('restart_hint','Tap or Space to restart'));
+  } else if(state==='win'){
+    drawCenterText(I18N.t('you_win_title','YOU WIN! Storage Expert!'),I18N.t('restart_hint','Tap or Space to restart'));
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

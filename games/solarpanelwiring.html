@@ -1,0 +1,323 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Solar Panel Wiring</title><meta name="description" content="Play Solar Panel Wiring free online — Wire a row of solar panels into series strings and parallel groups to hit the target voltage and current before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/solarpanelwiring"><meta property="og:title" content="Solar Panel Wiring - Multiport Games"><meta property="og:description" content="Play Solar Panel Wiring free online — Wire a row of solar panels into series strings and parallel groups to hit the target voltage and current before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/solarpanelwiring"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Solar Panel Wiring - Multiport Games"><meta name="twitter:description" content="Play Solar Panel Wiring free online — Wire a row of solar panels into series strings and parallel groups to hit the target voltage and current before time runs out."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Solar Panel Wiring","description":"Play Solar Panel Wiring free online instantly. Wire a row of solar panels into series strings and parallel groups to hit the target voltage and current before time runs out. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/solarpanelwiring","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0f2027;display:block;border-radius:8px;touch-action:none;max-width:100%;height:auto}
+#hud{color:#eaf0ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#banner{color:#ffd54f;text-align:center;font-weight:800;font-size:1.3rem;min-height:1.6em}
+#wireControls{text-align:center;margin:6px 0}
+#wireControls button{padding:8px 18px;background:#1c7ed6;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:.95rem;margin:0 5px;font-weight:700}
+#wireControls button:disabled{opacity:.4;cursor:not-allowed}
+#wireControls button.active{background:#ffd54f;color:#1a1a2e}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Solar Panel Wiring</div>
+  <div class="game-frame">
+    <div id="hud"><span id="score-display">Score: 0 | Hi: 0</span><span id="lives">Lives: ❤❤❤</span><span id="level-display">Level: 1</span><span id="time-display">Time: 0</span></div>
+    <div id="banner"></div>
+    <canvas id="c" width="800" height="320"></canvas>
+    <div id="wireControls">
+      <button id="submitBtn">Submit Wiring</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    Click (or select with <b>Arrow keys</b> + <b>Space</b>) the gap between two neighboring panels to toggle a <b>series</b> wire joining them into one string; separate strings combine in <b>parallel</b>. Make every string the same length so their voltages match, then hit <b>Submit</b> (or <b>Enter</b>) when your combined voltage and current reach the target shown. Mismatched string lengths cause a short circuit!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreEl=document.getElementById('score-display'),livesEl=document.getElementById('lives'),levelEl=document.getElementById('level-display'),timeEl=document.getElementById('time-display'),bannerEl=document.getElementById('banner'),submitBtn=document.getElementById('submitBtn');
+const HI_KEY='solarpanelwiring_hi';
+const MAX_LEVEL=7;
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),lives=3,level=1;
+let state='ready'; // ready, playing, result, over, win
+let numPanels=4,panelV=20,panelI=5,cuts=[],targetV=0,targetI=0,timeLeft=0,selGap=0;
+let resultTimer=0,resultMsg='',resultGood=true;
+
+function fmtLives(){return '❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));}
+
+function divisorsOf(n){
+  const out=[];
+  for(let d=1;d<=n;d++)if(n%d===0)out.push(d);
+  return out;
+}
+
+function startLevel(){
+  numPanels=4+Math.min(8,level);
+  // pick a panel voltage/current that varies a bit per level for flavor
+  panelV=18+ (level%3)*2;
+  panelI=4+Math.floor(level/3);
+  cuts=new Array(numPanels-1).fill(true); // true = cut (new string starts), false = joined (series)
+  const divs=divisorsOf(numPanels);
+  const stringLen=divs[Math.floor(Math.random()*divs.length)];
+  const numStrings=numPanels/stringLen;
+  targetV=panelV*stringLen;
+  targetI=panelI*numStrings;
+  timeLeft=Math.max(16,34-level*2);
+  selGap=0;
+  state='playing';
+  submitBtn.disabled=false;
+  bannerEl.textContent=I18N.t('level_label','Level {n}').replace('{n}',level);
+  setTimeout(()=>{ if(state==='playing') bannerEl.textContent=''; },900);
+}
+
+function reset(){
+  score=0;lives=3;level=1;state='ready';
+  bannerEl.textContent=I18N.t('start_hint','Press Space / Click / Tap to begin');
+}
+reset();
+
+function groupsFromCuts(){
+  const groups=[];
+  let cur=[0];
+  for(let i=0;i<cuts.length;i++){
+    if(cuts[i]){groups.push(cur);cur=[i+1];}
+    else{cur.push(i+1);}
+  }
+  groups.push(cur);
+  return groups;
+}
+
+function computeOutput(){
+  const groups=groupsFromCuts();
+  const lens=groups.map(g=>g.length);
+  const uniform=lens.every(l=>l===lens[0]);
+  if(!uniform)return {valid:false};
+  const stringLen=lens[0];
+  const numStrings=groups.length;
+  return {valid:true,v:panelV*stringLen,i:panelI*numStrings,stringLen,numStrings};
+}
+
+function toggleGap(idx){
+  cuts[idx]=!cuts[idx];
+  SFX.select();
+}
+
+function submitWiring(){
+  if(state!=='playing')return;
+  const out=computeOutput();
+  if(!out.valid){
+    lives--;
+    SFX.error();
+    resultGood=false;
+    resultMsg=I18N.t('short_circuit','Short circuit — string voltages don’t match!');
+    resultTimer=1.1;
+    state='result';
+    if(lives<=0)setTimeout(endGame,1100);
+    else setTimeout(()=>{ startLevel(); },1100);
+    return;
+  }
+  const okV=Math.abs(out.v-targetV)<=0.01;
+  const okI=Math.abs(out.i-targetI)<=0.01;
+  if(okV&&okI){
+    resultGood=true;
+    const pts=50+level*10;
+    score+=pts;
+    if(score>hi)hi=score;
+    SFX.success();
+    resultMsg=I18N.t('wiring_matched','Output matched! +{n} pts').replace('{n}',pts);
+    resultTimer=1.0;
+    state='result';
+    setTimeout(()=>{
+      if(level>=MAX_LEVEL)winGame();
+      else{level++;startLevel();}
+    },1000);
+  }else{
+    lives--;
+    SFX.fail();
+    resultGood=false;
+    resultMsg=I18N.t('wiring_mismatch','Output does not match the target spec.');
+    resultTimer=1.1;
+    state='result';
+    if(lives<=0)setTimeout(endGame,1100);
+    else setTimeout(()=>{ startLevel(); },1100);
+  }
+}
+submitBtn.addEventListener('click',submitWiring);
+
+function endGame(){
+  state='over';
+  SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  bannerEl.textContent=I18N.t('game_over_title','GAME OVER');
+  submitBtn.disabled=true;
+}
+
+function winGame(){
+  state='win';
+  SFX.win();
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  bannerEl.textContent=I18N.t('win_title','Array fully wired! You win!');
+  submitBtn.disabled=true;
+}
+
+function panelLayout(){
+  const margin=60,usable=800-margin*2;
+  const pw=Math.min(70,usable/numPanels-10);
+  const gap=(usable-pw*numPanels)/(numPanels-1||1);
+  const xs=[];
+  for(let i=0;i<numPanels;i++)xs.push(margin+i*(pw+gap));
+  return {xs,pw,gap,y:120,h:90};
+}
+
+function drawPanels(){
+  const {xs,pw,gap,y,h}=panelLayout();
+  for(let i=0;i<numPanels;i++){
+    ctx.fillStyle='#1c3b57';
+    ctx.fillRect(xs[i],y,pw,h);
+    ctx.strokeStyle='#5aa9e6';ctx.lineWidth=2;
+    ctx.strokeRect(xs[i],y,pw,h);
+    ctx.strokeStyle='rgba(90,169,230,.5)';ctx.lineWidth=1;
+    for(let gx=8;gx<pw;gx+=10)ctx.strokeRect(xs[i]+gx-8,y+4,8,h-8);
+  }
+  for(let i=0;i<numPanels-1;i++){
+    const x1=xs[i]+pw,x2=xs[i+1];
+    const midY=y+h/2;
+    const cutFlag=cuts[i];
+    ctx.strokeStyle=cutFlag?'#e74c3c':'#2ecc71';
+    ctx.lineWidth=cutFlag?2:5;
+    ctx.setLineDash(cutFlag?[5,5]:[]);
+    ctx.beginPath();ctx.moveTo(x1,midY);ctx.lineTo(x2,midY);ctx.stroke();
+    ctx.setLineDash([]);
+    const midX=(x1+x2)/2;
+    if(i===selGap){
+      ctx.strokeStyle='#fff';ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(midX,midY,14,0,Math.PI*2);ctx.stroke();
+    }
+    ctx.fillStyle='#dfe8f0';ctx.font='bold 12px Arial';ctx.textAlign='center';
+    ctx.fillText(cutFlag?'∥':'—',midX,midY-14);
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,800,320);
+  ctx.fillStyle='#0f2027';ctx.fillRect(0,0,800,320);
+  if(state==='playing'||state==='result'){
+    drawPanels();
+    const out=computeOutput();
+    ctx.fillStyle='#eaf0ff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('target_label','Target: {v}V / {i}A').replace('{v}',targetV).replace('{i}',targetI),400,40);
+    if(out.valid){
+      ctx.fillStyle='#ffd54f';
+      ctx.fillText(I18N.t('current_label','Your wiring: {v}V / {i}A').replace('{v}',out.v).replace('{i}',out.i),400,260);
+    }else{
+      ctx.fillStyle='#e74c3c';
+      ctx.fillText(I18N.t('mismatch_strings','Mismatched string lengths!'),400,260);
+    }
+    ctx.font='13px Arial';ctx.fillStyle='#9fb3c8';
+    ctx.fillText(I18N.t('panel_rating_label','Each panel: {v}V / {i}A').replace('{v}',panelV).replace('{i}',panelI),400,285);
+  }
+  if(state==='ready'){
+    ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(0,0,800,320);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Click / Tap to begin'),400,160);
+  }else if(state==='over'){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,800,320);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,150);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click / Tap to restart'),400,185);
+  }else if(state==='win'){
+    ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,800,320);
+    ctx.fillStyle='#ffd54f';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('win_title','Array fully wired! You win!'),400,150);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('restart_hint','Click / Tap to restart'),400,185);
+  }
+  if(resultTimer>0){
+    ctx.fillStyle=resultGood?'#2ecc71':'#e74c3c';
+    ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.fillText(resultMsg,400,20);
+  }
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  livesEl.textContent=I18N.t('lives_label','Lives: {l}').replace('{l}',fmtLives());
+  levelEl.textContent=I18N.t('level_label_short','Level: {n}').replace('{n}',level);
+  timeEl.textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.max(0,Math.ceil(timeLeft)));
+}
+
+let lastTime=null;
+function tick(dt){
+  if(resultTimer>0)resultTimer-=dt;
+  if(state==='playing'){
+    timeLeft-=dt;
+    if(timeLeft<=0){
+      timeLeft=0;
+      lives--;
+      SFX.fail();
+      resultGood=false;
+      resultMsg=I18N.t('time_up','Time’s up!');
+      resultTimer=1.0;
+      state='result';
+      if(lives<=0)setTimeout(endGame,1000);
+      else setTimeout(()=>{ startLevel(); },1000);
+    }
+  }
+}
+
+function loop(ts){
+  if(lastTime===null)lastTime=ts;
+  const dt=Math.min((ts-lastTime)/1000,0.1);
+  lastTime=ts;
+  tick(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function canvasPos(e){
+  const rect=c.getBoundingClientRect();
+  const sx=c.width/rect.width,sy=c.height/rect.height;
+  let clientX,clientY;
+  if(e.touches&&e.touches.length){clientX=e.touches[0].clientX;clientY=e.touches[0].clientY;}
+  else{clientX=e.clientX;clientY=e.clientY;}
+  return {x:(clientX-rect.left)*sx,y:(clientY-rect.top)*sy};
+}
+
+function handleTap(e){
+  if(state==='ready'||state==='over'||state==='win'){
+    if(state!=='ready')reset();
+    startLevel();
+    return;
+  }
+  if(state!=='playing')return;
+  const pos=canvasPos(e);
+  const {xs,pw,y,h}=panelLayout();
+  for(let i=0;i<numPanels-1;i++){
+    const x1=xs[i]+pw,x2=xs[i+1];
+    const midX=(x1+x2)/2,midY=y+h/2;
+    if(Math.hypot(pos.x-midX,pos.y-midY)<22){
+      selGap=i;
+      toggleGap(i);
+      return;
+    }
+  }
+}
+
+c.addEventListener('click',handleTap);
+c.addEventListener('touchstart',e=>{e.preventDefault();handleTap(e);},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight'].includes(e.key)||e.code==='Space'||e.code==='Enter'){
+    e.preventDefault();
+  }
+  if(state==='ready'||state==='over'||state==='win'){
+    if(e.code==='Space'||e.code==='Enter'){
+      if(state!=='ready')reset();
+      startLevel();
+    }
+    return;
+  }
+  if(state!=='playing')return;
+  if(e.key==='ArrowLeft')selGap=(selGap-1+cuts.length)%cuts.length;
+  else if(e.key==='ArrowRight')selGap=(selGap+1)%cuts.length;
+  else if(e.code==='Space')toggleGap(selGap);
+  else if(e.code==='Enter')submitWiring();
+});
+</script></body></html>

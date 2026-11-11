@@ -1,0 +1,286 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Wind Turbine Crane Lifting</title><meta name="description" content="Play Wind Turbine Crane Lifting free online — Swing the crane boom and hoist heavy blades and nacelle parts into place without slamming them into the tower."><link rel="canonical" href="https://games.multiportllc.com/games/windturbinecranelifting"><meta property="og:title" content="Wind Turbine Crane Lifting - Multiport Games"><meta property="og:description" content="Play Wind Turbine Crane Lifting free online — Swing the crane boom and hoist heavy blades and nacelle parts into place without slamming them into the tower."><meta property="og:url" content="https://games.multiportllc.com/games/windturbinecranelifting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Wind Turbine Crane Lifting","description":"Play Wind Turbine Crane Lifting free online instantly. Swing the crane boom and hoist heavy blades and nacelle parts into place without slamming them into the tower. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/windturbinecranelifting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#bcd8ea;display:block;border-radius:8px;touch-action:none}
+#hud{color:#eaf6ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Wind Turbine Crane Lifting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span id="lives-display">Lives: ❤❤❤</span>
+      <span id="level-display">Lift: 1</span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Left/Right Arrow</b> (or <b>drag left/right</b>) to swing the boom, <b>Up/Down Arrow</b> (or <b>drag up/down</b>) to reel the cable in and out. Guide the swinging load into the glowing target slot without letting it crash into the tower or ground. Loads get heavier and swingier with every lift!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+const ID='windturbinecranelifting';
+let score=0,hi=+(localStorage.getItem(ID+'_hi')||0),lives=3,lift=1,gameOver=false,started=false,won=false,placed=false;
+const boomPivot={x:120,y:60};
+let boomAngle=35; // degrees from horizontal, controls trolley x position along boom
+let cableLen=120,targetCableLen=120;
+let load={x:0,y:0,vx:0,vy:0,swing:0,swingV:0,w:0,h:0,mass:1};
+let targetSlot={x:0,y:0,w:0,h:0};
+let towerX=400,towerW=40;
+let keys={};
+let timeLeft=0,maxTime=0;
+let flashMsg='',flashT=0;
+let dragging=false,dragStartX=0,dragStartY=0,dragStartAngle=0,dragStartCable=0;
+
+function fmtHud(){
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  document.getElementById('lives-display').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','❤'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives)));
+  document.getElementById('level-display').textContent=I18N.t('lift_label','Lift: {n}').replace('{n}',lift);
+}
+
+function boomTip(){
+  const rad=boomAngle*Math.PI/180;
+  return {x:boomPivot.x+Math.cos(rad)*560,y:boomPivot.y-Math.sin(rad)*140-20};
+}
+
+function startLift(n){
+  lift=n;
+  boomAngle=35;
+  cableLen=100;
+  targetCableLen=100;
+  load.swing=(Math.random()*10-5)*(1+n*0.15);
+  load.swingV=0;
+  load.w=34+Math.min(26,n*3);
+  load.h=20+Math.min(14,n*1.6);
+  load.mass=1+n*0.12;
+  targetSlot.w=load.w+22;
+  targetSlot.h=load.h+18;
+  const slotYs=[150,220,290];
+  targetSlot.y=slotYs[Math.min(slotYs.length-1,Math.floor(Math.random()*slotYs.length))];
+  targetSlot.x=towerX;
+  maxTime=1100-n*25;
+  if(maxTime<480)maxTime=480;
+  timeLeft=maxTime;
+  placed=false;won=false;
+  started=true;gameOver=false;
+  flashMsg=I18N.t('lift_start','Lift {n}: guide the load into the slot!').replace('{n}',n);
+  flashT=90;
+}
+
+function reset(){
+  score=0;lives=3;
+  startLift(1);
+}
+
+function pos(e){
+  const r=c.getBoundingClientRect();
+  const scaleX=W/r.width,scaleY=H/r.height;
+  if(e.touches&&e.touches.length)return {x:(e.touches[0].clientX-r.left)*scaleX,y:(e.touches[0].clientY-r.top)*scaleY};
+  return {x:(e.clientX-r.left)*scaleX,y:(e.clientY-r.top)*scaleY};
+}
+
+c.addEventListener('mousedown',e=>{
+  if(!started||gameOver){reset();return;}
+  const p=pos(e);
+  dragging=true;dragStartX=p.x;dragStartY=p.y;dragStartAngle=boomAngle;dragStartCable=targetCableLen;
+});
+window.addEventListener('mousemove',e=>{
+  if(!dragging)return;
+  const p=pos(e);
+  boomAngle=Math.max(8,Math.min(80,dragStartAngle-(p.x-dragStartX)*0.15));
+  targetCableLen=Math.max(60,Math.min(300,dragStartCable+(p.y-dragStartY)*0.6));
+});
+window.addEventListener('mouseup',()=>{dragging=false;});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started||gameOver){reset();return;}
+  const p=pos(e);
+  dragging=true;dragStartX=p.x;dragStartY=p.y;dragStartAngle=boomAngle;dragStartCable=targetCableLen;
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(!dragging)return;
+  const p=pos(e);
+  boomAngle=Math.max(8,Math.min(80,dragStartAngle-(p.x-dragStartX)*0.15));
+  targetCableLen=Math.max(60,Math.min(300,dragStartCable+(p.y-dragStartY)*0.6));
+},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragging=false;},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(!started||gameOver){ if(e.code==='Space')reset(); }
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function loseLife(reason){
+  lives--;
+  SFX.lose&&SFX.lose();
+  flashMsg=reason;flashT=70;
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(ID+'_hi',String(Math.floor(hi)));}
+  } else {
+    boomAngle=35;targetCableLen=100;load.swing=(Math.random()*10-5);load.swingV=0;timeLeft=Math.floor(maxTime*0.7);placed=false;
+  }
+}
+
+function drawScene(){
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#cfe8f7');grad.addColorStop(1,'#8db7cf');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#7a8f52';ctx.fillRect(0,H-40,W,40);
+
+  // tower (turbine under construction)
+  ctx.fillStyle='#8a97a1';
+  ctx.fillRect(towerX-towerW/2,120,towerW,H-40-120);
+  ctx.strokeStyle='#5c6a73';ctx.lineWidth=2;ctx.strokeRect(towerX-towerW/2,120,towerW,H-40-120);
+
+  // target slot glow
+  ctx.save();
+  const slotOk=Math.abs(cableTip().x-targetSlot.x)<targetSlot.w/2 && Math.abs(cableTip().y-targetSlot.y)<targetSlot.h/2;
+  ctx.globalAlpha=0.55+0.25*Math.sin(performance.now()/180);
+  ctx.fillStyle=slotOk?'#66ffb0':'#ffe066';
+  ctx.fillRect(targetSlot.x-targetSlot.w/2,targetSlot.y-targetSlot.h/2,targetSlot.w,targetSlot.h);
+  ctx.globalAlpha=1;
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;
+  ctx.strokeRect(targetSlot.x-targetSlot.w/2,targetSlot.y-targetSlot.h/2,targetSlot.w,targetSlot.h);
+  ctx.restore();
+
+  // crane base
+  ctx.fillStyle='#d9a400';
+  ctx.fillRect(boomPivot.x-40,boomPivot.y+10,80,H-40-(boomPivot.y+10));
+  ctx.beginPath();ctx.arc(boomPivot.x,boomPivot.y,14,0,Math.PI*2);ctx.fillStyle='#b58900';ctx.fill();
+
+  // boom
+  const tip=boomTip();
+  ctx.strokeStyle='#d9a400';ctx.lineWidth=10;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(boomPivot.x,boomPivot.y);ctx.lineTo(tip.x,tip.y);ctx.stroke();
+  ctx.strokeStyle='#8a6400';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(boomPivot.x,boomPivot.y);ctx.lineTo(tip.x,tip.y);ctx.stroke();
+}
+
+function cableTip(){
+  const tip=boomTip();
+  const swingRad=load.swing*Math.PI/180;
+  return {x:tip.x+Math.sin(swingRad)*cableLen, y:tip.y+Math.cos(swingRad)*cableLen};
+}
+
+function drawCableAndLoad(){
+  const tip=boomTip();
+  const lp=cableTip();
+  ctx.strokeStyle='#333';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(tip.x,tip.y);ctx.lineTo(lp.x,lp.y);ctx.stroke();
+
+  ctx.save();
+  ctx.translate(lp.x,lp.y);
+  ctx.rotate(load.swing*Math.PI/180*0.3);
+  ctx.fillStyle=lift%2===0?'#c0392b':'#2e7d32';
+  ctx.fillRect(-load.w/2,-load.h/2,load.w,load.h);
+  ctx.strokeStyle='#222';ctx.lineWidth=2;ctx.strokeRect(-load.w/2,-load.h/2,load.w,load.h);
+  ctx.restore();
+}
+
+function drawBars(){
+  const pct=Math.max(0,timeLeft/maxTime);
+  ctx.fillStyle='#00000055';ctx.fillRect(40,20,W-80,10);
+  ctx.fillStyle=pct>0.3?'#4caf50':'#e53935';
+  ctx.fillRect(40,20,(W-80)*pct,10);
+  ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.strokeRect(40,20,W-80,10);
+}
+
+function rectsOverlap(ax,ay,aw,ah,bx,by,bw,bh){
+  return Math.abs(ax-bx)<(aw+bw)/2 && Math.abs(ay-by)<(ah+bh)/2;
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawScene();
+
+  if(!started){
+    ctx.fillStyle='#1a2a3acc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Arrows / drag / tap to start'),W/2,H/2);
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  if(gameOver){
+    drawCableAndLoad();
+    drawBars();
+    ctx.fillStyle='#000000aa';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press a key or tap to restart'),W/2,H/2+26);
+    fmtHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const boomSpeed=0.9,cableSpeed=2.6;
+  if(keys['ArrowLeft'])boomAngle=Math.min(80,boomAngle+boomSpeed);
+  if(keys['ArrowRight'])boomAngle=Math.max(8,boomAngle-boomSpeed);
+  if(keys['ArrowUp'])targetCableLen=Math.max(60,targetCableLen-cableSpeed);
+  if(keys['ArrowDown'])targetCableLen=Math.min(300,targetCableLen+cableSpeed);
+
+  cableLen+=(targetCableLen-cableLen)*0.08;
+
+  // pendulum physics for swing angle, influenced by boom motion
+  const gravityPull=-load.swing*0.01*load.mass;
+  load.swingV+=gravityPull;
+  load.swingV*=0.985;
+  load.swing+=load.swingV;
+
+  timeLeft--;
+  if(timeLeft<=0){
+    loseLife(I18N.t('time_up','Shift ended before the load was placed!'));
+  }
+
+  // collision with tower (only matters while load hasn't been placed)
+  const lp=cableTip();
+  if(!placed){
+    const hitTower = Math.abs(lp.x-towerX) < (towerW/2 + load.w/2) && lp.y>110 && lp.y<H-40;
+    const hitGround = lp.y > H-40-load.h/2;
+    if(hitTower||hitGround){
+      loseLife(hitTower?I18N.t('crashed_tower','Crash! The load struck the tower.'):I18N.t('crashed_ground','Crash! The load hit the ground.'));
+    }
+  }
+
+  drawCableAndLoad();
+  drawBars();
+
+  if(!placed && rectsOverlap(lp.x,lp.y,load.w,load.h,targetSlot.x,targetSlot.y,targetSlot.w,targetSlot.h) && Math.abs(load.swingV)<0.6){
+    placed=true;
+    score+=90+lift*12;
+    SFX.win&&SFX.win();
+    if(score>hi){hi=score;localStorage.setItem(ID+'_hi',String(Math.floor(hi)));}
+    flashMsg=I18N.t('placed','Placed perfectly!');
+    flashT=70;
+  }
+
+  if(flashT>0){
+    flashT--;
+    ctx.fillStyle='#1a2a3a';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.globalAlpha=Math.min(1,flashT/20);
+    ctx.fillText(flashMsg,W/2,H-55);
+    ctx.globalAlpha=1;
+  }
+
+  if(placed&&flashT===0){
+    startLift(lift+1);
+  }
+
+  fmtHud();
+  requestAnimationFrame(loop);
+}
+started=false;
+loop();
+</script></body></html>
