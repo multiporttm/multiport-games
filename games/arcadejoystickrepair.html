@@ -1,0 +1,391 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Arcade Joystick Repair</title><meta name="description" content="Play Arcade Joystick Repair free online — Remove the worn parts in order, install fresh microswitches, fit the matching restrictor gate, then test every direction before the clock runs out."><link rel="canonical" href="https://games.multiportllc.com/games/arcadejoystickrepair"><meta property="og:title" content="Arcade Joystick Repair - Multiport Games"><meta property="og:description" content="Play Arcade Joystick Repair free online — Remove the worn parts in order, install fresh microswitches, fit the matching restrictor gate, then test every direction before the clock runs out."><meta property="og:url" content="https://games.multiportllc.com/games/arcadejoystickrepair"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Arcade Joystick Repair - Multiport Games"><meta name="twitter:description" content="Play Arcade Joystick Repair free online — Remove the worn parts in order, install fresh microswitches, fit the matching restrictor gate, then test every direction before the clock runs out."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Arcade Joystick Repair","description":"Play Arcade Joystick Repair free online instantly. Tear down a worn arcade joystick in the right order, snap in fresh microswitches, fit the restrictor gate that matches the stick's 4-way or 8-way layout, then slam the stick through every direction to prove it registers cleanly before time runs out. Switch counts rise and the test clock shrinks every round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/arcadejoystickrepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a1a22;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#ff8fa3;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#timerWrap{max-width:600px;margin:0 auto 8px;background:#161620;border-radius:10px;padding:4px}
+#timerBar{height:12px;border-radius:8px;background:linear-gradient(90deg,#ff4757,#ffb3bd);width:100%;transition:width .15s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Arcade Joystick Repair</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Stick 1/5</span>
+    </div>
+    <div id="timerWrap"><div id="timerBar"></div></div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> <b>Teardown:</b> click the worn parts in the numbered order shown. <b>Install:</b> click every empty slot to snap in a fresh microswitch. <b>Gate:</b> pick the restrictor gate that matches this stick (4-way square or 8-way octagon). <b>Test:</b> drag the stick, use the <b>Arrow Keys / WASD</b>, or swipe to hit every lit direction before the clock runs out. Wrong order, wrong gate, or a blown clock costs a life!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const ID="arcadejoystickrepair";
+const TOTAL_LEVELS=5;
+const TYPES=['4-way','8-way','4-way','8-way','8-way'];
+let hi=parseInt(localStorage.getItem(ID+"_hi")||"0",10);
+
+let level=0,score=0,lives=3,gameOver=false,started=false,won=false;
+let phase='teardown'; // teardown, install, gate, test, done
+let parts=[],removeOrder=[],removeStep=0,installedCount=0;
+let gateChoice=null,requiredGate=null;
+let timeLeft=0,timeMax=0;
+let stick={x:0,y:0};
+let dirs=[],hitSet=[];
+let flashTimer=0,flashGood=true,msgTimer=0,msgText='';
+const keys={};
+const CX=400,CY=180,R=95,STICKR=38;
+
+function dirCount(type){return type==='8-way'?8:4;}
+function dirAngles(type){
+  const n=dirCount(type);
+  const arr=[];
+  for(let i=0;i<n;i++)arr.push(i*(360/n)-90);
+  return arr;
+}
+
+function buildLevel(){
+  const type=TYPES[level];
+  requiredGate=type;
+  const n=dirCount(type);
+  parts=[];
+  for(let i=0;i<n;i++){
+    const ang=(i*(360/n)-90)*Math.PI/180;
+    parts.push({idx:i,x:CX+Math.cos(ang)*R,y:CY+Math.sin(ang)*R,removed:false,installed:false});
+  }
+  removeOrder=[];
+  for(let i=0;i<n;i++)removeOrder.push(i);
+  // shuffle teardown order so it must be read off the numbered labels, not guessed
+  for(let i=removeOrder.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));const t=removeOrder[i];removeOrder[i]=removeOrder[j];removeOrder[j]=t;}
+  removeStep=0;
+  installedCount=0;
+  gateChoice=null;
+  phase='teardown';
+  timeMax=Math.max(5,11-level*1.1);
+  timeLeft=timeMax;
+  stick={x:CX,y:CY};
+  dirs=dirAngles(type);
+  hitSet=dirs.map(()=>false);
+}
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('stick_label','Stick {n}/{t}').replace('{n}',Math.min(level+1,TOTAL_LEVELS)).replace('{t}',TOTAL_LEVELS);
+  document.getElementById('timerBar').style.width=(phase==='test'?Math.max(0,100*timeLeft/timeMax):100)+'%';
+}
+
+function reset(){
+  level=0;score=0;lives=3;gameOver=false;started=false;won=false;
+  buildLevel();setHud();
+}
+
+function flash(good){flashTimer=16;flashGood=good;}
+function msg(t){msgText=t;msgTimer=70;}
+
+function loseLife(){
+  lives--;
+  SFX.error();
+  flash(false);
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem(ID+"_hi",hi);}
+    SFX.lose();
+  }
+}
+
+function completeLevel(){
+  SFX.levelup();
+  score+=100+level*20;
+  level++;
+  if(level>=TOTAL_LEVELS){
+    won=true;
+    if(score>hi){hi=score;localStorage.setItem(ID+"_hi",hi);}
+  }else{
+    buildLevel();
+  }
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();}
+}
+
+function canvasPos(ev){
+  const r=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return {x:cx*(800/r.width),y:cy*(400/r.height)};
+}
+
+function handleClickPart(p){
+  const idx=p.x,ignore=0;
+}
+
+let pointerDown=false;
+function handlePointer(ev,isDown){
+  if(!started||gameOver||won)return;
+  const p=canvasPos(ev);
+  if(phase==='teardown'){
+    for(let i=0;i<parts.length;i++){
+      const pt=parts[i];
+      if(pt.removed)continue;
+      if(Math.hypot(p.x-pt.x,p.y-pt.y)<22){
+        if(pt.idx===removeOrder[removeStep]){
+          pt.removed=true;removeStep++;SFX.hit();
+          if(removeStep>=removeOrder.length){phase='install';msg(I18N.t('install_msg','Install fresh microswitches'));}
+        }else{
+          loseLife();msg(I18N.t('order_msg','Wrong order!'));
+        }
+        return;
+      }
+    }
+  }else if(phase==='install'){
+    for(let i=0;i<parts.length;i++){
+      const pt=parts[i];
+      if(pt.installed)continue;
+      if(Math.hypot(p.x-pt.x,p.y-pt.y)<22){
+        pt.installed=true;installedCount++;SFX.coin();
+        if(installedCount>=parts.length){phase='gate';msg(I18N.t('gate_msg','Pick the matching gate'));}
+        return;
+      }
+    }
+  }else if(phase==='gate'){
+    const sqR={x:260,y:300,w:120,h:60};
+    const octR={x:420,y:300,w:120,h:60};
+    if(p.x>=sqR.x&&p.x<=sqR.x+sqR.w&&p.y>=sqR.y&&p.y<=sqR.y+sqR.h){
+      chooseGate('4-way');
+    }else if(p.x>=octR.x&&p.x<=octR.x+octR.w&&p.y>=octR.y&&p.y<=octR.y+octR.h){
+      chooseGate('8-way');
+    }
+  }else if(phase==='test'){
+    if(isDown){pointerDown=true;}
+    if(pointerDown){
+      const dx=p.x-CX,dy=p.y-CY;
+      const d=Math.min(1,Math.hypot(dx,dy)/R);
+      const ang=Math.atan2(dy,dx);
+      stick.x=CX+Math.cos(ang)*d*R;
+      stick.y=CY+Math.sin(ang)*d*R;
+    }
+  }
+}
+
+function chooseGate(choice){
+  gateChoice=choice;
+  if(choice===requiredGate){
+    SFX.success();phase='test';msg(I18N.t('test_msg','Test every direction!'));
+  }else{
+    loseLife();msg(I18N.t('gate_wrong_msg','Wrong gate shape!'));
+  }
+}
+
+c.addEventListener('mousedown',e=>{startOrRestart();handlePointer(e,true);});
+c.addEventListener('mousemove',e=>{if(phase==='test')handlePointer(e,false);});
+window.addEventListener('mouseup',()=>{pointerDown=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();handlePointer(e,true);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(phase==='test')handlePointer(e,false);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerDown=false;},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','KeyW','KeyA','KeyS','KeyD'].includes(e.code))e.preventDefault();
+  if(e.code==='Space')startOrRestart();
+  keys[e.code]=true;
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function nearestDirIndex(ang){
+  let best=0,bestDiff=1e9;
+  for(let i=0;i<dirs.length;i++){
+    let diff=Math.abs(((ang-dirs[i]+540)%360)-180);
+    if(diff<bestDiff){bestDiff=diff;best=i;}
+  }
+  return {idx:best,diff:bestDiff};
+}
+
+function updateTest(dt){
+  timeLeft-=dt/60;
+  let mx=0,my=0;
+  if(keys['ArrowLeft']||keys['KeyA'])mx-=1;
+  if(keys['ArrowRight']||keys['KeyD'])mx+=1;
+  if(keys['ArrowUp']||keys['KeyW'])my-=1;
+  if(keys['ArrowDown']||keys['KeyS'])my+=1;
+  if(mx||my){
+    const ang=Math.atan2(my,mx);
+    stick.x=CX+Math.cos(ang)*R;
+    stick.y=CY+Math.sin(ang)*R;
+  }else if(!pointerDown){
+    stick.x+=(CX-stick.x)*0.2;
+    stick.y+=(CY-stick.y)*0.2;
+  }
+  const dx=stick.x-CX,dy=stick.y-CY;
+  const dist=Math.hypot(dx,dy);
+  if(dist>R*0.78){
+    const ang=Math.atan2(dy,dx)*180/Math.PI;
+    const near=nearestDirIndex(ang);
+    if(near.diff<(360/dirs.length)/2+2 && !hitSet[near.idx]){
+      hitSet[near.idx]=true;
+      SFX.point();
+      score+=15;
+    }
+  }
+  if(hitSet.every(h=>h)){
+    completeLevel();
+  }else if(timeLeft<=0){
+    timeLeft=0;
+    loseLife();
+    if(!gameOver){
+      hitSet=dirs.map(()=>false);
+      timeLeft=timeMax;
+      stick={x:CX,y:CY};
+    }
+  }
+}
+
+function drawStickBase(){
+  ctx.fillStyle='#24242e';
+  ctx.beginPath();ctx.arc(CX,CY,R+18,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#3a3a48';ctx.lineWidth=4;ctx.stroke();
+}
+
+function drawPartsTeardown(){
+  parts.forEach((p,i)=>{
+    ctx.beginPath();ctx.arc(p.x,p.y,18,0,Math.PI*2);
+    ctx.fillStyle=p.removed?'#1a1a22':'#5a3a3a';
+    ctx.fill();
+    if(!p.removed){
+      ctx.strokeStyle='#ffb3b3';ctx.lineWidth=2;ctx.stroke();
+      ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+      ctx.fillText(String(removeOrder.indexOf(p.idx)+1),p.x,p.y+4);
+    }
+  });
+}
+
+function drawPartsInstall(){
+  parts.forEach((p)=>{
+    ctx.beginPath();ctx.arc(p.x,p.y,18,0,Math.PI*2);
+    ctx.fillStyle=p.installed?'#2f6e3f':'#13131a';
+    ctx.fill();
+    ctx.strokeStyle=p.installed?'#9fe6af':'#ff8fa3';ctx.lineWidth=2;ctx.stroke();
+    if(p.installed){
+      ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+      ctx.fillText('✓',p.x,p.y+4);
+    }
+  });
+}
+
+function drawGateChoices(){
+  const sqR={x:260,y:300,w:120,h:60};
+  const octR={x:420,y:300,w:120,h:60};
+  [[sqR,'4-way',I18N.t('square_gate','Square Gate')],[octR,'8-way',I18N.t('oct_gate','Octagon Gate')]].forEach(([r,type,label])=>{
+    ctx.fillStyle='#24242e';ctx.fillRect(r.x,r.y,r.w,r.h);
+    ctx.strokeStyle='#ff8fa3';ctx.lineWidth=2;ctx.strokeRect(r.x,r.y,r.w,r.h);
+    ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+    ctx.fillText(label,r.x+r.w/2,r.y+r.h/2+5);
+  });
+}
+
+function drawTest(){
+  dirs.forEach((a,i)=>{
+    const ang=a*Math.PI/180;
+    const tx=CX+Math.cos(ang)*(R+4),ty=CY+Math.sin(ang)*(R+4);
+    ctx.beginPath();ctx.arc(tx,ty,13,0,Math.PI*2);
+    ctx.fillStyle=hitSet[i]?'#7ec850':'#5a2a33';
+    ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+  });
+  ctx.beginPath();ctx.moveTo(CX,CY);ctx.lineTo(stick.x,stick.y);
+  ctx.strokeStyle='#888';ctx.lineWidth=8;ctx.lineCap='round';ctx.stroke();
+  ctx.beginPath();ctx.arc(stick.x,stick.y,16,0,Math.PI*2);
+  ctx.fillStyle='#ff4757';ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,800,400);
+  const sky=ctx.createLinearGradient(0,0,0,400);
+  sky.addColorStop(0,'#111118');sky.addColorStop(1,'#1a1a22');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,400);
+  ctx.textAlign='center';
+
+  if(!started){
+    drawStickBase();drawPartsTeardown();
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Space to start'),400,30);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','STICK SCRAPPED'),400,180);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,216);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#7ec850';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','ALL STICKS REPAIRED! 🕹️'),400,170);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,205);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,235);
+    requestAnimationFrame(loop);return;
+  }
+
+  drawStickBase();
+  if(phase==='teardown'){
+    drawPartsTeardown();
+    ctx.fillStyle='#ff8fa3';ctx.font='bold 16px Arial';
+    ctx.fillText(I18N.t('teardown_hint','Remove parts in numbered order'),400,20);
+  }else if(phase==='install'){
+    drawPartsInstall();
+    ctx.fillStyle='#9fe6af';ctx.font='bold 16px Arial';
+    ctx.fillText(I18N.t('install_hint','Install every fresh microswitch'),400,20);
+  }else if(phase==='gate'){
+    drawPartsInstall();
+    drawGateChoices();
+    ctx.fillStyle='#f6d57a';ctx.font='bold 16px Arial';
+    ctx.fillText(I18N.t('gate_hint','Pick the matching restrictor gate'),400,20);
+  }else if(phase==='test'){
+    updateTest(dt);
+    drawTest();
+    ctx.fillStyle='#f6d57a';ctx.font='bold 16px Arial';
+    ctx.fillText(I18N.t('test_hint','Hit every lit direction!'),400,20);
+  }
+
+  if(msgTimer>0){
+    msgTimer--;
+    ctx.fillStyle='#ff6b6b';ctx.font='bold 18px Arial';
+    ctx.fillText(msgText,400,360);
+  }
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.18)':'rgba(255,80,100,0.2)';
+    ctx.fillRect(0,0,800,400);
+  }
+
+  setHud();
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>
