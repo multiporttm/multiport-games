@@ -1,0 +1,293 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Special Effects Makeup Scar Sculpting</title><meta name="description" content="Play Special Effects Makeup Scar Sculpting free online — Drag your wax tool along the skin to trace the glowing reference scar path. Build up the right height and width before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/specialeffectsmakeupscarsculpting"><meta property="og:title" content="Special Effects Makeup Scar Sculpting - Multiport Games"><meta property="og:description" content="Play Special Effects Makeup Scar Sculpting free online — Drag your wax tool along the skin to trace the glowing reference scar path. Build up the right height and width before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/specialeffectsmakeupscarsculpting"><meta property="og:type" content="website"><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Special Effects Makeup Scar Sculpting","description":"Play Special Effects Makeup Scar Sculpting free online instantly. Drag your wax tool along the skin to trace the glowing reference scar path. Build up the right height and width before time runs out. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/specialeffectsmakeupscarsculpting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a1f1a;display:block;border-radius:8px;cursor:crosshair;touch-action:none}
+#score-display{color:#e0b084;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Special Effects Makeup Scar Sculpting</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>Click/tap and drag</b> (or hold <b>Arrow keys</b>) along the glowing reference path to build up wax, staying inside the guide band. Release when the whole scar is built to submit it before the timer runs out. Three bad scars and it's over.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisplay=document.getElementById('score-display');
+const HI_KEY='specialeffectsmakeupscarsculpting_hi';
+
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),lives=3,level=1;
+let path=[],coverage=[],roundTimer=0,roundLimit=0,gameOver=false,started=false,drawing=false,levelFlash=0;
+let kb={up:false,down:false,left:false,right:false};
+let cursor={x:400,y:210};
+let lastTime=null;
+const BAND=16; // guide tolerance width
+
+function genPath(l){
+  // generate a wavy / zigzag scar path of increasing complexity
+  const segs=2+Math.min(5,Math.floor(l/1));
+  const pts=[];
+  let x=180+Math.random()*60,y=140+Math.random()*40;
+  pts.push({x,y});
+  for(let i=0;i<segs;i++){
+    x+=80+Math.random()*60;
+    y+=(Math.random()-0.5)*(80+l*10);
+    y=Math.max(60,Math.min(360,y));
+    x=Math.min(760,x);
+    pts.push({x,y});
+  }
+  return pts;
+}
+
+function sampleCount(){return 60;}
+
+function flattenPath(pts){
+  // densify into evenly spaced points for coverage tracking
+  const out=[];
+  const N=sampleCount();
+  let totalLen=0;
+  for(let i=1;i<pts.length;i++){totalLen+=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y);}
+  const step=totalLen/N;
+  let segI=0,segPos=0;
+  out.push({...pts[0]});
+  for(let n=1;n<=N;n++){
+    let remaining=step;
+    while(segI<pts.length-1){
+      const a=pts[segI],b=pts[segI+1];
+      const segLen=Math.hypot(b.x-a.x,b.y-a.y)-segPos;
+      if(remaining<=segLen){
+        segPos+=remaining;
+        const t=segPos/Math.hypot(b.x-a.x,b.y-a.y);
+        out.push({x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t});
+        break;
+      } else {
+        remaining-=segLen;
+        segI++;segPos=0;
+        if(segI>=pts.length-1){out.push({...pts[pts.length-1]});break;}
+      }
+    }
+  }
+  return out;
+}
+
+function newRound(){
+  path=flattenPath(genPath(level));
+  coverage=path.map(()=>0);
+  roundLimit=Math.max(8,18-level*1.1);
+  roundTimer=roundLimit;
+  cursor={x:path[0].x,y:path[0].y};
+  levelFlash=60;
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;lastTime=null;
+  newRound();
+}
+reset();
+
+function canvasPos(evt){
+  const rect=c.getBoundingClientRect();
+  const scaleX=c.width/rect.width,scaleY=c.height/rect.height;
+  let cx,cy;
+  if(evt.touches&&evt.touches.length){cx=evt.touches[0].clientX;cy=evt.touches[0].clientY;}
+  else{cx=evt.clientX;cy=evt.clientY;}
+  return {x:(cx-rect.left)*scaleX,y:(cy-rect.top)*scaleY};
+}
+
+function startDraw(evt){
+  evt.preventDefault();
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  drawing=true;
+  cursor=canvasPos(evt);
+  applyAt(cursor);
+}
+function moveDraw(evt){
+  if(!drawing)return;
+  evt.preventDefault();
+  cursor=canvasPos(evt);
+  applyAt(cursor);
+}
+function endDraw(evt){ drawing=false; }
+
+c.addEventListener('mousedown',startDraw);
+c.addEventListener('mousemove',moveDraw);
+window.addEventListener('mouseup',endDraw);
+c.addEventListener('touchstart',startDraw,{passive:false});
+c.addEventListener('touchmove',moveDraw,{passive:false});
+c.addEventListener('touchend',endDraw);
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowUp'){kb.up=true;e.preventDefault();}
+  else if(e.code==='ArrowDown'){kb.down=true;e.preventDefault();}
+  else if(e.code==='ArrowLeft'){kb.left=true;e.preventDefault();}
+  else if(e.code==='ArrowRight'){kb.right=true;e.preventDefault();}
+  else if(e.code==='Space'){
+    e.preventDefault();
+    if(gameOver||!started){reset();started=true;return;}
+    drawing=!drawing;
+  }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp')kb.up=false;
+  else if(e.code==='ArrowDown')kb.down=false;
+  else if(e.code==='ArrowLeft')kb.left=false;
+  else if(e.code==='ArrowRight')kb.right=false;
+});
+
+function applyAt(p){
+  let touched=false;
+  for(let i=0;i<path.length;i++){
+    const d=Math.hypot(path[i].x-p.x,path[i].y-p.y);
+    if(d<BAND){
+      coverage[i]=Math.min(1,coverage[i]+0.12);
+      touched=true;
+    }
+  }
+  if(touched&&Math.random()<0.15)SFX.click();
+}
+
+function miss(){
+  lives--;
+  SFX.error();
+  if(lives<=0)endGame();
+}
+
+function checkDone(){
+  const done=coverage.every(v=>v>=1);
+  if(done){
+    const bonus=Math.round(roundTimer*10);
+    score+=120*level+bonus;
+    SFX.levelup();
+    level++;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    newRound();
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+}
+
+function drawSkin(){
+  const bg=ctx.createLinearGradient(0,0,0,420);
+  bg.addColorStop(0,'#c99a76');bg.addColorStop(1,'#b47f58');
+  ctx.fillStyle=bg;ctx.fillRect(40,40,720,340);
+  ctx.strokeStyle='rgba(0,0,0,0.08)';
+  for(let i=0;i<12;i++){
+    ctx.beginPath();ctx.moveTo(40,70+i*28);ctx.lineTo(760,70+i*28);ctx.stroke();
+  }
+}
+
+function drawGuide(){
+  for(let i=0;i<path.length;i++){
+    const p=path[i];
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,BAND,0,Math.PI*2);
+    ctx.fillStyle=`rgba(255,213,79,${0.08+0.12*(1-coverage[i])})`;
+    ctx.fill();
+  }
+}
+
+function drawWax(){
+  for(let i=0;i<path.length;i++){
+    const v=coverage[i];
+    if(v<=0)continue;
+    const p=path[i];
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,4+v*7,0,Math.PI*2);
+    ctx.fillStyle=`rgba(230,200,180,${0.5+v*0.4})`;
+    ctx.fill();
+    ctx.strokeStyle=`rgba(150,100,80,${0.4+v*0.4})`;
+    ctx.lineWidth=1;
+    ctx.stroke();
+  }
+}
+
+function drawCursor(){
+  ctx.beginPath();
+  ctx.arc(cursor.x,cursor.y,6,0,Math.PI*2);
+  ctx.strokeStyle=drawing?'#7ec850':'#fff';
+  ctx.lineWidth=2;
+  ctx.stroke();
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,420);
+  ctx.fillStyle='#1a1410';ctx.fillRect(0,0,800,420);
+
+  if(!started){
+    drawSkin();drawGuide();
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click / Tap to start'),400,30);
+    scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawSkin();drawGuide();drawWax();
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,800,420);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,190);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,228);
+    scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+  if(levelFlash>0)levelFlash--;
+
+  // keyboard-driven cursor
+  const spd=260*dt;
+  if(kb.up)cursor.y-=spd;
+  if(kb.down)cursor.y+=spd;
+  if(kb.left)cursor.x-=spd;
+  if(kb.right)cursor.x+=spd;
+  cursor.x=Math.max(40,Math.min(760,cursor.x));
+  cursor.y=Math.max(40,Math.min(380,cursor.y));
+  if(drawing&&(kb.up||kb.down||kb.left||kb.right))applyAt(cursor);
+
+  roundTimer-=dt;
+  if(roundTimer<=0){
+    roundTimer=0;
+    miss();
+    if(!gameOver)newRound();
+  }
+
+  drawSkin();
+  drawGuide();
+  drawWax();
+  drawCursor();
+  checkDone();
+
+  ctx.fillStyle='#fff';ctx.textAlign='left';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('round_label','Round {l}').replace('{l}',level),16,26);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('time_label','Time: {t}s').replace('{t}',roundTimer.toFixed(1)),784,26);
+  ctx.fillText('❤️'.repeat(Math.max(0,lives)),784,46);
+
+  if(levelFlash>40){
+    ctx.fillStyle=`rgba(255,213,79,${(levelFlash-40)/20})`;
+    ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('round_label','Round {l}').replace('{l}',level),400,210);
+  }
+
+  scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

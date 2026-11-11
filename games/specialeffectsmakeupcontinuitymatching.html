@@ -1,0 +1,275 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Special Effects Makeup Continuity Matching</title><meta name="description" content="Play Special Effects Makeup Continuity Matching free online — Compare the continuity photo to the actor's current look and click/tap every difference before the camera rolls."><link rel="canonical" href="https://games.multiportllc.com/games/specialeffectsmakeupcontinuitymatching"><meta property="og:title" content="Special Effects Makeup Continuity Matching - Multiport Games"><meta property="og:description" content="Play Special Effects Makeup Continuity Matching free online — Compare the continuity photo to the actor's current look and click/tap every difference before the camera rolls."><meta property="og:url" content="https://games.multiportllc.com/games/specialeffectsmakeupcontinuitymatching"><meta property="og:type" content="website"><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Special Effects Makeup Continuity Matching","description":"Play Special Effects Makeup Continuity Matching free online instantly. Compare the continuity photo to the actor's current look and click/tap every difference before the camera rolls. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/specialeffectsmakeupcontinuitymatching","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1c1414;display:block;border-radius:8px;cursor:crosshair}
+#score-display{color:#e0b084;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Special Effects Makeup Continuity Matching</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">The left panel is the <b>continuity photo</b>, the right panel is the actor <b>right now</b>. <b>Click/tap</b> (or move with <b>Arrow keys</b> and press <b>Space</b>) every spot on the right that doesn't match the photo before the take timer hits zero. Wrong clicks cost a life too.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisplay=document.getElementById('score-display');
+const HI_KEY='specialeffectsmakeupcontinuitymatching_hi';
+
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),lives=3,level=1;
+let diffs=[],found=0,roundTimer=0,roundLimit=0,gameOver=false,started=false,levelFlash=0,shakeT=0;
+let lastTime=null;
+let cursor={x:600,y:200};
+let kb={up:false,down:false,left:false,right:false};
+
+const PANEL_L={x:40,y:60,w:320,h:300};
+const PANEL_R={x:440,y:60,w:320,h:300};
+
+// a consistent set of candidate feature "slots" present on both panels
+const SLOTS=[
+  {dx:160,dy:70,r:20,type:'spot'},   // forehead scar/spot
+  {dx:70,dy:140,r:18,type:'spot'},   // cheekL
+  {dx:250,dy:140,r:18,type:'spot'},  // cheekR
+  {dx:100,dy:100,r:14,type:'eye'},   // eyeL bruise
+  {dx:220,dy:100,r:14,type:'eye'},   // eyeR bruise
+  {dx:160,dy:190,r:16,type:'mouth'}, // mouth blood
+  {dx:160,dy:240,r:14,type:'chin'},  // chin dirt
+  {dx:40,dy:160,r:14,type:'ear'},    // ear
+  {dx:280,dy:160,r:14,type:'ear2'},
+];
+
+function colorForSlot(active,hue){
+  return active? hue : 'rgba(0,0,0,0)';
+}
+
+function newRound(){
+  const diffCount=Math.min(SLOTS.length,2+Math.floor(level/1.3));
+  const chosenIdx=SLOTS.map((_,i)=>i).sort(()=>Math.random()-0.5).slice(0,diffCount);
+  // base state: random subset of slots active on photo (reference), consistent baseline
+  const baseActive=SLOTS.map(()=>Math.random()<0.4);
+  diffs=SLOTS.map((s,i)=>{
+    const refActive=baseActive[i];
+    let curActive=refActive;
+    const isDiff=chosenIdx.includes(i);
+    if(isDiff)curActive=!refActive; // flip to create a mismatch on the "current" panel
+    return {...s,refActive,curActive,isDiff,caughtCorrect:false};
+  });
+  found=0;
+  roundLimit=Math.max(7,15-level*0.7);
+  roundTimer=roundLimit;
+  levelFlash=60;
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;lastTime=null;
+  newRound();
+}
+reset();
+
+function canvasPos(evt){
+  const rect=c.getBoundingClientRect();
+  const scaleX=c.width/rect.width,scaleY=c.height/rect.height;
+  let cx,cy;
+  if(evt.touches&&evt.touches.length){cx=evt.touches[0].clientX;cy=evt.touches[0].clientY;}
+  else{cx=evt.clientX;cy=evt.clientY;}
+  return {x:(cx-rect.left)*scaleX,y:(cy-rect.top)*scaleY};
+}
+
+function slotPos(s,panel){return {x:panel.x+panel.w/2-80+s.dx,y:panel.y+s.dy};}
+
+function tryClick(p){
+  for(const s of diffs){
+    const pos=slotPos(s,PANEL_R);
+    const d=Math.hypot(pos.x-p.x,pos.y-p.y);
+    if(d<=s.r+8){
+      if(s.isDiff&&!s.caughtCorrect){
+        s.caughtCorrect=true;
+        found++;
+        score+=40+level*4;
+        SFX.success();
+        checkRoundComplete();
+      } else if(!s.isDiff){
+        miss();
+      }
+      return;
+    }
+  }
+}
+
+function handlePointer(evt){
+  evt.preventDefault();
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  tryClick(canvasPos(evt));
+}
+c.addEventListener('mousedown',handlePointer);
+c.addEventListener('touchstart',handlePointer,{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='ArrowUp'){kb.up=true;e.preventDefault();}
+  else if(e.code==='ArrowDown'){kb.down=true;e.preventDefault();}
+  else if(e.code==='ArrowLeft'){kb.left=true;e.preventDefault();}
+  else if(e.code==='ArrowRight'){kb.right=true;e.preventDefault();}
+  else if(e.code==='Space'){
+    e.preventDefault();
+    if(!started){started=true;return;}
+    if(gameOver){reset();return;}
+    tryClick(cursor);
+  }
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp')kb.up=false;
+  else if(e.code==='ArrowDown')kb.down=false;
+  else if(e.code==='ArrowLeft')kb.left=false;
+  else if(e.code==='ArrowRight')kb.right=false;
+});
+
+function miss(){
+  lives--;
+  shakeT=10;
+  SFX.error();
+  if(lives<=0)endGame();
+}
+
+function checkRoundComplete(){
+  if(diffs.filter(s=>s.isDiff).every(s=>s.caughtCorrect)){
+    const bonus=Math.round(roundTimer*10);
+    score+=bonus;
+    SFX.levelup();
+    level++;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    newRound();
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+}
+
+function drawFace(panel,useCurrent,shake){
+  ctx.save();
+  if(shake){ctx.translate((Math.random()-0.5)*5,(Math.random()-0.5)*5);}
+  ctx.fillStyle='#16213e';
+  ctx.fillRect(panel.x,panel.y,panel.w,panel.h);
+  const cx=panel.x+panel.w/2,cy=panel.y+panel.h/2+10;
+  ctx.fillStyle='#d9ab82';
+  ctx.beginPath();ctx.ellipse(cx,cy,95,130,0,0,Math.PI*2);ctx.fill();
+  // eyes base
+  ctx.fillStyle='#2a1a12';
+  ctx.beginPath();ctx.ellipse(cx-40,cy-40,8,5,0,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.ellipse(cx+40,cy-40,8,5,0,0,Math.PI*2);ctx.fill();
+  // mouth base
+  ctx.strokeStyle='#5a3024';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(cx-22,cy+60);ctx.quadraticCurveTo(cx,cy+68,cx+22,cy+60);ctx.stroke();
+
+  diffs.forEach(s=>{
+    const active=useCurrent?s.curActive:s.refActive;
+    if(!active)return;
+    const pos=slotPos(s,panel);
+    let color='rgba(120,30,30,0.7)';
+    if(s.type==='eye')color='rgba(60,30,80,0.6)';
+    if(s.type==='mouth')color='rgba(140,10,10,0.75)';
+    if(s.type==='spot')color='rgba(90,50,30,0.7)';
+    if(s.type==='chin')color='rgba(60,40,20,0.6)';
+    ctx.fillStyle=color;
+    ctx.beginPath();ctx.arc(pos.x,pos.y,s.r*0.7,0,Math.PI*2);ctx.fill();
+  });
+
+  if(useCurrent){
+    diffs.forEach(s=>{
+      if(s.isDiff&&s.caughtCorrect){
+        const pos=slotPos(s,panel);
+        ctx.strokeStyle='#7ec850';ctx.lineWidth=3;
+        ctx.beginPath();ctx.arc(pos.x,pos.y,s.r+6,0,Math.PI*2);ctx.stroke();
+      }
+    });
+  }
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,400);
+  ctx.fillStyle='#120e0e';ctx.fillRect(0,0,800,400);
+
+  if(!started){
+    drawFace(PANEL_L,false,false);
+    drawFace(PANEL_R,true,false);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click / Tap to start'),400,30);
+    scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawFace(PANEL_L,false,false);
+    drawFace(PANEL_R,true,false);
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,800,400);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,190);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,228);
+    scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+  if(shakeT>0)shakeT--;
+  if(levelFlash>0)levelFlash--;
+
+  const spd=260*dt;
+  if(kb.up)cursor.y-=spd;
+  if(kb.down)cursor.y+=spd;
+  if(kb.left)cursor.x-=spd;
+  if(kb.right)cursor.x+=spd;
+  cursor.x=Math.max(PANEL_R.x,Math.min(PANEL_R.x+PANEL_R.w,cursor.x));
+  cursor.y=Math.max(PANEL_R.y,Math.min(PANEL_R.y+PANEL_R.h,cursor.y));
+
+  roundTimer-=dt;
+  if(roundTimer<=0){
+    roundTimer=0;
+    miss();
+    if(!gameOver)newRound();
+  }
+
+  drawFace(PANEL_L,false,false);
+  drawFace(PANEL_R,true,shakeT>0);
+
+  // keyboard cursor marker on right panel
+  ctx.beginPath();ctx.arc(cursor.x,cursor.y,8,0,Math.PI*2);
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;ctx.stroke();
+
+  ctx.fillStyle='#fff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('continuity_photo_label','CONTINUITY PHOTO'),PANEL_L.x+PANEL_L.w/2,48);
+  ctx.fillText(I18N.t('right_now_label','RIGHT NOW'),PANEL_R.x+PANEL_R.w/2,48);
+
+  ctx.textAlign='left';
+  ctx.fillText(I18N.t('round_label','Round {l}').replace('{l}',level),16,20);
+  ctx.fillText(I18N.t('found_label','Found: {f}/{t}').replace('{f}',found).replace('{t}',diffs.filter(s=>s.isDiff).length),16,380);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('time_label','Time: {t}s').replace('{t}',roundTimer.toFixed(1)),784,20);
+  ctx.fillText('❤️'.repeat(Math.max(0,lives)),784,380);
+
+  if(levelFlash>40){
+    ctx.fillStyle=`rgba(255,213,79,${(levelFlash-40)/20})`;
+    ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('round_label','Round {l}').replace('{l}',level),400,210);
+  }
+
+  scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

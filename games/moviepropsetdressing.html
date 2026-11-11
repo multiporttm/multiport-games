@@ -1,0 +1,332 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Movie Prop Set Dressing</title><meta name="description" content="Play Movie Prop Set Dressing free online — Place furniture and decor to exactly match the continuity photo before the next take rolls."><link rel="canonical" href="https://games.multiportllc.com/games/moviepropsetdressing"><meta property="og:title" content="Movie Prop Set Dressing - Multiport Games"><meta property="og:description" content="Play Movie Prop Set Dressing free online — Place furniture and decor to exactly match the continuity photo before the next take rolls."><meta property="og:url" content="https://games.multiportllc.com/games/moviepropsetdressing"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Movie Prop Set Dressing","description":"Play Movie Prop Set Dressing free online instantly. Study the continuity photo, then drag every set-dressing prop — furniture, decor, and set pieces — onto its exact matching marked position on the film set before the next take rolls, across increasingly busy, detailed sets. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/moviepropsetdressing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1e1812;display:block;border-radius:8px;touch-action:none;cursor:grab}
+#hud{color:#f0d9b5;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#timeWrap{max-width:600px;margin:0 auto 8px;background:#140f0a;border-radius:10px;padding:4px}
+#timeBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#4ecdc4,#a0f0e8);width:100%;transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Movie Prop Set Dressing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Scene 1/8</span>
+    </div>
+    <div id="timeWrap"><div id="timeBar"></div></div>
+    <canvas id="c" width="800" height="360"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> The continuity photo (top-left) shows exactly where every prop belongs on set. Drag each prop from the tray onto its matching marked spot on the floor — or press <b>Tab</b> to cycle props and <b>1-9</b>/<b>Enter</b> to send the selected prop to its correct mark. Placing a prop on the wrong mark costs a life. Match the whole set before the "Rolling!" timer runs out to lock the take. Sets get busier and the timer gets tighter every scene!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const timeBarEl=document.getElementById('timeBar');
+const TOTAL_SCENES=8;
+let hi=parseInt(localStorage.getItem('moviepropsetdressing_hi')||'0',10);
+let score=0,lives=3,sceneIndex=0,gameOver=false,started=false,won=false;
+let props=[],marks=[],flashTimer=0,flashGood=true,timeLeft=1,timeMax=1;
+let dragging=null,dragOffset={x:0,y:0},heldTouchProp=null;
+
+const MARK_DEFS=[
+  {x:230,y:160,shape:'rect',color:'#e94560',w:46,h:30},
+  {x:330,y:140,shape:'circle',color:'#4ecdc4',r:18},
+  {x:430,y:150,shape:'rect',color:'#ffd54f',w:34,h:34},
+  {x:520,y:170,shape:'circle',color:'#7ec850',r:16},
+  {x:610,y:150,shape:'rect',color:'#a0f0e8',w:40,h:24},
+  {x:250,y:250,shape:'circle',color:'#ff8c42',r:20},
+  {x:360,y:260,shape:'rect',color:'#c77dff',w:30,h:40},
+  {x:470,y:250,shape:'circle',color:'#4d96ff',r:17},
+  {x:570,y:260,shape:'rect',color:'#f15bb5',w:36,h:28}
+];
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('scene_label','Scene {n}/{t}').replace('{n}',Math.min(sceneIndex+1,TOTAL_SCENES)).replace('{t}',TOTAL_SCENES);
+}
+
+function setupScene(){
+  const count=Math.min(MARK_DEFS.length,4+sceneIndex);
+  marks=MARK_DEFS.slice(0,count).map((def,i)=>({...def,id:i,filled:false}));
+  const trayOrder=marks.map(m=>m.id).sort(()=>Math.random()-0.5);
+  props=trayOrder.map((markId,i)=>({
+    markId,
+    placed:false,
+    x:70+(i%7)*100,
+    y: i<7?300:340
+  }));
+  dragging=null;heldTouchProp=null;
+  timeMax=17+sceneIndex*3;
+  timeLeft=timeMax;
+}
+
+function reset(){
+  score=0;lives=3;sceneIndex=0;gameOver=false;started=false;won=false;flashTimer=0;
+  setupScene();
+  setHud();
+}
+
+function flash(good){flashTimer=16;flashGood=good;}
+
+function loseLife(){
+  lives--;
+  flash(false);
+  SFX.hurt();
+  if(lives<=0){
+    gameOver=true;won=false;
+    if(score>hi){hi=score;localStorage.setItem('moviepropsetdressing_hi',hi);}
+    SFX.lose();
+  }
+  setHud();
+}
+
+function nextScene(){
+  score+=60+sceneIndex*10;
+  if(score>hi){hi=score;localStorage.setItem('moviepropsetdressing_hi',hi);}
+  sceneIndex++;
+  SFX.levelup();
+  flash(true);
+  if(sceneIndex>=TOTAL_SCENES){
+    gameOver=true;won=true;
+    SFX.win();
+  }else{
+    setupScene();
+  }
+  setHud();
+}
+
+function tryPlace(prop,mark){
+  if(mark.id===prop.markId){
+    prop.placed=true;
+    mark.filled=true;
+    score+=8;
+    SFX.success();
+    if(props.every(p=>p.placed))nextScene();
+  }else{
+    loseLife();
+  }
+}
+
+function start(){
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+}
+
+let selectedIdx=0;
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();start();}
+  if(!started||gameOver)return;
+  const open=props.filter(p=>!p.placed);
+  if(e.code==='Tab'){
+    e.preventDefault();
+    if(open.length)selectedIdx=(selectedIdx+(e.shiftKey?-1:1)+open.length)%open.length;
+  }
+  if(e.code==='Enter'&&open.length){
+    const prop=open[selectedIdx%open.length];
+    const mark=marks.find(m=>m.id===prop.markId);
+    tryPlace(prop,mark);
+  }
+  if(/^Digit[1-9]$/.test(e.code)){
+    const n=parseInt(e.code.replace('Digit',''),10)-1;
+    if(open[n]){
+      const prop=open[n];
+      const mark=marks.find(m=>m.id===prop.markId);
+      tryPlace(prop,mark);
+    }
+  }
+});
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(c.width/rect.width),y:cy*(c.height/rect.height)};
+}
+
+function propAt(p){
+  for(const prop of props){
+    if(prop.placed)continue;
+    if(Math.hypot(prop.x-p.x,prop.y-p.y)<26)return prop;
+  }
+  return null;
+}
+function markAt(p){
+  for(const mark of marks){
+    const rad=mark.shape==='circle'?mark.r+8:Math.max(mark.w,mark.h)/2+8;
+    if(Math.hypot(mark.x-p.x,mark.y-p.y)<rad)return mark;
+  }
+  return null;
+}
+
+function onDown(p){
+  if(!started||gameOver){start();return;}
+  if(heldTouchProp){
+    const mark=markAt(p);
+    if(mark)tryPlace(heldTouchProp,mark);
+    heldTouchProp=null;
+    return;
+  }
+  const prop=propAt(p);
+  if(prop){dragging=prop;dragOffset={x:prop.x-p.x,y:prop.y-p.y};}
+}
+function onMove(p){ if(dragging){dragging.x=p.x+dragOffset.x;dragging.y=p.y+dragOffset.y;} }
+function onUp(p){
+  if(dragging){
+    const mark=markAt(p);
+    if(mark)tryPlace(dragging,mark);
+    if(!dragging.placed){
+      const idx=props.indexOf(dragging);
+      dragging.x=70+(idx%7)*100;
+      dragging.y=idx<7?300:340;
+    }
+    dragging=null;
+  }
+}
+
+c.addEventListener('mousedown',e=>onDown(pointerPos(e)));
+c.addEventListener('mousemove',e=>onMove(pointerPos(e)));
+c.addEventListener('mouseup',e=>onUp(pointerPos(e)));
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const p=pointerPos(e);
+  if(!started||gameOver){start();return;}
+  const prop=propAt(p);
+  if(prop){
+    heldTouchProp=(heldTouchProp===prop)?null:prop;
+  }else{
+    const mark=markAt(p);
+    if(mark&&heldTouchProp){tryPlace(heldTouchProp,mark);heldTouchProp=null;}
+  }
+},{passive:false});
+
+function drawContinuityPhoto(){
+  ctx.fillStyle='#0b0a08';
+  ctx.fillRect(16,16,150,100);
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;
+  ctx.strokeRect(16,16,150,100);
+  ctx.fillStyle='#ffd54f';ctx.font='bold 10px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('continuity_label','CONTINUITY'),22,30);
+  for(const def of marks){
+    const mx=20+ (def.x-180)*(140/460);
+    const my=36+ (def.y-130)*(76/150);
+    ctx.beginPath();
+    if(def.shape==='circle'){ctx.arc(mx,my,5,0,Math.PI*2);}
+    else{ctx.rect(mx-5,my-5,10,10);}
+    ctx.fillStyle=def.color;
+    ctx.fill();
+  }
+}
+
+function drawFloor(){
+  ctx.fillStyle='#2a2117';
+  ctx.fillRect(170,110,460,190);
+  ctx.strokeStyle='#4a3a28';
+  ctx.lineWidth=4;
+  ctx.strokeRect(170,110,460,190);
+  ctx.fillStyle='#352a1d';
+  for(let gx=170;gx<630;gx+=40)ctx.fillRect(gx,110,1,190);
+  for(let gy=110;gy<300;gy+=40)ctx.fillRect(170,gy,460,1);
+}
+
+function drawMarks(){
+  for(const mark of marks){
+    ctx.save();
+    ctx.strokeStyle=mark.filled?'#7ec850':mark.color;
+    ctx.lineWidth=mark.filled?2:3;
+    ctx.setLineDash(mark.filled?[]:[5,4]);
+    ctx.beginPath();
+    if(mark.shape==='circle'){ctx.arc(mark.x,mark.y,mark.r,0,Math.PI*2);}
+    else{ctx.rect(mark.x-mark.w/2,mark.y-mark.h/2,mark.w,mark.h);}
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if(mark.filled){
+      ctx.fillStyle=mark.color;
+      ctx.globalAlpha=0.85;
+      if(mark.shape==='circle'){ctx.beginPath();ctx.arc(mark.x,mark.y,mark.r-4,0,Math.PI*2);ctx.fill();}
+      else{ctx.fillRect(mark.x-mark.w/2+4,mark.y-mark.h/2+4,mark.w-8,mark.h-8);}
+      ctx.globalAlpha=1;
+    }
+    ctx.restore();
+  }
+}
+
+function drawProps(){
+  for(const prop of props){
+    if(prop.placed)continue;
+    const mark=marks.find(m=>m.id===prop.markId);
+    ctx.save();
+    const isHeld=prop===dragging||prop===heldTouchProp;
+    ctx.globalAlpha=isHeld?0.9:1;
+    ctx.fillStyle=mark.color;
+    ctx.beginPath();
+    if(mark.shape==='circle'){ctx.arc(prop.x,prop.y,20,0,Math.PI*2);}
+    else{ctx.rect(prop.x-20,prop.y-20,40,40);}
+    ctx.fill();
+    if(isHeld){ctx.strokeStyle='#fff';ctx.lineWidth=3;ctx.stroke();}
+    ctx.restore();
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,360);
+  const bg=ctx.createLinearGradient(0,0,0,360);
+  bg.addColorStop(0,'#241d14');bg.addColorStop(1,'#120f0a');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,360);
+
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('dressing_title','Match the continuity photo'),460,20);
+
+  if(!started){
+    drawContinuityPhoto();drawFloor();drawMarks();drawProps();
+    ctx.fillStyle='#f0d9b599';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Space to start'),460,210);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawContinuityPhoto();drawFloor();drawMarks();drawProps();
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';
+    ctx.fillText(won?I18N.t('win_title','SET LOCKED - ROLLING!'):I18N.t('game_over_title','GAME OVER'),460,210);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click / Tap / Space to restart'),460,240);
+    requestAnimationFrame(loop);return;
+  }
+
+  timeLeft-=1/60;
+  if(timeLeft<=0){
+    timeLeft=0;
+    loseLife();
+    if(!gameOver)setupScene();
+  }
+  timeBarEl.style.width=Math.max(0,(timeLeft/timeMax)*100)+'%';
+
+  drawContinuityPhoto();
+  drawFloor();
+  drawMarks();
+  drawProps();
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(80,220,120,0.18)':'rgba(220,60,60,0.22)';
+    ctx.fillRect(0,0,800,360);
+  }
+
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>
