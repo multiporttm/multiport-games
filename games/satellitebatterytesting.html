@@ -1,0 +1,236 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Satellite Battery Testing</title><meta name="description" content="Play Satellite Battery Testing free online — Charge and discharge battery cells through test cycles, stopping each at the right moment and rejecting the duds."><link rel="canonical" href="https://games.multiportllc.com/games/satellitebatterytesting"><meta property="og:title" content="Satellite Battery Testing - Multiport Games"><meta property="og:description" content="Play Satellite Battery Testing free online — Charge and discharge battery cells through test cycles, stopping each at the right moment and rejecting the duds."><meta property="og:url" content="https://games.multiportllc.com/games/satellitebatterytesting"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Satellite Battery Testing - Multiport Games"><meta name="twitter:description" content="Play Satellite Battery Testing free online — Charge and discharge battery cells through test cycles, stopping each at the right moment and rejecting the duds."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Satellite Battery Testing","description":"Play Satellite Battery Testing free online instantly. Run satellite battery cells through charge and discharge test cycles, stopping the charger inside the target capacity band and catching cells that fail before they are installed. Bands get narrower and cells get more marginal every round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/satellitebatterytesting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#10151f;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#ffe3a0;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px;color:#ff6b6b}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Satellite Battery Testing</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="hud">
+      <span id="cellLbl">Cell 1</span>
+      <span id="scoreLbl">Score: 0</span>
+      <span id="hiLbl">Hi: 0</span>
+      <span class="lives" id="livesLbl">●●●</span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press <b>Space</b> / <b>click</b> / <b>tap</b> to stop the needle while it's charging. Then press again to stop the discharge. Accept the cell only if <b>both</b> stops land inside the green capacity band. Three bad calls ends the test campaign.</div>
+</div>
+<script>
+(function(){
+const canvas=document.getElementById('c'),ctx=canvas.getContext('2d');
+const W=800,H=420;
+const ID='satellitebatterytesting';
+const hiKey=ID+'_hi';
+
+let lives=3,score=0,cellNum=1,hi=0,gameOver=false,started=false,win=false;
+let lastTime=null;
+// phase: 'charge','discharge','result'
+let phase='charge';
+let needle=0; // 0..1 position along bar
+let dir=1;
+let speed=0.012;
+let band={lo:0.4,hi:0.6}; // target band each phase, randomized per cell
+let chargeStop=null,dischargeStop=null;
+let resultT=0;
+let resultGood=false;
+let flashMsg='';
+
+try{hi=parseFloat(localStorage.getItem(hiKey))||0;}catch(e){hi=0;}
+
+function diffLevel(){ return Math.min(cellNum,12); }
+
+function bandForPhase(){
+  const lvl=diffLevel();
+  const width=Math.max(0.1,0.34-lvl*0.02); // narrower band as cells get marginal
+  const center=0.3+Math.random()*0.4;
+  return {lo:Math.max(0.03,center-width/2),hi:Math.min(0.97,center+width/2)};
+}
+
+function speedForPhase(){
+  const lvl=diffLevel();
+  return 0.009+lvl*0.0016+Math.random()*0.003;
+}
+
+function newCell(){
+  phase='charge';
+  needle=0;dir=1;
+  band=bandForPhase();
+  speed=speedForPhase();
+  chargeStop=null;dischargeStop=null;
+  resultT=0;
+}
+
+function reset(){
+  lives=3;score=0;cellNum=1;gameOver=false;win=false;started=false;lastTime=null;
+  newCell();
+}
+
+function inBand(v){ return v>=band.lo&&v<=band.hi; }
+
+function stopAction(){
+  if(!started||gameOver||phase==='result')return;
+  if(phase==='charge'){
+    chargeStop=needle;
+    phase='discharge';
+    band=bandForPhase();
+    speed=speedForPhase();
+    needle=1;dir=-1;
+    SFX.click();
+  } else if(phase==='discharge'){
+    dischargeStop=needle;
+    const good=inBand(chargeStop)&&inBand(dischargeStop);
+    resultGood=good;
+    phase='result';
+    resultT=0;
+    if(good){
+      score+=50+diffLevel()*10;
+      if(score>hi){hi=score;try{localStorage.setItem(hiKey,String(hi));}catch(e){}}
+      flashMsg=I18N.t('cell_pass','CELL ACCEPTED');
+      SFX.success();
+    } else {
+      lives--;
+      flashMsg=I18N.t('cell_fail','CELL REJECTED');
+      SFX.fail();
+      if(lives<=0){gameOver=true;win=false;SFX.lose();}
+    }
+  }
+}
+
+function update(dt){
+  if(!started||gameOver)return;
+  if(phase==='charge'||phase==='discharge'){
+    needle+=dir*speed*dt;
+    if(needle>=1){needle=1;if(phase==='charge'){/* ran to top, auto-fail stop if player too slow */}}
+    if(needle<=0){needle=0;}
+  } else if(phase==='result'){
+    resultT+=dt;
+    if(resultT>36){
+      cellNum++;
+      if(cellNum>12){win=true;gameOver=true;SFX.win();}
+      else newCell();
+    }
+  }
+}
+
+function drawBand(x,y,w,h){
+  const loY=y+h*(1-band.hi);
+  const hiY=y+h*(1-band.lo);
+  ctx.fillStyle='rgba(126,217,87,.35)';
+  ctx.fillRect(x,loY,w,hiY-loY);
+  ctx.strokeStyle='#7ed957';
+  ctx.strokeRect(x,loY,w,hiY-loY);
+}
+
+function drawBar(){
+  const x=W/2-60,y=40,w=120,h=300;
+  ctx.strokeStyle='#5a6b80';ctx.lineWidth=2;
+  ctx.strokeRect(x,y,w,h);
+  ctx.fillStyle='#1a2230';ctx.fillRect(x,y,w,h);
+  if(phase==='charge'||phase==='discharge')drawBand(x,y,w,h);
+  if(chargeStop!=null){
+    const cy=y+h*(1-chargeStop);
+    ctx.strokeStyle='#4fc3f7';ctx.beginPath();ctx.moveTo(x-10,cy);ctx.lineTo(x+w+10,cy);ctx.stroke();
+  }
+  // needle
+  const ny=y+h*(1-needle);
+  ctx.fillStyle=phase==='charge'?'#ffd166':'#ff8a65';
+  ctx.fillRect(x-4,ny-3,w+8,6);
+  ctx.fillStyle='#fff';
+  ctx.font='14px Arial';ctx.textAlign='left';
+  ctx.fillText(phase==='charge'?I18N.t('charging_label','CHARGING'):phase==='discharge'?I18N.t('discharging_label','DISCHARGING'):I18N.t('idle_label','—'),x+w+16,ny+4);
+}
+
+function drawHUD(){
+  document.getElementById('cellLbl').textContent=I18N.t('cell_label','Cell {n}').replace('{n}',Math.min(cellNum,12));
+  document.getElementById('scoreLbl').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('hiLbl').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='●'.repeat(Math.max(0,lives))+'○'.repeat(3-Math.max(0,lives));
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#10151f';ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#ffe3a0';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press Space / Tap to start charging'),W/2,H/2-10);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('battery_intro','Stop the needle inside the green band, twice per cell'),W/2,H/2+22);
+    draw_cellIcon();
+    return;
+  }
+
+  drawBar();
+
+  ctx.textAlign='center';
+  if(phase==='result'){
+    ctx.fillStyle=resultGood?'#7ed957':'#ff6b6b';
+    ctx.font='bold 30px Arial';
+    ctx.fillText(flashMsg,W/2,H-50);
+  } else {
+    ctx.fillStyle='#8fa3bf';ctx.font='15px Arial';
+    ctx.fillText(I18N.t('stop_hint','Press Space / Click / Tap to stop'),W/2,H-30);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(5,7,15,.8)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle=win?'#7ed957':'#ff6b6b';
+    ctx.font='bold 36px Arial';
+    ctx.fillText(win?I18N.t('campaign_complete','TEST CAMPAIGN COMPLETE'):I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.fillStyle='#ffe3a0';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),W/2,H/2+20);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press any key or tap to restart'),W/2,H/2+52);
+  }
+
+  drawHUD();
+}
+
+function draw_cellIcon(){
+  ctx.strokeStyle='#5a6b80';ctx.lineWidth=2;
+  ctx.strokeRect(W/2-40,H/2+60,80,40);
+  ctx.fillRect(W/2+40,H/2+72,6,16);
+}
+
+function loop(now){
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function startIfNeeded(){
+  if(gameOver){reset();return true;}
+  if(!started){started=true;return true;}
+  return false;
+}
+
+function handleAction(){
+  if(startIfNeeded())return;
+  stopAction();
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();handleAction();}
+});
+canvas.addEventListener('pointerdown',e=>{e.preventDefault();handleAction();});
+canvas.addEventListener('touchstart',e=>{e.preventDefault();handleAction();},{passive:false});
+
+reset();
+requestAnimationFrame(loop);
+})();
+</script></body></html>

@@ -1,0 +1,216 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Astronaut Mission Simulator</title><meta name="description" content="Play Astronaut Mission Simulator free online — Respond to spacecraft emergency alarms with the correct procedure before time runs out. Faster, trickier alarm sequences each round."><link rel="canonical" href="https://games.multiportllc.com/games/astronautmissionsimulator"><meta property="og:title" content="Astronaut Mission Simulator - Multiport Games"><meta property="og:description" content="Play Astronaut Mission Simulator free online — Respond to spacecraft emergency alarms with the correct procedure before time runs out. Faster, trickier alarm sequences each round."><meta property="og:url" content="https://games.multiportllc.com/games/astronautmissionsimulator"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Astronaut Mission Simulator","description":"Play Astronaut Mission Simulator free online instantly. Respond to spacecraft emergency alarms with the correct procedure before time runs out. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/astronautmissionsimulator","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a0d0d;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ff8c69;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#panel{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;max-width:520px;margin:10px auto 0}
+#panel button{padding:12px 6px;border:none;border-radius:8px;background:#263859;color:#fff;font-weight:800;font-size:.95rem;cursor:pointer;min-height:48px}
+#panel button:active{transform:translateY(1px)}
+@media(max-width:480px){#panel{grid-template-columns:repeat(2,1fr)}}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Astronaut Mission Simulator</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="300"></canvas>
+    <div id="panel"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">An alarm sounds — pick the matching <b>procedure</b> before the timer bar runs out, using the <b>buttons</b>, <b>number keys 1-4</b>, or <b>tap</b>. Match the full sequence shown to clear the round. Wrong calls or timeouts cost a life, and sequences get longer and faster each round!</div>
+</div>
+<script>
+const ID='astronautmissionsimulator';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=300;
+let hi=parseInt(localStorage.getItem(ID+'_hi')||'0',10);
+
+const ALARMS=[
+  {key:'fire',alarm:'🔥 FIRE ALARM',proc:'VENT CABIN O2',color:'#e74c3c'},
+  {key:'depress',alarm:'🌀 CABIN DEPRESS',proc:'SEAL HATCH',color:'#3498db'},
+  {key:'power',alarm:'⚡ POWER FAULT',proc:'SWITCH TO BACKUP BUS',color:'#f1c40f'},
+  {key:'co2',alarm:'☁️ CO2 HIGH',proc:'ACTIVATE SCRUBBER',color:'#2ecc71'},
+  {key:'thermal',alarm:'🌡️ THERMAL OVERLOAD',proc:'DEPLOY RADIATOR',color:'#e67e22'},
+  {key:'comms',alarm:'📡 COMMS LOSS',proc:'REALIGN ANTENNA',color:'#9b59b6'},
+];
+
+let score=0,lives=3,level=1,gameOver=false,started=false;
+let sequence=[],stepIndex=0,choices=[];
+let timeLeft=0,timeMax=0,flashTimer=0,flashMsg='',flashColor='#fff';
+let lastTs=null;
+
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+function buildSequence(lvl){
+  const len=Math.min(2+Math.floor(lvl/2),6);
+  const pool=shuffle(ALARMS.slice());
+  const seq=[];
+  for(let i=0;i<len;i++)seq.push(pool[i%pool.length]);
+  return shuffle(seq.slice()).length?seq:seq; // keep order random already via pool shuffle per pick
+}
+
+function newRound(){
+  sequence=buildSequence(level);
+  stepIndex=0;
+  nextStep();
+}
+
+function nextStep(){
+  if(stepIndex>=sequence.length){
+    score+=40+level*5;
+    SFX.levelup();
+    level++;
+    newRound();
+    return;
+  }
+  const correct=sequence[stepIndex];
+  const wrongPool=ALARMS.filter(a=>a.key!==correct.key);
+  shuffle(wrongPool);
+  choices=shuffle([correct,wrongPool[0],wrongPool[1]||wrongPool[0],wrongPool[2]||wrongPool[1]||wrongPool[0]].slice(0,4));
+  renderPanel();
+  timeMax=Math.max(1400,3400-level*160);
+  timeLeft=timeMax;
+}
+
+function renderPanel(){
+  const panel=document.getElementById('panel');
+  panel.innerHTML='';
+  choices.forEach((ch,i)=>{
+    const btn=document.createElement('button');
+    btn.textContent=(i+1)+'. '+I18N.t('proc_'+ch.key,ch.proc);
+    btn.addEventListener('click',()=>pick(ch));
+    panel.appendChild(btn);
+  });
+}
+
+function pick(ch){
+  if(!started||gameOver)return;
+  const correct=sequence[stepIndex];
+  if(ch.key===correct.key){
+    SFX.success();
+    flash(I18N.t('correct_msg','Correct!'),'#2ecc71');
+    stepIndex++;
+    nextStep();
+  } else {
+    SFX.error();
+    flash(I18N.t('wrong_msg','WRONG PROCEDURE!'),'#e74c3c');
+    loseLife();
+    if(!gameOver){ stepIndex=0; newRound(); }
+  }
+  if(score>hi)hi=score;
+}
+
+function flash(msg,color){flashMsg=msg;flashColor=color;flashTimer=40;}
+
+function loseLife(){
+  lives--;
+  if(lives<=0){
+    gameOver=true;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(ID+'_hi',String(hi));}
+    document.getElementById('panel').innerHTML='';
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(!started){ if(e.code.startsWith('Digit')||e.code==='Space'){started=true;newRound();} return; }
+  if(gameOver){ if(e.code==='Space'){reset();} return; }
+  const n=parseInt(e.key,10);
+  if(n>=1&&n<=choices.length){e.preventDefault();pick(choices[n-1]);}
+});
+
+c.addEventListener('click',()=>{ if(!started){started=true;newRound();} else if(gameOver){reset();} });
+c.addEventListener('touchstart',e=>{e.preventDefault(); if(!started){started=true;newRound();} else if(gameOver){reset();} },{passive:false});
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=true;
+  newRound();
+}
+
+function drawAlarmBanner(){
+  if(sequence.length===0||stepIndex>=sequence.length)return;
+  const cur=sequence[stepIndex];
+  ctx.fillStyle=cur.color;
+  ctx.fillRect(0,0,W,70);
+  ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('alarm_'+cur.key,cur.alarm),W/2,46);
+
+  // sequence progress dots
+  for(let i=0;i<sequence.length;i++){
+    ctx.beginPath();
+    ctx.arc(W/2-sequence.length*12+i*24+12,90,8,0,Math.PI*2);
+    ctx.fillStyle=i<stepIndex?'#2ecc71':(i===stepIndex?'#f1c40f':'#444');
+    ctx.fill();
+  }
+}
+
+function loop(ts){
+  ctx.clearRect(0,0,W,H);
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#1a0d0d');grad.addColorStop(1,'#2a1515');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Press 1-4, Tap, or Click to start'),W/2,150);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,140);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Click to restart'),W/2,176);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  const dt=lastTs===null?16:Math.min(ts-lastTs,50);
+  lastTs=ts;
+  timeLeft-=dt;
+  if(timeLeft<=0){
+    SFX.error();
+    flash(I18N.t('timeout_msg','TOO SLOW!'),'#e74c3c');
+    loseLife();
+    if(!gameOver){ stepIndex=0; newRound(); }
+  }
+
+  drawAlarmBanner();
+
+  // timer bar
+  const pct=Math.max(0,timeLeft/timeMax);
+  ctx.fillStyle='#222';ctx.fillRect(100,120,W-200,16);
+  ctx.fillStyle=pct<0.3?'#e74c3c':(pct<0.6?'#f1c40f':'#2ecc71');
+  ctx.fillRect(100,120,(W-200)*pct,16);
+  ctx.strokeStyle='#fff';ctx.strokeRect(100,120,W-200,16);
+
+  ctx.fillStyle='#fff';ctx.font='bold 16px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('level_label','Level {l}').replace('{l}',level),W/2,160);
+  ctx.font='14px Arial';
+  ctx.fillText(I18N.t('procedure_prompt','Select the correct procedure below!'),W/2,182);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.globalAlpha=Math.min(1,flashTimer/20);
+    ctx.fillStyle=flashColor;ctx.font='bold 22px Arial';
+    ctx.fillText(flashMsg,W/2,230);
+    ctx.globalAlpha=1;
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function updateHud(){
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi))+' | '+I18N.t('lives_label','Lives: {n}').replace('{n}','●●●'.slice(0,lives)+'○○○'.slice(0,3-lives));
+}
+
+requestAnimationFrame(loop);
+</script></body></html>

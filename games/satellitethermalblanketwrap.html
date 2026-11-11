@@ -1,0 +1,288 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Satellite Thermal Blanket Wrap</title><meta name="description" content="Play Satellite Thermal Blanket Wrap free online — Paint multi-layer insulation blanket over every cell of the satellite's shape with no gaps, then tape each seam before time runs out, across more complex satellite shapes."><link rel="canonical" href="https://games.multiportllc.com/games/satellitethermalblanketwrap"><meta property="og:title" content="Satellite Thermal Blanket Wrap - Multiport Games"><meta property="og:description" content="Play Satellite Thermal Blanket Wrap free online — Paint multi-layer insulation blanket over every cell of the satellite's shape with no gaps, then tape each seam before time runs out, across more complex satellite shapes."><meta property="og:url" content="https://games.multiportllc.com/games/satellitethermalblanketwrap"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Satellite Thermal Blanket Wrap - Multiport Games"><meta name="twitter:description" content="Play Satellite Thermal Blanket Wrap free online — Paint multi-layer insulation blanket over every cell of the satellite's shape with no gaps, then tape each seam before time runs out, across more complex satellite shapes."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Satellite Thermal Blanket Wrap","description":"Play Satellite Thermal Blanket Wrap free online instantly. Wrap multi-layer insulation blanket material around a satellite's components with full coverage and no gaps, then tape every seam correctly before time runs out, across more complex satellite shapes. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/satellitethermalblanketwrap","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0c1220;display:block;border-radius:8px;touch-action:none;max-width:100%}
+#score-display{color:#ffe0b2;font-size:1.0rem;font-weight:700;text-align:center;padding:6px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Satellite Thermal Blanket Wrap</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0 | Lives: 3 | Shape: 1 | Phase: Wrap</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> <b>Click/drag</b> or use <b>Arrow Keys + Space</b> to paint gold multi-layer insulation over every highlighted cell of the satellite outline — paint outside the outline and you lose a life. Cover it completely with no gaps to move to the <b>Tape</b> phase: click (or Arrow Keys + Space) every seam marker before the timer runs out to seal it. Shapes get bigger and trickier each round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const HI_KEY='satellitethermalblanketwrap_hi';
+const GRID_X=40,GRID_Y=40,COLS=18,ROWS=8,CELL=38;
+let hi=0,score=0,lives=3,level=1,gameOver=false,phase='wrap';
+let target=new Set(),painted=new Set(),cursor={col:0,row:0};
+let seams=[],sealedCount=0,seamFocus=0,tapeTimer=0,tapeTimerMax=0,lastTime=null,flashT=0,flashOk=null,dragPaint=false;
+
+function loadHi(){hi=parseInt(localStorage.getItem(HI_KEY)||'0');}
+function saveHi(){if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}}
+function key(col,row){return col+','+row;}
+
+function generateShape(lvl){
+  const w=Math.min(3+Math.floor(lvl/2),9);
+  const h=Math.min(2+Math.floor(lvl/3),6);
+  const cx=Math.floor((COLS-w)/2),cy=Math.floor((ROWS-h)/2);
+  const set=new Set();
+  for(let c=cx;c<cx+w;c++)for(let r=cy;r<cy+h;r++)set.add(key(c,r));
+  const frontierOf=()=>{
+    const f=[];
+    set.forEach(k=>{
+      const [col,row]=k.split(',').map(Number);
+      [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dy])=>{
+        const nc=col+dx,nr=row+dy;
+        if(nc>=0&&nc<COLS&&nr>=0&&nr<ROWS&&!set.has(key(nc,nr)))f.push(key(nc,nr));
+      });
+    });
+    return f;
+  };
+  const extra=Math.min(lvl,14);
+  for(let i=0;i<extra;i++){
+    const f=frontierOf();
+    if(!f.length)break;
+    set.add(f[Math.floor(Math.random()*f.length)]);
+  }
+  return set;
+}
+
+function computeSeams(){
+  const list=[];
+  const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+  target.forEach(k=>{
+    const [col,row]=k.split(',').map(Number);
+    dirs.forEach(([dx,dy])=>{
+      const nc=col+dx,nr=row+dy;
+      if(!target.has(key(nc,nr))){
+        const mx=GRID_X+(col+0.5+dx*0.5)*CELL;
+        const my=GRID_Y+(row+0.5+dy*0.5)*CELL;
+        const sid=col+','+row+','+dx+','+dy;
+        if(!list.some(s=>s.id===sid))list.push({id:sid,x:mx,y:my,sealed:false});
+      }
+    });
+  });
+  return list;
+}
+
+function startShape(){
+  target=generateShape(level);
+  painted=new Set();
+  seams=computeSeams();
+  sealedCount=0;seamFocus=0;
+  phase='wrap';
+  cursor={col:Math.floor(COLS/2),row:Math.floor(ROWS/2)};
+  tapeTimerMax=Math.max(6,13-level*0.7);
+  tapeTimer=tapeTimerMax;
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;
+  startShape();
+}
+
+function paintCell(col,row){
+  if(phase!=='wrap'||gameOver)return;
+  const k=key(col,row);
+  if(painted.has(k))return;
+  if(target.has(k)){
+    painted.add(k);
+    score+=5;
+    SFX.click();
+    if(painted.size>=target.size){
+      phase='tape';
+      flashT=16;flashOk=true;
+      SFX.success();
+    }
+  } else {
+    lives--;
+    SFX.error();
+    flashT=16;flashOk=false;
+    if(lives<=0){ gameOver=true; saveHi(); SFX.lose(); }
+  }
+}
+
+function sealNearest(){
+  if(phase!=='tape'||gameOver)return;
+  if(seamFocus>=seams.length)return;
+  const s=seams[seamFocus];
+  if(s.sealed)return;
+  s.sealed=true;sealedCount++;
+  SFX.point();
+  seamFocus=seams.findIndex(x=>!x.sealed);
+  if(sealedCount>=seams.length){
+    SFX.win();
+    score+=60*level;
+    if(score>hi)hi=score;
+    level++;
+    if(level>6){ gameOver=true; saveHi(); return; }
+    setTimeout(()=>{startShape();},500);
+  }
+}
+
+function colRowFromPx(px,py){
+  return {col:Math.floor((px-GRID_X)/CELL),row:Math.floor((py-GRID_Y)/CELL)};
+}
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const clientX=e.touches?e.touches[0].clientX:e.clientX;
+  const clientY=e.touches?e.touches[0].clientY:e.clientY;
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+
+function handlePointerDown(e){
+  if(gameOver){reset();return;}
+  const p=pointerPos(e);
+  if(phase==='wrap'){
+    dragPaint=true;
+    const {col,row}=colRowFromPx(p.x,p.y);
+    if(col>=0&&col<COLS&&row>=0&&row<ROWS)paintCell(col,row);
+  } else if(phase==='tape'){
+    let best=-1,bd=22;
+    seams.forEach((s,i)=>{ if(!s.sealed){ const d=Math.hypot(s.x-p.x,s.y-p.y); if(d<bd){bd=d;best=i;} } });
+    if(best>=0){ seamFocus=best; sealNearest(); }
+  }
+}
+function handlePointerMove(e){
+  if(!dragPaint||phase!=='wrap')return;
+  const p=pointerPos(e);
+  const {col,row}=colRowFromPx(p.x,p.y);
+  if(col>=0&&col<COLS&&row>=0&&row<ROWS)paintCell(col,row);
+}
+c.addEventListener('mousedown',e=>{handlePointerDown(e);});
+c.addEventListener('mousemove',e=>{handlePointerMove(e);});
+window.addEventListener('mouseup',()=>{dragPaint=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();handlePointerDown(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();handlePointerMove(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();dragPaint=false;},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space','Enter'].includes(e.code))e.preventDefault();
+  if(gameOver){ if(e.code==='Space'||e.code==='Enter')reset(); return; }
+  if(phase==='wrap'){
+    if(e.code==='ArrowLeft')cursor.col=Math.max(0,cursor.col-1);
+    else if(e.code==='ArrowRight')cursor.col=Math.min(COLS-1,cursor.col+1);
+    else if(e.code==='ArrowUp')cursor.row=Math.max(0,cursor.row-1);
+    else if(e.code==='ArrowDown')cursor.row=Math.min(ROWS-1,cursor.row+1);
+    else if(e.code==='Space'||e.code==='Enter')paintCell(cursor.col,cursor.row);
+  } else if(phase==='tape'){
+    if(e.code==='ArrowRight'||e.code==='ArrowDown'){
+      do{seamFocus=(seamFocus+1)%seams.length;}while(seams[seamFocus].sealed&&seams.some(s=>!s.sealed));
+    } else if(e.code==='ArrowLeft'||e.code==='ArrowUp'){
+      do{seamFocus=(seamFocus-1+seams.length)%seams.length;}while(seams[seamFocus].sealed&&seams.some(s=>!s.sealed));
+    } else if(e.code==='Space'||e.code==='Enter')sealNearest();
+  }
+});
+
+function drawGrid(){
+  ctx.strokeStyle='rgba(255,255,255,0.05)';ctx.lineWidth=1;
+  for(let cI=0;cI<=COLS;cI++){ctx.beginPath();ctx.moveTo(GRID_X+cI*CELL,GRID_Y);ctx.lineTo(GRID_X+cI*CELL,GRID_Y+ROWS*CELL);ctx.stroke();}
+  for(let rI=0;rI<=ROWS;rI++){ctx.beginPath();ctx.moveTo(GRID_X,GRID_Y+rI*CELL);ctx.lineTo(GRID_X+COLS*CELL,GRID_Y+rI*CELL);ctx.stroke();}
+}
+
+function drawCells(){
+  target.forEach(k=>{
+    const [col,row]=k.split(',').map(Number);
+    const x=GRID_X+col*CELL,y=GRID_Y+row*CELL;
+    ctx.fillStyle='rgba(120,130,160,0.22)';
+    ctx.fillRect(x+1,y+1,CELL-2,CELL-2);
+  });
+  painted.forEach(k=>{
+    const [col,row]=k.split(',').map(Number);
+    const x=GRID_X+col*CELL,y=GRID_Y+row*CELL;
+    const grad=ctx.createLinearGradient(x,y,x+CELL,y+CELL);
+    grad.addColorStop(0,'#ffd54f');grad.addColorStop(1,'#ff9800');
+    ctx.fillStyle=grad;
+    ctx.fillRect(x+1,y+1,CELL-2,CELL-2);
+    ctx.strokeStyle='#fff3c4';ctx.lineWidth=1;ctx.strokeRect(x+3,y+3,CELL-6,CELL-6);
+  });
+}
+
+function drawCursor(){
+  if(phase!=='wrap'||gameOver)return;
+  const x=GRID_X+cursor.col*CELL,y=GRID_Y+cursor.row*CELL;
+  ctx.strokeStyle='#4fc3f7';ctx.lineWidth=3;
+  ctx.strokeRect(x+1,y+1,CELL-2,CELL-2);
+}
+
+function drawSeams(){
+  if(phase!=='tape')return;
+  seams.forEach((s,i)=>{
+    ctx.beginPath();
+    ctx.arc(s.x,s.y,8,0,Math.PI*2);
+    ctx.fillStyle=s.sealed?'#4caf50':(i===seamFocus?'#ffd54f':'#e94560');
+    ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+  });
+  // timer bar
+  const bw=300;
+  ctx.fillStyle='#263238';ctx.fillRect(W/2-bw/2,H-26,bw,12);
+  ctx.fillStyle=tapeTimer/tapeTimerMax>0.3?'#4caf50':'#e53935';
+  ctx.fillRect(W/2-bw/2,H-26,bw*Math.max(0,tapeTimer/tapeTimerMax),12);
+  ctx.strokeStyle='#607d8b';ctx.strokeRect(W/2-bw/2,H-26,bw,12);
+}
+
+function update(dt){
+  if(gameOver)return;
+  if(phase==='tape'){
+    tapeTimer-=dt/60;
+    if(tapeTimer<=0){
+      lives--;
+      SFX.hurt();
+      if(lives<=0){ gameOver=true; saveHi(); SFX.lose(); return; }
+      seams.forEach(s=>s.sealed=false);
+      sealedCount=0;seamFocus=0;
+      tapeTimer=tapeTimerMax;
+    }
+  }
+}
+
+function loop(ts){
+  const dt=lastTime===null?1:Math.min((ts-lastTime)/16.6667,3);
+  lastTime=ts;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0c1220';ctx.fillRect(0,0,W,H);
+  drawGrid();
+  drawCells();
+  drawCursor();
+  update(dt);
+  drawSeams();
+
+  if(flashT>0){
+    flashT-=dt;
+    ctx.fillStyle=flashOk?'rgba(76,175,80,0.14)':'rgba(233,69,96,0.18)';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    const won=level>6;
+    ctx.fillText(won?I18N.t('win_title','FULLY WRAPPED!'):I18N.t('lose_title','BLANKET FAILURE'),W/2,190);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click, tap, or press Space to retry'),W/2,224);
+  }
+
+  const phaseLabel=phase==='wrap'?I18N.t('phase_wrap','Wrap'):I18N.t('phase_tape','Tape');
+  document.getElementById('score-display').textContent=
+    I18N.t('hud_label','Score: {s} | Hi: {h} | Lives: {l} | Shape: {sh} | Phase: {ph}')
+      .replace('{s}',Math.floor(score)).replace('{h}',Math.floor(Math.max(score,hi)))
+      .replace('{l}',Math.max(0,lives)).replace('{sh}',Math.min(level,6)).replace('{ph}',phaseLabel);
+  requestAnimationFrame(loop);
+}
+loadHi();
+reset();
+requestAnimationFrame(loop);
+</script></body></html>

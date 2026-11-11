@@ -1,0 +1,322 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Astronaut Spacesuit Fitting</title><meta name="description" content="Play Astronaut Spacesuit Fitting free online — Click or tap each spacesuit component in the correct order, then check its seal before pressurizing. Three failed fits and the fitting ends!"><link rel="canonical" href="https://games.multiportllc.com/games/astronautspacesuitfitting"><meta property="og:title" content="Astronaut Spacesuit Fitting - Multiport Games"><meta property="og:description" content="Play Astronaut Spacesuit Fitting free online — Click or tap each spacesuit component in the correct order, then check its seal before pressurizing. Three failed fits and the fitting ends!"><meta property="og:url" content="https://games.multiportllc.com/games/astronautspacesuitfitting"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Astronaut Spacesuit Fitting - Multiport Games"><meta name="twitter:description" content="Play Astronaut Spacesuit Fitting free online — Click or tap each spacesuit component in the correct order, then check its seal before pressurizing. Three failed fits and the fitting ends!"><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Astronaut Spacesuit Fitting","description":"Play Astronaut Spacesuit Fitting free online instantly. Assemble and seal a spacesuit's components — helmet, gloves, boots and life support pack — in the correct order, checking each seal before pressurizing, across trickier custom-fit specs. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/astronautspacesuitfitting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0a0f1a;display:block;border-radius:8px}
+#hud{color:#dce8f5;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#8fd3ff}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Astronaut Spacesuit Fitting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>Suit: <b id="suitNum">1</b>/<b id="suitTotal">6</b></span>
+      <span>Lives: <b id="lives">3</b></span>
+      <span>Score: <b id="score">0</b></span>
+      <span>Hi: <b id="hi">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click or tap the spacesuit's <b>components</b> (helmet, gloves, boots, life support pack) in the <b>order shown at the top</b>. After attaching a part, click the <b>seal check</b> button that appears and keep the needle in the green zone before pressurizing. A wrong order or a bad seal costs a life!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=340;
+const TOTAL_SUITS=6;
+const HI_KEY='astronautspacesuitfitting_hi';
+
+const PARTS=[
+  {key:'helmet',label:'Helmet',x:400,y:70,w:70,h:70,color:'#8fd3ff'},
+  {key:'pack',label:'Life Support',x:400,y:170,w:90,h:70,color:'#7ec850'},
+  {key:'gloveL',label:'Left Glove',x:260,y:190,w:55,h:55,color:'#ffd54f'},
+  {key:'gloveR',label:'Right Glove',x:540,y:190,w:55,h:55,color:'#ffd54f'},
+  {key:'bootL',label:'Left Boot',x:340,y:290,w:55,h:50,color:'#e94560'},
+  {key:'bootR',label:'Right Boot',x:460,y:290,w:55,h:50,color:'#e94560'},
+];
+
+let score=0,hi=0,lives=3,suitIdx=0;
+let started=false,gameOver=false,awaitingNext=false;
+let resultMsg='',resultTimer=0,shake=0;
+let lastTime=null;
+
+let order=[];       // sequence of part indices required this suit
+let step=0;          // current step in order
+let attached=[];     // bools per part, attached or not
+let phase='attach';  // 'attach' | 'seal'
+let sealPos=0,sealDir=1,sealSpeed=2,sealLo=40,sealHi=60;
+let sealBtnRect=null;
+
+try{hi=parseInt(localStorage.getItem(HI_KEY)||'0',10)||0;}catch(e){}
+
+function setHud(){
+  document.getElementById('suitNum').textContent=Math.min(suitIdx+1,TOTAL_SUITS);
+  document.getElementById('suitTotal').textContent=TOTAL_SUITS;
+  document.getElementById('lives').textContent=lives;
+  document.getElementById('score').textContent=score;
+  document.getElementById('hi').textContent=hi;
+}
+
+function shuffledOrder(){
+  const idxs=PARTS.map((_,i)=>i);
+  for(let i=idxs.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [idxs[i],idxs[j]]=[idxs[j],idxs[i]];
+  }
+  return idxs;
+}
+
+function newSuit(){
+  order=shuffledOrder();
+  step=0;
+  attached=PARTS.map(()=>false);
+  phase='attach';
+  sealSpeed=2.2+suitIdx*0.45;
+  const half=Math.max(8,18-suitIdx*1.6);
+  sealLo=50-half;sealHi=50+half;
+}
+
+function resetGame(){
+  score=0;lives=3;suitIdx=0;gameOver=false;awaitingNext=false;started=true;
+  resultMsg='';resultTimer=0;
+  newSuit();
+  setHud();
+}
+
+function startGame(){
+  if(gameOver){resetGame();return;}
+  if(!started){started=true;newSuit();setHud();return;}
+}
+
+function failFit(msg){
+  lives--;shake=10;SFX.fail();
+  resultMsg=msg;
+  setHud();
+  if(lives<=0){
+    gameOver=true;
+    resultMsg=I18N.t('fitting_failed','Suit failed certification — fitting ended.');
+    SFX.lose();
+  }else{
+    newSuit();
+  }
+}
+
+function attachPart(idx){
+  if(phase!=='attach')return;
+  const expected=order[step];
+  if(idx!==expected){
+    failFit(I18N.t('wrong_order','Wrong attachment order!'));
+    return;
+  }
+  attached[idx]=true;
+  SFX.click();
+  step++;
+  if(step>=order.length){
+    phase='seal';
+    sealPos=10+Math.random()*20;
+    sealDir=1;
+    SFX.select();
+  }
+}
+
+function checkSeal(){
+  if(phase!=='seal')return;
+  if(sealPos>=sealLo&&sealPos<=sealHi){
+    SFX.success();
+    score+=120+suitIdx*20;
+    if(score>hi){hi=score;try{localStorage.setItem(HI_KEY,String(hi));}catch(e){}}
+    setHud();
+    suitIdx++;
+    if(suitIdx>=TOTAL_SUITS){
+      gameOver=true;
+      resultMsg=I18N.t('all_suits_done','All astronauts suited and sealed!');
+      SFX.win();
+    }else{
+      awaitingNext=true;
+      resultMsg=I18N.t('suit_sealed','Suit sealed and pressurized!');
+      resultTimer=70;
+    }
+  }else{
+    failFit(I18N.t('bad_seal','Seal check failed — leak detected!'));
+  }
+}
+
+function nextSuit(){
+  awaitingNext=false;resultMsg='';
+  newSuit();
+}
+
+function canvasPos(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+
+function partAt(px,py){
+  for(let i=0;i<PARTS.length;i++){
+    const p=PARTS[i];
+    if(px>=p.x-p.w/2&&px<=p.x+p.w/2&&py>=p.y-p.h/2&&py<=p.y+p.h/2)return i;
+  }
+  return -1;
+}
+
+function handlePointer(px,py){
+  if(!started||gameOver){ startGame(); return; }
+  if(awaitingNext)return;
+  if(phase==='seal'){
+    if(sealBtnRect&&px>=sealBtnRect.x&&px<=sealBtnRect.x+sealBtnRect.w&&py>=sealBtnRect.y&&py<=sealBtnRect.y+sealBtnRect.h){
+      checkSeal();
+    }
+    return;
+  }
+  const idx=partAt(px,py);
+  if(idx>=0 && !attached[idx]) attachPart(idx);
+}
+
+c.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  const p=canvasPos(e.clientX,e.clientY);
+  handlePointer(p.x,p.y);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const t=e.changedTouches[0];
+  const p=canvasPos(t.clientX,t.clientY);
+  handlePointer(p.x,p.y);
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  const nums=['1','2','3','4','5','6'];
+  if(!started||gameOver){
+    if(e.code==='Space'||e.key==='Enter'){ e.preventDefault(); startGame(); }
+    return;
+  }
+  if(awaitingNext)return;
+  if(phase==='seal'){
+    if(e.code==='Space'||e.key==='Enter'){ e.preventDefault(); checkSeal(); }
+    return;
+  }
+  if(nums.includes(e.key)){
+    e.preventDefault();
+    const idx=parseInt(e.key,10)-1;
+    if(idx>=0&&idx<PARTS.length&&!attached[idx]) attachPart(idx);
+  }
+});
+
+function drawOrderStrip(){
+  ctx.fillStyle='#8fd3ff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('fit_spec_label','Fit Spec — attach in this order:'),W/2,24);
+  const n=order.length;
+  const startX=W/2-(n-1)*50/2;
+  for(let i=0;i<n;i++){
+    const p=PARTS[order[i]];
+    const x=startX+i*50;
+    ctx.save();
+    ctx.fillStyle=i<step?'#2a3a2a':(i===step?'#ffd54f':'#1a2230');
+    ctx.strokeStyle=p.color;
+    ctx.lineWidth=2;
+    ctx.beginPath();ctx.roundRect?ctx.roundRect(x-20,36,40,40,8):ctx.rect(x-20,36,40,40);
+    ctx.fill();ctx.stroke();
+    ctx.fillStyle='#fff';ctx.font='10px Arial';
+    ctx.fillText(p.label.split(' ')[0],x,60);
+    ctx.restore();
+  }
+}
+
+function drawAstronautBody(){
+  ctx.save();
+  ctx.fillStyle='#2a3242';
+  ctx.fillRect(360,110,80,160);
+  ctx.restore();
+  PARTS.forEach((p,i)=>{
+    ctx.save();
+    ctx.globalAlpha=attached[i]?1:0.35;
+    ctx.fillStyle=p.color;
+    ctx.fillRect(p.x-p.w/2,p.y-p.h/2,p.w,p.h);
+    ctx.strokeStyle=attached[i]?'#fff':'#556';
+    ctx.lineWidth=attached[i]?3:1.5;
+    ctx.strokeRect(p.x-p.w/2,p.y-p.h/2,p.w,p.h);
+    ctx.fillStyle='#0a0f1a';ctx.font='11px Arial';ctx.textAlign='center';
+    ctx.fillText(p.label,p.x,p.y+p.h/2+14);
+    ctx.restore();
+  });
+}
+
+function drawSealMeter(){
+  const gx=250,gy=H-40,gw=300,gh=20;
+  ctx.fillStyle='#10161f';ctx.fillRect(gx,gy,gw,gh);
+  ctx.fillStyle='rgba(126,200,80,0.55)';
+  ctx.fillRect(gx+(sealLo/100)*gw,gy,(sealHi-sealLo)/100*gw,gh);
+  ctx.strokeStyle='#8fa5c0';ctx.strokeRect(gx,gy,gw,gh);
+  const nx=gx+(sealPos/100)*gw;
+  ctx.fillStyle='#fff';
+  ctx.fillRect(nx-3,gy-5,6,gh+10);
+
+  const bx=gx+gw+20,by=gy-5,bw=120,bh=30;
+  sealBtnRect={x:bx,y:by,w:bw,h:bh};
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('check_seal_btn','Check Seal'),bx+bw/2,by+bh/2+5);
+
+  ctx.fillStyle='#8fd3ff';ctx.font='13px Arial';
+  ctx.fillText(I18N.t('pressurize_hint','Keep needle in green, then Check Seal'),W/2,gy-14);
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  let ox=0,oy=0;
+  if(shake>0){ shake-=dt; ox=(Math.random()-0.5)*shake; oy=(Math.random()-0.5)*shake; }
+
+  ctx.save();
+  ctx.translate(ox,oy);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#0a0f1a');bg.addColorStop(1,'#141c2e');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#8fd3ffcc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('fitting_start_hint','Click / Tap / 1-6 keys to begin the fitting'),W/2,H/2);
+  }else if(!gameOver){
+    drawOrderStrip();
+    drawAstronautBody();
+    if(awaitingNext){
+      resultTimer-=dt;
+      ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+      ctx.fillText(resultMsg,W/2,H-30);
+      if(resultTimer<=0) nextSuit();
+    }else if(phase==='seal'){
+      sealPos+=sealDir*sealSpeed*dt*0.6;
+      if(sealPos>=98){sealPos=98;sealDir=-1;}
+      if(sealPos<=2){sealPos=2;sealDir=1;}
+      drawSealMeter();
+    }else if(resultMsg){
+      ctx.fillStyle='#e94560';ctx.font='bold 16px Arial';ctx.textAlign='center';
+      ctx.fillText(resultMsg,W/2,H-16);
+    }
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(resultMsg||I18N.t('game_over_title','GAME OVER'),W/2,150);
+    ctx.font='bold 20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),W/2,188);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,218);
+  }
+
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+setHud();
+loop();
+</script></body></html>

@@ -1,0 +1,318 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Astronaut Training Spacewalk</title><meta name="description" content="Play Astronaut Training Spacewalk free online — Click, tap, or use Arrow Keys to grip each glowing handhold in sequence along the training rig. Miss three grips and the drill ends!"><link rel="canonical" href="https://games.multiportllc.com/games/astronauttrainingspacewalk"><meta property="og:title" content="Astronaut Training Spacewalk - Multiport Games"><meta property="og:description" content="Play Astronaut Training Spacewalk free online — Click, tap, or use Arrow Keys to grip each glowing handhold in sequence along the training rig. Miss three grips and the drill ends!"><meta property="og:url" content="https://games.multiportllc.com/games/astronauttrainingspacewalk"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Astronaut Training Spacewalk - Multiport Games"><meta name="twitter:description" content="Play Astronaut Training Spacewalk free online — Click, tap, or use Arrow Keys to grip each glowing handhold in sequence along the training rig. Miss three grips and the drill ends!"><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Astronaut Training Spacewalk","description":"Play Astronaut Training Spacewalk free online instantly. Click, tap, or use Arrow Keys to grip each glowing handhold in sequence along the spacewalk training rig, hand over hand, without missing a grip. The path gets longer and trickier with every rung. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/astronauttrainingspacewalk","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#05060f;display:block;border-radius:8px}
+#hud{color:#dce8f5;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#4fc3f7}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Astronaut Training Spacewalk</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span>Rung: <b id="rungNum">1</b>/<b id="rungTotal">6</b></span>
+      <span>Lives: <b id="lives">3</b></span>
+      <span>Score: <b id="score">0</b></span>
+      <span>Hi: <b id="hi">0</b></span>
+    </div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click, tap, or use <b>Arrow Keys</b> to grip the <b>glowing handhold</b> in sequence along the spacewalk rig, hand over hand. Grip the wrong one, or miss the window, and you lose a life. Clear every rung's path to advance — the sequences get longer and faster!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320;
+const TOTAL_RUNGS=6;
+const HI_KEY='astronauttrainingspacewalk_hi';
+
+let score=0,hi=0,lives=3,rung=0;
+let started=false,gameOver=false,awaitingNext=false;
+let resultMsg='',resultTimer=0,shake=0;
+let lastTime=null;
+
+// Handhold grid: 4 columns x 3 rows of possible positions
+const COLS=4,ROWS=3;
+const holdPositions=[];
+for(let r=0;r<ROWS;r++){
+  for(let col=0;col<COLS;col++){
+    holdPositions.push({x:140+col*180,y:80+r*90});
+  }
+}
+
+let path=[];      // sequence of hold indices to grip in order
+let pathStep=0;    // which step we're on
+let timeLeft=0;    // time window for current step
+let stepWindow=0;  // the max window for current rung difficulty
+let activeIdx=-1;
+let gripFlash=0,missFlash=0;
+
+try{hi=parseInt(localStorage.getItem(HI_KEY)||'0',10)||0;}catch(e){}
+
+function setHud(){
+  document.getElementById('rungNum').textContent=Math.min(rung+1,TOTAL_RUNGS);
+  document.getElementById('rungTotal').textContent=TOTAL_RUNGS;
+  document.getElementById('lives').textContent=lives;
+  document.getElementById('score').textContent=score;
+  document.getElementById('hi').textContent=hi;
+}
+
+function genPath(len){
+  const p=[];
+  let last=-1;
+  for(let i=0;i<len;i++){
+    let idx;
+    do{ idx=Math.floor(Math.random()*holdPositions.length); }while(idx===last);
+    p.push(idx);
+    last=idx;
+  }
+  return p;
+}
+
+function startRungStep(){
+  activeIdx=path[pathStep];
+  stepWindow=Math.max(45,95-rung*7);
+  timeLeft=stepWindow;
+}
+
+function newRung(){
+  const len=4+rung;
+  path=genPath(len);
+  pathStep=0;
+  startRungStep();
+}
+
+function resetGame(){
+  score=0;lives=3;rung=0;gameOver=false;awaitingNext=false;started=true;
+  resultMsg='';resultTimer=0;
+  newRung();
+  setHud();
+}
+
+function startGame(){
+  if(gameOver){resetGame();return;}
+  if(!started){started=true;newRung();setHud();return;}
+}
+
+function gripMiss(){
+  lives--;shake=10;missFlash=14;SFX.fail();
+  setHud();
+  if(lives<=0){ gameOver=true; resultMsg=I18N.t('training_failed','Training suspended — out of lives.'); SFX.lose(); return; }
+  // restart this rung's path on miss
+  pathStep=0;
+  startRungStep();
+}
+
+function gripHold(idx){
+  if(!started||gameOver||awaitingNext)return;
+  if(idx!==activeIdx){ gripMiss(); return; }
+  gripFlash=10;
+  score+=10+rung*2;
+  if(score>hi){hi=score;try{localStorage.setItem(HI_KEY,String(hi));}catch(e){}}
+  SFX.click();
+  pathStep++;
+  setHud();
+  if(pathStep>=path.length){
+    // rung complete
+    SFX.success();
+    rung++;
+    if(rung>=TOTAL_RUNGS){
+      gameOver=true;
+      resultMsg=I18N.t('all_rungs_cleared','Spacewalk complete! Training passed.');
+      SFX.win();
+    }else{
+      awaitingNext=true;
+      resultMsg=I18N.t('rung_clear','Handhold path cleared!');
+      resultTimer=70;
+    }
+  }else{
+    startRungStep();
+  }
+}
+
+function nextRung(){
+  awaitingNext=false;resultMsg='';
+  newRung();
+}
+
+function holdAt(px,py){
+  for(let i=0;i<holdPositions.length;i++){
+    const h=holdPositions[i];
+    if(Math.hypot(px-h.x,py-h.y)<=34)return i;
+  }
+  return -1;
+}
+
+function canvasPos(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  return {x:(clientX-rect.left)*(W/rect.width),y:(clientY-rect.top)*(H/rect.height)};
+}
+
+c.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  if(!started||gameOver){ startGame(); return; }
+  if(awaitingNext)return;
+  const p=canvasPos(e.clientX,e.clientY);
+  const idx=holdAt(p.x,p.y);
+  if(idx>=0) gripHold(idx);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started||gameOver){ startGame(); return; }
+  if(awaitingNext)return;
+  const t=e.changedTouches[0];
+  const p=canvasPos(t.clientX,t.clientY);
+  const idx=holdAt(p.x,p.y);
+  if(idx>=0) gripHold(idx);
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  const keys=['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter',' '];
+  if(!keys.includes(e.key)&&e.code!=='Space')return;
+  e.preventDefault();
+  if(!started||gameOver){ startGame(); return; }
+  if(awaitingNext)return;
+  if(activeIdx<0)return;
+  const h=holdPositions[activeIdx];
+  const col=Math.round((h.x-140)/180),row=Math.round((h.y-80)/90);
+  let targetCol=col,targetRow=row;
+  if(e.key==='ArrowUp')targetRow=Math.max(0,row-1);
+  else if(e.key==='ArrowDown')targetRow=Math.min(ROWS-1,row+1);
+  else if(e.key==='ArrowLeft')targetCol=Math.max(0,col-1);
+  else if(e.key==='ArrowRight')targetCol=Math.min(COLS-1,col+1);
+  else { gripHold(activeIdx); return; }
+  // Arrow keys just nudge a cursor; Enter/Space grips whatever is active hold (keyboard mode grips active directly for simplicity)
+  gripHold(activeIdx);
+});
+
+function drawRig(){
+  ctx.strokeStyle='#223';
+  ctx.lineWidth=6;
+  ctx.beginPath();
+  ctx.moveTo(60,H/2+10);ctx.lineTo(W-60,H/2+10);
+  ctx.stroke();
+}
+
+function drawHolds(){
+  for(let i=0;i<holdPositions.length;i++){
+    const h=holdPositions[i];
+    const isActive=i===activeIdx&&started&&!gameOver&&!awaitingNext;
+    const isDone=path.slice(0,pathStep).includes(i)&&isActive===false;
+    ctx.save();
+    if(isActive){
+      const pulse=0.6+0.4*Math.sin(performance.now()/120);
+      ctx.shadowColor='#ffd54f';
+      ctx.shadowBlur=20*pulse;
+      ctx.fillStyle='#ffd54f';
+    }else{
+      ctx.fillStyle='#39465c';
+    }
+    ctx.beginPath();
+    ctx.arc(h.x,h.y,22,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle='#8fa5c0';
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.arc(h.x,h.y,22,0,Math.PI*2);
+    ctx.stroke();
+  }
+}
+
+function drawAstronaut(){
+  if(activeIdx<0)return;
+  const h=holdPositions[Math.max(0,activeIdx)];
+  ctx.save();
+  ctx.translate(h.x,h.y+46);
+  ctx.fillStyle='#e8edf2';
+  ctx.beginPath();ctx.arc(0,0,16,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#4fc3f7';
+  ctx.globalAlpha=0.5;
+  ctx.beginPath();ctx.arc(0,0,16,0,Math.PI*2);ctx.fill();
+  ctx.globalAlpha=1;
+  ctx.fillStyle='#ccd8e0';
+  ctx.fillRect(-14,10,28,30);
+  ctx.restore();
+}
+
+function drawTimerBar(){
+  if(!started||gameOver||awaitingNext)return;
+  const pct=Math.max(0,timeLeft/stepWindow);
+  ctx.fillStyle='#111a28';
+  ctx.fillRect(60,H-30,W-120,14);
+  ctx.fillStyle=pct>0.4?'#7ec850':'#e94560';
+  ctx.fillRect(60,H-30,(W-120)*pct,14);
+  ctx.strokeStyle='#8fa5c0';
+  ctx.strokeRect(60,H-30,W-120,14);
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  let ox=0,oy=0;
+  if(shake>0){ shake-=dt; ox=(Math.random()-0.5)*shake; oy=(Math.random()-0.5)*shake; }
+
+  ctx.save();
+  ctx.translate(ox,oy);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#05060f');sky.addColorStop(1,'#0c1830');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // stars
+  ctx.fillStyle='#ffffff55';
+  for(let i=0;i<40;i++){
+    const sx=(i*53+((now/50)|0)%800)%W;
+    const sy=(i*37)%H;
+    ctx.fillRect(sx,sy,2,2);
+  }
+
+  drawRig();
+  drawHolds();
+  drawAstronaut();
+
+  if(missFlash>0){
+    missFlash-=dt;
+    ctx.fillStyle='rgba(233,69,96,'+(missFlash/14*0.35)+')';
+    ctx.fillRect(0,0,W,H);
+  }
+  if(gripFlash>0)gripFlash-=dt;
+
+  if(!started){
+    ctx.fillStyle='#4fc3f7cc';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('spacewalk_start_hint','Click / Tap / Arrow Keys to begin the drill'),W/2,36);
+  }else if(!gameOver){
+    if(awaitingNext){
+      resultTimer-=dt;
+      ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+      ctx.fillText(resultMsg,W/2,36);
+      if(resultTimer<=0) nextRung();
+    }else{
+      timeLeft-=dt;
+      drawTimerBar();
+      if(timeLeft<=0){ gripMiss(); }
+    }
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#000a';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(resultMsg||I18N.t('game_over_title','GAME OVER'),W/2,130);
+    ctx.font='bold 20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),W/2,168);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,198);
+  }
+
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+setHud();
+loop();
+</script></body></html>
