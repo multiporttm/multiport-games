@@ -1,0 +1,297 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Automaton Movement Synchronization</title><meta name="description" content="Play Automaton Movement Synchronization free online — Press number keys or tap a body part to select it, then use the arrow keys or on-screen buttons to tune its cam offset until every part ticks in sync."><link rel="canonical" href="https://games.multiportllc.com/games/automatonmovementsynchronization"><meta property="og:title" content="Automaton Movement Synchronization - Multiport Games"><meta property="og:description" content="Play Automaton Movement Synchronization free online — Press number keys or tap a body part to select it, then use the arrow keys or on-screen buttons to tune its cam offset until every part ticks in sync."><meta property="og:url" content="https://games.multiportllc.com/games/automatonmovementsynchronization"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Automaton Movement Synchronization","description":"Play Automaton Movement Synchronization free online instantly. Tune the cam offset of every moving part of an antique automaton — head, arms, eyes and more — so each dial hand lands in its highlighted sync window at the same instant. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/automatonmovementsynchronization","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#wrap{background:#1b140d;border-radius:14px;padding:14px;text-align:center}
+#hud{display:flex;justify-content:space-between;color:#e8c173;font-weight:800;font-size:1rem;padding:0 6px 6px;max-width:800px;margin:0 auto}
+#msg{color:#ffd54f;font-weight:800;min-height:1.6em;margin-bottom:4px}
+#c{background:radial-gradient(ellipse at center,#3a2a18 0%,#1b140d 75%);border-radius:10px;display:block;margin:0 auto;touch-action:none}
+#timerbar{max-width:800px;margin:6px auto 0;height:8px;background:#000;border-radius:4px;overflow:hidden}
+#timerfill{height:100%;background:linear-gradient(90deg,#e8c173,#ff6b35);width:100%;transition:width .08s linear}
+#controls2{display:flex;justify-content:center;gap:10px;margin:10px 0;flex-wrap:wrap}
+#controls2 button{padding:9px 18px;background:#7a5a3a;border:none;border-radius:16px;color:#fff;cursor:pointer;font-size:.95rem;font-weight:700}
+#controls2 button:active{transform:scale(.95)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Automaton Movement Synchronization</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="wrap">
+      <div id="hud"><span id="levelDisp">Level 1</span><span id="scoreDisp">Score: 0</span><span id="livesDisp">Lives: 3</span><span id="hiDisp">Hi: 0</span></div>
+      <div id="msg">Select a part and tune its cam offset</div>
+      <canvas id="c" width="800" height="440"></canvas>
+      <div id="timerbar"><div id="timerfill"></div></div>
+      <div id="controls2">
+        <button id="btnPrev">◀ Part</button>
+        <button id="btnCoarseDown">− −</button>
+        <button id="btnFineDown">−</button>
+        <button id="btnFineUp">+</button>
+        <button id="btnCoarseUp">+ +</button>
+        <button id="btnNext">Part ▶</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press the <b>number keys</b> or tap a body part on the automaton to select it, then use the <b>Left/Right arrow keys</b> for a fine nudge or <b>Up/Down arrow keys</b> for a coarse nudge of its cam offset (or use the on-screen buttons on touch). Every dial's hand sweeps around once per rotation — get all of them inside their glowing sync window at the same moment to assemble the movement. Three timeouts end the run — later rounds add more body parts to synchronize.</div>
+</div>
+<script>
+const HI_KEY='automatonmovementsynchronization_hi';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+let level=1,score=0,lives=3,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let parts=[],selIdx=0,timeLeft=0,timeTotal=0,running=false,gameOver=false,masterPhase=0;
+let animT=0,celebrating=false;
+
+const PART_DEFS=[
+  {label:'Head',shape:'circle'},
+  {label:'L.Arm',shape:'bar'},
+  {label:'R.Arm',shape:'bar'},
+  {label:'Eyes',shape:'dot'},
+  {label:'Legs',shape:'bar'},
+  {label:'Mouth',shape:'arc'}
+];
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+function updateHud(){
+  document.getElementById('levelDisp').textContent=I18N.t('level_label','Level {n}').replace('{n}',level);
+  document.getElementById('scoreDisp').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('livesDisp').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}',lives);
+  document.getElementById('hiDisp').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+}
+
+function partCount(lv){ return Math.min(3+Math.floor((lv-1)/1),6); }
+function tolerance(lv){ return Math.max(0.035,0.09-lv*0.01); }
+function timeBudget(lv,n){ return Math.max(9, n*4.5 - lv*0.4); }
+
+function wrap01(v){ v=v%1; if(v<0) v+=1; return v; }
+function circDist(a,b){ const d=Math.abs(wrap01(a)-wrap01(b)); return Math.min(d,1-d); }
+
+function layoutParts(n){
+  const defs=PART_DEFS.slice(0,n);
+  const cx=W/2, cy=220, R=150;
+  return defs.map((d,i)=>{
+    const ang=-Math.PI/2+ (i/n)*Math.PI*2;
+    return {
+      label:d.label, shape:d.shape,
+      x:cx+Math.cos(ang)*R, y:cy+Math.sin(ang)*R,
+      offset:Math.random(),
+      target:Math.random(),
+      synced:false
+    };
+  });
+}
+
+function startLevel(){
+  const n=partCount(level);
+  parts=layoutParts(n);
+  selIdx=0; masterPhase=0;
+  timeTotal=timeBudget(level,n); timeLeft=timeTotal;
+  running=true; celebrating=false;
+  setMsg(I18N.t('sync_hint','Tune every dial so all hands land in sync together'));
+  updateHud();
+}
+
+function allSynced(){ return parts.every(p=>p.synced); }
+
+function loseLife(reason){
+  lives--;
+  SFX.error();
+  updateHud();
+  if(lives<=0){ endGame(); return; }
+  setMsg(reason);
+  timeLeft=Math.min(timeTotal, timeLeft+2.5);
+}
+
+function endGame(){
+  running=false; gameOver=true;
+  if(score>hi){ hi=score; localStorage.setItem(HI_KEY,String(hi)); }
+  SFX.lose();
+  updateHud();
+  setMsg(I18N.t('game_over_restart','Game Over — Score {s}. Tap / press Enter to restart').replace('{s}',score));
+}
+
+function nudge(delta){
+  if(!running||celebrating||!parts.length) return;
+  const p=parts[selIdx];
+  p.offset=wrap01(p.offset+delta);
+  SFX.select();
+}
+
+function selectPart(i){
+  if(!parts.length) return;
+  selIdx=((i%parts.length)+parts.length)%parts.length;
+  SFX.click();
+}
+
+function levelComplete(){
+  running=false; celebrating=true; animT=0;
+  score+=25*level+Math.round(timeLeft*5);
+  SFX.success();
+  setMsg(I18N.t('movements_synced','Movements synchronized! Cam train turning...'));
+  updateHud();
+}
+
+document.getElementById('btnPrev').addEventListener('click',()=>selectPart(selIdx-1));
+document.getElementById('btnNext').addEventListener('click',()=>selectPart(selIdx+1));
+document.getElementById('btnFineUp').addEventListener('click',()=>nudge(0.01));
+document.getElementById('btnFineDown').addEventListener('click',()=>nudge(-0.01));
+document.getElementById('btnCoarseUp').addEventListener('click',()=>nudge(0.05));
+document.getElementById('btnCoarseDown').addEventListener('click',()=>nudge(-0.05));
+
+document.addEventListener('keydown',e=>{
+  if(gameOver && (e.code==='Enter'||e.code==='Space')){ resetGame(); return; }
+  if(!running||celebrating) return;
+  if(e.code>='Digit1'&&e.code<='Digit9'){
+    const num=parseInt(e.code.replace('Digit',''),10)-1;
+    if(num<parts.length) selectPart(num);
+    return;
+  }
+  if(e.code==='ArrowLeft'){e.preventDefault(); nudge(-0.01); return;}
+  if(e.code==='ArrowRight'){e.preventDefault(); nudge(0.01); return;}
+  if(e.code==='ArrowUp'){e.preventDefault(); nudge(0.05); return;}
+  if(e.code==='ArrowDown'){e.preventDefault(); nudge(-0.05); return;}
+  if(e.code==='Tab'){e.preventDefault(); selectPart(selIdx+1); return;}
+});
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width), y:cy*(H/r.height)};
+}
+function handlePointer(e){
+  e.preventDefault();
+  if(gameOver){ resetGame(); return; }
+  if(!running||celebrating) return;
+  const p=pointerPos(e);
+  let idx=-1,bestD=38*38;
+  parts.forEach((pt,i)=>{ const dx=pt.x-p.x,dy=pt.y-p.y,d=dx*dx+dy*dy; if(d<bestD){bestD=d;idx=i;} });
+  if(idx>=0) selectPart(idx);
+}
+c.addEventListener('pointerdown',handlePointer);
+c.addEventListener('touchstart',handlePointer,{passive:false});
+
+function resetGame(){
+  level=1; score=0; lives=3; gameOver=false;
+  startLevel();
+}
+
+function drawDial(p,isSel){
+  const rad=34;
+  ctx.save();
+  ctx.translate(p.x,p.y-56);
+  ctx.beginPath(); ctx.arc(0,0,rad,0,Math.PI*2);
+  ctx.fillStyle='#120d08'; ctx.fill();
+  ctx.lineWidth=isSel?3:1.5;
+  ctx.strokeStyle=isSel?'#ffffff':'#8a6a3a';
+  ctx.stroke();
+  // target arc
+  const tolAng=tolerance(level)*Math.PI*2;
+  const tAng=p.target*Math.PI*2-Math.PI/2;
+  ctx.beginPath();
+  ctx.arc(0,0,rad-4,tAng-tolAng,tAng+tolAng);
+  ctx.strokeStyle=p.synced?'#6fe36f':'#ffd54f';
+  ctx.lineWidth=5;
+  ctx.stroke();
+  // hand
+  const hAng=wrap01(masterPhase+p.offset)*Math.PI*2-Math.PI/2;
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  ctx.lineTo(Math.cos(hAng)*(rad-6),Math.sin(hAng)*(rad-6));
+  ctx.strokeStyle='#ff6b35'; ctx.lineWidth=3; ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,0,3,0,Math.PI*2); ctx.fillStyle='#e8c173'; ctx.fill();
+  ctx.restore();
+}
+
+function drawPart(p,isSel){
+  ctx.save();
+  const bob=Math.sin(wrap01(masterPhase+p.offset)*Math.PI*2)*8;
+  ctx.fillStyle=p.synced?'#5aaa30':(isSel?'#ffd54f':'#6b4a28');
+  ctx.strokeStyle=isSel?'#ffffff':'#2a1a08';
+  ctx.lineWidth=isSel?3:2;
+  if(p.shape==='circle'){
+    ctx.beginPath(); ctx.arc(p.x,p.y+bob,22,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  } else if(p.shape==='bar'){
+    ctx.save(); ctx.translate(p.x,p.y+bob);
+    ctx.fillRect(-10,-26,20,52); ctx.strokeRect(-10,-26,20,52);
+    ctx.restore();
+  } else if(p.shape==='dot'){
+    ctx.beginPath(); ctx.arc(p.x,p.y+bob,12,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  } else if(p.shape==='arc'){
+    ctx.beginPath(); ctx.arc(p.x,p.y+bob,18,0.1*Math.PI,0.9*Math.PI); ctx.lineWidth=6; ctx.strokeStyle=p.synced?'#5aaa30':(isSel?'#ffd54f':'#6b4a28'); ctx.stroke();
+  }
+  ctx.fillStyle='#e8c173'; ctx.font='bold 12px Arial'; ctx.textAlign='center';
+  ctx.fillText(p.label,p.x,p.y+bob+40);
+  ctx.restore();
+}
+
+let lastT=null;
+function loop(ts){
+  if(lastT==null) lastT=ts;
+  const dt=Math.min((ts-lastT)/1000,0.1);
+  lastT=ts;
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#120d08'; ctx.fillRect(0,0,W,H);
+
+  if(gameOver){
+    ctx.fillStyle='#fff'; ctx.font='bold 34px Arial'; ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('final_score','Final Score: {s}').replace('{s}',score),W/2,H/2+24);
+    requestAnimationFrame(loop); return;
+  }
+
+  // torso
+  ctx.save();
+  ctx.fillStyle='#2a1a0a';
+  ctx.beginPath(); ctx.ellipse(W/2,230,70,110,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  if(celebrating){
+    animT+=dt;
+    masterPhase=wrap01(masterPhase+dt*0.4);
+    parts.forEach(p=>drawPart(p,false));
+    parts.forEach(p=>drawDial(p,false));
+    document.getElementById('timerfill').style.width='100%';
+    ctx.fillStyle='#ffd54f'; ctx.font='bold 22px Arial'; ctx.textAlign='center';
+    ctx.fillText('✓ IN SYNC ✓',W/2,60);
+    if(animT>1.2){
+      level++;
+      startLevel();
+    }
+    requestAnimationFrame(loop); return;
+  }
+
+  if(running){
+    masterPhase=wrap01(masterPhase+dt*(0.18+level*0.01));
+    parts.forEach(p=>{ p.synced=circDist(p.offset,p.target)<=tolerance(level); });
+    if(allSynced()){ levelComplete(); requestAnimationFrame(loop); return; }
+
+    timeLeft-=dt;
+    const pct=Math.max(0,timeLeft/timeTotal)*100;
+    document.getElementById('timerfill').style.width=pct+'%';
+    if(timeLeft<=0){
+      loseLife(I18N.t('time_up','Out of time! Keep tuning'));
+      timeLeft=timeTotal;
+      if(lives<=0){ requestAnimationFrame(loop); return; }
+    }
+  }
+
+  parts.forEach((p,i)=>drawPart(p,i===selIdx));
+  parts.forEach((p,i)=>drawDial(p,i===selIdx));
+
+  ctx.fillStyle='#e8c173'; ctx.font='bold 16px Arial'; ctx.textAlign='center';
+  const selLabel=parts[selIdx]?parts[selIdx].label:'';
+  ctx.fillText(I18N.t('selected_label','Selected: {p}').replace('{p}',selLabel),W/2,30);
+
+  requestAnimationFrame(loop);
+}
+startLevel();
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,228 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Music Box Comb Tuning</title><meta name="description" content="Play Music Box Comb Tuning free online — File each comb tooth to match the target pitch shown. Use Left/Right or A/D to pick a tooth, Up/Down or W/S to file it thinner (sharper) or thicker (flatter), and Space or Tap to lock it in."><link rel="canonical" href="https://games.multiportllc.com/games/musicboxcombtuning"><meta property="og:title" content="Music Box Comb Tuning - Multiport Games"><meta property="og:description" content="Play Music Box Comb Tuning free online — File each comb tooth to match the target pitch shown. Use Left/Right or A/D to pick a tooth, Up/Down or W/S to file it thinner (sharper) or thicker (flatter), and Space or Tap to lock it in."><meta property="og:url" content="https://games.multiportllc.com/games/musicboxcombtuning"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Music Box Comb Tuning","description":"Play Music Box Comb Tuning free online instantly. File each comb tooth to match the target pitch shown. Use Left/Right or A/D to pick a tooth, Up/Down or W/S to file it thinner (sharper) or thicker (flatter), and Space or Tap to lock it in. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/musicboxcombtuning","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#table{background:#16213e;border-radius:14px;padding:18px;text-align:center}
+#status{color:#fff;font-size:1.1rem;font-weight:800;margin:6px 0;min-height:1.6em}
+#hud{display:flex;justify-content:space-between;max-width:620px;margin:0 auto 8px;color:#ddd;font-size:.95rem;font-weight:700}
+#hud span{color:#ffd54f}
+#c{background:#2b1810;display:block;border-radius:10px;margin:0 auto;touch-action:none}
+#help{color:#bbb;font-size:.82rem;margin-top:10px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Music Box Comb Tuning</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="table">
+      <div id="hud"><span id="lives-display">Lives: 3</span><span id="level-display">Level 1</span><span id="score-display">Score: 0 | Hi: 0</span></div>
+      <div id="status">Tune the glowing tooth to the target pitch</div>
+      <canvas id="c" width="640" height="300"></canvas>
+      <div id="help">Left/Right select tooth · Up/Down file thinner/thicker · Space/Tap lock in</div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">File a music box comb's metal teeth to tune each one to the correct pitch. Use <b>Left/Right</b> or <b>A/D</b> to pick a tooth, <b>Up/Down</b> or <b>W/S</b> to file it thinner (sharper) or thicker (flatter), and <b>Space</b> or <b>Tap</b> to lock it in. Combs get longer and target pitches trickier as you level up.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const HI_KEY='musicboxcombtuning_hi';
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),lives=3,level=1,gameOver=false,won=false;
+let teeth=[],selected=0,targetIdx=0;
+let flashTimer=0,flashColor=null;
+let audioCtx=null,playingOsc=null;
+
+function toothCount(){return Math.min(4+Math.floor((level-1)/1),10);}
+function tolerance(){return Math.max(6,22-level*2);} // cents-ish units allowed
+function targetSpread(){return Math.min(40+level*8,260);}
+
+function newLevel(adv){
+  const n=toothCount();
+  teeth=[];
+  for(let i=0;i<n;i++){
+    // base correct length maps to a pitch spread across octave; start each tooth randomly off
+    const correct=40+(i*(220/(n-1||1)));
+    const off=(Math.random()<0.5?-1:1)*(30+Math.random()*targetSpread());
+    teeth.push({correct,len:Math.max(20,Math.min(280,correct+off)),done:false});
+  }
+  selected=0;
+  targetIdx=0;
+  flashTimer=0;
+  updateHud();
+  setStatus(I18N.t('tune_tooth','Tune tooth {n} of {t} to its target pitch').replace('{n}',1).replace('{t}',n));
+}
+
+function reset(){score=0;lives=3;level=1;gameOver=false;won=false;newLevel();}
+
+function updateHud(){
+  document.getElementById('lives-display').textContent=I18N.t('lives_label','Lives: {l}').replace('{l}',lives);
+  document.getElementById('level-display').textContent=I18N.t('level_label','Level {n}').replace('{n}',level);
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function pitchFromLen(len){ return 880*Math.pow(2,-(len-20)/120); }
+
+function playTone(len){
+  if(SFX.isMuted())return;
+  const c2=SFX.getContext();
+  if(!c2)return;
+  if(playingOsc){try{playingOsc.stop();}catch(e){}}
+  const osc=c2.createOscillator();
+  const gain=c2.createGain();
+  osc.type='triangle';
+  osc.frequency.setValueAtTime(pitchFromLen(len),c2.currentTime);
+  gain.gain.setValueAtTime(0.18,c2.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.0001,c2.currentTime+0.5);
+  osc.connect(gain);gain.connect(c2.destination);
+  osc.start();osc.stop(c2.currentTime+0.52);
+  playingOsc=osc;
+}
+
+function fileSelected(dir){
+  if(gameOver||won)return;
+  const t=teeth[targetIdx];
+  if(t.done)return;
+  t.len=Math.max(15,Math.min(290,t.len+dir*4));
+  playTone(t.len);
+}
+
+function selectTooth(dir){
+  if(gameOver||won)return;
+  selected=(selected+dir+teeth.length)%teeth.length;
+}
+
+function lockIn(){
+  if(gameOver){reset();return;}
+  if(won){level++;newLevel();won=false;return;}
+  const t=teeth[targetIdx];
+  if(!t||t.done)return;
+  const diff=Math.abs(t.len-t.correct);
+  if(diff<=tolerance()){
+    t.done=true;
+    score+=Math.max(10,40-Math.floor(diff));
+    SFX.success();
+    flashColor='#4caf50';flashTimer=20;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    updateHud();
+    const nextIdx=teeth.findIndex(x=>!x.done);
+    if(nextIdx===-1){
+      won=true;
+      SFX.win();
+      setStatus(I18N.t('level_complete','Comb tuned! Press Space / Tap for next comb'));
+    } else {
+      targetIdx=nextIdx;
+      selected=targetIdx;
+      setStatus(I18N.t('tune_tooth','Tune tooth {n} of {t} to its target pitch').replace('{n}',targetIdx+1).replace('{t}',teeth.length));
+    }
+  } else {
+    lives--;
+    SFX.error();
+    flashColor='#e94560';flashTimer=20;
+    updateHud();
+    if(lives<=0){
+      gameOver=true;
+      SFX.lose();
+      setStatus(I18N.t('game_over_hint','GAME OVER — Press Space / Tap to restart'));
+    } else {
+      setStatus(I18N.t('missed_pitch','Off pitch! Try filing again. Lives left: {l}').replace('{l}',lives));
+    }
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','a','A'].includes(e.key)){e.preventDefault();selectTooth(-1);}
+  else if(['ArrowRight','d','D'].includes(e.key)){e.preventDefault();selectTooth(1);}
+  else if(['ArrowUp','w','W'].includes(e.key)){e.preventDefault();fileSelected(-1);}
+  else if(['ArrowDown','s','S'].includes(e.key)){e.preventDefault();fileSelected(1);}
+  else if(e.code==='Space'){e.preventDefault();lockIn();}
+});
+
+let dragStartY=null;
+c.addEventListener('pointerdown',e=>{
+  const rect=c.getBoundingClientRect();
+  const x=e.clientX-rect.left;
+  const idx=Math.floor(x/(c.width/teeth.length));
+  if(idx>=0&&idx<teeth.length){selected=idx;}
+  dragStartY=e.clientY;
+  if(selected===targetIdx)playTone(teeth[selected].len);
+});
+c.addEventListener('pointermove',e=>{
+  if(dragStartY===null)return;
+  const dy=e.clientY-dragStartY;
+  if(Math.abs(dy)>6){
+    fileSelected(dy>0?1:-1);
+    dragStartY=e.clientY;
+  }
+});
+window.addEventListener('pointerup',()=>{dragStartY=null;});
+c.addEventListener('dblclick',e=>{e.preventDefault();lockIn();});
+let lastTap=0;
+c.addEventListener('touchend',e=>{
+  const now=Date.now();
+  if(now-lastTap<350){e.preventDefault();lockIn();}
+  lastTap=now;
+},{passive:false});
+
+function drawTooth(t,i){
+  const n=teeth.length;
+  const slotW=c.width/n;
+  const x=i*slotW+slotW/2;
+  const maxH=240;
+  const h=Math.max(10,maxH*(t.len/290));
+  const topY=260-h;
+  const isTarget=i===targetIdx;
+  const isSel=i===selected;
+  ctx.fillStyle=t.done?'#4caf50':(isTarget?'#ffd54f':'#c0c0c0');
+  const w=Math.max(10,slotW*0.4);
+  ctx.fillRect(x-w/2,topY,w,h);
+  if(isSel&&!t.done){
+    ctx.strokeStyle='#fff';ctx.lineWidth=3;
+    ctx.strokeRect(x-w/2-3,topY-3,w+6,h+6);
+  }
+  if(isTarget&&!t.done){
+    // target marker line
+    const targetH=Math.max(10,maxH*(t.correct/290));
+    const targetY=260-targetH;
+    ctx.strokeStyle='#ff6b35';ctx.lineWidth=2;
+    ctx.setLineDash([5,4]);
+    ctx.beginPath();ctx.moveTo(x-w/2-10,targetY);ctx.lineTo(x+w/2+10,targetY);ctx.stroke();
+    ctx.setLineDash([]);
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,c.width,c.height);
+  const bg=ctx.createLinearGradient(0,0,0,c.height);
+  bg.addColorStop(0,'#3a2418');bg.addColorStop(1,'#2b1810');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,c.width,c.height);
+  ctx.fillStyle='#1a0f08';ctx.fillRect(0,260,c.width,20);
+
+  teeth.forEach((t,i)=>drawTooth(t,i));
+
+  if(flashTimer>0){
+    ctx.fillStyle=flashColor+'33';
+    ctx.fillRect(0,0,c.width,c.height);
+    flashTimer--;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 30px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),c.width/2,130);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Press Space or Tap to restart'),c.width/2,165);
+  } else if(won){
+    ctx.fillStyle='#4caf50';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('comb_tuned','COMB TUNED!'),c.width/2,130);
+  }
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>
