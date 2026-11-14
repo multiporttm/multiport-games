@@ -1,0 +1,335 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Stringed Instrument Bridge Fitting</title><meta name="description" content="Play Stringed Instrument Bridge Fitting free online — Carve a replacement bridge foot to match the body's curve, then set its height for correct string action."><link rel="canonical" href="https://games.multiportllc.com/games/stringedinstrumentbridgefitting"><meta property="og:title" content="Stringed Instrument Bridge Fitting - Multiport Games"><meta property="og:description" content="Play Stringed Instrument Bridge Fitting free online — Carve a replacement bridge foot to match the body's curve, then set its height for correct string action."><meta property="og:url" content="https://games.multiportllc.com/games/stringedinstrumentbridgefitting"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Stringed Instrument Bridge Fitting","description":"Play Stringed Instrument Bridge Fitting free online instantly. Drag the carving knife (or use the arrow keys) across the bridge foot to shave it flush against the instrument body's curve without gouging too deep, then dial the bridge height into the target zone for proper string action. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/stringedinstrumentbridgefitting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b1d10;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#f3dcb8;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#timeWrap{max-width:600px;margin:0 auto 8px;background:#3a2611;border-radius:10px;padding:4px}
+#timeBar{height:10px;border-radius:8px;background:linear-gradient(90deg,#ffd54f,#ff8a3d);width:100%;transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Stringed Instrument Bridge Fitting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Body 1/5</span>
+    </div>
+    <div id="timeWrap"><div id="timeBar"></div></div>
+    <canvas id="c" width="800" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> <b>Carving:</b> drag your mouse or finger (or hold the <b>Arrow Keys</b>) to run the knife across the bridge foot, shaving it down flush with the glowing target curve of the instrument body. Carve too deep past a column and you gouge it — too many gouges ruins the bridge. <b>Fitting:</b> once flush, hold the bridge's height (drag or <b>Up/Down</b>) steady inside the target zone for proper string action until it locks in. Run out of time or lives and the bridge is scrapped!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const LEVELS=[
+  {amp:10,tol:7,overTol:11,time:26,hzone:16,maxGouge:4},
+  {amp:16,tol:6,overTol:10,time:24,hzone:14,maxGouge:4},
+  {amp:23,tol:5.5,overTol:9,time:22,hzone:12,maxGouge:3},
+  {amp:30,tol:5,overTol:8,time:20,hzone:10,maxGouge:3},
+  {amp:38,tol:4.5,overTol:7,time:18,hzone:8,maxGouge:2}
+];
+const COLS=24;
+const areaX0=160,areaX1=640,areaY0=90,areaY1=230;
+const colW=(areaX1-areaX0)/COLS;
+let hi=parseInt(localStorage.getItem('stringedinstrumentbridgefitting_hi')||'0',10);
+let score=0,lives=3,levelIndex=0,gameOver=false,started=false,won=false;
+let subPhase='carve',targetH=[],stock=[],gouged=[],timeLeft=0,lastTime=null,flashTimer=0,flashGood=true;
+let tool={x:400,y:150};
+let heightVal=50,hLo=0,hHi=0,holdTimer=0;
+const HOLD_NEEDED=0.9;
+const keys={};
+
+function yToH(y){return Math.max(0,Math.min(100,(y-areaY0)/(areaY1-areaY0)*100));}
+function hToY(h){return areaY0+(h/100)*(areaY1-areaY0);}
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('body_label','Body {n}/5').replace('{n}',levelIndex+1);
+}
+
+function setupCarve(){
+  const lv=LEVELS[levelIndex];
+  subPhase='carve';
+  targetH=[];stock=[];gouged=[];
+  for(let i=0;i<COLS;i++){
+    const t=50-lv.amp*Math.sin(Math.PI*i/(COLS-1));
+    targetH.push(t);
+    stock.push(Math.max(0,t-(14+Math.random()*16)));
+    gouged.push(false);
+  }
+  tool={x:400,y:hToY(stock[Math.floor(COLS/2)])};
+  timeLeft=lv.time;
+  lastTime=null;
+}
+
+function setupHeight(){
+  const lv=LEVELS[levelIndex];
+  subPhase='height';
+  const mid=25+Math.random()*50;
+  hLo=mid-lv.hzone/2;hHi=mid+lv.hzone/2;
+  heightVal=Math.random()*100;
+  holdTimer=0;
+  timeLeft=lv.time*0.8;
+  lastTime=null;
+}
+
+function reset(){
+  score=0;lives=3;levelIndex=0;gameOver=false;started=false;won=false;flashTimer=0;
+  setupCarve();
+  setHud();
+}
+
+function coverageStats(){
+  const lv=LEVELS[levelIndex];
+  let within=0,gougeCount=0;
+  for(let i=0;i<COLS;i++){
+    const d=stock[i]-targetH[i];
+    if(Math.abs(d)<=lv.tol)within++;
+    if(gouged[i])gougeCount++;
+  }
+  return {within,gougeCount};
+}
+
+function mistake(){
+  lives--;
+  SFX.error();
+  flashTimer=18;flashGood=false;
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem('stringedinstrumentbridgefitting_hi',hi);}
+    SFX.lose();
+  }else{
+    if(subPhase==='height')setupHeight();else setupCarve();
+  }
+  setHud();
+}
+
+function carveDone(){
+  score+=50+levelIndex*15;
+  SFX.success();
+  flashTimer=18;flashGood=true;
+  setupHeight();
+  setHud();
+}
+
+function levelSuccess(){
+  score+=70+levelIndex*20;
+  SFX.win();
+  flashTimer=20;flashGood=true;
+  levelIndex++;
+  if(levelIndex>=LEVELS.length){
+    won=true;
+    if(score>hi){hi=score;localStorage.setItem('stringedinstrumentbridgefitting_hi',hi);}
+  }else{
+    SFX.levelup();
+    setupCarve();
+  }
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();}
+}
+
+function canvasPos(ev){
+  const r=c.getBoundingClientRect();
+  const cxp=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const cyp=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return {x:cxp*(800/r.width),y:cyp*(340/r.height)};
+}
+
+function carveAt(nx,ny){
+  nx=Math.max(areaX0,Math.min(areaX1,nx));
+  ny=Math.max(areaY0,Math.min(areaY1+20,ny));
+  tool.x=nx;tool.y=ny;
+  const lv=LEVELS[levelIndex];
+  const h=yToH(ny);
+  const centerCol=Math.floor((nx-areaX0)/colW);
+  for(let i=centerCol-1;i<=centerCol+1;i++){
+    if(i<0||i>=COLS)continue;
+    if(h>stock[i]){
+      stock[i]=h;
+      if(stock[i]-targetH[i]>lv.overTol){
+        if(!gouged[i]){gouged[i]=true;SFX.hit();}
+      }
+    }
+  }
+}
+
+let pointerActive=false;
+c.addEventListener('mousedown',e=>{startOrRestart();pointerActive=true;const p=canvasPos(e);
+  if(started&&!gameOver&&!won){ if(subPhase==='carve'){carveAt(p.x,p.y);} else { heightVal=yToH(p.y); } }
+});
+c.addEventListener('mousemove',e=>{if(pointerActive&&started&&!gameOver&&!won){const p=canvasPos(e); if(subPhase==='carve')carveAt(p.x,p.y); else heightVal=yToH(p.y);}});
+window.addEventListener('mouseup',()=>{pointerActive=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();pointerActive=true;const p=canvasPos(e);
+  if(started&&!gameOver&&!won){ if(subPhase==='carve'){carveAt(p.x,p.y);} else { heightVal=yToH(p.y); } }
+},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(started&&!gameOver&&!won){const p=canvasPos(e); if(subPhase==='carve')carveAt(p.x,p.y); else heightVal=yToH(p.y);}},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();pointerActive=false;},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space')startOrRestart();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function drawCurve(){
+  ctx.strokeStyle='rgba(255,213,79,0.85)';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  for(let i=0;i<COLS;i++){
+    const x=areaX0+(i+0.5)*colW,y=hToY(targetH[i]);
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+}
+
+function drawStock(){
+  const lv=LEVELS[levelIndex];
+  for(let i=0;i<COLS;i++){
+    const x=areaX0+i*colW,y=hToY(stock[i]);
+    const d=stock[i]-targetH[i];
+    let col='#c89b6a';
+    if(gouged[i])col='#5a2f2f';
+    else if(Math.abs(d)<=lv.tol)col='#9fd88a';
+    else if(d<0)col='#c89b6a';else col='#e0a86a';
+    ctx.fillStyle=col;
+    ctx.fillRect(x,areaY0-10,colW-1,y-(areaY0-10));
+  }
+  drawCurve();
+}
+
+function drawKnife(){
+  ctx.save();
+  ctx.translate(tool.x,tool.y);
+  ctx.fillStyle='#d8d8e0';
+  ctx.fillRect(-4,-22,8,22);
+  ctx.fillStyle='#8a8a90';
+  ctx.beginPath();ctx.moveTo(-8,0);ctx.lineTo(8,0);ctx.lineTo(0,10);ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+
+function drawHeightGauge(){
+  const gx=400;
+  ctx.strokeStyle='#555';ctx.lineWidth=6;
+  ctx.beginPath();ctx.moveTo(gx,areaY0);ctx.lineTo(gx,areaY1);ctx.stroke();
+  const zy0=hToY(hLo),zy1=hToY(hHi);
+  ctx.fillStyle='rgba(76,175,80,0.35)';
+  ctx.fillRect(gx-20,zy0,40,zy1-zy0);
+  ctx.strokeStyle='#4caf50';ctx.lineWidth=2;
+  ctx.strokeRect(gx-20,zy0,40,zy1-zy0);
+  const hy=hToY(heightVal);
+  const inZone=heightVal>=hLo&&heightVal<=hHi;
+  ctx.fillStyle=inZone?'#ffd54f':'#e94560';
+  ctx.beginPath();ctx.moveTo(gx-30,hy);ctx.lineTo(gx+30,hy-10);ctx.lineTo(gx+30,hy+10);ctx.closePath();ctx.fill();
+  ctx.fillStyle='#f3dcb8';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('action_label','String action height'),gx,areaY0-18);
+  if(inZone){
+    ctx.fillStyle='#4caf50';ctx.font='bold 13px Arial';
+    ctx.fillText(I18N.t('hold_hint','Hold steady...')+' '+Math.round((HOLD_NEEDED-holdTimer)*10)/10+'s',gx,areaY1+24);
+  }else{
+    ctx.fillStyle='#f3dcb8';ctx.font='13px Arial';
+    ctx.fillText(I18N.t('fit_hint','Move into the green zone and hold'),gx,areaY1+24);
+  }
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,340);
+  const bg=ctx.createLinearGradient(0,0,0,340);
+  bg.addColorStop(0,'#1d140b');bg.addColorStop(1,'#2b1d10');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,340);
+  ctx.textAlign='center';
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Drag / Tap / Space to start'),400,30);
+    drawStock();drawKnife();
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','BRIDGE SCRAPPED'),400,110);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,145);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#ffd54f';ctx.font='bold 28px Arial';
+    ctx.fillText(I18N.t('win_title','PERFECT ACTION! 🎻'),400,100);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,135);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,165);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.25);
+  lastTime=now;
+
+  const lv=LEVELS[levelIndex];
+
+  if(subPhase==='carve'){
+    const kSpd=90*dt;
+    let nx=tool.x,ny=tool.y,moved=false;
+    if(keys['ArrowLeft']){nx-=kSpd;moved=true;}
+    if(keys['ArrowRight']){nx+=kSpd;moved=true;}
+    if(keys['ArrowDown']){ny+=kSpd;moved=true;}
+    if(keys['ArrowUp']){ny-=kSpd;moved=true;}
+    if(moved)carveAt(nx,ny);
+
+    timeLeft-=dt;
+    if(timeLeft<=0){mistake();}
+    else{
+      const st=coverageStats();
+      if(st.gougeCount>lv.maxGouge){mistake();}
+      else if(st.within>=COLS*0.95){carveDone();}
+    }
+    document.getElementById('timeBar').style.width=Math.max(0,Math.min(100,timeLeft/lv.time*100))+'%';
+    drawStock();drawKnife();
+    ctx.fillStyle='#f3dcb8';ctx.font='bold 16px Arial';
+    ctx.fillText(I18N.t('carve_hint','Shave the foot flush with the glowing curve'),400,60);
+  }else if(subPhase==='height'){
+    const kSpd=40*dt;
+    if(keys['ArrowUp'])heightVal=Math.max(0,heightVal-kSpd);
+    if(keys['ArrowDown'])heightVal=Math.min(100,heightVal+kSpd);
+
+    timeLeft-=dt;
+    const inZone=heightVal>=hLo&&heightVal<=hHi;
+    if(inZone){holdTimer+=dt;}else{holdTimer=Math.max(0,holdTimer-dt*2);}
+    if(holdTimer>=HOLD_NEEDED){levelSuccess();}
+    else if(timeLeft<=0){mistake();}
+    document.getElementById('timeBar').style.width=Math.max(0,Math.min(100,timeLeft/(lv.time*0.8)*100))+'%';
+    drawHeightGauge();
+  }
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.18)':'rgba(255,80,100,0.18)';
+    ctx.fillRect(0,0,800,340);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+setHud();
+loop();
+</script></body></html>
