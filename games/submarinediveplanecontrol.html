@@ -1,0 +1,253 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Submarine Dive Plane Control</title><meta name="description" content="Play Submarine Dive Plane Control free online — Use Left/Right Arrow or A/D, or drag, to angle the dive planes. Keep the pitch needle inside the safe zone through each maneuver."><link rel="canonical" href="https://games.multiportllc.com/games/submarinediveplanecontrol"><meta property="og:title" content="Submarine Dive Plane Control - Multiport Games"><meta property="og:description" content="Play Submarine Dive Plane Control free online — Use Left/Right Arrow or A/D, or drag, to angle the dive planes. Keep the pitch needle inside the safe zone through each maneuver."><meta property="og:url" content="https://games.multiportllc.com/games/submarinediveplanecontrol"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Submarine Dive Plane Control - Multiport Games"><meta name="twitter:description" content="Play Submarine Dive Plane Control free online — Use Left/Right Arrow or A/D, or drag, to angle the dive planes. Keep the pitch needle inside the safe zone through each maneuver."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Submarine Dive Plane Control","description":"Play Submarine Dive Plane Control free online instantly. Use Left/Right Arrow or A/D, or drag, to angle the dive planes. Keep the pitch needle inside the safe zone through each maneuver. No download or signup required.","genre":"Simulation","url":"https://games.multiportllc.com/games/submarinediveplanecontrol","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0b1f2e;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#9fe8d8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px}
+#hud span.lives{color:#ff6b6b}
+#hud span.lvl{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Submarine Dive Plane Control</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span class="lvl" id="lvl-display">Maneuver: 1</span>
+      <span class="lives" id="lives-display">Lives: ●●●</span>
+      <span id="time-display">Time: 45</span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Left/Right Arrow</b> or <b>A/D</b>, or drag the wheel / swipe left-right, to angle the dive planes and steer the pitch needle. Follow the target zone as it drifts through each maneuver — drift out of the safe range too long and you lose a life. Later maneuvers move faster and swing wider.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const scoreEl=document.getElementById('score-display');
+const lvlEl=document.getElementById('lvl-display');
+const livesEl=document.getElementById('lives-display');
+const timeEl=document.getElementById('time-display');
+
+let score=0,hi=0,lives=3,level=1,timeLeft=45,gameOver=false,started=false,lastTime=null,flashUntil=0,flashMsg='';
+let planeAngle=0; // -45..45 degrees, player controlled
+let pitch=0; // -90..90 current sub pitch
+let pitchVel=0;
+let targetCenter=0,targetWidth=22,targetPhase=0;
+let outOfRangeTime=0;
+let drag=null;
+
+try{hi=parseInt(localStorage.getItem('submarinediveplanecontrol_hi')||'0',10)||0;}catch(e){}
+function saveHi(){ if(score>hi){hi=score;try{localStorage.setItem('submarinediveplanecontrol_hi',String(Math.floor(hi)));}catch(e){} } }
+
+function newLevel(){
+  pitch=0;pitchVel=0;planeAngle=0;
+  targetPhase=Math.random()*10;
+  outOfRangeTime=0;
+  timeLeft=Math.max(28,45-level*1.5);
+  targetWidth=Math.max(10,22-level*1.3);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;lastTime=null;
+  newLevel();
+}
+reset();
+
+function flash(msg,ms){flashMsg=msg;flashUntil=performance.now()+(ms||700);}
+
+function targetAt(t){
+  const amp=25+Math.min(35,level*4);
+  const speed=0.3+level*0.09;
+  return amp*Math.sin((t+targetPhase)*speed)+10*Math.sin((t+targetPhase)*speed*2.3);
+}
+
+function setAngle(delta){ planeAngle=Math.max(-45,Math.min(45,planeAngle+delta)); }
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){e.preventDefault();reset();return;}
+  if(!started&&['Space','Enter','ArrowLeft','ArrowRight','KeyA','KeyD'].includes(e.code)){started=true;lastTime=performance.now();requestAnimationFrame(loop);}
+  if(e.code==='ArrowLeft'||e.code==='KeyA'){e.preventDefault();setAngle(-3);}
+  else if(e.code==='ArrowRight'||e.code==='KeyD'){e.preventDefault();setAngle(3);}
+});
+
+function pos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+function wheelInfo(){ return {x:W/2,y:H-70,r:50}; }
+function startDrag(e){
+  if(gameOver){reset();return;}
+  if(!started){started=true;lastTime=performance.now();requestAnimationFrame(loop);}
+  const p=pos(e);
+  drag={x:p.x};
+}
+function moveDrag(e){
+  if(!drag)return;
+  const p=pos(e);
+  const dx=p.x-drag.x;
+  setAngle(dx*0.3);
+  drag.x=p.x;
+}
+function endDrag(){drag=null;}
+
+c.addEventListener('mousedown',startDrag);
+c.addEventListener('mousemove',moveDrag);
+window.addEventListener('mouseup',endDrag);
+c.addEventListener('touchstart',e=>{e.preventDefault();startDrag(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();moveDrag(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();endDrag();},{passive:false});
+
+function drawGauge(){
+  const cx=W/2,cy=170,r=140;
+  ctx.save();
+  ctx.translate(cx,cy);
+  // dial background
+  ctx.fillStyle='#0e2a36';
+  ctx.beginPath();ctx.arc(0,0,r,Math.PI,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#3a6b78';ctx.lineWidth=3;
+  ctx.beginPath();ctx.arc(0,0,r,Math.PI,Math.PI*2);ctx.stroke();
+
+  // target safe zone arc
+  const toAng=deg=>Math.PI+ (deg+90)/180*Math.PI;
+  const lo=targetCenter-targetWidth/2,hi2=targetCenter+targetWidth/2;
+  ctx.strokeStyle='rgba(80,220,120,0.55)';
+  ctx.lineWidth=18;
+  ctx.beginPath();
+  ctx.arc(0,0,r-14,toAng(Math.max(-90,lo)),toAng(Math.min(90,hi2)));
+  ctx.stroke();
+
+  // ticks
+  ctx.strokeStyle='#6a98a8';ctx.lineWidth=1;
+  for(let d=-90;d<=90;d+=15){
+    const a=toAng(d);
+    const x1=Math.cos(a)*(r-4),y1=Math.sin(a)*(r-4);
+    const x2=Math.cos(a)*(r-16),y2=Math.sin(a)*(r-16);
+    ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke();
+  }
+
+  // needle (pitch)
+  const na=toAng(Math.max(-90,Math.min(90,pitch)));
+  ctx.strokeStyle='#ff6b6b';ctx.lineWidth=4;
+  ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(na)*(r-20),Math.sin(na)*(r-20));ctx.stroke();
+  ctx.fillStyle='#ff6b6b';ctx.beginPath();ctx.arc(0,0,7,0,Math.PI*2);ctx.fill();
+
+  ctx.restore();
+
+  ctx.fillStyle='#cfe9f0';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('pitch_label','PITCH: {p}°').replace('{p}',pitch.toFixed(1)),cx,cy+30);
+  ctx.fillText(I18N.t('dive_label','NOSE DOWN'),cx-r+10,cy+20);
+  ctx.fillText(I18N.t('surface_label','NOSE UP'),cx+r-10,cy+20);
+}
+
+function drawWheel(){
+  const w=wheelInfo();
+  ctx.save();
+  ctx.translate(w.x,w.y);
+  ctx.rotate(planeAngle/45*0.9);
+  ctx.strokeStyle='#8ef0ff';ctx.lineWidth=6;
+  ctx.beginPath();ctx.arc(0,0,w.r,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-w.r,0);ctx.lineTo(w.r,0);ctx.moveTo(0,-w.r);ctx.lineTo(0,w.r);ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle='#9fe8d8';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('plane_angle_label','DIVE PLANE: {a}°').replace('{a}',Math.round(planeAngle)),w.x,w.y+w.r+22);
+}
+
+function updateHud(){
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(Math.max(hi,score)));
+  lvlEl.textContent=I18N.t('maneuver_label','Maneuver: {n}').replace('{n}',level);
+  livesEl.textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(3-Math.max(0,lives)));
+  timeEl.textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(Math.max(0,timeLeft)));
+}
+
+let simT=0;
+function loop(now){
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#123444');bg.addColorStop(1,'#07161f');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(started&&!gameOver){
+    simT+=dt;
+    targetCenter=targetAt(simT);
+    timeLeft-=dt;
+
+    // physics: plane angle drives acceleration toward pitch
+    const accel=planeAngle*0.9;
+    pitchVel+=(accel-pitchVel*1.5)*dt*2;
+    pitch+=pitchVel*dt*10;
+    pitch=Math.max(-90,Math.min(90,pitch));
+
+    const inRange=pitch>=targetCenter-targetWidth/2&&pitch<=targetCenter+targetWidth/2;
+    if(inRange){
+      score+=12*dt;
+      outOfRangeTime=0;
+    }else{
+      outOfRangeTime+=dt;
+      if(outOfRangeTime>=1.4){
+        outOfRangeTime=0;
+        lives--;
+        SFX.error();
+        flash(I18N.t('pitch_out','OUT OF SAFE RANGE!'),800);
+        if(lives<=0){gameOver=true;SFX.lose();saveHi();}
+      }
+    }
+
+    if(timeLeft<=0){
+      SFX.win();
+      score+=40;
+      saveHi();
+      flash(I18N.t('maneuver_clear','MANEUVER COMPLETE!'),1000);
+      level++;
+      started=false;
+      setTimeout(()=>{ if(!gameOver){newLevel();started=true;lastTime=performance.now();} },1000);
+    }
+  }
+
+  drawGauge();
+  drawWheel();
+
+  if(performance.now()<flashUntil){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,330);
+  }
+
+  if(!started&&!gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#9fe8d8';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Arrow Keys / A-D / Drag Wheel to begin'),W/2,H/2);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','DIVE CONTROL LOST'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Space or Click to restart'),W/2,H/2+20);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+updateHud();
+(function initialDraw(){
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#123444');bg.addColorStop(1,'#07161f');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  drawGauge();drawWheel();
+  ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#9fe8d8';ctx.font='bold 24px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('start_hint','Arrow Keys / A-D / Drag Wheel to begin'),W/2,H/2);
+})();
+</script></body></html>

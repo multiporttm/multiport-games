@@ -1,0 +1,248 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Submarine Sonar Tracking - Multiport Games</title><meta name="description" content="Play Submarine Sonar Tracking free online — Track a contact by its sonar pings, move your targeting reticle with mouse/touch or Arrow Keys, and lock a firing solution with Space/click before the contact closes in or slips off the scope."><link rel="canonical" href="https://games.multiportllc.com/games/submarinesonartracking"><meta property="og:title" content="Submarine Sonar Tracking - Multiport Games"><meta property="og:description" content="Play Submarine Sonar Tracking free online — Track a contact by its sonar pings, move your targeting reticle with mouse/touch or Arrow Keys, and lock a firing solution with Space/click before the contact closes in or slips off the scope."><meta property="og:url" content="https://games.multiportllc.com/games/submarinesonartracking"><meta property="og:type" content="website"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Submarine Sonar Tracking","description":"Play Submarine Sonar Tracking free online instantly. Track a contact's position by its sonar pings, plot its course and speed, and lock a firing solution before it closes to collision range or slips off the scope, across trickier and faster contacts. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/submarinesonartracking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#021208;display:block;border-radius:8px;margin:0 auto;touch-action:none;cursor:crosshair}
+#hud{color:#8fffb0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span b{color:#fff}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Submarine Sonar Tracking</div>
+  <div class="game-frame" style="padding:10px">
+    <div id="hud">
+      <span>Score: <b id="scoreLabel">0</b></span>
+      <span>Lives: <b id="livesLabel">❤️❤️❤️</b></span>
+      <span>Contact: <b id="roundLabel">1</b></span>
+      <span>Best: <b id="hiLabel">0</b></span>
+    </div>
+    <canvas id="c" width="760" height="360"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch the sonar <b>pings</b> to figure out where the contact really is. Move the <b>targeting reticle</b> with your <b>mouse / touch drag</b> or <b>Arrow Keys</b>, then press <b>Space</b> or <b>click</b> right after a ping to lock a firing solution on the contact's true position. Lock it enough times before it closes to collision range or drifts off the scope — contacts get faster and noisier each round.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=760,H=360;
+const CX=380,CY=185,RADIUS=150;
+const MAXRANGE=150,MINRANGE=18;
+let score,hi,lives,round,state,t;
+let contact,ping,reticle,lockProgress,lockNeeded,pingTimer,pingInterval,pingVisible,pingVisTimer,msg,msgTimer,keys={};
+
+function loadHi(){try{return parseFloat(localStorage.getItem('submarinesonartracking_hi'))||0;}catch(e){return 0;}}
+function saveHi(v){try{localStorage.setItem('submarinesonartracking_hi',String(v));}catch(e){}}
+
+function spawnContact(r){
+  const bearing=Math.random()*Math.PI*2;
+  const range=MAXRANGE*(0.7+Math.random()*0.3);
+  const speed=0.55+r*0.18; // px/frame-ish along course
+  const course=Math.random()*Math.PI*2;
+  contact={x:Math.cos(bearing)*range,y:Math.sin(bearing)*range,vx:Math.cos(course)*speed,vy:Math.sin(course)*speed};
+  lockNeeded=3+Math.floor(r/2);
+  lockProgress=0;
+  pingInterval=Math.max(0.55,1.6-r*0.12);
+  pingTimer=pingInterval*0.4;
+  pingVisible=false;
+  pingVisTimer=0;
+  ping=null;
+}
+
+function startRound(r){
+  round=r;
+  spawnContact(r);
+}
+
+function resetGame(){
+  score=0;lives=3;state='playing';t=0;
+  reticle={x:0,y:0};
+  msg='';msgTimer=0;
+  startRound(1);
+}
+function loadAll(){hi=loadHi();resetGame();}
+
+function flashMsg(s){msg=s;msgTimer=1.6;}
+
+function hit(reason){
+  lives--;SFX.hit();flashMsg(reason);
+  if(lives<=0){state='over';SFX.lose();if(score>hi){hi=score;saveHi(hi);}}
+  else spawnContact(round);
+}
+
+function range(){return Math.hypot(contact.x,contact.y);}
+
+function tryLock(){
+  if(state!=='playing')return;
+  if(!pingVisible){flashMsg(I18N.t('wait_for_ping','Wait for a ping!'));SFX.error();return;}
+  const dx=reticle.x-contact.x,dy=reticle.y-contact.y;
+  const dist=Math.hypot(dx,dy);
+  const tolerance=Math.max(10,26-round*1.2);
+  if(dist<=tolerance){
+    lockProgress++;score+=25;SFX.success();
+    flashMsg(I18N.t('lock_label','Solution locked! {n}/{m}').replace('{n}',lockProgress).replace('{m}',lockNeeded));
+    if(lockProgress>=lockNeeded){
+      score+=50;SFX.levelup();
+      flashMsg(I18N.t('contact_sunk','Contact neutralized!'));
+      startRound(round+1);
+    }
+  } else {
+    SFX.error();score=Math.max(0,score-5);
+    flashMsg(I18N.t('missed_solution','Missed — reticle off target'));
+  }
+  pingVisible=false;
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space',' '].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space'){tryLock();}
+  if(state==='over'&&(e.code==='Space'||e.code==='Enter'))loadAll();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function pointerPos(ev){
+  const rect=c.getBoundingClientRect();
+  const sx=(ev.touches?ev.touches[0].clientX:ev.clientX)-rect.left;
+  const sy=(ev.touches?ev.touches[0].clientY:ev.clientY)-rect.top;
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  return {x:(sx*scaleX)-CX,y:(sy*scaleY)-CY};
+}
+let dragging=false;
+c.addEventListener('mousedown',e=>{dragging=true;const p=pointerPos(e);setReticle(p);});
+c.addEventListener('mousemove',e=>{if(dragging){const p=pointerPos(e);setReticle(p);}});
+window.addEventListener('mouseup',()=>{dragging=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=pointerPos(e);setReticle(p);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();const p=pointerPos(e);setReticle(p);},{passive:false});
+c.addEventListener('click',e=>{
+  if(state==='over'){loadAll();return;}
+  tryLock();
+});
+function setReticle(p){
+  const d=Math.hypot(p.x,p.y);
+  if(d>RADIUS){p.x=p.x/d*RADIUS;p.y=p.y/d*RADIUS;}
+  reticle.x=p.x;reticle.y=p.y;
+}
+
+function drawScope(){
+  ctx.save();ctx.translate(CX,CY);
+  ctx.strokeStyle='#0d5c33';ctx.lineWidth=1;
+  for(let r=RADIUS;r>0;r-=RADIUS/3){ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.stroke();}
+  for(let a=0;a<Math.PI*2;a+=Math.PI/6){
+    ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(a)*RADIUS,Math.sin(a)*RADIUS);ctx.stroke();
+  }
+  // sweep
+  const sweepA=(t*1.2)%(Math.PI*2);
+  const sweepGrad=ctx.createConicGradient?null:null;
+  ctx.save();
+  ctx.beginPath();ctx.moveTo(0,0);
+  ctx.arc(0,0,RADIUS,sweepA,sweepA+0.35);
+  ctx.closePath();
+  ctx.fillStyle='rgba(60,255,140,0.12)';ctx.fill();
+  ctx.restore();
+  // collision ring
+  ctx.beginPath();ctx.arc(0,0,MINRANGE,0,Math.PI*2);ctx.strokeStyle='#ff5050';ctx.lineWidth=2;ctx.stroke();
+  // center (own ship)
+  ctx.fillStyle='#8fffb0';ctx.beginPath();ctx.arc(0,0,6,0,Math.PI*2);ctx.fill();
+  // ping (noisy blip)
+  if(pingVisible&&ping){
+    ctx.beginPath();ctx.arc(ping.x,ping.y,7,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,213,79,0.85)';ctx.fill();
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;ctx.stroke();
+  }
+  // reticle
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(reticle.x-12,reticle.y);ctx.lineTo(reticle.x+12,reticle.y);
+  ctx.moveTo(reticle.x,reticle.y-12);ctx.lineTo(reticle.x,reticle.y+12);ctx.stroke();
+  ctx.beginPath();ctx.arc(reticle.x,reticle.y,16,0,Math.PI*2);ctx.stroke();
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=t===0?1/60:Math.min((now-t)/1000,0.05);
+  t+=dt;
+
+  ctx.clearRect(0,0,W,H);
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#032018');grad.addColorStop(1,'#010a06');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+
+  if(state==='playing'){
+    // reticle via keyboard
+    const kSpeed=140*dt;
+    if(keys['ArrowLeft'])reticle.x-=kSpeed;
+    if(keys['ArrowRight'])reticle.x+=kSpeed;
+    if(keys['ArrowUp'])reticle.y-=kSpeed;
+    if(keys['ArrowDown'])reticle.y+=kSpeed;
+    const rd=Math.hypot(reticle.x,reticle.y);
+    if(rd>RADIUS){reticle.x=reticle.x/rd*RADIUS;reticle.y=reticle.y/rd*RADIUS;}
+
+    // move contact: bounce within radar radius, generally approach center over time
+    contact.x+=contact.vx;
+    contact.y+=contact.vy;
+    const cr=Math.hypot(contact.x,contact.y);
+    if(cr>RADIUS-5){
+      // reflect back toward field
+      const nx=contact.x/cr,ny=contact.y/cr;
+      const dot=contact.vx*nx+contact.vy*ny;
+      contact.vx-=2*dot*nx;contact.vy-=2*dot*ny;
+      contact.x=nx*(RADIUS-5);contact.y=ny*(RADIUS-5);
+    }
+    // slow drift inward pressure increases with round (simulates closing distance)
+    const inwardPull=0.01+round*0.003;
+    contact.x-=contact.x*inwardPull*dt*10;
+    contact.y-=contact.y*inwardPull*dt*10;
+
+    if(cr<=MINRANGE){
+      hit(I18N.t('collision_msg','Contact closed to collision range!'));
+    }
+
+    pingTimer-=dt;
+    if(pingTimer<=0){
+      pingTimer=pingInterval;
+      const noise=8+round*2.2;
+      ping={x:contact.x+(Math.random()-0.5)*noise,y:contact.y+(Math.random()-0.5)*noise};
+      pingVisible=true;pingVisTimer=0.9;
+      SFX.tick();
+    }
+    if(pingVisible){
+      pingVisTimer-=dt;
+      if(pingVisTimer<=0){pingVisible=false;}
+    }
+    if(msgTimer>0)msgTimer-=dt;
+  }
+
+  drawScope();
+
+  ctx.fillStyle='#8fffb0';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('lock_progress_label','Lock progress: {n}/{m}').replace('{n}',lockProgress).replace('{m}',lockNeeded),CX,H-36);
+  ctx.strokeStyle='#0d5c33';ctx.strokeRect(CX-120,H-30,240,14);
+  ctx.fillStyle='#8fffb0';ctx.fillRect(CX-118,H-28,236*Math.min(1,lockProgress/lockNeeded),10);
+
+  if(msg&&msgTimer>0){
+    ctx.fillStyle='rgba(255,255,255,0.9)';ctx.font='bold 15px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,CX,30);
+  }
+
+  if(state==='over'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('contact_lost_title','CONTACT LOST — GAME OVER'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint3','Click or press Space/Enter to try again'),W/2,H/2+16);
+  }
+
+  document.getElementById('scoreLabel').textContent=Math.floor(score);
+  document.getElementById('livesLabel').textContent='❤️'.repeat(Math.max(0,lives));
+  document.getElementById('roundLabel').textContent=round;
+  document.getElementById('hiLabel').textContent=Math.floor(hi);
+
+  requestAnimationFrame(loop);
+}
+loadAll();
+loop();
+</script></body></html>

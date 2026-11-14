@@ -1,0 +1,294 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Submarine Battery Charging</title><meta name="description" content="Play Submarine Battery Charging free online — Use Up/Down Arrow or drag the slider to set charge rate. Fill the battery bank before engine load trips without overheating any cell."><link rel="canonical" href="https://games.multiportllc.com/games/submarinebatterycharging"><meta property="og:title" content="Submarine Battery Charging - Multiport Games"><meta property="og:description" content="Play Submarine Battery Charging free online — Use Up/Down Arrow or drag the slider to set charge rate. Fill the battery bank before engine load trips without overheating any cell."><meta property="og:url" content="https://games.multiportllc.com/games/submarinebatterycharging"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Submarine Battery Charging - Multiport Games"><meta name="twitter:description" content="Play Submarine Battery Charging free online — Use Up/Down Arrow or drag the slider to set charge rate. Fill the battery bank before engine load trips without overheating any cell."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Submarine Battery Charging","description":"Play Submarine Battery Charging free online instantly. Use Up/Down Arrow or drag the slider to set charge rate. Fill the battery bank before engine load trips without overheating any cell. No download or signup required.","genre":"Simulation","url":"https://games.multiportllc.com/games/submarinebatterycharging","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#10212b;display:block;border-radius:8px;touch-action:none}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#8ef0ff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px}
+#hud span.lives{color:#ff6b6b}
+#hud span.lvl{color:#ffd54f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Submarine Battery Charging</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span class="lvl" id="lvl-display">Schedule: 1</span>
+      <span class="lives" id="lives-display">Lives: ●●●</span>
+      <span id="time-display">Time: 60</span>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use <b>Up/Down Arrow</b> or drag the slider / swipe up-down to set the charging rate. Keep each battery cell's temperature inside the safe band while filling the bank to 100% before time runs out. Overheat a cell and you lose a life — later schedules throw trickier load swings.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const scoreEl=document.getElementById('score-display');
+const lvlEl=document.getElementById('lvl-display');
+const livesEl=document.getElementById('lives-display');
+const timeEl=document.getElementById('time-display');
+
+const CELLS=5;
+let score=0,hi=0,lives=3,level=1,timeLeft=60,gameOver=false,started=false,lastTime=null,flashUntil=0,flashMsg='';
+let chargeRate=0.4; // 0..1, player controlled
+let bankCharge=0; // 0..100
+let cellTemp=[]; // per-cell temp 0..100
+let loadWave=0,loadPhase=0,loadTarget=0;
+let safeMax=70,warnMax=85;
+let won=false;
+
+try{hi=parseInt(localStorage.getItem('submarinebatterycharging_hi')||'0',10)||0;}catch(e){}
+function saveHi(){ if(score>hi){hi=score;try{localStorage.setItem('submarinebatterycharging_hi',String(Math.floor(hi)));}catch(e){} } }
+
+function newLevel(){
+  bankCharge=0;
+  cellTemp=new Array(CELLS).fill(15+Math.random()*10);
+  chargeRate=0.4;
+  timeLeft=Math.max(35,60-level*2);
+  loadPhase=Math.random()*10;
+  safeMax=Math.max(55,70-level*2);
+  warnMax=Math.min(96,safeMax+15);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;won=false;started=false;lastTime=null;
+  newLevel();
+}
+reset();
+
+function flash(msg,ms){flashMsg=msg;flashUntil=performance.now()+(ms||700);}
+
+function engineLoad(t){
+  // fluctuating engine load 0..1, gets choppier with level
+  const amp=0.35+Math.min(0.35,level*0.04);
+  const speed=0.5+level*0.08;
+  return 0.45+amp*Math.sin((t+loadPhase)*speed)+0.12*Math.sin((t+loadPhase)*speed*2.7);
+}
+
+function setRate(delta){
+  chargeRate=Math.max(0,Math.min(1,chargeRate+delta));
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){e.preventDefault();reset();return;}
+  if(!started&&(e.code==='Space'||e.code==='Enter'||e.code==='ArrowUp'||e.code==='ArrowDown')){started=true;lastTime=performance.now();requestAnimationFrame(loop);}
+  if(e.code==='ArrowUp'){e.preventDefault();setRate(0.03);}
+  else if(e.code==='ArrowDown'){e.preventDefault();setRate(-0.03);}
+});
+
+let dragging=false;
+function sliderRectInfo(){
+  return {x:W-90,y:40,w:40,h:H-100};
+}
+function rateFromY(y){
+  const s=sliderRectInfo();
+  let v=1-(y-s.y)/s.h;
+  return Math.max(0,Math.min(1,v));
+}
+function pos(e){
+  const rect=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+  return {x:cx*(W/rect.width),y:cy*(H/rect.height)};
+}
+function startDrag(e){
+  if(gameOver){reset();return;}
+  if(!started){started=true;lastTime=performance.now();requestAnimationFrame(loop);}
+  const p=pos(e);
+  const s=sliderRectInfo();
+  if(p.x>=s.x-20&&p.x<=s.x+s.w+20){dragging=true;chargeRate=rateFromY(p.y);}
+}
+function moveDrag(e){
+  if(!dragging)return;
+  const p=pos(e);
+  chargeRate=rateFromY(p.y);
+}
+function endDrag(){dragging=false;}
+
+c.addEventListener('mousedown',startDrag);
+c.addEventListener('mousemove',moveDrag);
+window.addEventListener('mouseup',endDrag);
+c.addEventListener('touchstart',e=>{e.preventDefault();startDrag(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();moveDrag(e);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();endDrag();},{passive:false});
+
+function drawCell(x,y,w,h,temp,idx){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle='#0b1a22';
+  ctx.fillRect(0,0,w,h);
+  const pct=Math.max(0,Math.min(1,temp/100));
+  let color;
+  if(temp<safeMax)color='#4ad66d';
+  else if(temp<warnMax)color='#ffd54f';
+  else color='#ff4d4d';
+  const fillH=h*pct;
+  ctx.fillStyle=color;
+  ctx.fillRect(2,h-fillH+2,w-4,fillH-4>0?fillH-4:0);
+  ctx.strokeStyle='#4a6a7a';ctx.lineWidth=2;
+  ctx.strokeRect(1,1,w-2,h-2);
+  // safe/warn lines
+  ctx.strokeStyle='rgba(255,255,255,0.35)';ctx.setLineDash([3,3]);
+  const safeY=h-(h*(safeMax/100));
+  ctx.beginPath();ctx.moveTo(0,safeY);ctx.lineTo(w,safeY);ctx.stroke();
+  const warnY=h-(h*(warnMax/100));
+  ctx.strokeStyle='rgba(255,100,100,0.5)';
+  ctx.beginPath();ctx.moveTo(0,warnY);ctx.lineTo(w,warnY);ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#cfe9f0';ctx.font='12px Arial';ctx.textAlign='center';
+  ctx.fillText('C'+(idx+1),w/2,h+16);
+  ctx.fillText(Math.round(temp)+'°',w/2,-6);
+  ctx.restore();
+}
+
+function drawSlider(){
+  const s=sliderRectInfo();
+  ctx.save();
+  ctx.fillStyle='#0b1a22';
+  ctx.fillRect(s.x,s.y,s.w,s.h);
+  ctx.strokeStyle='#4a6a7a';ctx.lineWidth=2;
+  ctx.strokeRect(s.x,s.y,s.w,s.h);
+  const knobY=s.y+s.h*(1-chargeRate);
+  ctx.fillStyle='#8ef0ff';
+  ctx.fillRect(s.x-6,knobY-8,s.w+12,16);
+  ctx.fillStyle='#8ef0ff';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('charge_rate_label','RATE'),s.x+s.w/2,s.y-14);
+  ctx.fillText(Math.round(chargeRate*100)+'%',s.x+s.w/2,s.y+s.h+22);
+  ctx.restore();
+}
+
+function drawLoadMeter(load){
+  const x=40,y=40,w=60,h=H-100;
+  ctx.save();
+  ctx.fillStyle='#0b1a22';ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle='#4a6a7a';ctx.lineWidth=2;ctx.strokeRect(x,y,w,h);
+  const fillH=h*load;
+  ctx.fillStyle='#ff9f43';
+  ctx.fillRect(x+2,y+h-fillH+2,w-4,fillH-4>0?fillH-4:0);
+  ctx.fillStyle='#ffb347';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('engine_load_label','LOAD'),x+w/2,y-14);
+  ctx.restore();
+}
+
+function drawBankMeter(){
+  const x=W/2-150,y=20,w=300,h=26;
+  ctx.save();
+  ctx.fillStyle='#0b1a22';ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle='#4a6a7a';ctx.lineWidth=2;ctx.strokeRect(x,y,w,h);
+  ctx.fillStyle='#4ad66d';
+  ctx.fillRect(x+2,y+2,(w-4)*(bankCharge/100),h-4);
+  ctx.fillStyle='#e8f8ff';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('bank_charge_label','BANK CHARGE: {p}%').replace('{p}',Math.round(bankCharge)),x+w/2,y+h+18);
+  ctx.restore();
+}
+
+function updateHud(){
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(Math.max(hi,score)));
+  lvlEl.textContent=I18N.t('schedule_label','Schedule: {n}').replace('{n}',level);
+  livesEl.textContent=I18N.t('lives_label','Lives: {l}').replace('{l}','●'.repeat(Math.max(0,lives))+'○'.repeat(3-Math.max(0,lives)));
+  timeEl.textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(Math.max(0,timeLeft)));
+}
+
+let simT=0;
+function loop(now){
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#17313d');bg.addColorStop(1,'#0c1a22');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  let load=0.5;
+  if(started&&!gameOver&&!won){
+    simT+=dt;
+    load=Math.max(0,Math.min(1,engineLoad(simT)));
+    timeLeft-=dt;
+
+    // charging increases bank; engine load drains available rate & raises heat
+    const effectiveCharge=chargeRate*(1-load*0.4);
+    bankCharge=Math.min(100,bankCharge+effectiveCharge*18*dt);
+    score+=effectiveCharge*6*dt;
+
+    for(let i=0;i<CELLS;i++){
+      const heatIn=chargeRate*(26+level*2)*dt + load*8*dt;
+      const cool=(cellTemp[i]*0.35)*dt;
+      cellTemp[i]=Math.max(10,cellTemp[i]+heatIn-cool - (i*0.3*dt));
+      if(cellTemp[i]>=100){
+        cellTemp[i]=60;
+        lives--;
+        SFX.error();
+        flash(I18N.t('cell_overheat','CELL OVERHEATED!'),800);
+        if(lives<=0){gameOver=true;SFX.lose();saveHi();}
+      }
+    }
+
+    if(bankCharge>=100){
+      won=true;
+      SFX.win();
+      score+=50;
+      saveHi();
+      flash(I18N.t('bank_full','BANK FULLY CHARGED!'),1200);
+      setTimeout(()=>{ if(!gameOver){level++;newLevel();won=false;} },1200);
+    }
+    if(timeLeft<=0&&!won){
+      gameOver=true;
+      SFX.lose();
+      saveHi();
+    }
+  }
+
+  drawBankMeter();
+  drawLoadMeter(load);
+  drawSlider();
+  const cellW=70,gap=18;
+  const totalW=CELLS*cellW+(CELLS-1)*gap;
+  const startX=(W-totalW)/2;
+  for(let i=0;i<CELLS;i++){
+    drawCell(startX+i*(cellW+gap),80,cellW,220,cellTemp[i],i);
+  }
+
+  if(performance.now()<flashUntil){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,H-30);
+  }
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#8ef0ff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Arrow Keys or Drag Slider to begin charging'),W/2,H/2);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','CHARGING FAILURE'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Space or Click to restart'),W/2,H/2+20);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+updateHud();
+(function initialDraw(){
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#17313d');bg.addColorStop(1,'#0c1a22');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  drawBankMeter();drawLoadMeter(0.5);drawSlider();
+  const cellW=70,gap=18;
+  const totalW=CELLS*cellW+(CELLS-1)*gap;
+  const startX=(W-totalW)/2;
+  for(let i=0;i<CELLS;i++)drawCell(startX+i*(cellW+gap),80,cellW,220,cellTemp[i],i);
+  ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#8ef0ff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('start_hint','Arrow Keys or Drag Slider to begin charging'),W/2,H/2);
+})();
+</script></body></html>

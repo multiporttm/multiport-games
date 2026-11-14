@@ -1,0 +1,304 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Volcanology Lava Flow Mapping</title><meta name="description" content="Play Volcanology Lava Flow Mapping free online — Click, tap, or use arrow keys + Enter to flag land ahead of the advancing lava flow before it arrives. Warn every village in time to evacuate as the flow gets faster and less predictable."><link rel="canonical" href="https://games.multiportllc.com/games/volcanologylavaflowmapping"><meta property="og:title" content="Volcanology Lava Flow Mapping - Multiport Games"><meta property="og:description" content="Play Volcanology Lava Flow Mapping free online — Click, tap, or use arrow keys + Enter to flag land ahead of the advancing lava flow before it arrives. Warn every village in time to evacuate as the flow gets faster and less predictable."><meta property="og:url" content="https://games.multiportllc.com/games/volcanologylavaflowmapping"><meta property="og:type" content="website"><meta name="twitter:card" content="summary"><meta name="twitter:title" content="Volcanology Lava Flow Mapping - Multiport Games"><meta name="twitter:description" content="Play Volcanology Lava Flow Mapping free online — Click, tap, or use arrow keys + Enter to flag land ahead of the advancing lava flow before it arrives. Warn every village in time to evacuate as the flow gets faster and less predictable."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Volcanology Lava Flow Mapping","description":"Play Volcanology Lava Flow Mapping free online instantly. Click, tap, or use arrow keys plus Enter to flag land ahead of the advancing lava flow before it arrives. Warn every village in time to evacuate as the flow gets faster and less predictable. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/volcanologylavaflowmapping","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1b2e1a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#ffb074;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#hud span b{color:#fff}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Volcanology Lava Flow Mapping</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: <b>0</b></span>
+      <span id="hi-display">Hi: <b>0</b></span>
+      <span id="lives-display">Lives: <b>❤❤❤</b></span>
+      <span id="level-display">Map: <b>1</b></span>
+    </div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click, tap, or move the cursor with <b>Arrow Keys</b> and press <b>Enter</b> to flag land ahead of the advancing lava flow (orange). Flagging a village (🏠) at least a couple seconds before lava reaches it evacuates it safely — flag too late and it's lost. Each map brings a faster, less predictable flow.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreEl=document.getElementById('score-display'),hiEl=document.getElementById('hi-display'),livesEl=document.getElementById('lives-display'),levelEl=document.getElementById('level-display');
+const HI_KEY='volcanologylavaflowmapping_hi';
+
+const COLS=16,ROWS=8,CELL=50;
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),lives=3,level=1;
+let state='start';
+let grid=[]; // 0 land,1 lava
+let elevation=[];
+let flagged=[]; // boolean
+let flagTime=[]; // ms timestamp when flagged
+let villages=[]; // {idx, resolved, survived}
+let frontier=[];
+let cursor={r:4,c:2};
+let spreadAccum=0,spreadInterval=420,branch=1,diag=false;
+let levelElapsed=0,levelMax=38000;
+let flashCells=[]; // {idx,color,life}
+const MAX_LEVEL=5;
+
+function idx(r,cc){return r*COLS+cc;}
+
+function setupLevel(){
+  grid=new Array(COLS*ROWS).fill(0);
+  flagged=new Array(COLS*ROWS).fill(false);
+  flagTime=new Array(COLS*ROWS).fill(0);
+  elevation=new Array(COLS*ROWS).fill(0).map(()=>Math.random());
+  villages=[];
+  frontier=[];
+  flashCells=[];
+  levelElapsed=0;
+  spreadInterval=Math.max(130,430-level*55);
+  branch=1+Math.floor(level/2);
+  diag=level>=3;
+  const srcR=0+Math.floor(Math.random()*2),srcC=Math.floor(COLS/2)+(-1+Math.floor(Math.random()*3));
+  const srcIdx=idx(srcR,srcC);
+  grid[srcIdx]=1;
+  frontier=[srcIdx];
+  const villageCount=2+level;
+  let tries=0;
+  while(villages.length<villageCount&&tries<400){
+    tries++;
+    const r=2+Math.floor(Math.random()*(ROWS-2)),cc=Math.floor(Math.random()*COLS);
+    const i=idx(r,cc);
+    if(grid[i]===1)continue;
+    if(villages.some(v=>v.idx===i))continue;
+    villages.push({idx:i,resolved:false,survived:false});
+  }
+  cursor={r:4,c:2};
+}
+
+function resetGame(){
+  score=0;lives=3;level=1;state='playing';
+  setupLevel();
+}
+
+function neighbors(i){
+  const r=Math.floor(i/COLS),cc=i%COLS;
+  const deltas=diag?[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]]:[[-1,0],[1,0],[0,-1],[0,1]];
+  const out=[];
+  deltas.forEach(([dr,dc])=>{
+    const nr=r+dr,nc=cc+dc;
+    if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS)out.push(idx(nr,nc));
+  });
+  return out;
+}
+
+function toggleFlag(i){
+  if(grid[i]===1)return;
+  flagged[i]=!flagged[i];
+  flagTime[i]=flagged[i]?performance.now():0;
+  SFX.select();
+}
+
+function spread(){
+  const newFrontier=[];
+  frontier.forEach(i=>{
+    const opts=neighbors(i).filter(n=>grid[n]===0);
+    shuffle(opts);
+    let count=0;
+    opts.forEach(n=>{
+      if(count>=branch)return;
+      if(Math.random()<0.55){
+        igniteCell(n);
+        newFrontier.push(n);
+        count++;
+      }
+    });
+    if(opts.length>count&&Math.random()<0.4)newFrontier.push(i);
+  });
+  frontier=Array.from(new Set(newFrontier));
+}
+
+function shuffle(arr){
+  for(let i=arr.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]]=[arr[j],arr[i]];
+  }
+}
+
+function igniteCell(i){
+  grid[i]=1;
+  const v=villages.find(v=>v.idx===i&&!v.resolved);
+  if(v){
+    v.resolved=true;
+    const leadTime=flagged[i]?performance.now()-flagTime[i]:0;
+    if(flagged[i]&&leadTime>=1200){
+      v.survived=true;
+      score+=120*level;
+      flashCells.push({idx:i,color:'#4caf50',life:30});
+      SFX.success();
+    }else{
+      v.survived=false;
+      lives--;
+      flashCells.push({idx:i,color:'#e94560',life:30});
+      SFX.hurt();
+      if(lives<=0){
+        state='over';
+        if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+        SFX.lose();
+      }
+    }
+  }else if(flagged[i]){
+    score+=10;
+    flashCells.push({idx:i,color:'#4caf50',life:20});
+    SFX.point();
+  }
+}
+
+function checkLevelDone(){
+  const allVillagesDone=villages.every(v=>v.resolved);
+  const noFrontier=frontier.length===0;
+  if(state==='playing'&&(allVillagesDone&&noFrontier||levelElapsed>levelMax)){
+    if(level>=MAX_LEVEL){
+      state='win';
+      if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+      SFX.win();
+    }else{
+      level++;
+      SFX.levelup();
+      setupLevel();
+    }
+  }
+}
+
+function handleAction(r,cc){
+  if(state==='start'||state==='over'||state==='win'){resetGame();return;}
+  if(r<0||r>=ROWS||cc<0||cc>=COLS)return;
+  toggleFlag(idx(r,cc));
+}
+
+function cellFromPointer(x,y){
+  const rect=c.getBoundingClientRect();
+  const scaleX=800/rect.width,scaleY=400/rect.height;
+  const px=(x-rect.left)*scaleX,py=(y-rect.top)*scaleY;
+  return {r:Math.floor(py/CELL),c:Math.floor(px/CELL)};
+}
+
+c.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  if(state==='start'||state==='over'||state==='win'){resetGame();return;}
+  const {r,c:cc}=cellFromPointer(e.clientX,e.clientY);
+  handleAction(r,cc);
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(state==='start'||state==='over'||state==='win'){resetGame();return;}
+  const t=e.touches[0];
+  const {r,c:cc}=cellFromPointer(t.clientX,t.clientY);
+  handleAction(r,cc);
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(state==='start'||state==='over'||state==='win'){
+    if(e.code==='Enter'||e.code==='Space'){e.preventDefault();resetGame();}
+    return;
+  }
+  if(e.code==='ArrowUp'){e.preventDefault();cursor.r=Math.max(0,cursor.r-1);}
+  else if(e.code==='ArrowDown'){e.preventDefault();cursor.r=Math.min(ROWS-1,cursor.r+1);}
+  else if(e.code==='ArrowLeft'){e.preventDefault();cursor.c=Math.max(0,cursor.c-1);}
+  else if(e.code==='ArrowRight'){e.preventDefault();cursor.c=Math.min(COLS-1,cursor.c+1);}
+  else if(e.code==='Enter'||e.code==='Space'){e.preventDefault();handleAction(cursor.r,cursor.c);}
+});
+
+function cellColor(i){
+  const e=elevation[i];
+  if(grid[i]===1)return '#ff6b35';
+  const g=Math.floor(70+e*70);
+  return `rgb(${Math.floor(40+e*40)},${g},${Math.floor(30+e*30)})`;
+}
+
+function draw(){
+  ctx.clearRect(0,0,800,400);
+  for(let r=0;r<ROWS;r++){
+    for(let cc=0;cc<COLS;cc++){
+      const i=idx(r,cc);
+      ctx.fillStyle=cellColor(i);
+      ctx.fillRect(cc*CELL,r*CELL,CELL-2,CELL-2);
+      if(flagged[i]&&grid[i]===0){
+        ctx.fillStyle='#ffd54f';
+        ctx.beginPath();
+        ctx.moveTo(cc*CELL+8,r*CELL+6);
+        ctx.lineTo(cc*CELL+8,r*CELL+30);
+        ctx.lineTo(cc*CELL+24,r*CELL+14);
+        ctx.closePath();ctx.fill();
+      }
+    }
+  }
+  villages.forEach(v=>{
+    const r=Math.floor(v.idx/COLS),cc=v.idx%COLS;
+    ctx.font='24px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+    if(v.resolved){
+      ctx.fillText(v.survived?'✅':'💀',cc*CELL+CELL/2,r*CELL+CELL/2);
+    }else{
+      ctx.fillText('🏠',cc*CELL+CELL/2,r*CELL+CELL/2);
+    }
+  });
+  flashCells=flashCells.filter(f=>f.life>0);
+  flashCells.forEach(f=>{
+    const r=Math.floor(f.idx/COLS),cc=f.idx%COLS;
+    ctx.strokeStyle=f.color;ctx.lineWidth=4;
+    ctx.strokeRect(cc*CELL+2,r*CELL+2,CELL-6,CELL-6);
+    f.life--;
+  });
+  if(state==='playing'){
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+    ctx.strokeRect(cursor.c*CELL+2,cursor.r*CELL+2,CELL-6,CELL-6);
+    ctx.lineWidth=1;
+  }
+
+  if(state==='start'){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,800,400);
+    ctx.fillStyle='#ffb074';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / Enter to begin mapping'),400,190);
+  }
+  if(state==='over'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,800,400);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,180);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap / Click / Enter to try again'),400,218);
+  }
+  if(state==='win'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,800,400);
+    ctx.fillStyle='#4caf50';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('win_title','ALL FLOWS MAPPED!'),400,180);
+    ctx.font='20px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('restart_hint','Tap / Click / Enter to try again'),400,218);
+  }
+
+  scoreEl.innerHTML=I18N.t('score_label','Score: <b>{s}</b>').replace('{s}',score);
+  hiEl.innerHTML=I18N.t('hi_label','Hi: <b>{h}</b>').replace('{h}',hi);
+  livesEl.innerHTML=I18N.t('lives_label','Lives: <b>{l}</b>').replace('{l}','❤'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives)));
+  levelEl.innerHTML=I18N.t('map_label','Map: <b>{n}</b>').replace('{n}',Math.min(level,MAX_LEVEL));
+}
+
+let lastT=null;
+function loop(now){
+  if(lastT===null)lastT=now;
+  const dt=now-lastT;
+  lastT=now;
+  if(state==='playing'){
+    levelElapsed+=dt;
+    spreadAccum+=dt;
+    if(spreadAccum>=spreadInterval&&frontier.length>0){
+      spreadAccum=0;
+      spread();
+    }
+    checkLevelDone();
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+setupLevel();
+requestAnimationFrame(loop);
+</script></body></html>
