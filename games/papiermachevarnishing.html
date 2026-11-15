@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. --><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Papier-Mâché Varnishing</title><meta name="description" content="Play Papier-Mâché Varnishing free online — Sweep a protective varnish coat evenly over each painted piece, keeping thickness inside the safe band. Avoid pooling and bare spots across larger pieces each round."><link rel="canonical" href="https://games.multiportllc.com/games/papiermachevarnishing"><meta property="og:title" content="Papier-Mâché Varnishing - Multiport Games"><meta property="og:description" content="Play Papier-Mâché Varnishing free online — Sweep a protective varnish coat evenly over each painted piece, keeping thickness inside the safe band. Avoid pooling and bare spots across larger pieces each round."><meta property="og:url" content="https://games.multiportllc.com/games/papiermachevarnishing"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Papier-Mâché Varnishing - Multiport Games"><meta name="twitter:description" content="Play Papier-Mâché Varnishing free online — Sweep a protective varnish coat evenly over each painted piece, keeping thickness inside the safe band. Avoid pooling and bare spots across larger pieces each round."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Papier-Mâché Varnishing","description":"Play Papier-Mâché Varnishing free online instantly. Brush a protective varnish coat evenly over a finished painted piece, sweeping every area until its thickness sits inside the safe band on the gauge — too thin leaves a bare spot, too thick causes a pool. Coat each piece before the varnish sets, across larger pieces every round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/papiermachevarnishing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#14201c}
+#c{background:#2a4a3e;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#d9f5e8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#meterWrap{max-width:600px;margin:0 auto 8px;background:#122019;border-radius:10px;padding:4px;position:relative}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#4ecdc4,#bff5ee);width:0%;transition:width .1s}
+#meterBand{position:absolute;top:4px;height:14px;background:rgba(255,213,79,0.3);border-radius:6px;pointer-events:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Papier-Mâché Varnishing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Piece 1/8</span>
+      <span id="timeLbl">Time: 32</span>
+    </div>
+    <div id="meterWrap"><div id="meterBand"></div><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Drag your mouse or finger (or steer with the <b>Arrow Keys</b>) to sweep the varnish brush over the whole painted piece. Each spot builds up a glossy coat the longer the brush lingers — the glowing yellow band on the gauge is the safe thickness zone. Too little varnish leaves a <b>bare spot</b>; too much makes it <b>pool</b>. Get the whole piece evenly coated before the varnish sets. Pieces get larger every round — lose all 3 lives and the finish is ruined!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320,CELL=16;
+const COLS=Math.floor(W/CELL),ROWS=Math.floor(H/CELL);
+const TOTAL_LEVELS=8;
+let hi=parseInt(localStorage.getItem('papiermachevarnishing_hi')||'0',10);
+let score=0,lives=3,level=0,gameOver=false,started=false,won=false;
+let cells=[],activeCount=0,timeLeft=32,maxTime=32;
+let brush={x:400,y:160},BR=22;
+let flashTimer=0,flashGood=true;
+let lowBand=48,highBand=82,fillRate=1.0;
+let poolCount=0;
+const keys={};
+let lastTime=null;
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('piece_label','Piece {n}/{t}').replace('{n}',Math.min(level+1,TOTAL_LEVELS)).replace('{t}',TOTAL_LEVELS);
+  document.getElementById('timeLbl').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+  const wrapW=600-8;
+  document.getElementById('meterBand').style.left=(4+wrapW*lowBand/100)+'px';
+  document.getElementById('meterBand').style.width=(wrapW*(highBand-lowBand)/100)+'px';
+}
+
+function shapeMask(cx,cy,px,py,lobes,amp,baseR){
+  const dx=px-cx,dy=py-cy;
+  const ang=Math.atan2(dy,dx);
+  const dist=Math.hypot(dx,dy);
+  const r=baseR+Math.sin(ang*lobes+level*0.5)*amp+Math.cos(ang*lobes*1.5+0.8)*amp*0.35;
+  return dist<r;
+}
+
+function buildShape(){
+  cells=[];
+  const cx=COLS/2,cy=ROWS/2;
+  const lobes=2+Math.floor(level/2);
+  const amp=2+level*0.5;
+  const baseR=7+level*0.85;
+  activeCount=0;
+  for(let r=0;r<ROWS;r++){
+    const row=[];
+    for(let col=0;col<COLS;col++){
+      const active=shapeMask(cx,cy,col,r,lobes,amp,baseR);
+      if(active)activeCount++;
+      row.push({coverage:0,active,pooled:false});
+    }
+    cells.push(row);
+  }
+}
+
+function setupLevel(){
+  buildShape();
+  maxTime=Math.max(20,32+level*1.6);
+  timeLeft=maxTime;
+  lowBand=Math.max(38,48-level*0.6);
+  highBand=Math.min(90,82+level*0.5);
+  fillRate=0.85+level*0.04;
+  BR=Math.max(15,22-level*0.4);
+  brush={x:W/2,y:H/2};
+  poolCount=0;
+  lastTime=null;
+}
+
+function reset(){
+  score=0;lives=3;level=0;gameOver=false;started=false;won=false;flashTimer=0;
+  setupLevel();
+  setHud();
+}
+
+function evenPercent(){
+  let good=0;
+  for(let r=0;r<ROWS;r++)for(let col=0;col<COLS;col++){
+    const cell=cells[r][col];
+    if(!cell.active)continue;
+    if(cell.coverage>=lowBand&&cell.coverage<=highBand)good++;
+  }
+  return activeCount?good/activeCount*100:100;
+}
+
+function failLevel(){
+  lives--;
+  SFX.hurt();
+  flashTimer=20;flashGood=false;
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem('papiermachevarnishing_hi',hi);}
+    setHud();
+    return;
+  }
+  setupLevel();
+  setHud();
+}
+
+function completeLevel(){
+  score+=Math.round(90+evenPercent()*2-poolCount*8);
+  SFX.success();
+  flashTimer=20;flashGood=true;
+  level++;
+  if(level>=TOTAL_LEVELS){
+    won=true;
+    SFX.win();
+    if(score>hi){hi=score;localStorage.setItem('papiermachevarnishing_hi',hi);}
+    setHud();
+    return;
+  }
+  setupLevel();
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;SFX.click();return;}
+  if(gameOver||won){reset();}
+}
+
+function canvasPos(ev){
+  const r=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+let pointerActive=false;
+c.addEventListener('mousedown',e=>{startOrRestart();pointerActive=true;const p=canvasPos(e);brush.x=p.x;brush.y=p.y;});
+c.addEventListener('mousemove',e=>{if(pointerActive&&started&&!gameOver&&!won){const p=canvasPos(e);brush.x=p.x;brush.y=p.y;}});
+window.addEventListener('mouseup',()=>{pointerActive=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();pointerActive=true;const p=canvasPos(e);brush.x=p.x;brush.y=p.y;},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(started&&!gameOver&&!won){const p=canvasPos(e);brush.x=p.x;brush.y=p.y;}},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space')startOrRestart();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function colorForCoverage(cov,pooled){
+  if(pooled)return 'rgba(255,213,79,0.85)';
+  if(cov<=0)return 'rgba(60,90,80,0.35)';
+  const t=Math.min(1,cov/100);
+  const inBand=cov>=lowBand&&cov<=highBand;
+  if(inBand)return `rgba(78,205,196,${0.35+t*0.55})`;
+  if(cov>highBand)return `rgba(255,170,60,${0.5+t*0.4})`;
+  return `rgba(110,170,150,${0.25+t*0.5})`;
+}
+
+function drawCells(){
+  for(let r=0;r<ROWS;r++){
+    for(let col=0;col<COLS;col++){
+      const cell=cells[r][col];
+      if(!cell.active)continue;
+      ctx.fillStyle=colorForCoverage(cell.coverage,cell.pooled);
+      ctx.fillRect(col*CELL,r*CELL,CELL-1,CELL-1);
+    }
+  }
+}
+
+function drawBrush(){
+  ctx.beginPath();ctx.arc(brush.x,brush.y,BR,0,Math.PI*2);
+  ctx.fillStyle='rgba(191,245,238,0.25)';ctx.fill();
+  ctx.strokeStyle='#bff5ee';ctx.lineWidth=2;ctx.stroke();
+  ctx.beginPath();ctx.arc(brush.x,brush.y,5,0,Math.PI*2);
+  ctx.fillStyle='#fff';ctx.fill();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#122019');sky.addColorStop(1,'#2a4a3e');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  drawCells();
+  ctx.textAlign='center';
+
+  if(!started){
+    drawBrush();
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Drag / Tap / Space to start varnishing'),W/2,30);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    drawBrush();
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','FINISH RUINED'),W/2,130);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,165);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    drawBrush();
+    ctx.fillStyle='#4ecdc4';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','ALL PIECES VARNISHED! ✨'),W/2,120);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,W/2,155);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,185);
+    requestAnimationFrame(loop);return;
+  }
+
+  const kSpd=5.5;
+  if(keys['ArrowUp'])brush.y-=kSpd;
+  if(keys['ArrowDown'])brush.y+=kSpd;
+  if(keys['ArrowLeft'])brush.x-=kSpd;
+  if(keys['ArrowRight'])brush.x+=kSpd;
+  brush.x=Math.max(5,Math.min(W-5,brush.x));
+  brush.y=Math.max(5,Math.min(H-5,brush.y));
+
+  timeLeft-=dt/60;
+
+  const c0=Math.floor((brush.x-BR)/CELL),c1=Math.floor((brush.x+BR)/CELL);
+  const r0=Math.floor((brush.y-BR)/CELL),r1=Math.floor((brush.y+BR)/CELL);
+  for(let r=Math.max(0,r0);r<=Math.min(ROWS-1,r1);r++){
+    for(let col=Math.max(0,c0);col<=Math.min(COLS-1,c1);col++){
+      const cell=cells[r][col];
+      if(!cell.active||cell.pooled)continue;
+      const cx=col*CELL+CELL/2,cy=r*CELL+CELL/2;
+      if(Math.hypot(cx-brush.x,cy-brush.y)<=BR){
+        cell.coverage+=fillRate*dt;
+        if(cell.coverage>100){
+          cell.coverage=100;
+          if(!cell.pooled){cell.pooled=true;poolCount++;SFX.hit();flashTimer=10;flashGood=false;}
+        }
+      }
+    }
+  }
+
+  drawBrush();
+
+  if(poolCount>=3){
+    failLevel();
+    requestAnimationFrame(loop);return;
+  }
+
+  const pct=evenPercent();
+  if(pct>=92){
+    completeLevel();
+    requestAnimationFrame(loop);return;
+  }
+  if(timeLeft<=0){
+    if(pct>=75){completeLevel();}else{failLevel();}
+    requestAnimationFrame(loop);return;
+  }
+
+  document.getElementById('meterBar').style.width=Math.max(0,Math.min(100,pct))+'%';
+  document.getElementById('timeLbl').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+
+  ctx.fillStyle='#d9f5e8';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('pool_hint','Pools: {d}/3').replace('{d}',poolCount),W/2,22);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(78,205,196,0.2)':'rgba(255,170,60,0.25)';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+setHud();
+loop();
+</script></body></html>

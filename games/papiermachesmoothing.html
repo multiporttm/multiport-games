@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. --><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Papier-Mâché Smoothing</title><meta name="description" content="Play Papier-Mâché Smoothing free online — Sweep a sanding block over every rough patch of a dried piece before time runs out. Don't linger too long or you'll gouge through the paper layers. Larger pieces every round."><link rel="canonical" href="https://games.multiportllc.com/games/papiermachesmoothing"><meta property="og:title" content="Papier-Mâché Smoothing - Multiport Games"><meta property="og:description" content="Play Papier-Mâché Smoothing free online — Sweep a sanding block over every rough patch of a dried piece before time runs out. Don't linger too long or you'll gouge through the paper layers. Larger pieces every round."><meta property="og:url" content="https://games.multiportllc.com/games/papiermachesmoothing"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Papier-Mâché Smoothing - Multiport Games"><meta name="twitter:description" content="Play Papier-Mâché Smoothing free online — Sweep a sanding block over every rough patch of a dried piece before time runs out. Don't linger too long or you'll gouge through the paper layers. Larger pieces every round."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Papier-Mâché Smoothing","description":"Play Papier-Mâché Smoothing free online instantly. Sand a dried papier-mâché piece's surface smooth by sweeping a sanding block over every rough patch before time runs out. Lingering too long on one spot gouges through the paper layers — ruin three spots and the piece is wrecked. Pieces get larger every round. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/papiermachesmoothing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1e1812}
+#c{background:#4a3a28;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#fff0d6;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#meterWrap{max-width:600px;margin:0 auto 8px;background:#241b10;border-radius:10px;padding:4px;position:relative}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#c48a4a,#ffe0ad);width:0%;transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Papier-Mâché Smoothing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Piece 1/8</span>
+      <span id="timeLbl">Time: 24</span>
+    </div>
+    <div id="meterWrap"><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Drag your mouse or finger (or steer with the <b>Arrow Keys</b>) to sweep the sanding block over every rough, bumpy patch of the piece until it turns smooth and pale. Work fast — the clock is ticking! But don't park the block in one spot too long: if you over-sand a patch it <b>gouges through</b> the paper layers and ruins that spot. Smooth the whole piece before time runs out. Pieces get larger every round — rack up 3 gouges or run out of time 3 times and the piece is wrecked!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320,CELL=18;
+const COLS=Math.floor(W/CELL),ROWS=Math.floor(H/CELL);
+const TOTAL_LEVELS=8;
+let hi=parseInt(localStorage.getItem('papiermachesmoothing_hi')||'0',10);
+let score=0,lives=3,level=0,gameOver=false,started=false,won=false;
+let cells=[],activeCount=0,timeLeft=24,maxTime=24;
+let brush={x:400,y:160},BR=24;
+let flashTimer=0,flashGood=true;
+let sandRate=1.4,gougeCount=0;
+const keys={};
+let lastTime=null;
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('piece_label','Piece {n}/{t}').replace('{n}',Math.min(level+1,TOTAL_LEVELS)).replace('{t}',TOTAL_LEVELS);
+  document.getElementById('timeLbl').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+}
+
+function shapeMask(cx,cy,px,py,lobes,amp,baseR){
+  const dx=px-cx,dy=py-cy;
+  const ang=Math.atan2(dy,dx);
+  const dist=Math.hypot(dx,dy);
+  const r=baseR+Math.sin(ang*lobes+level*0.6)*amp+Math.cos(ang*lobes*1.7+1.1)*amp*0.3;
+  return dist<r;
+}
+
+function buildShape(){
+  cells=[];
+  const cx=COLS/2,cy=ROWS/2;
+  const lobes=2+Math.floor(level/1.8);
+  const amp=2+level*0.45;
+  const baseR=7+level*0.8;
+  activeCount=0;
+  for(let r=0;r<ROWS;r++){
+    const row=[];
+    for(let col=0;col<COLS;col++){
+      const active=shapeMask(cx,cy,col,r,lobes,amp,baseR);
+      if(active)activeCount++;
+      row.push({rough:active?100:0,active,gouged:false});
+    }
+    cells.push(row);
+  }
+}
+
+function setupLevel(){
+  buildShape();
+  maxTime=18+level*2.2;
+  timeLeft=maxTime;
+  sandRate=1.2+level*0.05;
+  BR=Math.max(16,25-level*0.5);
+  brush={x:W/2,y:H/2};
+  gougeCount=0;
+  lastTime=null;
+}
+
+function reset(){
+  score=0;lives=3;level=0;gameOver=false;started=false;won=false;flashTimer=0;
+  setupLevel();
+  setHud();
+}
+
+function smoothPercent(){
+  let good=0;
+  for(let r=0;r<ROWS;r++)for(let col=0;col<COLS;col++){
+    const cell=cells[r][col];
+    if(!cell.active)continue;
+    if(cell.rough<=15&&!cell.gouged)good++;
+  }
+  return activeCount?good/activeCount*100:100;
+}
+
+function failLevel(){
+  lives--;
+  SFX.hurt();
+  flashTimer=20;flashGood=false;
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem('papiermachesmoothing_hi',hi);}
+    setHud();
+    return;
+  }
+  setupLevel();
+  setHud();
+}
+
+function completeLevel(){
+  score+=Math.round(70+smoothPercent()*2+Math.max(0,timeLeft)*3-gougeCount*10);
+  SFX.success();
+  flashTimer=20;flashGood=true;
+  level++;
+  if(level>=TOTAL_LEVELS){
+    won=true;
+    SFX.win();
+    if(score>hi){hi=score;localStorage.setItem('papiermachesmoothing_hi',hi);}
+    setHud();
+    return;
+  }
+  setupLevel();
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;SFX.click();return;}
+  if(gameOver||won){reset();}
+}
+
+function canvasPos(ev){
+  const r=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+let pointerActive=false;
+c.addEventListener('mousedown',e=>{startOrRestart();pointerActive=true;const p=canvasPos(e);brush.x=p.x;brush.y=p.y;});
+c.addEventListener('mousemove',e=>{if(pointerActive&&started&&!gameOver&&!won){const p=canvasPos(e);brush.x=p.x;brush.y=p.y;}});
+window.addEventListener('mouseup',()=>{pointerActive=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();pointerActive=true;const p=canvasPos(e);brush.x=p.x;brush.y=p.y;},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(started&&!gameOver&&!won){const p=canvasPos(e);brush.x=p.x;brush.y=p.y;}},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space')startOrRestart();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function colorForRough(rough,gouged){
+  if(gouged)return 'rgba(40,20,15,0.95)';
+  if(rough>=100)return 'rgba(120,90,60,0.55)';
+  const t=1-Math.min(1,Math.max(0,rough)/100);
+  if(rough<=15)return `rgba(255,224,173,${0.5+t*0.4})`;
+  return `rgba(180,140,95,${0.35+t*0.4})`;
+}
+
+function drawCells(){
+  for(let r=0;r<ROWS;r++){
+    for(let col=0;col<COLS;col++){
+      const cell=cells[r][col];
+      if(!cell.active)continue;
+      ctx.fillStyle=colorForRough(cell.rough,cell.gouged);
+      ctx.fillRect(col*CELL,r*CELL,CELL-1,CELL-1);
+    }
+  }
+}
+
+function drawBrush(){
+  ctx.save();
+  ctx.translate(brush.x,brush.y);
+  ctx.fillStyle='rgba(255,224,173,0.3)';
+  ctx.fillRect(-BR,-BR*0.6,BR*2,BR*1.2);
+  ctx.strokeStyle='#ffe0ad';ctx.lineWidth=2;
+  ctx.strokeRect(-BR,-BR*0.6,BR*2,BR*1.2);
+  ctx.restore();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#241b10');sky.addColorStop(1,'#4a3a28');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  drawCells();
+  ctx.textAlign='center';
+
+  if(!started){
+    drawBrush();
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Drag / Tap / Space to start sanding'),W/2,30);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    drawBrush();
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title3','PIECE WRECKED'),W/2,130);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,165);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    drawBrush();
+    ctx.fillStyle='#ffe0ad';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title3','ALL PIECES SMOOTHED! 🪵'),W/2,120);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,W/2,155);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,185);
+    requestAnimationFrame(loop);return;
+  }
+
+  const kSpd=6;
+  if(keys['ArrowUp'])brush.y-=kSpd;
+  if(keys['ArrowDown'])brush.y+=kSpd;
+  if(keys['ArrowLeft'])brush.x-=kSpd;
+  if(keys['ArrowRight'])brush.x+=kSpd;
+  brush.x=Math.max(5,Math.min(W-5,brush.x));
+  brush.y=Math.max(5,Math.min(H-5,brush.y));
+
+  timeLeft-=dt/60;
+
+  const c0=Math.floor((brush.x-BR)/CELL),c1=Math.floor((brush.x+BR)/CELL);
+  const r0=Math.floor((brush.y-BR*0.6)/CELL),r1=Math.floor((brush.y+BR*0.6)/CELL);
+  for(let r=Math.max(0,r0);r<=Math.min(ROWS-1,r1);r++){
+    for(let col=Math.max(0,c0);col<=Math.min(COLS-1,c1);col++){
+      const cell=cells[r][col];
+      if(!cell.active||cell.gouged)continue;
+      const cx=col*CELL+CELL/2,cy=r*CELL+CELL/2;
+      if(cx>brush.x-BR&&cx<brush.x+BR&&cy>brush.y-BR*0.6&&cy<brush.y+BR*0.6){
+        cell.rough-=sandRate*dt;
+        if(cell.rough<-15){
+          cell.rough=-15;
+          if(!cell.gouged){cell.gouged=true;gougeCount++;SFX.hit();flashTimer=10;flashGood=false;}
+        }
+      }
+    }
+  }
+
+  drawBrush();
+
+  if(gougeCount>=3){
+    failLevel();
+    requestAnimationFrame(loop);return;
+  }
+
+  const pct=smoothPercent();
+  if(pct>=94){
+    completeLevel();
+    requestAnimationFrame(loop);return;
+  }
+  if(timeLeft<=0){
+    failLevel();
+    requestAnimationFrame(loop);return;
+  }
+
+  document.getElementById('meterBar').style.width=Math.max(0,Math.min(100,pct))+'%';
+  document.getElementById('timeLbl').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+
+  ctx.fillStyle='#fff0d6';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('gouge_hint','Gouges: {d}/3').replace('{d}',gougeCount),W/2,22);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(255,224,173,0.2)':'rgba(120,40,30,0.3)';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+setHud();
+loop();
+</script></body></html>

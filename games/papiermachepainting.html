@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. --><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Papier-Mâché Painting</title><meta name="description" content="Play Papier-Mâché Painting free online — Sweep your brush over every part of the dried piece, keeping each patch's paint level inside the glowing safe band. Avoid drips and missed spots across increasingly intricate shapes."><link rel="canonical" href="https://games.multiportllc.com/games/papiermachepainting"><meta property="og:title" content="Papier-Mâché Painting - Multiport Games"><meta property="og:description" content="Play Papier-Mâché Painting free online — Sweep your brush over every part of the dried piece, keeping each patch's paint level inside the glowing safe band. Avoid drips and missed spots across increasingly intricate shapes."><meta property="og:url" content="https://games.multiportllc.com/games/papiermachepainting"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Papier-Mâché Painting - Multiport Games"><meta name="twitter:description" content="Play Papier-Mâché Painting free online — Sweep your brush over every part of the dried piece, keeping each patch's paint level inside the glowing safe band. Avoid drips and missed spots across increasingly intricate shapes."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Papier-Mâché Painting","description":"Play Papier-Mâché Painting free online instantly. Sweep your brush over every patch of a dried papier-mâché piece, keeping each patch's paint coverage inside the safe band on the gauge — too little leaves a missed patch, too much causes a drip. Finish each piece before the paint dries, across more intricate shapes every round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/papiermachepainting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1c130b}
+#c{background:#3a2a1c;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#ffe3b3;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#meterWrap{max-width:600px;margin:0 auto 8px;background:#2a1d12;border-radius:10px;padding:4px;position:relative}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#e8a33d,#ffd98a);width:0%;transition:width .1s}
+#meterBand{position:absolute;top:4px;height:14px;background:rgba(126,200,80,0.35);border-radius:6px;pointer-events:none}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Papier-Mâché Painting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Piece 1/8</span>
+      <span id="timeLbl">Time: 30</span>
+    </div>
+    <div id="meterWrap"><div id="meterBand"></div><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Drag your mouse or finger (or steer with the <b>Arrow Keys</b>) to sweep the brush across every part of the dried piece. Each patch fills with paint the longer your brush covers it — watch the gauge below: the glowing green band is the safe coverage zone. Too little paint leaves a <b>missed patch</b>; lingering too long on one spot makes it <b>drip</b>. Get the whole piece evenly into the safe zone before time runs out. Shapes get more intricate every round — lose all 3 lives and the paint job is ruined!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320,CELL=18;
+const COLS=Math.floor(W/CELL),ROWS=Math.floor(H/CELL);
+const TOTAL_LEVELS=8;
+let hi=parseInt(localStorage.getItem('papiermachepainting_hi')||'0',10);
+let score=0,lives=3,level=0,gameOver=false,started=false,won=false;
+let cells=[],activeCount=0,timeLeft=30,maxTime=30;
+let brush={x:400,y:160},BR=24;
+let flashTimer=0,flashGood=true;
+let lowBand=45,highBand=80,fillRate=1.0;
+const keys={};
+let lastTime=null;
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('piece_label','Piece {n}/{t}').replace('{n}',Math.min(level+1,TOTAL_LEVELS)).replace('{t}',TOTAL_LEVELS);
+  document.getElementById('timeLbl').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+  const wrapW=600-8;
+  document.getElementById('meterBand').style.left=(4+wrapW*lowBand/100)+'px';
+  document.getElementById('meterBand').style.width=(wrapW*(highBand-lowBand)/100)+'px';
+}
+
+function shapeMask(cx,cy,px,py,lobes,amp,baseR){
+  const dx=px-cx,dy=py-cy;
+  const ang=Math.atan2(dy,dx);
+  const dist=Math.hypot(dx,dy);
+  const r=baseR+Math.sin(ang*lobes+level*0.7)*amp+Math.sin(ang*lobes*2+1.3)*amp*0.4;
+  return dist<r;
+}
+
+function buildShape(){
+  cells=[];
+  const cx=COLS/2,cy=ROWS/2;
+  const lobes=2+Math.floor(level/1.4);
+  const amp=2+level*0.6;
+  const baseR=6.5+level*0.35;
+  activeCount=0;
+  for(let r=0;r<ROWS;r++){
+    const row=[];
+    for(let col=0;col<COLS;col++){
+      const active=shapeMask(cx,cy,col,r,lobes,amp,baseR);
+      if(active)activeCount++;
+      row.push({active,coverage:0,dripped:false});
+    }
+    cells.push(row);
+  }
+}
+
+function setupLevel(){
+  buildShape();
+  maxTime=Math.max(16,30-level*1.4);
+  timeLeft=maxTime;
+  lowBand=Math.max(35,45-level);
+  highBand=Math.min(92,80+level*0.5);
+  fillRate=1.0+level*0.08;
+  BR=Math.max(16,24-level*0.6);
+  brush={x:W/2,y:H/2};
+  dripCount=0;
+  lastTime=null;
+}
+
+let dripCount=0;
+
+function reset(){
+  score=0;lives=3;level=0;gameOver=false;started=false;won=false;flashTimer=0;
+  setupLevel();
+  setHud();
+}
+
+function evenPercent(){
+  let good=0;
+  for(let r=0;r<ROWS;r++)for(let col=0;col<COLS;col++){
+    const cell=cells[r][col];
+    if(!cell.active)continue;
+    if(cell.coverage>=lowBand&&cell.coverage<=highBand)good++;
+  }
+  return activeCount?good/activeCount*100:100;
+}
+
+function failLevel(){
+  lives--;
+  SFX.hurt();
+  flashTimer=20;flashGood=false;
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem('papiermachepainting_hi',hi);}
+    setHud();
+    return;
+  }
+  setupLevel();
+  setHud();
+}
+
+function completeLevel(){
+  score+=Math.round(80+evenPercent()*2-dripCount*8);
+  SFX.success();
+  flashTimer=20;flashGood=true;
+  level++;
+  if(level>=TOTAL_LEVELS){
+    won=true;
+    SFX.win();
+    if(score>hi){hi=score;localStorage.setItem('papiermachepainting_hi',hi);}
+    setHud();
+    return;
+  }
+  setupLevel();
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;SFX.click();return;}
+  if(gameOver||won){reset();}
+}
+
+function canvasPos(ev){
+  const r=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+let pointerActive=false;
+c.addEventListener('mousedown',e=>{startOrRestart();pointerActive=true;const p=canvasPos(e);brush.x=p.x;brush.y=p.y;});
+c.addEventListener('mousemove',e=>{if(pointerActive&&started&&!gameOver&&!won){const p=canvasPos(e);brush.x=p.x;brush.y=p.y;}});
+window.addEventListener('mouseup',()=>{pointerActive=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();pointerActive=true;const p=canvasPos(e);brush.x=p.x;brush.y=p.y;},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(started&&!gameOver&&!won){const p=canvasPos(e);brush.x=p.x;brush.y=p.y;}},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space')startOrRestart();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function colorForCoverage(cov,dripped){
+  if(dripped)return 'rgba(140,40,30,0.9)';
+  if(cov<=0)return 'rgba(90,65,45,0.4)';
+  const t=Math.min(1,cov/100);
+  const inBand=cov>=lowBand&&cov<=highBand;
+  if(inBand)return `rgba(126,200,80,${0.35+t*0.5})`;
+  if(cov>highBand)return `rgba(230,120,60,${0.5+t*0.4})`;
+  return `rgba(220,170,100,${0.25+t*0.5})`;
+}
+
+function drawCells(){
+  for(let r=0;r<ROWS;r++){
+    for(let col=0;col<COLS;col++){
+      const cell=cells[r][col];
+      if(!cell.active)continue;
+      ctx.fillStyle=colorForCoverage(cell.coverage,cell.dripped);
+      ctx.fillRect(col*CELL,r*CELL,CELL-1,CELL-1);
+    }
+  }
+}
+
+function drawBrush(){
+  ctx.beginPath();ctx.arc(brush.x,brush.y,BR,0,Math.PI*2);
+  ctx.fillStyle='rgba(255,217,138,0.25)';ctx.fill();
+  ctx.strokeStyle='#ffd98a';ctx.lineWidth=2;ctx.stroke();
+  ctx.beginPath();ctx.arc(brush.x,brush.y,5,0,Math.PI*2);
+  ctx.fillStyle='#fff3d6';ctx.fill();
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#2a1d12');sky.addColorStop(1,'#3a2a1c');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+
+  drawCells();
+  ctx.textAlign='center';
+
+  if(!started){
+    drawBrush();
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Drag / Tap / Space to start painting'),W/2,30);
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    drawBrush();
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','PAINT JOB RUINED'),W/2,130);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,165);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    drawBrush();
+    ctx.fillStyle='#7ec850';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','ALL PIECES PAINTED! 🎨'),W/2,120);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,W/2,155);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,185);
+    requestAnimationFrame(loop);return;
+  }
+
+  const kSpd=5.5;
+  if(keys['ArrowUp'])brush.y-=kSpd;
+  if(keys['ArrowDown'])brush.y+=kSpd;
+  if(keys['ArrowLeft'])brush.x-=kSpd;
+  if(keys['ArrowRight'])brush.x+=kSpd;
+  brush.x=Math.max(5,Math.min(W-5,brush.x));
+  brush.y=Math.max(5,Math.min(H-5,brush.y));
+
+  timeLeft-=dt/60;
+
+  const c0=Math.floor((brush.x-BR)/CELL),c1=Math.floor((brush.x+BR)/CELL);
+  const r0=Math.floor((brush.y-BR)/CELL),r1=Math.floor((brush.y+BR)/CELL);
+  for(let r=Math.max(0,r0);r<=Math.min(ROWS-1,r1);r++){
+    for(let col=Math.max(0,c0);col<=Math.min(COLS-1,c1);col++){
+      const cell=cells[r][col];
+      if(!cell.active||cell.dripped)continue;
+      const cx=col*CELL+CELL/2,cy=r*CELL+CELL/2;
+      if(Math.hypot(cx-brush.x,cy-brush.y)<=BR){
+        cell.coverage+=fillRate*dt;
+        if(cell.coverage>100){
+          cell.coverage=100;
+          if(!cell.dripped){cell.dripped=true;dripCount++;SFX.hit();flashTimer=10;flashGood=false;}
+        }
+      }
+    }
+  }
+
+  drawBrush();
+
+  if(dripCount>=3){
+    failLevel();
+    requestAnimationFrame(loop);return;
+  }
+
+  const pct=evenPercent();
+  if(pct>=92){
+    completeLevel();
+    requestAnimationFrame(loop);return;
+  }
+  if(timeLeft<=0){
+    if(pct>=75){completeLevel();}else{failLevel();}
+    requestAnimationFrame(loop);return;
+  }
+
+  document.getElementById('meterBar').style.width=Math.max(0,Math.min(100,pct))+'%';
+  document.getElementById('timeLbl').textContent=I18N.t('time_label','Time: {t}').replace('{t}',Math.ceil(timeLeft));
+
+  ctx.fillStyle='#ffe3b3';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('drip_hint','Drips: {d}/3').replace('{d}',dripCount),W/2,22);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.2)':'rgba(230,80,60,0.25)';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+setHud();
+loop();
+</script></body></html>
