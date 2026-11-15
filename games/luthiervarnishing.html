@@ -1,0 +1,312 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Luthier Varnishing</title><meta name="description" content="Play Luthier Varnishing free online — Brush thin, even varnish coats over a violin body, covering every area within the target thickness band without pooling."><link rel="canonical" href="https://games.multiportllc.com/games/luthiervarnishing"><meta property="og:title" content="Luthier Varnishing - Multiport Games"><meta property="og:description" content="Play Luthier Varnishing free online — Brush thin, even varnish coats over a violin body, covering every area within the target thickness band without pooling."><meta property="og:url" content="https://games.multiportllc.com/games/luthiervarnishing"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Luthier Varnishing - Multiport Games"><meta name="twitter:description" content="Play Luthier Varnishing free online — Brush thin, even varnish coats over a violin body, covering every area within the target thickness band without pooling."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Luthier Varnishing","description":"Play Luthier Varnishing free online instantly. Brush thin coats of varnish evenly over a violin body, sweeping over every area within the target thickness gauge without pooling the finish or missing spots. Bigger bodies and more demanding coats arrive every round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/luthiervarnishing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2a1d14;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#e9c27a;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#meterWrap{max-width:600px;margin:0 auto 6px;background:#0e0a06;border-radius:10px;padding:4px}
+#meterBar{height:12px;border-radius:8px;background:linear-gradient(90deg,#d9a24c,#f3d08a);width:100%;transition:width .1s}
+#covRow{color:#caa36a;font-size:.9rem;text-align:center;margin-bottom:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Luthier Varnishing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Coat 1/8</span>
+    </div>
+    <div id="meterWrap"><div id="meterBar"></div></div>
+    <div id="covRow">Coverage: 0% · Pooled: 0</div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Drag your brush (mouse or finger), or steer with the <b>Arrow Keys</b> and hold <b>Space</b> to brush, over the violin body to build up an even varnish coat. Every patch must land inside the gold target thickness band shown by its color — too little brushing leaves bare wood, too much makes it pool and ruin the finish. Cover enough of the body within the band before time runs out to move to the next coat. Bigger bodies, finer grain, and tighter bands arrive every coat — lose all 3 lives and the finish is ruined!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const TOTAL_ROUNDS=8;
+let hi=parseInt(localStorage.getItem('luthiervarnishing_hi')||'0',10);
+let score=0,lives=3,round=1,gameOver=false,started=false,won=false;
+let flashTimer=0,flashGood=true;
+const keys={};
+let brush={x:400,y:160},painting=false;
+
+const PROFILE=[[0,0.04],[0.05,0.22],[0.14,0.40],[0.24,0.46],[0.34,0.38],[0.44,0.30],[0.50,0.27],[0.56,0.30],[0.66,0.40],[0.76,0.50],[0.86,0.46],[0.95,0.26],[1,0.05]];
+function halfWidthAt(t){
+  for(let i=0;i<PROFILE.length-1;i++){
+    const a=PROFILE[i],b=PROFILE[i+1];
+    if(t>=a[0]&&t<=b[0]){
+      const f=(t-a[0])/((b[0]-a[0])||1);
+      const f2=(1-Math.cos(f*Math.PI))/2;
+      return a[1]*(1-f2)+b[1]*f2;
+    }
+  }
+  return PROFILE[PROFILE.length-1][1];
+}
+function buildViolinPath(cx,topY,botY,maxHalfW){
+  const p=new Path2D();
+  const N=90;
+  for(let i=0;i<=N;i++){
+    const t=i/N,y=topY+(botY-topY)*t,hw=halfWidthAt(t)*maxHalfW;
+    if(i===0)p.moveTo(cx+hw,y); else p.lineTo(cx+hw,y);
+  }
+  for(let i=N;i>=0;i--){
+    const t=i/N,y=topY+(botY-topY)*t,hw=halfWidthAt(t)*maxHalfW;
+    p.lineTo(cx-hw,y);
+  }
+  p.closePath();
+  return p;
+}
+
+let bodyGeom,violinPath,cols,rows,cellW,cellH,gridLeft,gridTop;
+let inside,thickness,pooled,totalInside,pooledCount,allowedPooled;
+let bandMin,bandMax,bandWidth,timeLeft,timeTotal,lastTime=null;
+
+function setupRound(){
+  cols=Math.min(22,10+round*2);
+  rows=Math.min(14,7+round);
+  const maxHalfW=120+Math.min(round,6)*8;
+  bodyGeom={cx:400,topY:28,botY:300,maxHalfW};
+  violinPath=buildViolinPath(bodyGeom.cx,bodyGeom.topY,bodyGeom.botY,maxHalfW);
+  gridLeft=bodyGeom.cx-maxHalfW-8; gridTop=bodyGeom.topY;
+  const gridRight=bodyGeom.cx+maxHalfW+8;
+  cellW=(gridRight-gridLeft)/cols; cellH=(bodyGeom.botY-bodyGeom.topY)/rows;
+  thickness=new Array(rows*cols).fill(0);
+  pooled=new Array(rows*cols).fill(false);
+  inside=new Array(rows*cols).fill(false);
+  let total=0;
+  for(let r=0;r<rows;r++)for(let col=0;col<cols;col++){
+    const ccx=gridLeft+(col+0.5)*cellW, ccy=gridTop+(r+0.5)*cellH;
+    const isin=ctx.isPointInPath(violinPath,ccx,ccy);
+    inside[r*cols+col]=isin;
+    if(isin)total++;
+  }
+  totalInside=total;
+  bandWidth=Math.max(16,36-round*2);
+  bandMin=50-bandWidth/2; bandMax=50+bandWidth/2;
+  timeTotal=Math.max(14,24-round);
+  timeLeft=timeTotal;
+  pooledCount=0;
+  allowedPooled=Math.max(1,Math.floor(total*0.035));
+  brush={x:bodyGeom.cx,y:(bodyGeom.topY+bodyGeom.botY)/2};
+  lastTime=null;
+}
+
+function reset(){
+  score=0;lives=3;round=1;gameOver=false;started=false;won=false;flashTimer=0;
+  setupRound();
+  setHud();
+}
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('coat_label','Coat {n}/{t}').replace('{n}',Math.min(round,TOTAL_ROUNDS)).replace('{t}',TOTAL_ROUNDS);
+}
+
+function paintAt(bx,by){
+  const R=30+Math.min(round,4)*2;
+  for(let r=0;r<rows;r++)for(let col=0;col<cols;col++){
+    const idx=r*cols+col;
+    if(!inside[idx])continue;
+    const ccx=gridLeft+(col+0.5)*cellW, ccy=gridTop+(r+0.5)*cellH;
+    const d=Math.hypot(bx-ccx,by-ccy);
+    if(d<=R){
+      const falloff=1-d/R;
+      thickness[idx]=Math.min(140,thickness[idx]+0.85*falloff);
+      if(!pooled[idx]&&thickness[idx]>bandMax+18){
+        pooled[idx]=true;pooledCount++;
+        if(pooledCount===1||pooledCount%3===0){SFX.hurt();}
+        flashTimer=10;flashGood=false;
+      }
+    }
+  }
+}
+
+function evaluateRound(){
+  let good=0;
+  for(let i=0;i<thickness.length;i++){
+    if(!inside[i])continue;
+    if(!pooled[i]&&thickness[i]>=bandMin&&thickness[i]<=bandMax)good++;
+  }
+  const coverage=totalInside?good/totalInside:0;
+  if(coverage>=0.8&&pooledCount<=allowedPooled){
+    score+=Math.round(100+coverage*150-pooledCount*5);
+    if(score>hi){hi=score;localStorage.setItem('luthiervarnishing_hi',hi);}
+    SFX.success();flashTimer=18;flashGood=true;
+    round++;
+    if(round>TOTAL_ROUNDS){
+      won=true;SFX.levelup();setHud();return;
+    }
+    setupRound();
+  }else{
+    lives--;SFX.fail();flashTimer=18;flashGood=false;
+    if(lives<=0){
+      gameOver=true;
+      if(score>hi){hi=score;localStorage.setItem('luthiervarnishing_hi',hi);}
+      setHud();return;
+    }
+    setupRound();
+  }
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();}
+}
+
+function canvasPos(ev){
+  const r=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return {x:cx*(800/r.width),y:cy*(320/r.height)};
+}
+
+c.addEventListener('mousedown',e=>{startOrRestart();painting=true;const p=canvasPos(e);brush.x=p.x;brush.y=p.y;});
+c.addEventListener('mousemove',e=>{if(painting&&started&&!gameOver&&!won){const p=canvasPos(e);brush.x=p.x;brush.y=p.y;}});
+window.addEventListener('mouseup',()=>{painting=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();painting=true;const p=canvasPos(e);brush.x=p.x;brush.y=p.y;},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(started&&!gameOver&&!won){const p=canvasPos(e);brush.x=p.x;brush.y=p.y;}},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();painting=false;},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space')startOrRestart();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function lerp(a,b,t){return a+(b-a)*t;}
+function colorFor(idx){
+  if(!inside[idx])return null;
+  if(pooled[idx])return '#3a1f12';
+  const th=thickness[idx];
+  if(th<=0.5)return '#6b4226';
+  if(th<bandMin){
+    const t=th/bandMin;
+    return `rgb(${Math.round(lerp(107,217,t))},${Math.round(lerp(66,162,t))},${Math.round(lerp(38,76,t))})`;
+  }
+  if(th<=bandMax){
+    return '#d9a24c';
+  }
+  const t=Math.min(1,(th-bandMax)/18);
+  return `rgb(${Math.round(lerp(217,90,t))},${Math.round(lerp(162,55,t))},${Math.round(lerp(76,30,t))})`;
+}
+
+function drawBody(){
+  ctx.save();
+  ctx.fillStyle='#4a3420';
+  ctx.fill(violinPath);
+  ctx.save();
+  ctx.clip(violinPath);
+  for(let r=0;r<rows;r++)for(let col=0;col<cols;col++){
+    const idx=r*cols+col;
+    const colr=colorFor(idx);
+    if(!colr)continue;
+    ctx.fillStyle=colr;
+    ctx.fillRect(gridLeft+col*cellW,gridTop+r*cellH,cellW+0.5,cellH+0.5);
+  }
+  ctx.restore();
+  ctx.lineWidth=3;ctx.strokeStyle='#1a0f08';
+  ctx.stroke(violinPath);
+  // f-holes decoration
+  ctx.fillStyle='rgba(20,12,6,0.55)';
+  ctx.font='bold 26px Georgia';ctx.textAlign='center';
+  ctx.fillText('f',bodyGeom.cx-40,170);
+  ctx.save();ctx.scale(-1,1);ctx.fillText('f',-(bodyGeom.cx+40),170);ctx.restore();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,800,320);
+  const bg=ctx.createLinearGradient(0,0,0,320);
+  bg.addColorStop(0,'#3a271a');bg.addColorStop(1,'#1f140c');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,320);
+  ctx.textAlign='center';
+
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Drag / Tap / Space to start'),400,18);
+    drawBody();
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    drawBody();
+    ctx.fillStyle='rgba(20,10,5,0.6)';ctx.fillRect(0,0,800,320);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','FINISH RUINED'),400,140);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,175);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    drawBody();
+    ctx.fillStyle='rgba(20,10,5,0.55)';ctx.fillRect(0,0,800,320);
+    ctx.fillStyle='#7ec850';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title','PERFECTLY VARNISHED! ✨'),400,135);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,168);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,196);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.1);
+  lastTime=now;
+
+  const kSpd=4.5;
+  let moved=false;
+  if(keys['ArrowUp']){brush.y-=kSpd;moved=true;}
+  if(keys['ArrowDown']){brush.y+=kSpd;moved=true;}
+  if(keys['ArrowLeft']){brush.x-=kSpd;moved=true;}
+  if(keys['ArrowRight']){brush.x+=kSpd;moved=true;}
+  brush.x=Math.max(20,Math.min(780,brush.x));
+  brush.y=Math.max(20,Math.min(310,brush.y));
+  if((moved||keys['Space'])){paintAt(brush.x,brush.y);}
+  if(painting)paintAt(brush.x,brush.y);
+
+  timeLeft-=dt;
+  if(timeLeft<=0){timeLeft=0;evaluateRound();}
+
+  drawBody();
+
+  ctx.fillStyle='rgba(255,100,120,0.6)';
+  ctx.beginPath();ctx.arc(brush.x,brush.y,30+Math.min(round,4)*2,0,Math.PI*2);ctx.strokeStyle='rgba(255,255,255,0.5)';ctx.lineWidth=2;ctx.stroke();
+  ctx.fillStyle='#e94560';ctx.beginPath();ctx.arc(brush.x,brush.y,7,0,Math.PI*2);ctx.fill();
+
+  document.getElementById('meterBar').style.width=Math.max(0,(timeLeft/timeTotal)*100)+'%';
+  let goodNow=0;
+  for(let i=0;i<thickness.length;i++){if(inside[i]&&!pooled[i]&&thickness[i]>=bandMin&&thickness[i]<=bandMax)goodNow++;}
+  const covPct=totalInside?Math.round(goodNow/totalInside*100):0;
+  document.getElementById('covRow').textContent=I18N.t('coverage_label','Coverage: {c}% · Pooled: {p}').replace('{c}',covPct).replace('{p}',pooledCount);
+
+  ctx.fillStyle='#e9c27a';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('varnish_hint','Sweep the brush to fill the gold band — avoid pooling'),400,16);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.18)':'rgba(255,80,100,0.18)';
+    ctx.fillRect(0,0,800,320);
+  }
+
+  setHud();
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>
