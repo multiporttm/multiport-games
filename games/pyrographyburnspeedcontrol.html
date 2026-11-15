@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. --><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Pyrography Burn Speed Control</title><meta name="description" content="Play Pyrography Burn Speed Control free online — Drag the hot pen tip along the wood panel at a steady speed inside the safe gauge to burn an even line, without scorching too deep or leaving a faint line."><link rel="canonical" href="https://games.multiportllc.com/games/pyrographyburnspeedcontrol"><meta property="og:title" content="Pyrography Burn Speed Control - Multiport Games"><meta property="og:description" content="Play Pyrography Burn Speed Control free online — Drag the hot pen tip along the wood panel at a steady speed inside the safe gauge to burn an even line, without scorching too deep or leaving a faint line."><meta property="og:url" content="https://games.multiportllc.com/games/pyrographyburnspeedcontrol"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Pyrography Burn Speed Control - Multiport Games"><meta name="twitter:description" content="Play Pyrography Burn Speed Control free online — Drag the hot pen tip along the wood panel at a steady speed inside the safe gauge to burn an even line, without scorching too deep or leaving a faint line."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Pyrography Burn Speed Control","description":"Play Pyrography Burn Speed Control free online instantly. Drag a hot pen tip along a wood panel at a steady speed within a safe zone to burn an even-width line, without moving too slowly and burning too deep or too fast and leaving a faint line, across longer and trickier lines each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/pyrographyburnspeedcontrol","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#140b06}
+#c{background:#2a1810;display:block;border-radius:8px;margin:0 auto;touch-action:none;cursor:crosshair}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#ffb347;font-size:1.05rem;font-weight:700;padding:8px 10px;flex-wrap:wrap;gap:6px}
+#hud .lives{letter-spacing:2px;color:#ff6b35}
+#gaugeWrap{max-width:600px;margin:0 auto 6px;background:#1a0f08;border-radius:10px;padding:4px;position:relative;height:16px}
+#gaugeBand{position:absolute;top:2px;bottom:2px;background:rgba(76,175,80,0.45);border-radius:6px}
+#gaugeNeedle{position:absolute;top:0;bottom:0;width:3px;background:#fff176;border-radius:2px;transition:left .06s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Pyrography Burn Speed Control</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="roundLbl">Line 1</span>
+    </div>
+    <div id="gaugeWrap"><div id="gaugeBand"></div><div id="gaugeNeedle"></div></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    Drag the pen tip (mouse/touch) along the glowing path, or steer with <b>Arrow Keys</b>: <b>Right/Up</b> speeds up, <b>Left/Down</b> slows down. Keep the needle in the green safe zone — too slow chars the wood too deep, too fast leaves a faint line. Lines get longer and curvier each round!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreLbl=document.getElementById('scoreLbl'),livesLbl=document.getElementById('livesLbl'),roundLbl=document.getElementById('roundLbl');
+const gaugeBand=document.getElementById('gaugeBand'),gaugeNeedle=document.getElementById('gaugeNeedle');
+const HI_KEY='pyrographyburnspeedcontrol_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+
+let score=0,lives=3,round=1,state='ready';
+let path=[],pathLen=0,cum=[];
+let progress=0,velocity=0,integrity=100;
+let segQuality=[]; // per-sample quality for scoring
+const SAFE_MIN=120,SAFE_MAX=260,MAX_SPEED=420; // px/sec along path
+let pointerDown=false,lastPointerT=null,lastPointerProg=0;
+let keys={};
+
+function genPath(n){
+  const pts=[];
+  const margin=60;
+  const w=800-margin*2,h=320;
+  const segs=Math.min(3+Math.floor(round/2),8);
+  for(let i=0;i<=segs;i++){
+    const x=margin+(w*i/segs);
+    const y=70+h/2+Math.sin(i*1.7+round*0.6)*Math.min(100,30+round*8)*(i>0&&i<segs?1:0.2);
+    pts.push({x,y});
+  }
+  return pts;
+}
+
+function buildPath(){
+  path=genPath();
+  cum=[0];
+  for(let i=1;i<path.length;i++){
+    const dx=path[i].x-path[i-1].x,dy=path[i].y-path[i-1].y;
+    cum.push(cum[i-1]+Math.sqrt(dx*dx+dy*dy));
+  }
+  pathLen=cum[cum.length-1];
+}
+
+function pointAtDist(d){
+  d=Math.max(0,Math.min(pathLen,d));
+  for(let i=1;i<cum.length;i++){
+    if(d<=cum[i]){
+      const segLen=cum[i]-cum[i-1];
+      const t=segLen>0?(d-cum[i-1])/segLen:0;
+      return {
+        x:path[i-1].x+(path[i].x-path[i-1].x)*t,
+        y:path[i-1].y+(path[i].y-path[i-1].y)*t,
+        idx:i-1,t
+      };
+    }
+  }
+  return {x:path[path.length-1].x,y:path[path.length-1].y,idx:path.length-2,t:1};
+}
+
+function newRound(){
+  buildPath();
+  progress=0;velocity=0;integrity=100;segQuality=[];
+  lastPointerProg=0;lastPointerT=null;
+  state='playing';
+}
+
+function qualityForSpeed(spd){
+  if(spd>=SAFE_MIN&&spd<=SAFE_MAX)return 1;
+  if(spd<SAFE_MIN)return Math.max(0,spd/SAFE_MIN);
+  return Math.max(0,1-(spd-SAFE_MAX)/(MAX_SPEED-SAFE_MAX));
+}
+
+function burnColorForSpeed(spd){
+  if(spd<SAFE_MIN){
+    const t=1-spd/SAFE_MIN;
+    return `rgba(${20+t*10},${10+t*5},${5},${0.9})`; // very dark char
+  }
+  if(spd<=SAFE_MAX)return 'rgba(120,60,20,0.95)';
+  const t=Math.min(1,(spd-SAFE_MAX)/(MAX_SPEED-SAFE_MAX));
+  return `rgba(${160+t*60},${110+t*60},${70+t*50},${0.5-t*0.3})`;
+}
+
+function advance(dt){
+  if(progress>=pathLen)return;
+  const dist=velocity*dt;
+  const prevProgress=progress;
+  progress=Math.min(pathLen,progress+dist);
+  if(dist>0.1){
+    const q=qualityForSpeed(velocity);
+    segQuality.push(q);
+    if(velocity<SAFE_MIN){
+      const deficit=(SAFE_MIN-velocity)/SAFE_MIN;
+      integrity-=deficit*dt*26;
+    }
+  }
+  if(progress>=pathLen){
+    finishLine();
+  }
+  if(integrity<=0){
+    burnThrough();
+  }
+}
+
+function finishLine(){
+  SFX.success();
+  const avgQ=segQuality.length?segQuality.reduce((a,b)=>a+b,0)/segQuality.length:0;
+  score+=Math.max(10,Math.round(avgQ*80)+round*5);
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+  round++;
+  state='won';
+  setTimeout(()=>{ if(state==='won')newRound(); },1000);
+}
+
+function burnThrough(){
+  SFX.hurt();
+  lives--;
+  if(lives<=0){
+    state='over';SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,hi);}
+  }else{
+    state='over';
+    setTimeout(()=>{ if(state==='over'&&lives>0)newRound(); },900);
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,800,420);
+  const bg=ctx.createLinearGradient(0,0,0,420);
+  bg.addColorStop(0,'#1a0f08');bg.addColorStop(1,'#2a1810');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,420);
+
+  // wood panel
+  ctx.fillStyle='#3a2416';ctx.fillRect(40,60,720,340);
+  ctx.strokeStyle='rgba(0,0,0,0.15)';
+  for(let y=70;y<390;y+=16){ctx.beginPath();ctx.moveTo(40,y);ctx.lineTo(760,y);ctx.stroke();}
+
+  if(state==='ready'){
+    ctx.fillStyle='#ffb347';ctx.font='bold 26px Georgia';ctx.textAlign='center';
+    ctx.fillText(I18N.t('bs_start_hint','Click / Tap / Space to start'),400,220);
+    requestAnimationFrame(loop);return;
+  }
+
+  // guide path (faint)
+  ctx.strokeStyle='rgba(255,179,71,0.3)';ctx.lineWidth=20;ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();
+  path.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+  ctx.stroke();
+
+  // burned portion up to progress, colored by recorded quality via gradient approx
+  ctx.lineCap='round';ctx.lineJoin='round';
+  const steps=Math.max(2,Math.floor(progress/6));
+  let prevPt=pointAtDist(0);
+  for(let s=1;s<=steps;s++){
+    const d=(progress*s/steps);
+    const pt=pointAtDist(d);
+    const qIdx=Math.min(segQuality.length-1,Math.floor(segQuality.length*s/steps));
+    const q=segQuality.length?segQuality[Math.max(0,qIdx)]:1;
+    ctx.strokeStyle=q>=0.95?'#7a3a16':(q>0.5?'#5a2a10':'#1c0e06');
+    ctx.lineWidth=q>=0.95?10:(q>0.5?8:13);
+    ctx.beginPath();ctx.moveTo(prevPt.x,prevPt.y);ctx.lineTo(pt.x,pt.y);ctx.stroke();
+    prevPt=pt;
+  }
+
+  // pen tip
+  const tip=pointAtDist(progress);
+  ctx.save();
+  ctx.fillStyle='#ff6b35';
+  const glow=ctx.createRadialGradient(tip.x,tip.y,0,tip.x,tip.y,18);
+  glow.addColorStop(0,'rgba(255,183,71,0.9)');glow.addColorStop(1,'rgba(255,183,71,0)');
+  ctx.fillStyle=glow;ctx.beginPath();ctx.arc(tip.x,tip.y,18,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#ffe9a8';ctx.beginPath();ctx.arc(tip.x,tip.y,6,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+
+  if(state==='over'||state==='won'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,800,420);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Georgia';ctx.textAlign='center';
+    ctx.fillText(state==='won'?I18N.t('bs_line_done','LINE COMPLETE!'):I18N.t('game_over_title','GAME OVER'),400,200);
+    ctx.font='18px Georgia';
+    ctx.fillText(I18N.t('restart_hint2','Click / Tap / Space to restart'),400,238);
+  }
+
+  // integrity bar
+  ctx.fillStyle='#1a0f08';ctx.fillRect(650,60,90,16);
+  ctx.fillStyle=integrity>40?'#4caf50':'#e94560';
+  ctx.fillRect(650,60,Math.max(0,90*integrity/100),16);
+  ctx.strokeStyle='#ffb347';ctx.lineWidth=1;ctx.strokeRect(650,60,90,16);
+  ctx.fillStyle='#ffb347';ctx.font='11px Georgia';ctx.textAlign='left';
+  ctx.fillText(I18N.t('bs_wood_integrity','Wood'),650,55);
+
+  const pct=Math.min(100,Math.round(velocity/MAX_SPEED*100));
+  gaugeNeedle.style.left=pct+'%';
+  gaugeBand.style.left=(SAFE_MIN/MAX_SPEED*100)+'%';
+  gaugeBand.style.width=((SAFE_MAX-SAFE_MIN)/MAX_SPEED*100)+'%';
+
+  scoreLbl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  livesLbl.textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  roundLbl.textContent=I18N.t('bs_line_label','Line {r}').replace('{r}',round);
+  requestAnimationFrame(loop);
+}
+
+let lastT=null;
+function loop(t){
+  if(state==='playing'){
+    if(lastT===null)lastT=t;
+    const dt=Math.min(0.05,(t-lastT)/1000);
+    lastT=t;
+    if(keys['ArrowRight']||keys['ArrowUp'])velocity=Math.min(MAX_SPEED,velocity+300*dt);
+    else if(keys['ArrowLeft']||keys['ArrowDown'])velocity=Math.max(0,velocity-300*dt);
+    else if(!pointerDown)velocity=Math.max(0,velocity-140*dt);
+    else if(pointerDown&&lastPointerT!==null&&(performance.now()-lastPointerT)>150)velocity=Math.max(0,velocity-200*dt);
+    if(!pointerDown)advance(dt);
+  }else lastT=null;
+  draw();
+}
+
+function canvasPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(800/r.width),y:cy*(420/r.height)};
+}
+
+function nearestProgress(px,py){
+  // search in a window around current progress for the nearest point on the path
+  let best=progress,bestD=Infinity;
+  const window=200;
+  const lo=Math.max(0,progress-window),hi=Math.min(pathLen,progress+window);
+  for(let d=lo;d<=hi;d+=4){
+    const p=pointAtDist(d);
+    const dx=p.x-px,dy=p.y-py;
+    const dist=dx*dx+dy*dy;
+    if(dist<bestD){bestD=dist;best=d;}
+  }
+  return best;
+}
+
+function handlePointerMove(p){
+  if(state!=='playing')return;
+  const now=performance.now();
+  const newProg=nearestProgress(p.x,p.y);
+  let dt=0;
+  if(lastPointerT!==null){
+    dt=(now-lastPointerT)/1000;
+    if(dt>0){
+      const dProg=newProg-lastPointerProg;
+      velocity=Math.max(0,Math.min(MAX_SPEED,dProg/dt));
+    }
+  }
+  lastPointerT=now;lastPointerProg=newProg;
+  const moved=newProg-progress;
+  if(moved>0.1){
+    progress=newProg;
+    const q=qualityForSpeed(velocity);
+    segQuality.push(q);
+    if(velocity<SAFE_MIN&&dt>0){
+      const deficit=(SAFE_MIN-velocity)/SAFE_MIN;
+      integrity-=deficit*dt*26;
+    }
+  }
+  if(progress>=pathLen){finishLine();}
+  if(integrity<=0){burnThrough();}
+}
+
+c.addEventListener('mousedown',e=>{
+  if(state==='ready'||state==='over'||state==='won'){startGame();return;}
+  pointerDown=true;lastPointerT=performance.now();lastPointerProg=progress;
+});
+window.addEventListener('mouseup',()=>{pointerDown=false;lastPointerT=null;});
+c.addEventListener('mousemove',e=>{ if(pointerDown)handlePointerMove(canvasPos(e)); });
+
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(state==='ready'||state==='over'||state==='won'){startGame();return;}
+  pointerDown=true;lastPointerT=performance.now();lastPointerProg=progress;
+},{passive:false});
+c.addEventListener('touchmove',e=>{ e.preventDefault(); if(pointerDown)handlePointerMove(canvasPos(e)); },{passive:false});
+c.addEventListener('touchend',e=>{ e.preventDefault(); pointerDown=false;lastPointerT=null; },{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' ','Enter'].includes(e.key))e.preventDefault();
+  if(state==='ready'||state==='over'||state==='won'){
+    if(e.key===' '||e.key==='Enter')startGame();
+    return;
+  }
+  keys[e.key]=true;
+});
+document.addEventListener('keyup',e=>{ keys[e.key]=false; });
+
+function startGame(){
+  score=0;lives=3;round=1;
+  newRound();
+}
+
+buildPath();state='ready';
+requestAnimationFrame(loop);
+</script></body></html>

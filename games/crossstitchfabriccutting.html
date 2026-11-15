@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. --><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Cross-Stitch Fabric Cutting</title><meta name="description" content="Play Cross-Stitch Fabric Cutting free online — Cut aida cloth to the shape shown on the template using scissors, tracing a steady line along the glowing guide without fraying the edge."><link rel="canonical" href="https://games.multiportllc.com/games/crossstitchfabriccutting"><meta property="og:title" content="Cross-Stitch Fabric Cutting - Multiport Games"><meta property="og:description" content="Play Cross-Stitch Fabric Cutting free online — Cut aida cloth to the shape shown on the template using scissors, tracing a steady line along the glowing guide without fraying the edge."><meta property="og:url" content="https://games.multiportllc.com/games/crossstitchfabriccutting"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Cross-Stitch Fabric Cutting - Multiport Games"><meta name="twitter:description" content="Play Cross-Stitch Fabric Cutting free online — Cut aida cloth to the shape shown on the template using scissors, tracing a steady line along the glowing guide without fraying the edge."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Cross-Stitch Fabric Cutting","description":"Play Cross-Stitch Fabric Cutting free online instantly. Cut aida cloth to the shape shown on the template using scissors, tracing a steady line along the glowing guide without fraying the edge. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/crossstitchfabriccutting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#e9d9b5;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#score-display{color:#b5651d;font-size:1.1rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Cross-Stitch Fabric Cutting</div>
+  <div class="game-frame">
+    <div id="score-display">Round: 1 | Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press and <b>drag</b> your scissors (mouse or touch, or <b>Arrow Keys</b>) along the glowing guide line to cut the aida cloth into the template shape. Stray too far off the line and the edge <b>frays</b> — fray too much and the fabric is ruined! Finish the whole outline to complete the shape. Shapes get more intricate each round.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+const HI_KEY="crossstitchfabriccutting_hi";
+let hi=parseInt(localStorage.getItem(HI_KEY)||"0",10);
+let round=1,score=0,path=[],cum=[],pathLen=0,tol=22;
+let fray=0,progress=0,dragging=false,state='ready',pointerPos=null,offTrack=false,offTrackTicks=0;
+let cutMarks=[];
+
+function setStatusText(t){document.getElementById('score-display').textContent=t;}
+
+function buildShape(r){
+  const cx=W/2,cy=H/2;
+  const type=['square','triangle','star','cross'][Math.min(3,Math.floor((r-1)/2))];
+  const pts=[];
+  const size=130;
+  if(type==='square'){
+    const corners=[[-1,-1],[1,-1],[1,1],[-1,1]];
+    corners.forEach(([x,y])=>pts.push({x:cx+x*size,y:cy+y*size*0.75}));
+  } else if(type==='triangle'){
+    for(let i=0;i<3;i++){
+      const ang=-Math.PI/2+i*(Math.PI*2/3);
+      pts.push({x:cx+Math.cos(ang)*size,y:cy+Math.sin(ang)*size});
+    }
+  } else if(type==='star'){
+    const spikes=5;
+    for(let i=0;i<spikes*2;i++){
+      const ang=-Math.PI/2+i*(Math.PI/spikes);
+      const rad=i%2===0?size:size*0.45;
+      pts.push({x:cx+Math.cos(ang)*rad,y:cy+Math.sin(ang)*rad});
+    }
+  } else {
+    const a=size*0.35,b=size;
+    const sq=[[-a,-b],[a,-b],[a,-a],[b,-a],[b,a],[a,a],[a,b],[-a,b],[-a,a],[-b,a],[-b,-a],[-a,-a]];
+    sq.forEach(([x,y])=>pts.push({x:cx+x,y:cy+y}));
+  }
+  // extra jaggedness for higher rounds beyond base 4 shapes: add mid-point wobble
+  const extra=Math.max(0,r-8);
+  let finalPts=pts;
+  if(extra>0){
+    finalPts=[];
+    for(let i=0;i<pts.length;i++){
+      finalPts.push(pts[i]);
+      const nxt=pts[(i+1)%pts.length];
+      const mx=(pts[i].x+nxt.x)/2,my=(pts[i].y+nxt.y)/2;
+      const jag=10+extra*2;
+      finalPts.push({x:mx+(Math.random()<0.5?-1:1)*jag,y:my+(Math.random()<0.5?-1:1)*jag});
+    }
+  }
+  return finalPts;
+}
+
+function computeCum(pts){
+  const arr=[0];
+  for(let i=1;i<=pts.length;i++){
+    const a=pts[i-1],b=pts[i%pts.length];
+    const d=Math.hypot(b.x-a.x,b.y-a.y);
+    arr.push(arr[i-1]+d);
+  }
+  return arr;
+}
+
+function newRound(){
+  const basePts=buildShape(round);
+  path=basePts;
+  cum=computeCum(path);
+  pathLen=cum[cum.length-1];
+  tol=Math.max(12,24-round);
+  fray=0;
+  progress=0;
+  cutMarks=[];
+  offTrackTicks=0;
+  state='ready';
+  setStatusText("Round: "+round+" | Score: "+score+" | Hi: "+hi);
+}
+
+function pointAt(d){
+  d=((d%pathLen)+pathLen)%pathLen;
+  let idx=0;
+  for(let i=0;i<cum.length;i++){if(cum[i]<=d)idx=i;}
+  const a=path[idx%path.length],b=path[(idx+1)%path.length];
+  const segLen=cum[idx+1]-cum[idx]||1;
+  const t=(d-cum[idx])/segLen;
+  return {x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t};
+}
+
+function closestOnPath(px,py){
+  let best=1e18,bestD=0;
+  const steps=400;
+  for(let i=0;i<=steps;i++){
+    const d=(i/steps)*pathLen;
+    const p=pointAt(d);
+    const dist=Math.hypot(p.x-px,p.y-py);
+    if(dist<best){best=dist;bestD=d;}
+  }
+  return {dist:best,d:bestD};
+}
+
+function pos2canvas(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width,scaleY=H/rect.height;
+  let cx,cy;
+  if(e.touches&&e.touches[0]){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else{cx=e.clientX;cy=e.clientY;}
+  return {x:(cx-rect.left)*scaleX,y:(cy-rect.top)*scaleY};
+}
+
+function startDrag(e){
+  e.preventDefault();
+  if(state==='won'||state==='lost'){newRound();return;}
+  const p=pos2canvas(e);
+  const near=closestOnPath(p.x,p.y);
+  if(near.dist<60){
+    dragging=true;state='playing';pointerPos=p;
+    SFX.click();
+  }
+}
+function moveDrag(e){
+  if(!dragging)return;
+  e.preventDefault();
+  const p=pos2canvas(e);
+  pointerPos=p;
+  applyPosition(p);
+}
+function applyPosition(p){
+  const near=closestOnPath(p.x,p.y);
+  if(near.dist<=tol){
+    offTrack=false;
+    let d=near.d;
+    let forwardDist=d-progress;
+    if(forwardDist<-pathLen/2)forwardDist+=pathLen;
+    if(forwardDist>pathLen/2)forwardDist-=pathLen;
+    if(forwardDist>0){
+      progress+=forwardDist;
+      if(progress>=pathLen){
+        progress=pathLen;
+        winRound();
+        return;
+      }
+      if(Math.floor(progress/15)>cutMarks.length){
+        cutMarks.push(progress);
+        SFX.swoosh();
+      }
+    }
+  } else {
+    offTrack=true;
+    offTrackTicks++;
+    fray+=0.8;
+    if(offTrackTicks%15===0)SFX.error();
+    if(fray>=100)loseRound();
+  }
+}
+function endDrag(){dragging=false;pointerPos=null;}
+
+c.addEventListener('mousedown',startDrag);
+c.addEventListener('mousemove',moveDrag);
+window.addEventListener('mouseup',endDrag);
+c.addEventListener('touchstart',startDrag,{passive:false});
+c.addEventListener('touchmove',moveDrag,{passive:false});
+c.addEventListener('touchend',endDrag,{passive:false});
+
+let keyActive=false,keyPos=null;
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key))e.preventDefault();
+  if(state==='won'||state==='lost'){if(e.key===' ')newRound();return;}
+  if(e.key===' '&&!keyActive){
+    keyActive=true;dragging=true;state='playing';
+    keyPos=pointAt(progress);pointerPos=keyPos;
+    SFX.click();
+    return;
+  }
+  if(keyActive&&keyPos){
+    const step=10;
+    if(e.key==='ArrowRight')keyPos.x+=step;
+    if(e.key==='ArrowLeft')keyPos.x-=step;
+    if(e.key==='ArrowUp')keyPos.y-=step;
+    if(e.key==='ArrowDown')keyPos.y+=step;
+    pointerPos=keyPos;
+    applyPosition(keyPos);
+  }
+});
+
+function winRound(){
+  if(state==='won')return;
+  state='won';
+  dragging=false;keyActive=false;
+  const bonus=Math.round((100-fray))+round*20;
+  score+=bonus;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  SFX.win();
+  round++;
+}
+function loseRound(){
+  if(state==='lost')return;
+  state='lost';
+  dragging=false;keyActive=false;
+  SFX.lose();
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  round=1;score=0;
+}
+
+function drawFabric(){
+  ctx.fillStyle='#e9d9b5';
+  ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(107,66,38,0.1)';
+  ctx.lineWidth=1;
+  for(let x=0;x<=W;x+=18){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+  for(let y=0;y<=H;y+=18){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+}
+
+function drawGuide(){
+  ctx.save();
+  ctx.lineWidth=tol*2;
+  ctx.strokeStyle='rgba(255,213,79,0.18)';
+  ctx.lineJoin='round';
+  ctx.beginPath();
+  path.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+  ctx.closePath();ctx.stroke();
+
+  ctx.lineWidth=2.5;
+  ctx.setLineDash([3,7]);
+  ctx.strokeStyle='#6b4226';
+  ctx.beginPath();
+  path.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+  ctx.closePath();ctx.stroke();
+  ctx.setLineDash([]);
+
+  // cut progress line (solid where cut)
+  ctx.strokeStyle='#2ecc71';
+  ctx.lineWidth=4;
+  ctx.beginPath();
+  const steps=Math.max(2,Math.floor(progress/4));
+  for(let i=0;i<=steps;i++){
+    const d=(i/steps)*progress;
+    const p=pointAt(d);
+    i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y);
+  }
+  ctx.stroke();
+
+  const gp=pointAt(progress);
+  const grad=ctx.createRadialGradient(gp.x,gp.y,2,gp.x,gp.y,20);
+  grad.addColorStop(0,'rgba(255,213,79,0.9)');
+  grad.addColorStop(1,'rgba(255,213,79,0)');
+  ctx.fillStyle=grad;
+  ctx.beginPath();ctx.arc(gp.x,gp.y,20,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawScissors(){
+  if(!pointerPos)return;
+  ctx.save();
+  ctx.translate(pointerPos.x,pointerPos.y);
+  ctx.strokeStyle=offTrack?'#e74c3c':'#555';
+  ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(-10,-10);ctx.lineTo(8,0);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-10,10);ctx.lineTo(8,0);ctx.stroke();
+  ctx.fillStyle=offTrack?'#e74c3c':'#2ecc71';
+  ctx.beginPath();ctx.arc(-10,-10,3,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(-10,10,3,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+}
+
+function drawFrayBar(){
+  ctx.save();
+  ctx.fillStyle='#5a4330';
+  ctx.fillRect(20,20,160,16);
+  ctx.fillStyle=fray<60?'#2ecc71':'#e74c3c';
+  ctx.fillRect(22,22,Math.max(0,156*(1-fray/100)),12);
+  ctx.strokeStyle='#3a2a1f';ctx.strokeRect(20,20,160,16);
+  ctx.fillStyle='#3a2a1f';ctx.font='12px Arial';
+  ctx.fillText(I18N.t('edge_label','Edge Integrity'),20,16);
+  ctx.restore();
+}
+
+function loop(){
+  drawFabric();
+  drawGuide();
+  drawFrayBar();
+  drawScissors();
+
+  ctx.textAlign='center';
+  if(state==='ready'){
+    ctx.fillStyle='#3a2a1f';ctx.font='bold 20px Arial';
+    ctx.fillText(I18N.t('cut_ready_hint','Press/Tap near the dashed line and drag to start cutting'),W/2,H-20);
+  } else if(state==='won'){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('shape_cut','Shape Cut Clean!'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('tap_continue','Tap / Click / Space to continue'),W/2,H/2+26);
+  } else if(state==='lost'){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('fabric_ruined','Fabric Frayed Too Much!'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('tap_retry','Tap / Click / Space to retry'),W/2,H/2+26);
+  }
+
+  setStatusText("Round: "+round+" | Score: "+score+" | Hi: "+hi);
+  requestAnimationFrame(loop);
+}
+
+newRound();
+loop();
+</script></body></html>
