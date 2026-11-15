@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Leather Carving Wet Forming</title><meta name="description" content="Play Leather Carving Wet Forming free online — Press the dampened leather into position at each marked point, holding pressure in the safe zone until it sets. Don't let it slip off the form! Trickier shapes each round."><link rel="canonical" href="https://games.multiportllc.com/games/leathercarvingwetforming"><meta property="og:title" content="Leather Carving Wet Forming - Multiport Games"><meta property="og:description" content="Press the dampened leather into position at each marked point, holding pressure in the safe zone until it sets, without the leather slipping off the form."><meta property="og:url" content="https://games.multiportllc.com/games/leathercarvingwetforming"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Leather Carving Wet Forming - Multiport Games"><meta name="twitter:description" content="Press the dampened leather into position at each marked point, holding pressure in the safe zone until it sets."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Leather Carving Wet Forming","description":"Play Leather Carving Wet Forming free online instantly. Mold a dampened leather piece over a form shape by pressing it into position at marked points, holding pressure within a safe zone until it sets, without the leather slipping off the form. Trickier shapes each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/leathercarvingwetforming","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1b120a}
+#c{background:#3b2a1a;display:block;border-radius:8px;touch-action:none}
+#hud{color:#f3d9b1;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:space-around;flex-wrap:wrap;gap:4px}
+#hud span{color:#e8c38a}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Leather Carving Wet Forming</div>
+  <div class="game-frame">
+    <div id="hud">
+      <div>Round <span id="lvl">1</span></div>
+      <div>Score <span id="score">0</span></div>
+      <div>Lives <span id="lives">3</span></div>
+      <div>Hi <span id="hi">0</span></div>
+    </div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click/tap and hold a glowing marked point (or use <b>Arrow Keys</b> to select one, then hold <b>Space</b>) to press the damp leather onto the form. Watch the pressure gauge — keep it in the green safe zone until the point sets. Press too hard and the leather slips off the form! Set every point before time runs out.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const HI_KEY='leathercarvingwetforming_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+document.getElementById('hi').textContent=hi;
+
+let level=1,score=0,lives=3,gameState='ready';
+let points,sel=0,timeLeft,totalTime;
+let pressure=0,holding=false,keys={};
+let formPath=[];
+
+function genForm(n){
+  // create an irregular closed-ish blob outline for visual flavor
+  const cx=400,cy=230,baseR=130+Math.min(n,8)*6;
+  const pts=[];
+  const segs=16;
+  for(let i=0;i<segs;i++){
+    const a=(i/segs)*Math.PI*2;
+    const r=baseR*(0.78+0.22*Math.sin(a*3+level));
+    pts.push({x:cx+Math.cos(a)*r,y:cy+Math.sin(a)*r*0.72});
+  }
+  return pts;
+}
+
+function setupLevel(){
+  const n=3+Math.min(level,7);
+  formPath=genForm(n);
+  points=[];
+  for(let i=0;i<n;i++){
+    const a=(i/n)*Math.PI*2+0.3;
+    const cx=400,cy=230,r=100+Math.min(level,6)*5;
+    points.push({
+      x:cx+Math.cos(a)*r*(0.8+0.3*Math.sin(i*1.7)),
+      y:cy+Math.sin(a)*r*0.65*(0.8+0.3*Math.cos(i*1.3)),
+      progress:0,
+      set:false,
+      slipFlash:0
+    });
+  }
+  sel=0;
+  pressure=0;
+  totalTime=20+level*3;
+  timeLeft=totalTime;
+  gameState='playing';
+}
+
+function resetGame(){
+  level=1;score=0;lives=3;
+  updateHud();
+  setupLevel();
+}
+function updateHud(){
+  document.getElementById('lvl').textContent=level;
+  document.getElementById('score').textContent=Math.floor(score);
+  document.getElementById('lives').textContent=lives;
+}
+
+const SAFE_LO=35,SAFE_HI=68,RISE=95,DECAY=80,SET_RATE=55,SET_TARGET=100,SLIP_RATE=130,SLIP_MAX=100;
+
+function nearestPointIdx(x,y){
+  let best=-1,bd=1e9;
+  points.forEach((p,i)=>{
+    if(p.set)return;
+    const d=Math.hypot(p.x-x,p.y-y);
+    if(d<bd){bd=d;best=i;}
+  });
+  return best;
+}
+
+function toLocal(e){
+  const rect=c.getBoundingClientRect();
+  const sx=c.width/rect.width, sy=c.height/rect.height;
+  let cx,cy;
+  if(e.touches&&e.touches.length){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else{cx=e.clientX;cy=e.clientY;}
+  return {x:(cx-rect.left)*sx,y:(cy-rect.top)*sy};
+}
+
+function startHold(x,y){
+  if(gameState!=='playing'){advance();return;}
+  const i=nearestPointIdx(x,y);
+  if(i>=0){
+    const p=points[i];
+    if(Math.hypot(p.x-x,p.y-y)<60){sel=i;holding=true;}
+  }
+}
+function endHold(){holding=false;}
+
+c.addEventListener('mousedown',e=>{const p=toLocal(e);startHold(p.x,p.y);});
+window.addEventListener('mouseup',endHold);
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=toLocal(e);startHold(p.x,p.y);},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();endHold();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  if(e.code==='ArrowRight'||e.code==='ArrowDown')cycleSel(1);
+  if(e.code==='ArrowLeft'||e.code==='ArrowUp')cycleSel(-1);
+  if(e.code==='Space'){ if(gameState==='playing')holding=true; else advance(); }
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;if(e.code==='Space')holding=false;});
+
+function cycleSel(dir){
+  if(gameState!=='playing')return;
+  let i=sel,tries=0;
+  do{ i=(i+dir+points.length)%points.length; tries++; }while(points[i].set&&tries<points.length);
+  sel=i;
+  SFX.click();
+}
+
+function advance(){
+  SFX.select();
+  if(gameState==='gameover')resetGame();
+  else {level++;setupLevel();}
+}
+
+function step(dt){
+  if(holding){pressure=Math.min(100,pressure+RISE*dt);} else {pressure=Math.max(0,pressure-DECAY*dt);}
+  const inBand=pressure>=SAFE_LO&&pressure<=SAFE_HI;
+  const p=points[sel];
+  if(p&&!p.set){
+    if(holding){
+      if(inBand){
+        p.progress=Math.min(SET_TARGET,p.progress+SET_RATE*dt);
+        if(p.progress>=SET_TARGET){p.set=true;score+=15;SFX.point();holding=false;pressure=0;
+          const next=points.findIndex(pt=>!pt.set);
+          if(next>=0)sel=next;
+        }
+      } else if(pressure>SAFE_HI){
+        p.slipFlash=1;
+        p.progress=Math.max(0,p.progress-SLIP_RATE*dt);
+        if(p.progress<=0&&pressure>=95){
+          lives--;SFX.hurt();updateHud();holding=false;pressure=0;
+        }
+      }
+    }
+  }
+  points.forEach(pt=>{if(pt.slipFlash>0)pt.slipFlash=Math.max(0,pt.slipFlash-dt*2);});
+
+  timeLeft-=dt;
+  if(lives<=0){finish();return;}
+  if(points.every(pt=>pt.set)){
+    score+=Math.floor(timeLeft*4);
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(Math.floor(hi)));}
+    document.getElementById('hi').textContent=Math.floor(hi);
+    gameState='roundover';SFX.success();updateHud();
+    return;
+  }
+  if(timeLeft<=0){finish();return;}
+  updateHud();
+}
+
+function finish(){
+  gameState='gameover';
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(Math.floor(hi)));}
+  document.getElementById('hi').textContent=Math.floor(hi);
+  SFX.lose();
+}
+
+function drawForm(){
+  ctx.save();
+  ctx.beginPath();
+  formPath.forEach((pt,i)=>{ if(i===0)ctx.moveTo(pt.x,pt.y); else ctx.lineTo(pt.x,pt.y); });
+  ctx.closePath();
+  ctx.fillStyle='#6b4a2e';
+  ctx.fill();
+  ctx.strokeStyle='#8a5a34';ctx.lineWidth=4;ctx.stroke();
+  ctx.restore();
+}
+
+function drawPoints(){
+  points.forEach((p,i)=>{
+    ctx.save();
+    ctx.translate(p.x,p.y);
+    const pulse=1+0.08*Math.sin(performance.now()/180+i);
+    const r=18*(i===sel&&gameState==='playing'?pulse:1);
+    if(p.set){
+      ctx.fillStyle='#7ec850';
+    } else if(p.slipFlash>0){
+      ctx.fillStyle=`rgba(233,69,96,${0.5+0.5*p.slipFlash})`;
+    } else {
+      ctx.fillStyle=i===sel?'#ffd54f':'#e8c38a';
+    }
+    ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#3a2414';ctx.lineWidth=2;ctx.stroke();
+    // progress ring
+    if(!p.set){
+      ctx.beginPath();
+      ctx.strokeStyle='#ffffff';
+      ctx.lineWidth=3;
+      ctx.arc(0,0,r+6,-Math.PI/2,-Math.PI/2+Math.PI*2*(p.progress/SET_TARGET));
+      ctx.stroke();
+    }
+    ctx.restore();
+  });
+}
+
+function drawGauge(){
+  const gx=20,gy=16,gw=260,gh=22;
+  ctx.fillStyle='#2a1a0e';ctx.fillRect(gx,gy,gw,gh);
+  const bx=gx+gw*(SAFE_LO/100), bw=gw*((SAFE_HI-SAFE_LO)/100);
+  ctx.fillStyle='rgba(120,200,110,0.35)';ctx.fillRect(bx,gy,bw,gh);
+  ctx.strokeStyle='#7ec850';ctx.lineWidth=2;ctx.strokeRect(bx,gy,bw,gh);
+  const fw=gw*Math.max(0,Math.min(100,pressure))/100;
+  const inBand=pressure>=SAFE_LO&&pressure<=SAFE_HI;
+  ctx.fillStyle=inBand?'#ffd54f':'#e94560';
+  ctx.fillRect(gx,gy,fw,gh);
+  ctx.strokeStyle='#f3d9b1';ctx.strokeRect(gx,gy,gw,gh);
+  ctx.fillStyle='#f3d9b1';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('pressure_label','Pressure'),gx,gy-4);
+
+  const tx=320,tw=460;
+  ctx.fillStyle='#2a1a0e';ctx.fillRect(tx,gy,tw,gh);
+  ctx.fillStyle='#ffb74d';ctx.fillRect(tx,gy,tw*Math.max(0,timeLeft/totalTime),gh);
+  ctx.strokeStyle='#f3d9b1';ctx.strokeRect(tx,gy,tw,gh);
+  ctx.fillText(I18N.t('time_label','Time'),tx,gy-4);
+
+  const done=points.filter(p=>p.set).length;
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('points_set_label','Set {d}/{n}').replace('{d}',done).replace('{n}',points.length),780,gy-4);
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.05);
+  lastTime=now;
+
+  ctx.clearRect(0,0,800,420);
+  ctx.fillStyle='#3b2a1a';ctx.fillRect(0,0,800,420);
+  drawForm();
+
+  if(gameState==='playing'){
+    step(dt);
+    drawPoints();
+    drawGauge();
+  } else {
+    drawPoints();
+    drawGauge();
+    ctx.fillStyle='rgba(15,8,4,0.74)';ctx.fillRect(0,0,800,420);
+    ctx.textAlign='center';ctx.fillStyle='#f3d9b1';
+    if(gameState==='roundover'){
+      ctx.font='bold 32px Georgia';
+      ctx.fillText(I18N.t('round_clear_title','FORM SET!'),400,190);
+      ctx.font='17px Georgia';
+      ctx.fillText(I18N.t('tap_continue_hint','Tap / Click / Space for next round'),400,225);
+    } else if(gameState==='gameover'){
+      ctx.font='bold 32px Georgia';
+      ctx.fillText(I18N.t('game_over_title','GAME OVER'),400,185);
+      ctx.font='17px Georgia';
+      ctx.fillText(I18N.t('final_score_label','Score: {s}').replace('{s}',Math.floor(score)),400,218);
+      ctx.fillText(I18N.t('tap_restart_hint','Tap / Click / Space to restart'),400,248);
+    }
+  }
+  requestAnimationFrame(loop);
+}
+
+resetGame();
+loop();
+</script></body></html>

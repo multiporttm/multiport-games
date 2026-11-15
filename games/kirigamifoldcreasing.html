@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. --><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Kirigami Fold Creasing</title><meta name="description" content="Play Kirigami Fold Creasing free online — Run the bone folder smoothly along each glowing crease line, staying inside the safe pressure zone, without tearing the paper."><link rel="canonical" href="https://games.multiportllc.com/games/kirigamifoldcreasing"><meta property="og:title" content="Kirigami Fold Creasing - Multiport Games"><meta property="og:description" content="Play Kirigami Fold Creasing free online — Run the bone folder smoothly along each glowing crease line, staying inside the safe pressure zone, without tearing the paper."><meta property="og:url" content="https://games.multiportllc.com/games/kirigamifoldcreasing"><meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Kirigami Fold Creasing - Multiport Games"><meta name="twitter:description" content="Play Kirigami Fold Creasing free online — Run the bone folder smoothly along each glowing crease line, staying inside the safe pressure zone, without tearing the paper.">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Kirigami Fold Creasing","description":"Play Kirigami Fold Creasing free online instantly. Fold paper along marked lines shown on a template and run a bone folder tool smoothly along each crease within a safe pressure zone, without over-creasing and tearing the paper, across more folds each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/kirigamifoldcreasing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#f4ede1}
+#c{background:#fffdf8;display:block;border-radius:8px;box-shadow:0 2px 18px rgba(80,60,40,.15)}
+#score-display{color:#7a5c3e;font-size:1.15rem;font-weight:700;text-align:center;padding:8px}
+.game-frame{background:#ece2d0}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Kirigami Fold Creasing</div>
+  <div class="game-frame">
+    <div id="score-display">Round: 1 | Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Mouse / Finger</b> down and drag the bone folder smoothly along the glowing crease line, staying inside the pale safe-pressure zone (not too fast, not too slow, not wobbling off the line) to crease each fold without tearing the paper. Finish every crease in a round to advance — more creases are added each round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const HI_KEY='kirigamifoldcreasing_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let round=1,score=0,gameOver=false,won=false,started=false;
+let creases=[]; // {points:[{x,y}...], done:false, torn:false}
+let activeIdx=0;
+let progress=0; // 0..1 along active crease
+let pressure=0; // 0..1 how well we're tracking
+let dragging=false;
+let pointer={x:0,y:0};
+let shakeT=0;
+let particles=[];
+
+function lerp(a,b,t){return a+(b-a)*t;}
+
+function buildRound(r){
+  creases=[];
+  const n=Math.min(2+r,7);
+  const margin=90;
+  for(let i=0;i<n;i++){
+    const horizontal=Math.random()<0.5;
+    let pts;
+    if(horizontal){
+      const y=margin+ (H-2*margin)*Math.random();
+      const x1=margin+Math.random()*60;
+      const x2=W-margin-Math.random()*60;
+      // add gentle wave for higher rounds
+      const segs=r>3?3:1;
+      pts=[];
+      for(let s=0;s<=segs;s++){
+        const t=s/segs;
+        const x=lerp(x1,x2,t);
+        const yy=y+(segs>1?Math.sin(t*Math.PI*2+i)*18*(r-3):0);
+        pts.push({x,y:yy});
+      }
+    } else {
+      const x=margin+(W-2*margin)*Math.random();
+      const y1=margin+Math.random()*40;
+      const y2=H-margin-Math.random()*40;
+      pts=[{x,y:y1},{x,y:y2}];
+    }
+    creases.push({points:pts,done:false,torn:false,length:pathLength(pts)});
+  }
+  activeIdx=0;
+  progress=0;
+  pressure=0.5;
+}
+
+function pathLength(pts){
+  let len=0;
+  for(let i=1;i<pts.length;i++){
+    len+=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y);
+  }
+  return len;
+}
+
+function pointAt(pts,t){
+  const segLens=[];
+  let total=0;
+  for(let i=1;i<pts.length;i++){const l=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y);segLens.push(l);total+=l;}
+  let target=t*total;
+  for(let i=0;i<segLens.length;i++){
+    if(target<=segLens[i]||i===segLens.length-1){
+      const segT=segLens[i]>0?target/segLens[i]:0;
+      return {
+        x:lerp(pts[i].x,pts[i+1].x,Math.min(1,Math.max(0,segT))),
+        y:lerp(pts[i].y,pts[i+1].y,Math.min(1,Math.max(0,segT)))
+      };
+    }
+    target-=segLens[i];
+  }
+  return pts[pts.length-1];
+}
+
+function reset(){
+  round=1;score=0;gameOver=false;won=false;started=false;
+  buildRound(round);
+}
+reset();
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+function startDrag(e){
+  e.preventDefault();
+  if(!started){started=true;}
+  if(gameOver){reset();return;}
+  dragging=true;
+  pointer=getPos(e);
+}
+function moveDrag(e){
+  if(!dragging)return;
+  e.preventDefault();
+  pointer=getPos(e);
+}
+function endDrag(e){
+  dragging=false;
+}
+c.addEventListener('mousedown',startDrag);
+c.addEventListener('mousemove',moveDrag);
+window.addEventListener('mouseup',endDrag);
+c.addEventListener('touchstart',startDrag,{passive:false});
+c.addEventListener('touchmove',moveDrag,{passive:false});
+c.addEventListener('touchend',endDrag,{passive:false});
+
+// keyboard controls: left/right or A/D move along active crease, space = press (simulate drag)
+let keyPress=false;
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' ','Space'].includes(e.code)||['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){
+    e.preventDefault();
+  }
+  if(!started){started=true;}
+  if(gameOver){reset();return;}
+  if(e.code==='Space'){keyPress=true;}
+  if(e.code==='ArrowRight'||e.code==='ArrowUp')kbDir=1;
+  if(e.code==='ArrowLeft'||e.code==='ArrowDown')kbDir=-1;
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space')keyPress=false;
+  if(e.code==='ArrowRight'||e.code==='ArrowUp'||e.code==='ArrowLeft'||e.code==='ArrowDown')kbDir=0;
+});
+let kbDir=0;
+
+function spawnParticles(x,y,color){
+  for(let i=0;i<8;i++){
+    particles.push({x,y,vx:(Math.random()-0.5)*3,vy:(Math.random()-0.5)*3,life:30,color});
+  }
+}
+
+function tearCrease(idx){
+  creases[idx].torn=true;
+  shakeT=18;
+  SFX.hurt();
+  const pt=pointAt(creases[idx].points,progress);
+  spawnParticles(pt.x,pt.y,'#c0392b');
+  setTimeout(()=>{
+    gameOver=true;
+    won=false;
+    SFX.fail();
+  },260);
+}
+
+function update(dt){
+  if(gameOver||!started)return;
+  const active=creases[activeIdx];
+  if(!active||active.done||active.torn)return;
+
+  let moving=false;
+  let speed=0;
+
+  if(dragging){
+    const target=pointAt(active.points,progress);
+    const dx=pointer.x-target.x,dy=pointer.y-target.y;
+    const dist=Math.hypot(dx,dy);
+    // advance progress based on how far ahead pointer is projected along path, simplified:
+    // find nearest t on path near current progress by sampling forward
+    let bestT=progress,bestD=dist;
+    for(let s=1;s<=20;s++){
+      const t=Math.min(1,progress+s*0.01);
+      const p=pointAt(active.points,t);
+      const d=Math.hypot(pointer.x-p.x,pointer.y-p.y);
+      if(d<bestD){bestD=d;bestT=t;}
+    }
+    speed=(bestT-progress)*60;
+    progress=bestT;
+    moving=true;
+    // pressure: how close pointer tracks the line (off-line = too much wobble = tear risk)
+    const onLineDist=bestD;
+    if(onLineDist<10){
+      pressure=lerp(pressure,0.5,0.15);
+    } else if(onLineDist<28){
+      pressure=lerp(pressure,0.75,0.2);
+    } else {
+      pressure=lerp(pressure,1,0.3);
+    }
+  } else if(keyPress&&kbDir!==0){
+    progress=Math.min(1,Math.max(0,progress+kbDir*0.008*dt));
+    moving=true;
+    pressure=lerp(pressure,0.45,0.15);
+  } else {
+    pressure=lerp(pressure,0.3,0.05);
+  }
+
+  if(moving&&pressure>0.92){
+    tearCrease(activeIdx);
+    return;
+  }
+
+  if(progress>=0.999){
+    active.done=true;
+    active.torn=false;
+    progress=0;
+    score+=100+round*10;
+    SFX.success();
+    spawnParticles(active.points[active.points.length-1].x,active.points[active.points.length-1].y,'#2e8b57');
+    activeIdx++;
+    if(activeIdx>=creases.length){
+      // round complete
+      won=true;
+      score+=50*round;
+      if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+      SFX.levelup();
+      setTimeout(()=>{
+        round++;
+        buildRound(round);
+        won=false;
+        started=true;
+      },900);
+    }
+  }
+}
+
+function drawPaper(){
+  ctx.save();
+  if(shakeT>0){
+    ctx.translate((Math.random()-0.5)*shakeT*0.6,(Math.random()-0.5)*shakeT*0.6);
+    shakeT--;
+  }
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#fffdf8');
+  grad.addColorStop(1,'#f3ecdd');
+  ctx.fillStyle=grad;
+  ctx.fillRect(20,20,W-40,H-40);
+  ctx.strokeStyle='#e4d7bd';
+  ctx.lineWidth=3;
+  ctx.strokeRect(20,20,W-40,H-40);
+  // subtle paper fiber texture lines
+  ctx.strokeStyle='rgba(180,150,100,0.06)';
+  for(let i=0;i<14;i++){
+    ctx.beginPath();
+    ctx.moveTo(30+i*55,25);
+    ctx.lineTo(30+i*55+10,H-25);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawCrease(crease,idx){
+  const pts=crease.points;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x,pts[0].y);
+  for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i].x,pts[i].y);
+
+  if(crease.done){
+    ctx.strokeStyle='#8a9a7a';
+    ctx.lineWidth=3;
+    ctx.setLineDash([]);
+    ctx.stroke();
+    // crease shading
+    ctx.strokeStyle='rgba(0,0,0,0.08)';
+    ctx.lineWidth=7;
+    ctx.stroke();
+  } else if(idx===activeIdx){
+    ctx.setLineDash([10,6]);
+    ctx.lineWidth=3;
+    ctx.strokeStyle=crease.torn?'#c0392b':'#e8b23d';
+    ctx.shadowColor=crease.torn?'#c0392b':'#ffd166';
+    ctx.shadowBlur=14;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.shadowBlur=0;
+    // safe pressure zone band
+    ctx.strokeStyle='rgba(126,200,80,0.18)';
+    ctx.lineWidth=26;
+    ctx.stroke();
+  } else {
+    ctx.setLineDash([4,8]);
+    ctx.strokeStyle='#cfc2a6';
+    ctx.lineWidth=2;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
+function drawFolderTool(){
+  const active=creases[activeIdx];
+  if(!active||gameOver)return;
+  const p=pointAt(active.points,progress);
+  ctx.save();
+  ctx.translate(p.x,p.y);
+  // bone folder shape: elongated ellipse handle
+  ctx.rotate(Math.sin(progress*10)*0.03);
+  ctx.fillStyle='#f0e6d2';
+  ctx.strokeStyle='#b89d6e';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.ellipse(0,0,22,9,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.ellipse(0,0,8,4,0,0,Math.PI*2);
+  ctx.fillStyle='#d8c6a0';
+  ctx.fill();
+  ctx.restore();
+
+  // pressure meter near tool
+  const barX=p.x-25,barY=p.y-28;
+  ctx.fillStyle='rgba(255,255,255,0.8)';
+  ctx.fillRect(barX,barY,50,8);
+  const col=pressure>0.85?'#c0392b':pressure>0.65?'#e8b23d':'#4c9a5b';
+  ctx.fillStyle=col;
+  ctx.fillRect(barX,barY,50*pressure,8);
+  ctx.strokeStyle='#999';
+  ctx.strokeRect(barX,barY,50,8);
+}
+
+function drawParticles(){
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    p.x+=p.vx;p.y+=p.vy;p.life--;
+    ctx.fillStyle=p.color;
+    ctx.globalAlpha=Math.max(0,p.life/30);
+    ctx.fillRect(p.x-2,p.y-2,4,4);
+    ctx.globalAlpha=1;
+  });
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#ece2d0';
+  ctx.fillRect(0,0,W,H);
+
+  drawPaper();
+  creases.forEach((cr,i)=>drawCrease(cr,i));
+  drawParticles();
+
+  if(!gameOver)update(dt);
+
+  if(!gameOver)drawFolderTool();
+
+  if(!started){
+    ctx.fillStyle='rgba(122,92,62,0.85)';
+    ctx.font='bold 24px Georgia';
+    ctx.textAlign='center';
+    ctx.fillText(I18N.t('fc_start_hint','Drag the bone folder along the glowing crease to start'),W/2,H/2);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(60,40,25,0.55)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';
+    ctx.font='bold 36px Georgia';
+    ctx.textAlign='center';
+    ctx.fillText(I18N.t('fc_torn_title','PAPER TORN!'),W/2,H/2-10);
+    ctx.font='20px Georgia';
+    ctx.fillText(I18N.t('fc_restart_hint','Tap or Space to restart'),W/2,H/2+28);
+  }
+
+  document.getElementById('score-display').textContent=
+    I18N.t('fc_status','Round: {r} | Score: {s} | Hi: {h}')
+      .replace('{r}',round).replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. --><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Kirigami Cutting Precision</title><meta name="description" content="Play Kirigami Cutting Precision free online — Trace scissors along a glowing guide line through increasingly intricate paper-cut patterns without wandering off."><link rel="canonical" href="https://games.multiportllc.com/games/kirigamicuttingprecision"><meta property="og:title" content="Kirigami Cutting Precision - Multiport Games"><meta property="og:description" content="Play Kirigami Cutting Precision free online — Trace scissors along a glowing guide line through increasingly intricate paper-cut patterns without wandering off."><meta property="og:url" content="https://games.multiportllc.com/games/kirigamicuttingprecision"><meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Kirigami Cutting Precision - Multiport Games"><meta name="twitter:description" content="Play Kirigami Cutting Precision free online — Trace scissors along a glowing guide line through increasingly intricate paper-cut patterns without wandering off.">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Kirigami Cutting Precision","description":"Play Kirigami Cutting Precision free online instantly. Cut paper along marked lines shown on a template using scissors, tracing a steady line along a glowing guide without wandering off the line, across more intricate cutting patterns each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/kirigamicuttingprecision","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#f4ede1}
+#c{background:#fffdf8;display:block;border-radius:8px;box-shadow:0 2px 18px rgba(80,60,40,.15)}
+#score-display{color:#7a5c3e;font-size:1.15rem;font-weight:700;text-align:center;padding:8px}
+.game-frame{background:#ece2d0}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Kirigami Cutting Precision</div>
+  <div class="game-frame">
+    <div id="score-display">Pattern: 1 | Accuracy: 100% | Hi: 0</div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Mouse / Finger</b> down on the scissors and trace steadily along the glowing guide line through the whole paper-cut pattern. Wander too far off the line and the cut is ruined. Complete each pattern to advance to a more intricate one!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const HI_KEY='kirigamicuttingprecision_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let pattern=1,strikes=0,maxStrikes=3,gameOver=false,started=false,completing=false;
+let path=[]; // flattened array of points to cut through in order
+let cutIndex=0; // how far along path we've cut (point index, with interpolation via cutT)
+let cutT=0;
+let dragging=false,pointer={x:0,y:0};
+let wander=0; // visual feedback timer
+let accuracySum=0,accuracyCount=0;
+let particles=[];
+let scissorAngle=0;
+
+function lerp(a,b,t){return a+(b-a)*t;}
+
+function genZigZagPath(cx,cy,w,h,teeth){
+  const pts=[];
+  pts.push({x:cx-w/2,y:cy-h/2});
+  for(let i=0;i<teeth;i++){
+    const t=(i+1)/teeth;
+    const x=lerp(cx-w/2,cx+w/2,t);
+    const y=cy-h/2+(i%2===0?0:h*0.5);
+    pts.push({x,y});
+  }
+  pts.push({x:cx+w/2,y:cy+h/2});
+  for(let i=teeth-1;i>=0;i--){
+    const t=i/teeth;
+    const x=lerp(cx-w/2,cx+w/2,t);
+    const y=cy+h/2-(i%2===0?0:h*0.5);
+    pts.push({x,y});
+  }
+  pts.push({x:cx-w/2,y:cy-h/2});
+  return pts;
+}
+
+function genStarPath(cx,cy,r1,r2,points){
+  const pts=[];
+  for(let i=0;i<points*2;i++){
+    const ang=(i/(points*2))*Math.PI*2-Math.PI/2;
+    const r=i%2===0?r1:r2;
+    pts.push({x:cx+Math.cos(ang)*r,y:cy+Math.sin(ang)*r});
+  }
+  pts.push(pts[0]);
+  return pts;
+}
+
+function genSpiralPath(cx,cy,maxR,turns){
+  const pts=[];
+  const steps=turns*16;
+  for(let i=0;i<=steps;i++){
+    const t=i/steps;
+    const ang=t*turns*Math.PI*2;
+    const r=t*maxR;
+    pts.push({x:cx+Math.cos(ang)*r,y:cy+Math.sin(ang)*r});
+  }
+  return pts;
+}
+
+function buildPattern(p){
+  const cx=W/2,cy=H/2;
+  const complexity=Math.min(p,8);
+  const type=p%3;
+  if(type===1){
+    path=genZigZagPath(cx,cy,560,180,2+complexity);
+  } else if(type===2){
+    path=genStarPath(cx,cy,150,70+Math.max(0,20-complexity*2),4+Math.min(complexity,6));
+  } else {
+    path=genSpiralPath(cx,cy,160,2+Math.min(complexity*0.4,4));
+  }
+  cutIndex=0;cutT=0;
+  completing=false;
+}
+
+function pathLenSegment(a,b){return Math.hypot(b.x-a.x,b.y-a.y);}
+
+function currentCutPoint(){
+  if(cutIndex>=path.length-1)return path[path.length-1];
+  const a=path[cutIndex],b=path[cutIndex+1];
+  return {x:lerp(a.x,b.x,cutT),y:lerp(a.y,b.y,cutT)};
+}
+
+function reset(){
+  pattern=1;strikes=0;gameOver=false;started=false;accuracySum=0;accuracyCount=0;
+  buildPattern(pattern);
+}
+reset();
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*(W/r.width),y:cy*(H/r.height)};
+}
+
+function startDrag(e){
+  e.preventDefault();
+  if(!started)started=true;
+  if(gameOver){reset();return;}
+  dragging=true;
+  pointer=getPos(e);
+}
+function moveDrag(e){
+  if(!dragging)return;
+  e.preventDefault();
+  pointer=getPos(e);
+}
+function endDrag(){dragging=false;}
+c.addEventListener('mousedown',startDrag);
+c.addEventListener('mousemove',moveDrag);
+window.addEventListener('mouseup',endDrag);
+c.addEventListener('touchstart',startDrag,{passive:false});
+c.addEventListener('touchmove',moveDrag,{passive:false});
+c.addEventListener('touchend',endDrag,{passive:false});
+
+let kbDir=0,keyPress=false;
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Space'].includes(e.code))e.preventDefault();
+  if(!started)started=true;
+  if(gameOver){reset();return;}
+  if(e.code==='Space')keyPress=true;
+  if(e.code==='ArrowRight'||e.code==='ArrowUp')kbDir=1;
+  if(e.code==='ArrowLeft'||e.code==='ArrowDown')kbDir=-1;
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space')keyPress=false;
+  if(['ArrowRight','ArrowUp','ArrowLeft','ArrowDown'].includes(e.code))kbDir=0;
+});
+
+function spawnParticles(x,y,color){
+  for(let i=0;i<10;i++){
+    particles.push({x,y,vx:(Math.random()-0.5)*3.5,vy:(Math.random()-0.5)*3.5,life:28,color});
+  }
+}
+
+function ruinCut(){
+  strikes++;
+  SFX.hurt();
+  const p=currentCutPoint();
+  spawnParticles(p.x,p.y,'#c0392b');
+  wander=20;
+  if(strikes>=maxStrikes){
+    gameOver=true;
+    SFX.fail();
+  } else {
+    // snip back slightly as a penalty
+    cutIndex=Math.max(0,cutIndex-1);
+    cutT=0;
+  }
+}
+
+function update(dt){
+  if(gameOver||!started||completing)return;
+  if(cutIndex>=path.length-1)return;
+
+  const target=currentCutPoint();
+  let moving=false;
+
+  if(dragging){
+    const dx=pointer.x-target.x,dy=pointer.y-target.y;
+    const dist=Math.hypot(dx,dy);
+    // advance along path toward where pointer is
+    let bestIdx=cutIndex,bestT=cutT,bestD=dist;
+    let idx=cutIndex,t=cutT;
+    for(let s=0;s<40;s++){
+      t+=0.03;
+      if(t>=1){t=0;idx++;if(idx>=path.length-1){idx=path.length-2;t=1;break;}}
+      const a=path[idx],b=path[idx+1];
+      const p={x:lerp(a.x,b.x,t),y:lerp(a.y,b.y,t)};
+      const d=Math.hypot(pointer.x-p.x,pointer.y-p.y);
+      if(d<bestD){bestD=d;bestIdx=idx;bestT=t;}
+    }
+    if(bestIdx>cutIndex||(bestIdx===cutIndex&&bestT>cutT)){
+      cutIndex=bestIdx;cutT=bestT;
+      moving=true;
+    }
+    accuracyCount++;
+    if(bestD<14)accuracySum+=1;
+    else if(bestD<30)accuracySum+=0.5;
+
+    if(bestD>42){
+      ruinCut();
+    }
+  } else if(keyPress&&kbDir!==0){
+    let t=cutT+kbDir*0.01*dt;
+    let idx=cutIndex;
+    while(t>=1){t-=1;idx++;}
+    while(t<0){ if(idx>0){idx--;t+=1;} else {t=0;} }
+    if(idx<path.length-1&&idx>=0){cutIndex=idx;cutT=t;moving=true;}
+    accuracyCount++;accuracySum+=1;
+  }
+
+  if(cutIndex>=path.length-2&&cutT>=0.999){
+    completing=true;
+    SFX.success();
+    const acc=accuracyCount>0?Math.round((accuracySum/accuracyCount)*100):100;
+    const score=pattern*120+acc;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    SFX.levelup();
+    setTimeout(()=>{
+      pattern++;
+      buildPattern(pattern);
+      started=true;
+    },900);
+  }
+}
+
+function drawPaper(){
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#fffdf8');
+  grad.addColorStop(1,'#f3ecdd');
+  ctx.fillStyle=grad;
+  ctx.fillRect(20,20,W-40,H-40);
+  ctx.strokeStyle='#e4d7bd';
+  ctx.lineWidth=3;
+  ctx.strokeRect(20,20,W-40,H-40);
+}
+
+function drawPath(){
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(path[0].x,path[0].y);
+  for(let i=1;i<path.length;i++)ctx.lineTo(path[i].x,path[i].y);
+
+  // uncut (future) portion as dashed guide glow
+  ctx.setLineDash([2,10]);
+  ctx.strokeStyle='#e8b23d';
+  ctx.lineWidth=2.5;
+  ctx.shadowColor='#ffd166';
+  ctx.shadowBlur=10;
+  ctx.stroke();
+  ctx.shadowBlur=0;
+  ctx.setLineDash([]);
+
+  // safe tolerance band along full path
+  ctx.strokeStyle='rgba(126,200,80,0.12)';
+  ctx.lineWidth=30;
+  ctx.stroke();
+  ctx.restore();
+
+  // cut (already done) portion solid charcoal slit
+  if(cutIndex>0||cutT>0){
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(path[0].x,path[0].y);
+    for(let i=1;i<=cutIndex;i++)ctx.lineTo(path[i].x,path[i].y);
+    const cp=currentCutPoint();
+    ctx.lineTo(cp.x,cp.y);
+    ctx.strokeStyle='#4a4038';
+    ctx.lineWidth=3;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawScissors(){
+  if(!path.length)return;
+  const p=currentCutPoint();
+  const next=path[Math.min(cutIndex+1,path.length-1)];
+  const ang=Math.atan2(next.y-p.y,next.x-p.x);
+  scissorAngle=lerp(scissorAngle,ang,0.3);
+  ctx.save();
+  ctx.translate(p.x,p.y);
+  ctx.rotate(scissorAngle);
+  const open=dragging?6:10;
+  ctx.strokeStyle=wander>0?'#c0392b':'#9aa3ad';
+  ctx.lineWidth=3;
+  ctx.lineCap='round';
+  ctx.beginPath();
+  ctx.moveTo(-14,0);
+  ctx.lineTo(14,open);
+  ctx.moveTo(-14,0);
+  ctx.lineTo(14,-open);
+  ctx.stroke();
+  ctx.fillStyle='#c9ced4';
+  ctx.beginPath();ctx.arc(-16,open*0.5,5,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(-16,-open*0.5,5,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+  if(wander>0)wander--;
+}
+
+function drawParticles(){
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    p.x+=p.vx;p.y+=p.vy;p.life--;
+    ctx.fillStyle=p.color;
+    ctx.globalAlpha=Math.max(0,p.life/28);
+    ctx.fillRect(p.x-2,p.y-2,4,4);
+    ctx.globalAlpha=1;
+  });
+}
+
+function drawStrikes(){
+  for(let i=0;i<maxStrikes;i++){
+    ctx.fillStyle=i<strikes?'#c0392b':'#d8c9ac';
+    ctx.beginPath();
+    ctx.arc(W-30-i*22,34,7,0,Math.PI*2);
+    ctx.fill();
+  }
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#ece2d0';
+  ctx.fillRect(0,0,W,H);
+  drawPaper();
+  drawPath();
+  drawParticles();
+  drawStrikes();
+
+  if(!gameOver)update(dt);
+  if(!gameOver)drawScissors();
+
+  if(!started){
+    ctx.fillStyle='rgba(122,92,62,0.85)';
+    ctx.font='bold 22px Georgia';
+    ctx.textAlign='center';
+    ctx.fillText(I18N.t('cp_start_hint','Drag the scissors along the glowing line to start cutting'),W/2,H/2);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(60,40,25,0.55)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';
+    ctx.font='bold 34px Georgia';
+    ctx.textAlign='center';
+    ctx.fillText(I18N.t('cp_ruined_title','CUT RUINED!'),W/2,H/2-10);
+    ctx.font='20px Georgia';
+    ctx.fillText(I18N.t('cp_restart_hint','Tap or Space to restart'),W/2,H/2+28);
+  }
+
+  const acc=accuracyCount>0?Math.round((accuracySum/accuracyCount)*100):100;
+  document.getElementById('score-display').textContent=
+    I18N.t('cp_status','Pattern: {p} | Accuracy: {a}% | Hi: {h}')
+      .replace('{p}',pattern).replace('{a}',acc).replace('{h}',Math.floor(hi));
+
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
