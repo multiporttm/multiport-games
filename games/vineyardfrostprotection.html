@@ -1,0 +1,326 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Vineyard Frost Protection</title><meta name="description" content="Play Vineyard Frost Protection free online — Light smudge pots and run wind machines across the vineyard grid to keep every block above freezing before dawn, with faster temperature drops each round."><link rel="canonical" href="https://games.multiportllc.com/games/vineyardfrostprotection"><meta property="og:title" content="Vineyard Frost Protection - Multiport Games"><meta property="og:description" content="Play Vineyard Frost Protection free online — Light smudge pots and run wind machines across the vineyard grid to keep every block above freezing before dawn, with faster temperature drops each round."><meta property="og:url" content="https://games.multiportllc.com/games/vineyardfrostprotection"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Vineyard Frost Protection - Multiport Games"><meta name="twitter:description" content="Play Vineyard Frost Protection free online — Light smudge pots and run wind machines across the vineyard grid to keep every block above freezing before dawn, with faster temperature drops each round."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Vineyard Frost Protection","description":"Play Vineyard Frost Protection free online instantly. A killing frost is rolling in. Click blocks on the vineyard grid to light smudge pots and start wind machines, keeping every block's temperature gauge above freezing until dawn. Pots burn out and must be relit, machines drain fuel, and each new round brings more blocks and faster temperature drops. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/vineyardfrostprotection","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#0a1733;display:block;border-radius:8px;touch-action:none;cursor:pointer;max-width:100%}
+#hud{color:#fff3d6;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#timeWrap{max-width:600px;margin:0 auto 8px;background:#2d1b0e;border-radius:10px;padding:4px}
+#timeBar{height:10px;border-radius:8px;background:linear-gradient(90deg,#4aa3ff,#ffd54f);width:100%;transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Vineyard Frost Protection</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Round 1/6</span>
+    </div>
+    <div id="timeWrap"><div id="timeBar"></div></div>
+    <canvas id="c" width="800" height="380"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A hard frost is settling over the vineyard. Each block has a temperature gauge that drifts down toward freezing. <b>Click/tap</b> a block to light its <b>smudge pot</b> (warms it steadily but burns out over time) — click again on a lit block to spin up its <b>wind machine</b> instead (warms faster but drains quickly). Keep every block above the blue freeze line until dawn breaks. Letting a block freeze solid costs a life. Use <b>1-9</b> or <b>Tab</b>/<b>Space</b> to select and toggle blocks by keyboard. Each new round adds more blocks and colder, faster drops. 3 lives — survive all 6 rounds to win!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const HID='vineyardfrostprotection';
+let hi=parseInt(localStorage.getItem(HID+'_hi')||'0',10);
+const W=800,H=380;
+const GRID_TOP=20,GRID_BOTTOM=H-20;
+
+const LEVELS=[
+  {cols:3, rows:2, dropRate:1.6, dawn:55},
+  {cols:3, rows:3, dropRate:1.9, dawn:55},
+  {cols:4, rows:3, dropRate:2.2, dawn:52},
+  {cols:4, rows:3, dropRate:2.6, dawn:50},
+  {cols:5, rows:3, dropRate:3.0, dawn:48},
+  {cols:5, rows:4, dropRate:3.4, dawn:46},
+];
+
+let level=0,score=0,lives=3,gameOver=false,won=false,started=false;
+let blocks=[],cellW=0,cellH=0,cols=0,rows=0;
+let dawnTimeLeft=0,lastTime=null;
+let selIdx=0;
+let flashMsg='',flashT=0;
+
+const FREEZE=32, MAX_TEMP=70, START_TEMP=50;
+
+function layoutGrid(){
+  const L=LEVELS[level];
+  cols=L.cols;rows=L.rows;
+  cellW=(W-40)/cols;
+  cellH=(GRID_BOTTOM-GRID_TOP-20)/rows;
+}
+
+function buildLevel(){
+  const L=LEVELS[level];
+  layoutGrid();
+  blocks=[];
+  for(let r=0;r<rows;r++){
+    for(let col=0;col<cols;col++){
+      blocks.push({
+        col,row:r,
+        temp:START_TEMP,
+        state:'idle', // idle, pot, machine, frozen
+        fuel:0,
+      });
+    }
+  }
+  dawnTimeLeft=L.dawn;
+  selIdx=0;
+}
+
+function reset(){
+  level=0;score=0;lives=3;gameOver=false;won=false;started=false;lastTime=null;
+  buildLevel();
+}
+
+function flash(msg){flashMsg=msg;flashT=60;}
+
+function loseLife(msg){
+  lives--;
+  SFX.hurt();
+  flash(msg);
+  if(lives<=0){
+    gameOver=true;won=false;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HID+'_hi',String(hi));}
+  }
+}
+
+function nextLevel(){
+  level++;
+  if(level>=LEVELS.length){
+    won=true;gameOver=true;
+    SFX.win();
+    if(score>hi){hi=score;localStorage.setItem(HID+'_hi',String(hi));}
+    return;
+  }
+  SFX.levelup();
+  buildLevel();
+}
+
+function toggleBlock(b){
+  if(b.state==='frozen')return;
+  if(b.state==='idle'){
+    b.state='pot';b.fuel=22;SFX.click();
+  } else if(b.state==='pot'){
+    b.state='machine';b.fuel=12;SFX.powerup();
+  } else if(b.state==='machine'){
+    b.state='idle';b.fuel=0;SFX.select();
+  }
+}
+
+function blockAt(x,y){
+  const cx=Math.floor((x-20)/cellW);
+  const cy=Math.floor((y-GRID_TOP-10)/cellH);
+  if(cx<0||cx>=cols||cy<0||cy>=rows)return null;
+  return blocks.find(b=>b.col===cx&&b.row===cy);
+}
+
+function canvasPos(evt){
+  const rect=c.getBoundingClientRect();
+  const t=evt.touches?evt.touches[0]:evt;
+  return {x:(t.clientX-rect.left)*(W/rect.width), y:(t.clientY-rect.top)*(H/rect.height)};
+}
+
+function handleTap(x,y){
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  const b=blockAt(x,y);
+  if(b)toggleBlock(b);
+}
+
+c.addEventListener('mousedown',e=>{const p=canvasPos(e);handleTap(p.x,p.y);});
+c.addEventListener('touchstart',e=>{e.preventDefault();const p=canvasPos(e);handleTap(p.x,p.y);},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver){if(e.code==='Space'||e.code==='Enter')reset();return;}
+  if(e.code==='Tab'){e.preventDefault();selIdx=(selIdx+1)%blocks.length;return;}
+  if(/^Digit[1-9]$/.test(e.code)){
+    const n=parseInt(e.code.slice(5),10)-1;
+    if(n<blocks.length){selIdx=n;}
+    return;
+  }
+  if(e.code==='Space'||e.code==='Enter'){
+    e.preventDefault();
+    const b=blocks[selIdx];
+    if(b)toggleBlock(b);
+  }
+});
+
+function drawBackground(){
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#0a1733');sky.addColorStop(1,'#1c2d52');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  // stars
+  ctx.fillStyle='rgba(255,255,255,0.7)';
+  for(let i=0;i<40;i++){
+    const sx=(i*53)%W, sy=(i*37)%H;
+    const tw=0.4+0.6*Math.abs(Math.sin(Date.now()*0.001+i));
+    ctx.globalAlpha=tw;
+    ctx.fillRect(sx,sy,2,2);
+  }
+  ctx.globalAlpha=1;
+  // moon
+  ctx.fillStyle='#f0f4ff';
+  ctx.beginPath();ctx.arc(W-60,50,26,0,7);ctx.fill();
+}
+
+function tempColor(t){
+  const frac=Math.max(0,Math.min(1,(t-FREEZE)/(MAX_TEMP-FREEZE)));
+  const r=Math.round(80+(255-80)*(1-frac));
+  const g=Math.round(80+180*frac);
+  const b=Math.round(200-120*frac);
+  return `rgb(${r},${g},${b})`;
+}
+
+function drawBlock(b,idx){
+  const x=20+b.col*cellW, y=GRID_TOP+10+b.row*cellH;
+  const w=cellW-8, h=cellH-8;
+  ctx.save();
+  // vine rows backdrop
+  ctx.fillStyle=b.state==='frozen'?'#394a66':'#2a3a26';
+  ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle=idx===selIdx&&!gameOver?'#ffd54f':'#000';
+  ctx.lineWidth=idx===selIdx&&!gameOver?3:1.5;
+  ctx.strokeRect(x,y,w,h);
+
+  // temp gauge bar (vertical, left side of cell)
+  const gaugeH=h-14;
+  const frac=Math.max(0,Math.min(1,(b.temp-FREEZE)/(MAX_TEMP-FREEZE)));
+  ctx.fillStyle='rgba(0,0,0,0.35)';
+  ctx.fillRect(x+6,y+7,10,gaugeH);
+  ctx.fillStyle=tempColor(b.temp);
+  ctx.fillRect(x+6,y+7+gaugeH*(1-frac),10,gaugeH*frac);
+  ctx.strokeStyle='#000';ctx.lineWidth=1;ctx.strokeRect(x+6,y+7,10,gaugeH);
+
+  // device icon
+  const cx=x+w/2+6, cy=y+h/2;
+  if(b.state==='pot'){
+    ctx.fillStyle='#c0392b';
+    ctx.beginPath();ctx.arc(cx,cy+6,14,0,Math.PI,false);ctx.fill();
+    ctx.fillStyle='#ffb347';
+    const flick=Math.sin(Date.now()*0.02+idx)*3;
+    ctx.beginPath();ctx.moveTo(cx,cy-4);ctx.lineTo(cx-7,cy-16+flick);ctx.lineTo(cx,cy-24+flick);ctx.lineTo(cx+7,cy-16+flick);ctx.closePath();ctx.fill();
+  } else if(b.state==='machine'){
+    ctx.fillStyle='#777';
+    ctx.fillRect(cx-5,cy-14,10,24);
+    ctx.save();ctx.translate(cx,cy-16);ctx.rotate(Date.now()*0.02);
+    ctx.strokeStyle='#ddd';ctx.lineWidth=3;
+    for(let i=0;i<3;i++){
+      ctx.save();ctx.rotate(i*2.094);
+      ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(0,-13);ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  } else if(b.state==='frozen'){
+    ctx.fillStyle='rgba(200,230,255,0.8)';
+    ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText('❄',cx,cy+6);
+  }
+
+  // fuel bar for active devices
+  if((b.state==='pot'||b.state==='machine')){
+    const maxFuel=b.state==='pot'?22:12;
+    ctx.fillStyle='rgba(0,0,0,0.3)';
+    ctx.fillRect(x+6,y+h-8,w-12,5);
+    ctx.fillStyle='#ffd54f';
+    ctx.fillRect(x+6,y+h-8,(w-12)*Math.max(0,b.fuel/maxFuel),5);
+  }
+  ctx.restore();
+}
+
+function updateHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('round_label','Round {n}/{t}').replace('{n}',level+1).replace('{t}',LEVELS.length);
+  document.getElementById('timeBar').style.width=Math.max(0,100*dawnTimeLeft/LEVELS[Math.min(level,LEVELS.length-1)].dawn)+'%';
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawBackground();
+
+  if(!started){
+    ctx.fillStyle='#fff3d6';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Click to start'),W/2,H/2);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.05);
+  lastTime=now;
+
+  if(!gameOver){
+    const L=LEVELS[level];
+    dawnTimeLeft-=dt;
+    let anyFrozenNew=false;
+    for(const b of blocks){
+      if(b.state==='frozen')continue;
+      let delta=-L.dropRate;
+      if(b.state==='pot'){delta+=3.0;b.fuel-=dt;if(b.fuel<=0){b.state='idle';}}
+      else if(b.state==='machine'){delta+=5.4;b.fuel-=dt;if(b.fuel<=0){b.state='idle';}}
+      b.temp+=delta*dt;
+      if(b.temp>MAX_TEMP)b.temp=MAX_TEMP;
+      if(b.temp<=FREEZE){
+        b.temp=FREEZE;
+        b.state='frozen';
+        anyFrozenNew=true;
+      }
+    }
+    if(anyFrozenNew){
+      loseLife(I18N.t('frozen_block_msg',"A block froze solid!"));
+      if(!gameOver){
+        for(const b of blocks)if(b.state==='frozen'){b.state='idle';b.temp=START_TEMP*0.7;}
+      }
+    } else {
+      score+=Math.round(dt*5*blocks.filter(b=>b.state!=='frozen').length)/5;
+    }
+    if(dawnTimeLeft<=0){
+      score=Math.round(score)+30;
+      nextLevel();
+    }
+  }
+
+  blocks.forEach((b,i)=>drawBlock(b,i));
+
+  // freeze line label
+  ctx.fillStyle='rgba(150,200,255,0.8)';ctx.font='11px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('freeze_line_label','Freeze line: {t}°').replace('{t}',FREEZE),10,H-6);
+
+  if(flashT>0){
+    flashT--;
+    ctx.save();
+    ctx.globalAlpha=Math.min(1,flashT/30);
+    ctx.fillStyle='#fff3d6';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,30);
+    ctx.restore();
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('win_title','VINEYARD SAVED!'):I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Click to try again'),W/2,H/2+24);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>

@@ -1,0 +1,312 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Vineyard Canopy Hedging</title><meta name="description" content="Play Vineyard Canopy Hedging free online — Drive a hedging trimmer along the vine rows, trimming leaf canopy to the target height band without cutting into the fruit zone."><link rel="canonical" href="https://games.multiportllc.com/games/vineyardcanopyhedging"><meta property="og:title" content="Vineyard Canopy Hedging - Multiport Games"><meta property="og:description" content="Play Vineyard Canopy Hedging free online — Drive a hedging trimmer along the vine rows, trimming leaf canopy to the target height band without cutting into the fruit zone."><meta property="og:url" content="https://games.multiportllc.com/games/vineyardcanopyhedging"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Vineyard Canopy Hedging - Multiport Games"><meta name="twitter:description" content="Play Vineyard Canopy Hedging free online — Drive a hedging trimmer along the vine rows, trimming leaf canopy to the target height band without cutting into the fruit zone."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Vineyard Canopy Hedging","description":"Play Vineyard Canopy Hedging free online instantly. Drive a tractor-mounted hedging trimmer along the vine row, raising and lowering the cutter bar to trim excess leaf canopy down to a target height band shown as a guide line, without cutting into the fruit zone below it. Rows get longer and the target band tighter each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/vineyardcanopyhedging","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#cde8ff;display:block;border-radius:8px;touch-action:none;cursor:ns-resize;max-width:100%}
+#hud{color:#fff3d6;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#timeWrap{max-width:600px;margin:0 auto 8px;background:#1b2a14;border-radius:10px;padding:4px}
+#timeBar{height:10px;border-radius:8px;background:linear-gradient(90deg,#7ec850,#c0392b);width:100%;transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Vineyard Canopy Hedging</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Row 1/6</span>
+    </div>
+    <div id="timeWrap"><div id="timeBar"></div></div>
+    <canvas id="c" width="800" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Your tractor drives automatically down the row. Use <b>Up</b>/<b>Down Arrow</b> or <b>W</b>/<b>S</b> (or drag up/down on mobile) to raise or lower the cutter bar so it stays inside the yellow target band. Canopy trimmed inside the band scores points; drifting above the band leaves leaves uncut, and dropping below it cuts into the <b>fruit zone</b> and costs a life. Rows get longer and the target band narrower each round. 3 lives — finish all 6 rows to win!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const HID='vineyardcanopyhedging';
+let hi=parseInt(localStorage.getItem(HID+'_hi')||'0',10);
+const W=800,H=340;
+
+const LEVELS=[
+  {rowLen:3200, bandH:70, speed:160, fruitBuffer:34},
+  {rowLen:3600, bandH:60, speed:170, fruitBuffer:32},
+  {rowLen:4000, bandH:52, speed:180, fruitBuffer:30},
+  {rowLen:4400, bandH:46, speed:190, fruitBuffer:28},
+  {rowLen:4800, bandH:40, speed:200, fruitBuffer:26},
+  {rowLen:5200, bandH:36, speed:210, fruitBuffer:24},
+];
+
+let level=0,score=0,lives=3,gameOver=false,won=false,started=false;
+let progress=0; // distance traveled along row
+let cutterY=170; // current cutter bar y position (canvas coords)
+let targetCenter=170;
+let lastTime=null;
+let keys={};
+let flashMsg='',flashT=0;
+let canopyProfile=[]; // precomputed canopy top-edge wiggle per level
+let dragging=false,dragY=0;
+
+function genCanopy(len){
+  const pts=[];
+  let y=150;
+  for(let x=0;x<=len+W;x+=20){
+    y+=(Math.random()-0.5)*18;
+    y=Math.max(90,Math.min(220,y));
+    pts.push(y);
+  }
+  return pts;
+}
+
+function canopyAt(x){
+  const idx=Math.max(0,Math.floor(x/20));
+  const a=canopyProfile[idx]!=null?canopyProfile[idx]:170;
+  const b=canopyProfile[idx+1]!=null?canopyProfile[idx+1]:a;
+  const frac=(x%20)/20;
+  return a+(b-a)*frac;
+}
+
+function resetLevel(){
+  const L=LEVELS[level];
+  progress=0;
+  canopyProfile=genCanopy(L.rowLen);
+  targetCenter=140+Math.sin(0)*0;
+  cutterY=targetCenter;
+}
+
+function reset(){
+  level=0;score=0;lives=3;gameOver=false;won=false;started=false;lastTime=null;
+  resetLevel();
+}
+
+function loseLife(msg){
+  lives--;
+  SFX.hurt();
+  flash(msg);
+  if(lives<=0){
+    gameOver=true;won=false;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HID+'_hi',String(hi));}
+  }
+}
+function flash(msg){flashMsg=msg;flashT=60;}
+
+function nextRow(){
+  level++;
+  if(level>=LEVELS.length){
+    won=true;gameOver=true;
+    SFX.win();
+    if(score>hi){hi=score;localStorage.setItem(HID+'_hi',String(hi));}
+    return;
+  }
+  SFX.levelup();
+  resetLevel();
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+}
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(['ArrowUp','ArrowDown','Space'].includes(e.code))e.preventDefault();
+  if(e.code==='Space')startOrRestart();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+c.addEventListener('mousedown',e=>{startOrRestart();dragging=true;dragY=posY(e);});
+c.addEventListener('mousemove',e=>{if(dragging){const y=posY(e);cutterY+=(y-dragY);dragY=y;}});
+window.addEventListener('mouseup',()=>{dragging=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();dragging=true;dragY=posY(e);},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(dragging){const y=posY(e);cutterY+=(y-dragY);dragY=y;}},{passive:false});
+c.addEventListener('touchend',()=>{dragging=false;});
+
+function posY(evt){
+  const rect=c.getBoundingClientRect();
+  const cy=(evt.touches?evt.touches[0].clientY:evt.clientY)-rect.top;
+  return cy*(H/rect.height);
+}
+
+function updateHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('row_label','Row {n}/{t}').replace('{n}',level+1).replace('{t}',LEVELS.length);
+  const L=LEVELS[Math.min(level,LEVELS.length-1)];
+  document.getElementById('timeBar').style.width=Math.max(0,100*(1-progress/L.rowLen))+'%';
+}
+
+function drawBackground(){
+  const sky=ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#cde8ff');sky.addColorStop(1,'#eef7df');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#ffe29a';
+  ctx.beginPath();ctx.arc(680,50,30,0,7);ctx.fill();
+  // hills
+  ctx.fillStyle='#d8ecb0';
+  ctx.beginPath();ctx.moveTo(0,70);
+  for(let x=0;x<=W;x+=40)ctx.lineTo(x,70+Math.sin(x*0.02+progress*0.002)*10);
+  ctx.lineTo(W,0);ctx.lineTo(0,0);ctx.closePath();ctx.fill();
+}
+
+function drawRow(L){
+  // Vine trunk/soil base
+  ctx.fillStyle='#8a5a30';ctx.fillRect(0,290,W,H-290);
+  ctx.fillStyle='#6b4423';ctx.fillRect(0,290,W,4);
+
+  // fruit zone (below canopy bottom) - draw grape clusters hints
+  const fruitTop=240;
+  ctx.fillStyle='#b9dca0';
+  ctx.fillRect(0,fruitTop,W,290-fruitTop);
+  for(let x=20;x<W;x+=60){
+    ctx.fillStyle='#5a2d82';
+    ctx.beginPath();ctx.arc(x+(progress%60),fruitTop+20,8,0,7);ctx.fill();
+  }
+
+  // canopy (jagged green leaves) drawn from profile, scrolling with progress
+  ctx.fillStyle='#4f8c3a';
+  ctx.beginPath();
+  ctx.moveTo(0,290);
+  for(let x=0;x<=W;x+=10){
+    const topY=canopyAt(progress+x);
+    ctx.lineTo(x,topY);
+  }
+  ctx.lineTo(W,290);
+  ctx.closePath();
+  ctx.fill();
+  // leaf texture bumps
+  ctx.fillStyle='#3f7a2d';
+  for(let x=0;x<W;x+=18){
+    const topY=canopyAt(progress+x);
+    ctx.beginPath();ctx.arc(x+9,topY+6,8,0,7);ctx.fill();
+  }
+
+  // target band (guide lines)
+  const bandTop=targetCenter-L.bandH/2;
+  const bandBot=targetCenter+L.bandH/2;
+  ctx.fillStyle='rgba(255,213,79,0.28)';
+  ctx.fillRect(0,bandTop,W,bandBot-bandTop);
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;ctx.setLineDash([8,6]);
+  ctx.beginPath();ctx.moveTo(0,bandTop);ctx.lineTo(W,bandTop);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(0,bandBot);ctx.lineTo(W,bandBot);ctx.stroke();
+  ctx.setLineDash([]);
+
+  // trimmed effect: at cutter position, show flat-cut canopy near tractor x
+}
+
+const tractorX=120;
+function drawTractor(){
+  const y=cutterY;
+  ctx.save();
+  // tractor body
+  ctx.fillStyle='#c0392b';
+  ctx.fillRect(tractorX-30,295,70,30);
+  ctx.fillStyle='#8e2e22';
+  ctx.beginPath();ctx.arc(tractorX-15,330,14,0,7);ctx.fill();
+  ctx.beginPath();ctx.arc(tractorX+30,330,14,0,7);ctx.fill();
+  ctx.fillStyle='#2a2a2a';
+  ctx.beginPath();ctx.arc(tractorX-15,330,7,0,7);ctx.fill();
+  ctx.beginPath();ctx.arc(tractorX+30,330,7,0,7);ctx.fill();
+  // cab
+  ctx.fillStyle='#e94560';
+  ctx.fillRect(tractorX-10,270,26,28);
+  // cutter arm up to cutterY
+  ctx.strokeStyle='#555';ctx.lineWidth=6;
+  ctx.beginPath();ctx.moveTo(tractorX+28,295);ctx.lineTo(tractorX+28,y);ctx.stroke();
+  // cutter bar
+  ctx.fillStyle='#2a2a2a';
+  ctx.fillRect(tractorX+10,y-6,70,12);
+  ctx.fillStyle='#silver';
+  ctx.fillStyle='#d9d9d9';
+  for(let i=0;i<8;i++)ctx.fillRect(tractorX+10+i*9,y-6,4,12);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawBackground();
+
+  if(!started){
+    ctx.fillStyle='#2d1b0e';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Click / Space to start'),W/2,H/2);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.05);
+  lastTime=now;
+
+  const L=LEVELS[level];
+
+  if(!gameOver){
+    progress+=L.speed*dt;
+    // target band wanders slowly
+    targetCenter=170+Math.sin(progress*0.003)*40;
+
+    const upHeld=keys['ArrowUp']||keys['KeyW'];
+    const downHeld=keys['ArrowDown']||keys['KeyS'];
+    if(upHeld)cutterY-=180*dt;
+    if(downHeld)cutterY+=180*dt;
+    cutterY=Math.max(90,Math.min(260,cutterY));
+
+    const bandTop=targetCenter-L.bandH/2;
+    const bandBot=targetCenter+L.bandH/2;
+    const fruitTop=240;
+
+    // scoring: inside band -> good; below band toward fruit zone -> danger
+    if(cutterY>=bandTop&&cutterY<=bandBot){
+      score+=Math.round(20*dt*10)/10;
+      score=Math.round(score*10)/10;
+    }
+    if(cutterY> fruitTop-L.fruitBuffer && cutterY<=fruitTop+10){
+      // getting dangerously close/into fruit zone
+    }
+    if(cutterY>fruitTop){
+      loseLife(I18N.t('fruit_cut_msg','Cut into the fruit zone!'));
+      cutterY=targetCenter;
+    }
+
+    if(progress>=L.rowLen){
+      nextRow();
+    }
+  }
+
+  drawRow(L);
+  drawTractor();
+
+  if(flashT>0){
+    flashT--;
+    ctx.save();
+    ctx.globalAlpha=Math.min(1,flashT/30);
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.strokeStyle='#000';ctx.lineWidth=3;
+    ctx.strokeText(flashMsg,W/2,70);
+    ctx.fillText(flashMsg,W/2,70);
+    ctx.restore();
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.45)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('win_title','ALL ROWS TRIMMED!'):I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Click to try again'),W/2,H/2+24);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>

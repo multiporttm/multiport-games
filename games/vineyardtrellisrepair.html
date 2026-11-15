@@ -1,0 +1,377 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Vineyard Trellis Repair</title><meta name="description" content="Play Vineyard Trellis Repair free online — Restring broken trellis wires in the correct tension order across the posts before the windstorm hits, with more wires and posts each level."><link rel="canonical" href="https://games.multiportllc.com/games/vineyardtrellisrepair"><meta property="og:title" content="Vineyard Trellis Repair - Multiport Games"><meta property="og:description" content="Play Vineyard Trellis Repair free online — Restring broken trellis wires in the correct tension order across the posts before the windstorm hits, with more wires and posts each level."><meta property="og:url" content="https://games.multiportllc.com/games/vineyardtrellisrepair"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Vineyard Trellis Repair - Multiport Games"><meta name="twitter:description" content="Play Vineyard Trellis Repair free online — Restring broken trellis wires in the correct tension order across the posts before the windstorm hits, with more wires and posts each level."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Vineyard Trellis Repair","description":"Play Vineyard Trellis Repair free online instantly. A windstorm snapped the vineyard's trellis wires. Drag each broken wire segment to its matching anchor point on the posts, restringing them in the correct low-to-high tension order before the storm returns. Each new level adds more posts and more tangled wires. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/vineyardtrellisrepair","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#9fc9e8;display:block;border-radius:8px;touch-action:none;cursor:pointer;max-width:100%}
+#hud{color:#fff3d6;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#timeWrap{max-width:600px;margin:0 auto 8px;background:#2d1b0e;border-radius:10px;padding:4px}
+#timeBar{height:10px;border-radius:8px;background:linear-gradient(90deg,#8e44ad,#c0392b);width:100%;transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Vineyard Trellis Repair</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Level 1/6</span>
+    </div>
+    <div id="timeWrap"><div id="timeBar"></div></div>
+    <canvas id="c" width="800" height="360"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A windstorm snapped the trellis wires! <b>Drag</b> each loose wire coil (or tap a coil, then tap its target anchor) to the glowing anchor point that matches it. Wires must be restrung in <b>tension order</b> — lowest wire first, then the next one up — shown by the numbered anchors. Restringing out of order costs a life. Finish all wires on all posts before the windstorm timer runs out. 3 lives — clear all 6 levels to win!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const HID='vineyardtrellisrepair';
+let hi=parseInt(localStorage.getItem(HID+'_hi')||'0',10);
+const W=800,H=360;
+const GROUND=H-50;
+
+const LEVELS=[
+  {posts:3, wiresPerGap:2, levelTime:50},
+  {posts:4, wiresPerGap:2, levelTime:48},
+  {posts:4, wiresPerGap:3, levelTime:48},
+  {posts:5, wiresPerGap:3, levelTime:46},
+  {posts:5, wiresPerGap:4, levelTime:44},
+  {posts:6, wiresPerGap:4, levelTime:42},
+];
+
+let level=0,score=0,lives=3,gameOver=false,won=false,started=false;
+let posts=[],anchors=[],coils=[];
+let levelTimeLeft=0,lastTime=null;
+let dragCoil=null,dragX=0,dragY=0;
+let flashMsg='',flashT=0;
+
+function buildLevel(){
+  const L=LEVELS[level];
+  posts=[];
+  const margin=70;
+  const gap=(W-margin*2)/(L.posts-1);
+  for(let i=0;i<L.posts;i++){
+    posts.push({x:margin+i*gap, topY:GROUND-150});
+  }
+  anchors=[];
+  coils=[];
+  let idCounter=0;
+  for(let p=0;p<L.posts-1;p++){
+    const x1=posts[p].x, x2=posts[p+1].x;
+    for(let w=0;w<L.wiresPerGap;w++){
+      const yFrac=(w+1)/(L.wiresPerGap+1);
+      const y=GROUND-150+yFrac*130;
+      const tension=w+1; // 1 = lowest wire = first
+      const anchorId=idCounter++;
+      anchors.push({id:anchorId, x1,x2,y, tension, gap:p, filled:false, glow:false});
+    }
+  }
+  // shuffle coils, give each coil a random starting position along the ground
+  const shuffled=anchors.slice().sort(()=>Math.random()-0.5);
+  shuffled.forEach((a,i)=>{
+    coils.push({
+      anchorId:a.id,
+      x:60+((i*97)%(W-120)),
+      y:GROUND+20+((i%3)*18),
+      r:14,
+      placed:false,
+      color:`hsl(${(a.gap*70+a.tension*25)%360},70%,55%)`
+    });
+  });
+  levelTimeLeft=L.levelTime;
+  updateGlow();
+}
+
+function updateGlow(){
+  // the next required anchor(s): lowest untensioned wire in each gap
+  const L=LEVELS[level];
+  for(const a of anchors)a.glow=false;
+  for(let p=0;p<L.posts-1;p++){
+    const gapAnchors=anchors.filter(a=>a.gap===p);
+    const next=gapAnchors.filter(a=>!a.filled).sort((x,y)=>x.tension-y.tension)[0];
+    if(next)next.glow=true;
+  }
+}
+
+function reset(){
+  level=0;score=0;lives=3;gameOver=false;won=false;started=false;lastTime=null;
+  buildLevel();
+}
+
+function flash(msg){flashMsg=msg;flashT=60;}
+
+function loseLife(msg){
+  lives--;
+  SFX.hurt();
+  flash(msg);
+  if(lives<=0){
+    gameOver=true;won=false;
+    SFX.lose();
+    if(score>hi){hi=score;localStorage.setItem(HID+'_hi',String(hi));}
+  }
+}
+
+function nextLevel(){
+  level++;
+  if(level>=LEVELS.length){
+    won=true;gameOver=true;
+    SFX.win();
+    if(score>hi){hi=score;localStorage.setItem(HID+'_hi',String(hi));}
+    return;
+  }
+  SFX.levelup();
+  buildLevel();
+}
+
+function anchorScreenPos(a){
+  return {x:(a.x1+a.x2)/2, y:a.y};
+}
+
+function tryPlaceCoil(coil, screenX, screenY){
+  // find nearest unfilled anchor within reach
+  let best=null,bestD=9999;
+  for(const a of anchors){
+    if(a.filled)continue;
+    const pos=anchorScreenPos(a);
+    const d=Math.hypot(pos.x-screenX,pos.y-screenY);
+    if(d<34&&d<bestD){bestD=d;best=a;}
+  }
+  if(!best)return false;
+  if(best.id!==coil.anchorId){
+    loseLife(I18N.t('wrong_anchor_msg',"Wrong anchor!"));
+    return true;
+  }
+  if(!best.glow){
+    loseLife(I18N.t('out_of_order_msg',"Out of tension order!"));
+    return true;
+  }
+  best.filled=true;
+  coil.placed=true;
+  score+=15;
+  SFX.success();
+  flash('+15');
+  updateGlow();
+  const allFilled=anchors.every(a=>a.filled);
+  if(allFilled){
+    setTimeout(()=>{ if(!gameOver) nextLevel(); },300);
+  }
+  return true;
+}
+
+document.addEventListener('keydown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver&&(e.code==='Space'||e.code==='Enter')){reset();return;}
+  if(e.code==='Tab'){
+    e.preventDefault();
+    cycleSelection();
+  }
+  if(e.code==='Space'||e.code==='Enter'){
+    e.preventDefault();
+    confirmSelection();
+  }
+});
+
+let selIdx=-1;
+function cycleSelection(){
+  const avail=coils.filter(co=>!co.placed);
+  if(avail.length===0)return;
+  selIdx=(selIdx+1)%avail.length;
+}
+function confirmSelection(){
+  const avail=coils.filter(co=>!co.placed);
+  if(selIdx<0||selIdx>=avail.length)return;
+  const coil=avail[selIdx];
+  const a=anchors.find(x=>x.id===coil.anchorId&&x.glow);
+  if(a){
+    const pos=anchorScreenPos(a);
+    tryPlaceCoil(coil,pos.x,pos.y);
+  } else {
+    loseLife(I18N.t('out_of_order_msg',"Out of tension order!"));
+  }
+}
+
+function canvasPos(evt){
+  const rect=c.getBoundingClientRect();
+  const t=evt.touches?evt.touches[0]:evt;
+  return {x:(t.clientX-rect.left)*(W/rect.width), y:(t.clientY-rect.top)*(H/rect.height)};
+}
+
+function pickCoilAt(x,y){
+  let best=null,bestD=9999;
+  for(const co of coils){
+    if(co.placed)continue;
+    const d=Math.hypot(co.x-x,co.y-y);
+    if(d<co.r+8&&d<bestD){bestD=d;best=co;}
+  }
+  return best;
+}
+
+c.addEventListener('mousedown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  const p=canvasPos(e);
+  const coil=pickCoilAt(p.x,p.y);
+  if(coil){dragCoil=coil;dragX=p.x;dragY=p.y;SFX.click();}
+});
+c.addEventListener('mousemove',e=>{
+  if(!dragCoil)return;
+  const p=canvasPos(e);
+  dragX=p.x;dragY=p.y;
+});
+window.addEventListener('mouseup',e=>{
+  if(!dragCoil)return;
+  const rect=c.getBoundingClientRect();
+  const inside=e.clientX>=rect.left&&e.clientX<=rect.right&&e.clientY>=rect.top&&e.clientY<=rect.bottom;
+  if(inside){
+    tryPlaceCoil(dragCoil,dragX,dragY);
+  }
+  dragCoil=null;
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  const p=canvasPos(e);
+  const coil=pickCoilAt(p.x,p.y);
+  if(coil){dragCoil=coil;dragX=p.x;dragY=p.y;SFX.click();}
+},{passive:false});
+c.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(!dragCoil)return;
+  const p=canvasPos(e);
+  dragX=p.x;dragY=p.y;
+},{passive:false});
+c.addEventListener('touchend',e=>{
+  e.preventDefault();
+  if(!dragCoil)return;
+  tryPlaceCoil(dragCoil,dragX,dragY);
+  dragCoil=null;
+},{passive:false});
+
+function drawBackground(){
+  const sky=ctx.createLinearGradient(0,0,0,GROUND);
+  sky.addColorStop(0,'#9fc9e8');sky.addColorStop(1,'#d7e8c0');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,W,GROUND);
+  ctx.fillStyle='#ffe29a';
+  ctx.beginPath();ctx.arc(700,55,30,0,7);ctx.fill();
+  // moving storm clouds
+  ctx.fillStyle='rgba(120,120,140,0.5)';
+  const t=Date.now()*0.00002;
+  for(let i=0;i<4;i++){
+    const cx=((i*260+t*800)%(W+200))-100;
+    ctx.beginPath();ctx.ellipse(cx,70+i*10,55,22,0,0,7);ctx.fill();
+  }
+  ctx.fillStyle='#8fbc5a';ctx.fillRect(0,GROUND,W,H-GROUND);
+  ctx.fillStyle='#7a9e4a';ctx.fillRect(0,GROUND,W,6);
+}
+
+function drawPost(p){
+  ctx.fillStyle='#6b4423';
+  ctx.fillRect(p.x-7,p.topY,14,GROUND-p.topY);
+  ctx.fillStyle='#4a3018';
+  ctx.fillRect(p.x-9,p.topY-6,18,8);
+}
+
+function drawAnchorsAndWires(){
+  for(const a of anchors){
+    const pos=anchorScreenPos(a);
+    if(a.filled){
+      ctx.strokeStyle='#555';ctx.lineWidth=2.5;
+      ctx.beginPath();ctx.moveTo(a.x1+7,a.y);ctx.lineTo(a.x2-7,a.y);ctx.stroke();
+    } else {
+      ctx.strokeStyle='rgba(180,60,60,0.5)';ctx.lineWidth=2;ctx.setLineDash([6,6]);
+      ctx.beginPath();ctx.moveTo(a.x1+7,a.y);ctx.lineTo(a.x2-7,a.y);ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // anchor marker
+    ctx.beginPath();
+    ctx.arc(pos.x,pos.y,13,0,7);
+    ctx.fillStyle=a.filled?'#4caf50':(a.glow?'rgba(255,215,0,'+(0.6+0.4*Math.sin(Date.now()*0.008))+')':'rgba(200,80,80,0.55)');
+    ctx.fill();
+    ctx.strokeStyle='#2d1b0e';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle='#2d1b0e';ctx.font='bold 12px Arial';ctx.textAlign='center';
+    ctx.fillText(a.tension,pos.x,pos.y+4);
+  }
+}
+
+function drawCoil(co){
+  if(co.placed)return;
+  const x=co===dragCoil?dragX:co.x, y=co===dragCoil?dragY:co.y;
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.strokeStyle=co.color;ctx.lineWidth=4;
+  ctx.beginPath();
+  for(let i=0;i<3;i++){
+    ctx.arc(0,0,co.r-i*3,0,5.5);
+  }
+  ctx.stroke();
+  ctx.fillStyle=co.color;
+  ctx.beginPath();ctx.arc(0,0,4,0,7);ctx.fill();
+  ctx.restore();
+}
+
+function updateHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('level_label','Level {n}/{t}').replace('{n}',level+1).replace('{t}',LEVELS.length);
+  document.getElementById('timeBar').style.width=Math.max(0,100*levelTimeLeft/LEVELS[Math.min(level,LEVELS.length-1)].levelTime)+'%';
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawBackground();
+  posts.forEach(drawPost);
+
+  if(!started){
+    ctx.fillStyle='#2d1b0e';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Click to start'),W/2,H/2);
+    updateHud();
+    requestAnimationFrame(loop);
+    return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.05);
+  lastTime=now;
+
+  if(!gameOver){
+    levelTimeLeft-=dt;
+    if(levelTimeLeft<=0){
+      loseLife(I18N.t('storm_hit_msg',"The windstorm hit before you finished!"));
+      if(!gameOver){buildLevel();}
+    }
+  }
+
+  drawAnchorsAndWires();
+  coils.forEach(drawCoil);
+
+  if(flashT>0){
+    flashT--;
+    ctx.save();
+    ctx.globalAlpha=Math.min(1,flashT/30);
+    ctx.fillStyle='#2d1b0e';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,GROUND+36);
+    ctx.restore();
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.45)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(won?I18N.t('win_title','TRELLIS RESTORED!'):I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Click to try again'),W/2,H/2+24);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>

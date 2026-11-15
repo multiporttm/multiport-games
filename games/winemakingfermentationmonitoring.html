@@ -1,0 +1,302 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Winemaking Fermentation Monitoring</title><meta name="description" content="Play Winemaking Fermentation Monitoring free online — Watch every tank's temperature and sugar gauges, cool and punch down at the right moments before the window closes."><link rel="canonical" href="https://games.multiportllc.com/games/winemakingfermentationmonitoring"><meta property="og:title" content="Winemaking Fermentation Monitoring - Multiport Games"><meta property="og:description" content="Play Winemaking Fermentation Monitoring free online — Watch every tank's temperature and sugar gauges, cool and punch down at the right moments before the window closes."><meta property="og:url" content="https://games.multiportllc.com/games/winemakingfermentationmonitoring"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Winemaking Fermentation Monitoring - Multiport Games"><meta name="twitter:description" content="Play Winemaking Fermentation Monitoring free online — Watch every tank's temperature and sugar gauges, cool and punch down at the right moments before the window closes."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Winemaking Fermentation Monitoring","description":"Play Winemaking Fermentation Monitoring free online instantly. Monitor multiple fermentation tanks' temperature and sugar gauges, adjusting cooling jackets and punching down caps at the right moments to keep every tank in its target zone before the fermentation window closes. More tanks join each level. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/winemakingfermentationmonitoring","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#140a06}
+#c{background:#241109;display:block;border-radius:8px;touch-action:none;cursor:pointer;margin:0 auto}
+#score-display{color:#e8b568;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+#level-display{color:#c97b3d;font-size:.95rem;text-align:center;padding-bottom:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Winemaking Fermentation Monitoring</div>
+  <div class="game-frame">
+    <div id="score-display">Score: 0 | Hi: 0</div>
+    <div id="level-display">Level 1</div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Each tank has a <b>temperature</b> gauge (keep in the green band) and a <b>sugar</b> gauge (must drain to zero before time runs out). Click/tap a tank's <b>Cool</b> button when it's too hot, or <b>Punch</b> when its cap needs breaking to speed sugar conversion. Neglect a tank too long and it spoils! More tanks arrive each level.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+const HI_KEY='winemakingfermentationmonitoring_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let score=0,level=1,gameOver=false,started=false,win=false;
+let tanks=[],frame=0,levelTimer=0,levelDuration=0;
+let flashMsg='',flashTimer=0;
+
+const TARGET_LO=18,TARGET_HI=24;
+
+function tankCountFor(l){return Math.min(6,2+Math.floor((l-1)*0.8));}
+function durationFor(l){return 1800+l*140;} // frames (~30fps feel at 60fps rAF/2... we just use frame ticks)
+function driftFor(l){return 0.012+l*0.003;}
+
+function makeTank(id){
+  return {
+    id,
+    temp: 19+Math.random()*4,
+    tempVel: (Math.random()-0.5)*0.02,
+    sugar: 90+Math.random()*10,
+    cooling:false,
+    coolTimer:0,
+    punchCooldown:0,
+    spoiled:false,
+    complete:false,
+    neglect:0
+  };
+}
+
+function reset(){
+  score=0;level=1;gameOver=false;started=false;win=false;frame=0;
+  setupLevel();
+}
+
+function setupLevel(){
+  const n=tankCountFor(level);
+  tanks=[];
+  for(let i=0;i<n;i++)tanks.push(makeTank(i));
+  levelTimer=0;
+  levelDuration=durationFor(level);
+}
+
+function flash(msg){flashMsg=msg;flashTimer=90;}
+
+function layoutFor(i,n){
+  const cols=n<=3?n:Math.ceil(n/2);
+  const rows=Math.ceil(n/cols);
+  const cellW=W/cols,cellH=(H-70)/rows;
+  const col=i%cols,row=Math.floor(i/cols);
+  return {x:col*cellW+cellW/2,y:70+row*cellH+cellH/2,w:cellW-20,h:cellH-20};
+}
+
+function tankRects(){
+  const n=tanks.length;
+  return tanks.map((t,i)=>{
+    const L=layoutFor(i,n);
+    return {t,
+      box:{x:L.x-L.w/2,y:L.y-L.h/2,w:L.w,h:L.h},
+      coolBtn:{x:L.x-L.w/2+8,y:L.y+L.h/2-34,w:L.w/2-14,h:28},
+      punchBtn:{x:L.x,y:L.y+L.h/2-34,w:L.w/2-14,h:28}
+    };
+  });
+}
+
+function pointIn(p,r){return p.x>=r.x&&p.x<=r.x+r.w&&p.y>=r.y&&p.y<=r.y+r.h;}
+
+function handleTap(x,y){
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  const rects=tankRects();
+  for(const r of rects){
+    if(r.t.spoiled||r.t.complete)continue;
+    if(pointIn({x,y},r.coolBtn)){
+      r.t.cooling=true;r.t.coolTimer=50;SFX.click();
+      return;
+    }
+    if(pointIn({x,y},r.punchBtn)){
+      if(r.t.punchCooldown<=0){
+        r.t.sugar=Math.max(0,r.t.sugar-14);
+        r.t.punchCooldown=70;
+        r.t.neglect=0;
+        SFX.select();
+        if(r.t.sugar<=0)completeTank(r.t);
+      }
+      return;
+    }
+  }
+}
+
+function completeTank(t){
+  if(t.complete)return;
+  t.complete=true;
+  score+=120+level*10;
+  SFX.success();
+  flash(I18N.t('tank_done','Tank '+(t.id+1)+' finished!'));
+}
+
+function spoilTank(t){
+  if(t.spoiled)return;
+  t.spoiled=true;
+  score=Math.max(0,score-40);
+  SFX.fail();
+  flash(I18N.t('tank_spoiled','Tank '+(t.id+1)+' spoiled!'));
+}
+
+c.addEventListener('mousedown',e=>{const r=c.getBoundingClientRect();handleTap((e.clientX-r.left)*(W/r.width),(e.clientY-r.top)*(H/r.height));});
+c.addEventListener('touchstart',e=>{e.preventDefault();const t=e.touches[0];const r=c.getBoundingClientRect();handleTap((t.clientX-r.left)*(W/r.width),(t.clientY-r.top)*(H/r.height));},{passive:false});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();if(!started){started=true;return;}if(gameOver){reset();return;}}
+  const n=parseInt(e.key,10);
+  if(n>=1&&n<=tanks.length){
+    const t=tanks[n-1];
+    if(!t||t.spoiled||t.complete)return;
+    if(e.shiftKey){ // punch
+      if(t.punchCooldown<=0){t.sugar=Math.max(0,t.sugar-14);t.punchCooldown=70;t.neglect=0;SFX.select();if(t.sugar<=0)completeTank(t);}
+    } else {
+      t.cooling=true;t.coolTimer=50;SFX.click();
+    }
+  }
+});
+
+function updateTank(t){
+  if(t.spoiled||t.complete)return;
+  const drift=driftFor(level);
+  // temp drifts upward due to fermentation heat, random wobble
+  t.temp+=drift+ (Math.random()-0.5)*0.01;
+  if(t.cooling){
+    t.temp-=0.09;
+    t.coolTimer--;
+    if(t.coolTimer<=0)t.cooling=false;
+  }
+  // sugar slowly converts on its own, faster when temp is in band
+  const inBand=t.temp>=TARGET_LO&&t.temp<=TARGET_HI;
+  t.sugar-=inBand?0.035:0.01;
+  if(t.sugar<0)t.sugar=0;
+  if(t.punchCooldown>0)t.punchCooldown--;
+
+  if(t.temp>TARGET_HI+3||t.temp<TARGET_LO-3){
+    t.neglect+=1.4;
+  } else if(!inBand){
+    t.neglect+=0.4;
+  } else {
+    t.neglect=Math.max(0,t.neglect-0.6);
+  }
+  if(t.neglect>160)spoilTank(t);
+  if(t.sugar<=0&&!t.complete)completeTank(t);
+}
+
+function drawGauge(x,y,w,h,value,max,lo,hi,label,color){
+  ctx.fillStyle='#1a0d06';
+  ctx.fillRect(x,y,w,h);
+  const loPct=1-lo/max,hiPct=1-hi/max;
+  ctx.fillStyle='rgba(120,200,120,0.25)';
+  ctx.fillRect(x,y+h*hiPct,w,h*(loPct-hiPct));
+  const pct=1-Math.min(1,value/max);
+  ctx.fillStyle=color;
+  ctx.fillRect(x,y+h*pct,w,h*(1-pct));
+  ctx.strokeStyle='#5a3b26';ctx.lineWidth=2;ctx.strokeRect(x,y,w,h);
+  ctx.fillStyle='#e8b568';ctx.font='10px Arial';ctx.textAlign='center';
+  ctx.fillText(label,x+w/2,y+h+12);
+}
+
+function drawTank(rt){
+  const t=rt.t,b=rt.box;
+  ctx.save();
+  ctx.fillStyle=t.spoiled?'#2a1010':(t.complete?'#10220f':'#3a2010');
+  ctx.strokeStyle='#5a3b26';ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.roundRect?ctx.roundRect(b.x,b.y,b.w,b.h,10):ctx.rect(b.x,b.y,b.w,b.h);
+  ctx.fill();ctx.stroke();
+
+  ctx.fillStyle='#e8b568';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText('Tank '+(t.id+1),b.x+10,b.y+18);
+
+  if(t.spoiled){
+    ctx.fillStyle='#ff6655';ctx.font='bold 14px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('spoiled_label','SPOILED'),b.x+b.w/2,b.y+b.h/2);
+    ctx.restore();return;
+  }
+  if(t.complete){
+    ctx.fillStyle='#7ec850';ctx.font='bold 14px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('done_label','✓ DONE'),b.x+b.w/2,b.y+b.h/2);
+    ctx.restore();return;
+  }
+
+  const gw=(b.w-50)/2,gh=b.h-60;
+  drawGauge(b.x+14,b.y+30,gw,gh,t.temp,40,TARGET_LO,TARGET_HI,I18N.t('temp_label','TEMP'),t.cooling?'#5ab0ff':'#ff8855');
+  drawGauge(b.x+24+gw,b.y+30,gw,gh,t.sugar,100,0,0,I18N.t('sugar_label','SUGAR'),'#e8b568');
+
+  // neglect warning bar
+  if(t.neglect>60){
+    ctx.fillStyle=`rgba(255,80,60,${Math.min(0.6,t.neglect/200)})`;
+    ctx.fillRect(b.x,b.y,b.w,b.h);
+  }
+
+  ctx.restore();
+
+  // buttons
+  const cb=rt.coolBtn,pb=rt.punchBtn;
+  ctx.fillStyle=t.cooling?'#2a6fae':'#1a4a7a';
+  ctx.fillRect(cb.x,cb.y,cb.w,cb.h);
+  ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('cool_btn','❄ Cool'),cb.x+cb.w/2,cb.y+cb.h/2+4);
+
+  ctx.fillStyle=t.punchCooldown>0?'#5a3010':'#8a4a1a';
+  ctx.fillRect(pb.x,pb.y,pb.w,pb.h);
+  ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('punch_btn','👊 Punch'),pb.x+pb.w/2,pb.y+pb.h/2+4);
+}
+
+function loop(){
+  frame++;
+  ctx.fillStyle='#241109';ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#e8b568';ctx.font='bold 14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('cellar_label','Fermentation Cellar'),16,20);
+
+  if(started&&!gameOver){
+    levelTimer++;
+    tanks.forEach(updateTank);
+    const allDone=tanks.every(t=>t.complete||t.spoiled);
+    const anySpoiledTooMany=tanks.filter(t=>t.spoiled).length>Math.ceil(tanks.length/2);
+    if(anySpoiledTooMany){
+      gameOver=true;SFX.lose();
+      if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    } else if(allDone){
+      SFX.levelup();
+      score+=50;
+      level++;
+      setupLevel();
+      started=true;
+    } else if(levelTimer>=levelDuration){
+      gameOver=true;SFX.lose();
+      if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    }
+  }
+
+  const rects=tankRects();
+  rects.forEach(drawTank);
+
+  // time bar
+  if(started&&!gameOver){
+    const pct=1-levelTimer/levelDuration;
+    ctx.fillStyle='#1a0d06';ctx.fillRect(0,H-14,W,14);
+    ctx.fillStyle=pct<0.25?'#ff5544':'#e8b568';
+    ctx.fillRect(0,H-14,W*Math.max(0,pct),14);
+  }
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.globalAlpha=Math.min(1,flashTimer/30);
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(flashMsg,W/2,50);
+    ctx.globalAlpha=1;
+  }
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#e8b568';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Tap / Space to start monitoring'),W/2,H/2);
+  } else if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff8866';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','HARVEST LOST'),W/2,H/2-20);
+    ctx.fillStyle='#e8b568';ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+16);
+  }
+
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  document.getElementById('score-display').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('level-display').textContent=I18N.t('level_label','Level {l}').replace('{l}',level);
+  requestAnimationFrame(loop);
+}
+setupLevel();
+loop();
+</script></body></html>
