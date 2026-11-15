@@ -1,0 +1,305 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Cooperage Hoop Fitting</title><meta name="description" content="Play Cooperage Hoop Fitting free online — Press Space, Click, or Tap to swing the hammer and drive each metal hoop down to its marked target position in the correct order, without over-striking and denting it."><link rel="canonical" href="https://games.multiportllc.com/games/cooperagehoopfitting"><meta property="og:title" content="Cooperage Hoop Fitting - Multiport Games"><meta property="og:description" content="Play Cooperage Hoop Fitting free online — Press Space, Click, or Tap to swing the hammer and drive each metal hoop down to its marked target position in the correct order, without over-striking and denting it."><meta property="og:url" content="https://games.multiportllc.com/games/cooperagehoopfitting"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Cooperage Hoop Fitting - Multiport Games"><meta name="twitter:description" content="Play Cooperage Hoop Fitting free online — Press Space, Click, or Tap to swing the hammer and drive each metal hoop down to its marked target position in the correct order, without over-striking and denting it."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Cooperage Hoop Fitting","description":"Play Cooperage Hoop Fitting free online instantly. Press Space, Click, or Tap to swing the hammer and drive each metal hoop down over the barrel staves to its marked target position, in the correct sequence and with even spacing, without over-striking and denting it. More hoops and trickier spacing every level. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/cooperagehoopfitting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1a1008}
+#c{background:#2a1a0e;display:block;border-radius:8px}
+#score-display{color:#e8a948;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Cooperage Hoop Fitting</div>
+  <div class="game-frame">
+    <div id="score-display">Level: 1 | Score: 0 | Hi: 0</div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press <b>Space</b>, <b>Click</b>, or <b>Tap</b> to swing the hammer. Time your strikes to drive the glowing hoop down into its marked target band in order, top to bottom — gentle taps near the target, but don't over-strike or you'll dent the hoop! More hoops and tighter spacing each level.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+let level=1,score=0,hi=parseInt(localStorage.getItem('cooperagehoopfitting_hi')||'0',10);
+let hoops=[];
+let activeIndex=0;
+let dents=0;
+let state='playing'; // playing | levelclear | gameover
+let stateTimer=0;
+let swingAnim=0; // 0..1 hammer swing progress
+let swinging=false;
+let barrelTop=60,barrelBottom=380,barrelCX=400,barrelHalfW=120;
+let shakeT=0;
+let sparks=[];
+
+function barrelWidthAt(y){
+  // barrel bulges in the middle (classic barrel silhouette)
+  const t=(y-barrelTop)/(barrelBottom-barrelTop);
+  const bulge=Math.sin(t*Math.PI);
+  return barrelHalfW*(0.78+0.22*bulge);
+}
+
+function newLevel(){
+  const count=3+Math.min(level,6);
+  hoops=[];
+  const spacingBase=(barrelBottom-barrelTop-40)/(count+1);
+  for(let i=0;i<count;i++){
+    const targetY=barrelTop+30+ (i+1)*spacingBase + (Math.random()*10-5)*Math.max(0,level-1)*0.4;
+    hoops.push({
+      y:barrelTop-10,          // current visual position (starts above, loose)
+      targetY:targetY,
+      driven:0,                 // 0..1 progress toward target
+      done:false,
+      denting:false
+    });
+  }
+  activeIndex=0;
+  dents=0;
+  state='playing';
+  stateTimer=0;
+  updateDisplay();
+}
+
+function updateDisplay(){
+  document.getElementById('score-display').textContent=
+    I18N.t('hoop_status','Level: {l} | Score: {s} | Hi: {h}')
+      .replace('{l}',level).replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+}
+
+function tolerance(){
+  return Math.max(16-level*0.8,6);
+}
+
+function strike(){
+  if(state!=='playing'||swinging)return;
+  swinging=true;
+  swingAnim=0;
+}
+
+function applyStrike(){
+  const hoop=hoops[activeIndex];
+  if(!hoop)return;
+  const remaining=hoop.targetY-hoop.y;
+  const tol=tolerance();
+  // strike power: fixed increment, slightly randomized by "skill" baseline
+  const power=22;
+  if(remaining<=0){
+    // already at/below target somehow, ignore
+    return;
+  }
+  if(power>remaining+tol){
+    // over-strike -> dent
+    hoop.y=hoop.targetY+ (power-remaining)*0.4;
+    hoop.denting=true;
+    dents++;
+    SFX.hit();
+    shakeT=14;
+    spawnSparks(hoop.y,true);
+    stateTimer=0;
+    if(dents>=3){
+      state='gameover';
+      SFX.lose();
+    }
+    setTimeout(()=>{if(hoop)hoop.denting=false;},300);
+  } else {
+    hoop.y=Math.min(hoop.y+power,hoop.targetY+tol);
+    spawnSparks(hoop.y,false);
+    SFX.tick();
+    if(Math.abs(hoop.y-hoop.targetY)<=tol){
+      hoop.done=true;
+      SFX.point();
+      const acc=Math.max(0,tol-Math.abs(hoop.y-hoop.targetY));
+      score+=40+Math.floor(acc*6);
+      activeIndex++;
+      if(score>hi){hi=score;localStorage.setItem('cooperagehoopfitting_hi',String(hi));}
+      if(activeIndex>=hoops.length){
+        state='levelclear';
+        stateTimer=0;
+        SFX.levelup();
+      }
+    }
+  }
+  updateDisplay();
+}
+
+function spawnSparks(y,bad){
+  for(let i=0;i<8;i++){
+    sparks.push({
+      x:barrelCX+(Math.random()*2-1)*barrelWidthAt(y),
+      y,
+      vx:(Math.random()*2-1)*3,
+      vy:-Math.random()*3-1,
+      life:0,
+      bad
+    });
+  }
+}
+
+document.addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();if(state==='gameover'){newGameAll();}else{strike();}}});
+c.addEventListener('click',()=>{if(state==='gameover'){newGameAll();}else{strike();}});
+c.addEventListener('touchstart',e=>{e.preventDefault();if(state==='gameover'){newGameAll();}else{strike();}},{passive:false});
+
+function newGameAll(){level=1;score=0;newLevel();}
+
+function drawBg(){
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#2a1a0e');g.addColorStop(1,'#120b06');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(230,180,110,0.06)';
+  for(let i=0;i<30;i++){
+    const x=(i*83)%W, y=(i*61)%H;
+    ctx.fillRect(x,y,2,2);
+  }
+}
+
+function drawBarrel(){
+  // wood staves
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(barrelCX-barrelWidthAt(barrelTop),barrelTop);
+  for(let y=barrelTop;y<=barrelBottom;y+=4){
+    ctx.lineTo(barrelCX-barrelWidthAt(y),y);
+  }
+  for(let y=barrelBottom;y>=barrelTop;y-=4){
+    ctx.lineTo(barrelCX+barrelWidthAt(y),y);
+  }
+  ctx.closePath();
+  const wg=ctx.createLinearGradient(barrelCX-barrelHalfW,0,barrelCX+barrelHalfW,0);
+  wg.addColorStop(0,'#5a3a20');wg.addColorStop(0.5,'#8a5a30');wg.addColorStop(1,'#5a3a20');
+  ctx.fillStyle=wg;
+  ctx.fill();
+  ctx.restore();
+  // stave lines
+  ctx.strokeStyle='rgba(0,0,0,0.25)';
+  ctx.lineWidth=1.5;
+  for(let i=-5;i<=5;i++){
+    ctx.beginPath();
+    let first=true;
+    for(let y=barrelTop;y<=barrelBottom;y+=6){
+      const w=barrelWidthAt(y);
+      const x=barrelCX+(i/5)*w;
+      if(first){ctx.moveTo(x,y);first=false;}else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+}
+
+function drawHoop(hoop,idx){
+  const w=barrelWidthAt(hoop.y);
+  const isActive=idx===activeIndex&&state==='playing';
+  ctx.save();
+  if(hoop.denting)ctx.translate((Math.random()-0.5)*4,0);
+  const grad=ctx.createLinearGradient(barrelCX-w,hoop.y,barrelCX+w,hoop.y);
+  if(hoop.denting){
+    grad.addColorStop(0,'#ff5252');grad.addColorStop(0.5,'#ffab91');grad.addColorStop(1,'#ff5252');
+  } else if(hoop.done){
+    grad.addColorStop(0,'#8d6e63');grad.addColorStop(0.5,'#bcaaa4');grad.addColorStop(1,'#8d6e63');
+  } else if(isActive){
+    grad.addColorStop(0,'#ffb300');grad.addColorStop(0.5,'#fff3b0');grad.addColorStop(1,'#ffb300');
+  } else {
+    grad.addColorStop(0,'#555');grad.addColorStop(0.5,'#999');grad.addColorStop(1,'#555');
+  }
+  ctx.fillStyle=grad;
+  ctx.fillRect(barrelCX-w-6,hoop.y-9,(w+6)*2,18);
+  ctx.strokeStyle='#2a1a0e';
+  ctx.lineWidth=2;
+  ctx.strokeRect(barrelCX-w-6,hoop.y-9,(w+6)*2,18);
+  ctx.restore();
+
+  if(isActive){
+    // target band marker
+    const tw=barrelWidthAt(hoop.targetY);
+    const tol=tolerance();
+    ctx.save();
+    ctx.strokeStyle='rgba(120,220,140,0.9)';
+    ctx.lineWidth=2;
+    ctx.setLineDash([5,4]);
+    ctx.strokeRect(barrelCX-tw-10,hoop.targetY-9-tol,(tw+10)*2,18+tol*2);
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+}
+
+function drawHammer(){
+  const baseX=barrelCX+barrelHalfW+70, baseY=hoops[activeIndex]?hoops[activeIndex].y:barrelTop;
+  const angle=swinging? -1.1+swingAnim*1.6 : -1.1;
+  ctx.save();
+  ctx.translate(baseX,baseY-40);
+  ctx.rotate(angle);
+  ctx.fillStyle='#6d4c2f';
+  ctx.fillRect(-4,0,8,70);
+  ctx.fillStyle='#777';
+  ctx.fillRect(-20,-14,40,24);
+  ctx.strokeStyle='#333';ctx.lineWidth=2;
+  ctx.strokeRect(-20,-14,40,24);
+  ctx.restore();
+}
+
+function drawSparks(dt){
+  sparks=sparks.filter(s=>s.life<40);
+  sparks.forEach(s=>{
+    s.life+=dt;s.x+=s.vx*dt;s.y+=s.vy*dt;s.vy+=0.15*dt;
+    ctx.globalAlpha=Math.max(0,1-s.life/40);
+    ctx.fillStyle=s.bad?'#ff5252':'#ffd54f';
+    ctx.fillRect(s.x,s.y,3,3);
+  });
+  ctx.globalAlpha=1;
+}
+
+function drawDentMeter(){
+  ctx.fillStyle='#d9b38c';
+  ctx.font='14px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('dents_label','Dents: {d}/3').replace('{d}',dents),20,30);
+}
+
+let lastTime=null;
+function loop(now){
+  if(lastTime===null)lastTime=now;
+  const dt=Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  ctx.save();
+  if(shakeT>0){shakeT-=dt;ctx.translate((Math.random()-0.5)*6,(Math.random()-0.5)*6);}
+
+  drawBg();
+  drawBarrel();
+  hoops.forEach((h,i)=>drawHoop(h,i));
+  drawSparks(dt);
+  if(state==='playing')drawHammer();
+  drawDentMeter();
+
+  if(swinging){
+    swingAnim+=0.18*dt;
+    if(swingAnim>=0.55&&swingAnim<0.55+0.18*dt){
+      applyStrike();
+    }
+    if(swingAnim>=1){swinging=false;swingAnim=0;}
+  }
+
+  if(state==='levelclear'){
+    stateTimer+=dt;
+    ctx.fillStyle='#8bc34a';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('hoops_fitted','ALL HOOPS FITTED!'),W/2,70);
+    if(stateTimer>70){level++;newLevel();}
+  } else if(state==='gameover'){
+    ctx.fillStyle='#ff5252';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('barrel_ruined','BARREL RUINED!'),W/2,70);
+    ctx.font='18px Arial';ctx.fillStyle='#e8a948';
+    ctx.fillText(I18N.t('restart_hint2','Tap / Click / Space to rebuild'),W/2,105);
+  } else {
+    ctx.fillStyle='#e8a948';ctx.font='16px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('strike_hint','Strike to drive the glowing hoop into the green zone'),W/2,30);
+  }
+
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+
+newLevel();
+requestAnimationFrame(loop);
+</script></body></html>

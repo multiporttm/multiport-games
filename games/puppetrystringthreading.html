@@ -1,0 +1,258 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Puppetry String Threading</title><meta name="description" content="Play Puppetry String Threading free online — Drag each marionette string from its peg on the control bar down to the matching numbered limb point, in order, routing around other strings so nothing tangles."><link rel="canonical" href="https://games.multiportllc.com/games/puppetrystringthreading"><meta property="og:title" content="Puppetry String Threading - Multiport Games"><meta property="og:description" content="Play Puppetry String Threading free online — Drag each marionette string from its peg on the control bar down to the matching numbered limb point, in order, routing around other strings so nothing tangles."><meta property="og:url" content="https://games.multiportllc.com/games/puppetrystringthreading"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Puppetry String Threading - Multiport Games"><meta name="twitter:description" content="Play Puppetry String Threading free online — Drag each marionette string from its peg on the control bar down to the matching numbered limb point, in order, routing around other strings so nothing tangles."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Puppetry String Threading","description":"Play Puppetry String Threading free online instantly. A marionette workshop puzzle: drag each control string from its peg on the wooden control bar down to the matching numbered joint on the puppet below, threading them strictly in order and steering your route around strings already tied so nothing tangles. Every round adds more strings and tighter routing. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/puppetrystringthreading","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#241409;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#f0d9a8;font-size:1.02rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#hud span b{color:#ffb347}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Puppetry String Threading</div>
+  <div class="game-frame">
+    <div id="hud"><span id="scoreDisp">Score: 0 | Hi: 0</span><span id="livesDisp">❤️❤️❤️</span><span id="levelDisp">Round 1</span></div>
+    <canvas id="c" width="800" height="480" tabindex="0"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click or tap the glowing <b>peg</b> on the control bar for the current numbered string, then drag down to the matching numbered joint on the puppet — steer your drag around strings already tied so your route does not cross them. On keyboard, use <b>Tab/Arrow keys</b> to select the peg then its joint and press <b>Enter</b> to thread a straight line. More strings and trickier routing arrive each round.</div>
+</div>
+<script>
+const GID='puppetrystringthreading';
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreDisp=document.getElementById('scoreDisp'),livesDisp=document.getElementById('livesDisp'),levelDisp=document.getElementById('levelDisp');
+let hi=0;try{hi=parseInt(localStorage.getItem(GID+'_hi')||'0',10);}catch(e){hi=0;}
+let score=0,lives=3,round=1;
+const MAX_ROUND=8;
+let pegs=[],limbs=[],strings=[],order=[],curIdx=0;
+let dragging=false,dragPath=[],dragPegIdx=-1;
+let selPeg=0,selLimb=0,kbMode='peg';
+let phase='play'; // play|roundclear|lost|won
+let flashT=0,shakeT=0;
+
+function lives2str(){return '❤️'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));}
+
+function buildRound(){
+  const n=Math.min(3+round,10);
+  pegs=[];limbs=[];strings=[];curIdx=0;
+  const pegGap=620/(n+1);
+  for(let i=0;i<n;i++)pegs.push({x:90+pegGap*(i+1),y:70,idx:i});
+  // scrambled target x positions for limbs, but order array defines thread sequence 0..n-1
+  const xs=[];const limbGap=620/(n+1);
+  for(let i=0;i<n;i++)xs.push(90+limbGap*(i+1));
+  // shuffle which label goes where physically
+  const labels=[...Array(n).keys()];
+  for(let i=labels.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[labels[i],labels[j]]=[labels[j],labels[i]];}
+  for(let i=0;i<n;i++){
+    const jitterY=Math.random()*40;
+    limbs.push({x:xs[i],y:380+jitterY,label:labels[i]});
+  }
+  order=[];
+  for(let i=0;i<n;i++)order.push(limbs.findIndex(l=>l.label===i));
+  selPeg=0;selLimb=0;kbMode='peg';
+  phase='play';
+}
+
+function segInt(p1,p2,p3,p4){
+  function cross(o,a,b){return (a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);}
+  const d1=cross(p3,p4,p1),d2=cross(p3,p4,p2),d3=cross(p1,p2,p3),d4=cross(p1,p2,p4);
+  if(((d1>0&&d2<0)||(d1<0&&d2>0))&&((d3>0&&d4<0)||(d3<0&&d4>0)))return true;
+  return false;
+}
+function pathCrossesExisting(path){
+  for(const s of strings){
+    for(let i=0;i<path.length-1;i++){
+      for(let j=0;j<s.path.length-1;j++){
+        if(segInt(path[i],path[i+1],s.path[j],s.path[j+1]))return true;
+      }
+    }
+  }
+  return false;
+}
+
+function completeThread(pegIdx,limbIdx,path){
+  const target=order[curIdx];
+  if(pegIdx!==curIdx||limbIdx!==target){
+    lives--;shakeT=18;SFX.error();
+    livesDisp.textContent=lives2str();
+    if(lives<=0){phase='lost';SFX.lose();}
+    return;
+  }
+  if(pathCrossesExisting(path)){
+    lives--;shakeT=18;SFX.hurt();
+    livesDisp.textContent=lives2str();
+    if(lives<=0){phase='lost';SFX.lose();}
+    return;
+  }
+  strings.push({path,peg:pegIdx,limb:limbIdx});
+  score+=10+round*2;
+  if(score>hi){hi=score;try{localStorage.setItem(GID+'_hi',String(hi));}catch(e){}}
+  curIdx++;
+  flashT=14;SFX.point();
+  scoreDisp.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  if(curIdx>=order.length){
+    phase='roundclear';SFX.success();
+  }
+}
+
+function getPos(e){
+  const r=c.getBoundingClientRect();
+  const sx=c.width/r.width,sy=c.height/r.height;
+  const cx=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy=(e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  return {x:cx*sx,y:cy*sy};
+}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y);}
+
+function onDown(e){
+  e.preventDefault();
+  if(phase==='lost'){resetGame();return;}
+  if(phase==='roundclear'){round++;if(round>MAX_ROUND){phase='won';SFX.win();return;}buildRound();return;}
+  if(phase!=='play')return;
+  const p=getPos(e);
+  const peg=pegs[curIdx];
+  if(peg&&dist(p,peg)<26){dragging=true;dragPegIdx=curIdx;dragPath=[{x:peg.x,y:peg.y}];}
+}
+function onMove(e){
+  if(!dragging)return;
+  e.preventDefault();
+  const p=getPos(e);
+  dragPath.push(p);
+}
+function onUp(e){
+  if(!dragging)return;
+  e.preventDefault();
+  const p=getPos(e);
+  dragPath.push(p);
+  let hitLimb=-1;
+  limbs.forEach((l,i)=>{if(dist(p,l)<26)hitLimb=i;});
+  dragging=false;
+  if(hitLimb>=0){
+    completeThread(dragPegIdx,hitLimb,dragPath);
+  }else{
+    SFX.swoosh();
+  }
+  dragPath=[];dragPegIdx=-1;
+}
+c.addEventListener('mousedown',onDown);
+c.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+c.addEventListener('touchstart',onDown,{passive:false});
+c.addEventListener('touchmove',onMove,{passive:false});
+c.addEventListener('touchend',onUp,{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','Tab','Enter',' '].includes(e.key))e.preventDefault();
+  if(phase==='lost'||phase==='roundclear'){ if(e.key==='Enter'||e.key===' ')onDown({preventDefault:()=>{}}); return;}
+  if(phase!=='play')return;
+  if(e.key==='Enter'){
+    const peg=pegs[curIdx];
+    const l=limbs[selLimb];
+    completeThread(curIdx,selLimb,[{x:peg.x,y:peg.y},{x:l.x,y:l.y}]);
+  }else if(e.key==='ArrowLeft'){selLimb=(selLimb-1+limbs.length)%limbs.length;}
+  else if(e.key==='ArrowRight'){selLimb=(selLimb+1)%limbs.length;}
+});
+
+function resetGame(){score=0;lives=3;round=1;livesDisp.textContent=lives2str();scoreDisp.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',0).replace('{h}',hi);buildRound();}
+
+function drawPeg(p,isCur,isDone){
+  ctx.save();
+  ctx.fillStyle='#4a2f17';ctx.fillRect(p.x-6,p.y-24,12,24);
+  ctx.beginPath();ctx.arc(p.x,p.y,13,0,7);
+  ctx.fillStyle=isDone?'#5a4a35':(isCur?'#ffb347':'#9c7b4a');
+  ctx.fill();
+  if(isCur){ctx.shadowColor='#ffd27a';ctx.shadowBlur=16+Math.sin(flashT*0.4)*6;ctx.fill();ctx.shadowBlur=0;}
+  ctx.strokeStyle='#2a1810';ctx.lineWidth=2;ctx.stroke();
+  ctx.fillStyle='#1a1008';ctx.font='bold 13px Arial';ctx.textAlign='center';ctx.fillText(p.idx+1,p.x,p.y+4);
+  ctx.restore();
+}
+function drawLimb(l,i,isTarget,isSelected){
+  ctx.save();
+  ctx.beginPath();ctx.arc(l.x,l.y,15,0,7);
+  ctx.fillStyle=isTarget?'#ff8c42':'#7a5a9c';
+  ctx.fill();
+  if(isTarget){ctx.shadowColor='#ff8c42';ctx.shadowBlur=14+Math.sin(flashT*0.4)*6;ctx.fill();ctx.shadowBlur=0;}
+  if(isSelected&&kbMode==='limb'){ctx.strokeStyle='#fff';ctx.lineWidth=3;ctx.stroke();}
+  ctx.strokeStyle='#2a1810';ctx.lineWidth=2;ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.textAlign='center';ctx.fillText(l.label+1,l.x,l.y+4);
+  ctx.restore();
+}
+function drawString(path,color){
+  ctx.save();
+  ctx.strokeStyle=color;ctx.lineWidth=2.5;ctx.lineCap='round';
+  ctx.beginPath();
+  path.forEach((p,i)=>{if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);});
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPuppet(){
+  ctx.save();
+  ctx.translate(400,420);
+  ctx.fillStyle='#caa472';
+  ctx.beginPath();ctx.arc(0,-30,20,0,7);ctx.fill();
+  ctx.fillStyle='#8a3b2e';
+  ctx.fillRect(-18,-10,36,45);
+  ctx.restore();
+}
+
+function loop(){
+  ctx.save();
+  if(shakeT>0){shakeT--;ctx.translate((Math.random()-0.5)*6,(Math.random()-0.5)*6);}
+  ctx.clearRect(-10,-10,820,500);
+  const bg=ctx.createLinearGradient(0,0,0,480);
+  bg.addColorStop(0,'#1a0f08');bg.addColorStop(1,'#2e1c10');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,800,480);
+  // stage light glow
+  const glow=ctx.createRadialGradient(400,0,10,400,0,420);
+  glow.addColorStop(0,'rgba(255,200,120,0.18)');glow.addColorStop(1,'rgba(255,200,120,0)');
+  ctx.fillStyle=glow;ctx.fillRect(0,0,800,480);
+  // control bar
+  ctx.fillStyle='#3a2416';ctx.fillRect(60,36,680,16);
+  ctx.strokeStyle='#1a0f08';ctx.lineWidth=2;ctx.strokeRect(60,36,680,16);
+
+  drawPuppet();
+
+  strings.forEach(s=>drawString(s.path,'rgba(230,220,200,0.85)'));
+  pegs.forEach((p,i)=>drawPeg(p,i===curIdx&&phase==='play',i<curIdx));
+  limbs.forEach((l,i)=>drawLimb(l,i,order[curIdx]===i&&phase==='play',i===selLimb));
+
+  if(dragging){drawString(dragPath,'#ffd27a');}
+
+  ctx.fillStyle='#f0d9a8';ctx.font='bold 14px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('next_string_label','Thread string #{n}').replace('{n}',curIdx+1),400,20);
+
+  if(phase==='roundclear'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,800,480);
+    ctx.fillStyle='#ffd27a';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('round_clear_title','ROUND CLEAR!'),400,220);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('continue_hint','Tap / Click / Enter for next round'),400,260);
+  }
+  if(phase==='lost'){
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,800,480);
+    ctx.fillStyle='#ff6b6b';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('tangled_title','STRINGS TANGLED!'),400,220);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('restart_hint2','Tap / Click / Enter to try again'),400,260);
+  }
+  if(phase==='won'){
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,800,480);
+    ctx.fillStyle='#ffd27a';ctx.font='bold 34px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('master_puppeteer_title','MASTER PUPPETEER!'),400,220);
+    ctx.font='18px Arial';ctx.fillStyle='#fff';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {s}').replace('{s}',score),400,260);
+  }
+  levelDisp.textContent=I18N.t('round_label','Round {n}').replace('{n}',round);
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+buildRound();
+livesDisp.textContent=lives2str();
+scoreDisp.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',0).replace('{h}',hi);
+loop();
+</script></body></html>

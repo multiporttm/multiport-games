@@ -1,0 +1,232 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Falconry Telemetry Tracking</title><meta name="description" content="Play Falconry Telemetry Tracking free online — Follow the signal strength gauge while scanning the map to triangulate a lost falcon's transmitter before time and battery run out."><link rel="canonical" href="https://games.multiportllc.com/games/falconrytelemetrytracking"><meta property="og:title" content="Falconry Telemetry Tracking - Multiport Games"><meta property="og:description" content="Play Falconry Telemetry Tracking free online — Follow the signal strength gauge while scanning the map to triangulate a lost falcon's transmitter before time and battery run out."><meta property="og:url" content="https://games.multiportllc.com/games/falconrytelemetrytracking"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Falconry Telemetry Tracking - Multiport Games"><meta name="twitter:description" content="Play Falconry Telemetry Tracking free online — Follow the signal strength gauge while scanning the map to triangulate a lost falcon's transmitter before time and battery run out."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Falconry Telemetry Tracking","description":"Play Falconry Telemetry Tracking free online instantly. Follow a signal strength gauge while scanning a map and compass to triangulate a lost falcon's telemetry transmitter location before its battery and your search time run out. Search areas grow larger each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/falconrytelemetrytracking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b3a2e;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#d6e8c8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#meterWrap{max-width:600px;margin:0 auto 4px;background:#1b2a1c;border-radius:10px;padding:4px}
+#meterLabel{color:#bcd9a8;font-size:.75rem;text-align:center;margin-bottom:2px}
+#meterBar{height:16px;border-radius:8px;background:linear-gradient(90deg,#3a5a2c,#f2d24b,#d1472c);width:0%;transition:width .12s linear}
+#battWrap{max-width:600px;margin:0 auto 8px;background:#1b2a1c;border-radius:10px;padding:4px}
+#battBar{height:10px;border-radius:6px;background:linear-gradient(90deg,#4ecdc4,#a0f0e8);width:100%;transition:width .2s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Falconry Telemetry Tracking</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="pingsLbl">Pings: 0</span>
+      <span id="levelLbl">Area 1/8</span>
+    </div>
+    <div id="meterWrap"><div id="meterLabel">Signal Strength</div><div id="meterBar"></div></div>
+    <div id="battWrap"><div id="battBar"></div></div>
+    <canvas id="c" width="800" height="340"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click/Tap anywhere on the map to ping that spot. The <b>signal strength</b> gauge tells you how close you are — stronger signal means closer to the lost falcon's transmitter. Use arrow keys to nudge the cursor, <b>Space/Enter</b> to ping. Find it before the battery drains! Search areas grow larger each round.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const scoreLbl=document.getElementById('scoreLbl'),pingsLbl=document.getElementById('pingsLbl'),levelLbl=document.getElementById('levelLbl'),meterBar=document.getElementById('meterBar'),battBar=document.getElementById('battBar');
+const HI_KEY='falconrytelemetrytracking_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let score=0,round=1,maxRounds=8,pings=0;
+let mapW=720,mapH=260,mapX=40,mapY=40;
+let target={x:0,y:0};
+let battery=100,battRate=0;
+let cursor={x:400,y:170};
+let pingMarks=[]; // {x,y,strength,age}
+let state='intro'; // intro, playing, found, gameover
+let flashTimer=0,flashColor='',foundTimer=0;
+
+function areaScale(r){return 1+ (r-1)*0.12;} // larger search area each round -> bigger map radius conceptually (we scale max distance considered)
+
+function newRound(){
+  round=Math.min(round,maxRounds);
+  target.x=mapX+30+Math.random()*(mapW-60);
+  target.y=mapY+30+Math.random()*(mapH-60);
+  battery=100;
+  battRate=0.09+round*0.045;
+  pingMarks=[];
+  pings=0;
+  cursor.x=mapX+mapW/2;cursor.y=mapY+mapH/2;
+  state='playing';
+  levelLbl.textContent=I18N.t('area_level_label','Area {n}/{m}').replace('{n}',round).replace('{m}',maxRounds);
+}
+
+function resetGame(){
+  score=0;round=1;
+  newRound();
+}
+
+function maxDist(){return Math.hypot(mapW,mapH)*0.55*areaScale(round);}
+
+function strengthAt(x,y){
+  const d=Math.hypot(x-target.x,y-target.y);
+  const s=Math.max(0,1-d/maxDist());
+  return s;
+}
+
+function doPing(x,y){
+  if(state!=='playing')return;
+  const s=strengthAt(x,y);
+  pings++;
+  pingMarks.push({x,y,strength:s,age:0});
+  if(pingMarks.length>6)pingMarks.shift();
+  const d=Math.hypot(x-target.x,y-target.y);
+  if(d<16){
+    SFX.success();
+    const bonus=Math.round(battery*4 + Math.max(0,(10-pings))*20);
+    score+=100+bonus;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    state='found';flashColor='#6fae3e';flashTimer=28;foundTimer=55;
+  } else {
+    SFX.tick();
+  }
+}
+
+function onCanvasClick(e){
+  e.preventDefault();
+  if(state==='intro'||state==='gameover'){resetGame();SFX.click();return;}
+  const rect=c.getBoundingClientRect();
+  const scaleX=c.width/rect.width, scaleY=c.height/rect.height;
+  const clientX=(e.touches?e.touches[0].clientX:e.clientX);
+  const clientY=(e.touches?e.touches[0].clientY:e.clientY);
+  const x=(clientX-rect.left)*scaleX, y=(clientY-rect.top)*scaleY;
+  cursor.x=Math.max(mapX,Math.min(mapX+mapW,x));
+  cursor.y=Math.max(mapY,Math.min(mapY+mapH,y));
+  doPing(cursor.x,cursor.y);
+}
+c.addEventListener('click',onCanvasClick);
+c.addEventListener('touchstart',onCanvasClick,{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(state==='intro'||state==='gameover'){
+    if(e.code==='Space'||e.code==='Enter'){resetGame();SFX.click();}
+    return;
+  }
+  const step=14;
+  if(e.code==='ArrowLeft'){cursor.x=Math.max(mapX,cursor.x-step);e.preventDefault();}
+  else if(e.code==='ArrowRight'){cursor.x=Math.min(mapX+mapW,cursor.x+step);e.preventDefault();}
+  else if(e.code==='ArrowUp'){cursor.y=Math.max(mapY,cursor.y-step);e.preventDefault();}
+  else if(e.code==='ArrowDown'){cursor.y=Math.min(mapY+mapH,cursor.y+step);e.preventDefault();}
+  else if(e.code==='Space'||e.code==='Enter'){e.preventDefault();doPing(cursor.x,cursor.y);}
+});
+
+function drawMap(){
+  ctx.fillStyle='#355c3a';
+  ctx.fillRect(mapX,mapY,mapW,mapH);
+  ctx.strokeStyle='#4a7a4f';ctx.lineWidth=2;
+  ctx.strokeRect(mapX,mapY,mapW,mapH);
+  // terrain speckles
+  for(let i=0;i<40;i++){
+    const sx=mapX+((i*53)%mapW), sy=mapY+((i*97)%mapH);
+    ctx.fillStyle='rgba(255,255,255,0.05)';
+    ctx.beginPath();ctx.arc(sx,sy,3,0,Math.PI*2);ctx.fill();
+  }
+  // compass
+  ctx.save();
+  ctx.translate(mapX+mapW-36,mapY+36);
+  ctx.strokeStyle='#d6e8c8';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(0,0,22,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='#d6e8c8';ctx.font='bold 12px Arial';ctx.textAlign='center';
+  ctx.fillText('N',0,-10);ctx.fillText('S',0,18);
+  ctx.fillText('W',-14,4);ctx.fillText('E',14,4);
+  ctx.restore();
+}
+
+function drawPingMarks(){
+  pingMarks.forEach(p=>{
+    p.age++;
+    const r=8+p.age*0.6;
+    ctx.strokeStyle=`rgba(255,220,100,${Math.max(0,0.8-p.age*0.015)})`;
+    ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);ctx.stroke();
+    ctx.fillStyle='#ffd24b';
+    ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();
+  });
+}
+
+function drawCursor(){
+  ctx.strokeStyle='#ffffff';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(cursor.x-10,cursor.y);ctx.lineTo(cursor.x+10,cursor.y);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(cursor.x,cursor.y-10);ctx.lineTo(cursor.x,cursor.y+10);ctx.stroke();
+}
+
+function drawTargetFound(){
+  ctx.save();
+  ctx.translate(target.x,target.y);
+  ctx.fillStyle='#8a6c4a';
+  ctx.beginPath();ctx.arc(0,0,10,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#ffd24b';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(0,0,16,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='#2c2c2c';
+  ctx.beginPath();ctx.moveTo(-6,-10);ctx.lineTo(-14,-18);ctx.lineTo(-2,-16);ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.fillStyle='#1a2a1c';ctx.fillRect(0,0,800,340);
+  drawMap();
+
+  if(state==='playing'){
+    battery-=battRate;
+    if(battery<=0){
+      battery=0;state='gameover';SFX.lose();
+    }
+    const s=strengthAt(cursor.x,cursor.y);
+    meterBar.style.width=(s*100)+'%';
+  }
+  battBar.style.width=Math.max(0,battery)+'%';
+
+  drawPingMarks();
+  if(state==='found')drawTargetFound();
+  drawCursor();
+
+  if(flashTimer>0){
+    ctx.fillStyle=flashColor;ctx.globalAlpha=flashTimer/28*0.3;
+    ctx.fillRect(0,0,800,340);ctx.globalAlpha=1;flashTimer--;
+  }
+
+  if(state==='found'){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('telemetry_found','TRANSMITTER FOUND!'),400,320);
+    foundTimer--;
+    if(foundTimer<=0){
+      if(round>=maxRounds){state='gameover';SFX.win();}
+      else{round++;newRound();}
+    }
+  }
+
+  if(state==='intro'){
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('telemetry_title','FALCONRY TELEMETRY TRACKING'),400,150);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('telemetry_start_hint','Tap map / Space to begin'),400,190);
+  }
+
+  if(state==='gameover'){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,800,340);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    const won=round>=maxRounds&&battery>0;
+    ctx.fillText(won?I18N.t('telemetry_win','ALL TRANSMITTERS RECOVERED!'):I18N.t('telemetry_lose','BATTERY DIED'),400,160);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,200);
+  }
+
+  pingsLbl.textContent=I18N.t('pings_label','Pings: {p}').replace('{p}',pings);
+  scoreLbl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+
+  requestAnimationFrame(loop);
+}
+levelLbl.textContent=I18N.t('area_level_label','Area {n}/{m}').replace('{n}',round).replace('{m}',maxRounds);
+loop();
+</script></body></html>
