@@ -1,0 +1,327 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Batik Color Layering</title><meta name="description" content="Play Batik Color Layering free online — Apply wax and dye layers in the exact order shown on the recipe card to build the target multi-color batik pattern without ruining the piece."><link rel="canonical" href="https://games.multiportllc.com/games/batikcolorlayering"><meta property="og:title" content="Batik Color Layering - Multiport Games"><meta property="og:description" content="Play Batik Color Layering free online — Apply wax and dye layers in the exact order shown on the recipe card to build the target multi-color batik pattern without ruining the piece."><meta property="og:url" content="https://games.multiportllc.com/games/batikcolorlayering"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Batik Color Layering - Multiport Games"><meta name="twitter:description" content="Play Batik Color Layering free online — Apply wax and dye layers in the exact order shown on the recipe card to build the target multi-color batik pattern without ruining the piece."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Batik Color Layering","description":"Play Batik Color Layering free online instantly. Apply successive wax and dye layers to a batik cloth in the exact order shown on a recipe card to build up a target multi-color pattern. Applying a layer out of order ruins the piece. More layers are added to the recipe each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/batikcolorlayering","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1f1309;display:block;border-radius:8px;margin:0 auto}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#e8c07d;font-size:1.05rem;font-weight:700;padding:8px 10px;flex-wrap:wrap;gap:4px}
+#recipeWrap{background:rgba(0,0,0,.3);border-radius:10px;padding:10px;margin:0 10px 8px;color:#e8c07d;font-size:.85rem;font-weight:700;text-align:center}
+#recipeSteps{display:flex;justify-content:center;gap:6px;flex-wrap:wrap;margin-top:6px}
+.recipe-chip{padding:5px 10px;border-radius:14px;font-size:.78rem;font-weight:800;background:#333;color:#fff;border:2px solid #555}
+.recipe-chip.wax{background:#4a3a1a;border-color:#caa64a;color:#f0d98a}
+.recipe-chip.done{opacity:.35;text-decoration:line-through}
+.recipe-chip.current{outline:3px solid #fff;transform:scale(1.08)}
+#palette{display:flex;justify-content:center;gap:10px;margin:10px 0;flex-wrap:wrap}
+.swatch{width:54px;height:54px;border-radius:10px;cursor:pointer;border:3px solid rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-size:.7rem;color:#fff;font-weight:800;text-shadow:0 1px 2px #000;transition:transform .1s}
+.swatch:hover{transform:scale(1.08)}
+.swatch.wax{background:repeating-linear-gradient(45deg,#caa64a,#caa64a 4px,#e8d9a0 4px,#e8d9a0 8px)}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Batik Color Layering</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span id="level-display">Piece 1</span>
+    </div>
+    <div id="recipeWrap">
+      <div data-i18n="recipe_card_label">Recipe Card — apply in order:</div>
+      <div id="recipeSteps"></div>
+    </div>
+    <canvas id="c" width="420" height="420"></canvas>
+    <div id="palette"></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Follow the <b>Recipe Card</b> above: click the wax swatch or a dye color, in the exact order listed, to build up the target pattern on the cloth. Wax protects whatever is beneath it from the next dye bath. Apply a layer out of order and the piece is ruined. Use <b>1-6</b> on your keyboard or tap a swatch. More layers are added each round.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=420,H=420;
+const scoreDisplay=document.getElementById('score-display');
+const levelDisplay=document.getElementById('level-display');
+const recipeStepsEl=document.getElementById('recipeSteps');
+const paletteEl=document.getElementById('palette');
+
+const HI_KEY='batikcolorlayering_hi';
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),level=0;
+
+const DYES=[
+  {id:'crimson',name:'Crimson',hex:'#c23b3b'},
+  {id:'indigo',name:'Indigo',hex:'#2a3d8f'},
+  {id:'ochre',name:'Ochre',hex:'#c98a2c'},
+  {id:'teal',name:'Teal',hex:'#1f7a6c'},
+  {id:'violet',name:'Violet',hex:'#6b3fa0'},
+];
+const WAX={id:'wax',name:'Wax',hex:'#caa64a'};
+
+// regions of the cloth: concentric diamond "batik medallion" segments
+let regions=[]; // {path points list defining polygon in [0..1] space, layers:[colorId,...]}
+let recipe=[]; // sequence of {type:'wax'|'dye', id, regionIdx}
+let stepIndex=0;
+let gameState='playing';
+let msgTimer=0,msgText='';
+
+function buildRegions(n){
+  // n concentric rings around center, each ring split into 4 quadrant wedges for variety at higher levels
+  regions=[];
+  const rings=Math.min(3,1+Math.floor(level/3));
+  const wedges=level>=4?4:1;
+  for(let r=0;r<rings;r++){
+    for(let w=0;w<wedges;w++){
+      regions.push({ring:r,wedge:w,layers:[]});
+    }
+  }
+}
+
+function regionPath(reg,rings,wedges){
+  const cx=W/2,cy=H/2;
+  const maxR=170;
+  const rInner=reg.ring/rings*maxR;
+  const rOuter=(reg.ring+1)/rings*maxR;
+  const aStart=reg.wedge/wedges*Math.PI*2-Math.PI/2;
+  const aEnd=(reg.wedge+1)/wedges*Math.PI*2-Math.PI/2;
+  return {cx,cy,rInner,rOuter,aStart,aEnd};
+}
+
+function drawDiamondRing(cx,cy,rInner,rOuter,aStart,aEnd){
+  // draw a diamond-ish ring segment using rotated square approximation blended with arc for batik medallion look
+  ctx.beginPath();
+  const steps=24;
+  for(let i=0;i<=steps;i++){
+    const a=aStart+(aEnd-aStart)*i/steps;
+    const r=rOuter;
+    const x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  for(let i=steps;i>=0;i--){
+    const a=aStart+(aEnd-aStart)*i/steps;
+    const r=rInner;
+    const x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r;
+    ctx.lineTo(x,y);
+  }
+  ctx.closePath();
+}
+
+function colorFor(id){
+  if(id==='wax')return WAX.hex;
+  const d=DYES.find(d=>d.id===id);
+  return d?d.hex:'#888';
+}
+
+function nameFor(id){
+  if(id==='wax')return I18N.t('wax_label','Wax');
+  const d=DYES.find(d=>d.id===id);
+  return d?d.name:id;
+}
+
+function newPiece(){
+  level++;
+  buildRegions(level);
+  // build a recipe: for each region, alternate wax then dye, possibly multiple rounds for higher levels
+  recipe=[];
+  const layerRounds=Math.min(3,1+Math.floor((level-1)/3));
+  const dyePool=DYES.slice(0,Math.min(DYES.length,2+Math.floor(level/2)));
+  regions.forEach((reg,idx)=>{
+    for(let rnd=0;rnd<layerRounds;rnd++){
+      // wax some regions to preserve earlier color, dye others
+      if(rnd>0){
+        recipe.push({type:'wax',id:'wax',regionIdx:idx});
+      }
+      const dye=dyePool[(idx+rnd*2)%dyePool.length];
+      recipe.push({type:'dye',id:dye.id,regionIdx:idx});
+    }
+  });
+  // shuffle order a bit but keep each region's own sequence relative order via global interleave by round
+  recipe=interleaveByRound(recipe);
+  stepIndex=0;
+  gameState='playing';
+  levelDisplay.textContent=I18N.t('piece_label','Piece {n}').replace('{n}',level);
+  renderRecipe();
+  renderPalette();
+}
+
+function interleaveByRound(steps){
+  // group by region, then flatten round-robin so recipe reads left-to-right across regions per "round"
+  const byRegion={};
+  steps.forEach(s=>{(byRegion[s.regionIdx]=byRegion[s.regionIdx]||[]).push(s);});
+  const keys=Object.keys(byRegion);
+  const maxLen=Math.max(...keys.map(k=>byRegion[k].length));
+  const out=[];
+  for(let i=0;i<maxLen;i++){
+    keys.forEach(k=>{ if(byRegion[k][i])out.push(byRegion[k][i]); });
+  }
+  return out;
+}
+
+function renderRecipe(){
+  recipeStepsEl.innerHTML='';
+  recipe.forEach((s,i)=>{
+    const chip=document.createElement('span');
+    chip.className='recipe-chip'+(s.type==='wax'?' wax':'')+(i<stepIndex?' done':'')+(i===stepIndex?' current':'');
+    chip.textContent=nameFor(s.id)+' R'+(s.regionIdx+1);
+    recipeStepsEl.appendChild(chip);
+  });
+}
+
+function renderPalette(){
+  paletteEl.innerHTML='';
+  const waxSw=document.createElement('div');
+  waxSw.className='swatch wax';
+  waxSw.textContent='WAX';
+  waxSw.onclick=()=>applyLayer('wax');
+  paletteEl.appendChild(waxSw);
+  const dyePool=DYES.slice(0,Math.min(DYES.length,2+Math.floor(level/2)));
+  dyePool.forEach((d,i)=>{
+    const sw=document.createElement('div');
+    sw.className='swatch';
+    sw.style.background=d.hex;
+    sw.textContent=d.name;
+    sw.dataset.key=String(i+2);
+    sw.onclick=()=>applyLayer(d.id);
+    paletteEl.appendChild(sw);
+  });
+}
+
+function activeRegionIdx(){
+  if(stepIndex>=recipe.length)return -1;
+  return recipe[stepIndex].regionIdx;
+}
+
+function applyLayer(id){
+  if(gameState!=='playing')return;
+  if(stepIndex>=recipe.length)return;
+  const expected=recipe[stepIndex];
+  const regionIdx=activeRegionIdx();
+  if(expected.id===id){
+    regions[regionIdx].layers.push(id);
+    stepIndex++;
+    SFX.select();
+    renderRecipe();
+    if(stepIndex>=recipe.length){
+      completeLevel();
+    }
+  } else {
+    ruin();
+  }
+}
+
+function ruin(){
+  gameState='ruined';
+  SFX.fail();
+  msgText=I18N.t('layer_wrong_msg','Wrong layer! The piece is ruined.');
+  msgTimer=90;
+}
+
+function completeLevel(){
+  gameState='done';
+  const bonus=50+level*15+recipe.length*3;
+  score+=bonus;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  SFX.win();
+  msgText=I18N.t('piece_complete_msg','Piece complete! +{b} points').replace('{b}',bonus);
+  msgTimer=90;
+  updateScore();
+  setTimeout(()=>{ newPiece(); },1300);
+}
+
+function updateScore(){
+  scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+
+function resetGame(){
+  score=0;level=0;
+  newPiece();
+  updateScore();
+}
+
+document.addEventListener('keydown',e=>{
+  if(gameState==='ruined'){
+    if(e.code==='Space'){SFX.click();resetGame();}
+    return;
+  }
+  if(e.key==='1')applyLayer('wax');
+  else {
+    const n=parseInt(e.key,10);
+    if(n>=2&&n<=6){
+      const dyePool=DYES.slice(0,Math.min(DYES.length,2+Math.floor(level/2)));
+      const d=dyePool[n-2];
+      if(d)applyLayer(d.id);
+    }
+  }
+});
+c.addEventListener('click',()=>{ if(gameState==='ruined')resetGame(); });
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createRadialGradient(W/2,H/2,20,W/2,H/2,250);
+  bg.addColorStop(0,'#3a2414');bg.addColorStop(1,'#15100a');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  const rings=Math.min(3,1+Math.floor(level/3));
+  const wedges=level>=4?4:1;
+  const active=activeRegionIdx();
+
+  regions.forEach((reg,idx)=>{
+    const p=regionPath(reg,rings,wedges);
+    drawDiamondRing(p.cx,p.cy,p.rInner,p.rOuter,p.aStart,p.aEnd);
+    // base cloth color, then layers blended: wax layers "lock" previous color (drawn as mild sheen), dye layers mix additively
+    let col='#e8d9b8';
+    let waxed=false;
+    reg.layers.forEach(l=>{
+      if(l==='wax'){ waxed=true; }
+      else {
+        if(!waxed){ col=colorFor(l); }
+        waxed=false;
+      }
+    });
+    ctx.fillStyle=col;
+    ctx.fill();
+    if(reg.layers.includes('wax')){
+      ctx.save();ctx.clip();
+      ctx.fillStyle='rgba(202,166,74,0.18)';
+      ctx.fillRect(p.cx-200,p.cy-200,400,400);
+      ctx.restore();
+    }
+    ctx.lineWidth=idx===active&&gameState==='playing'?3:1;
+    ctx.strokeStyle=idx===active&&gameState==='playing'?'#fff':'rgba(0,0,0,0.4)';
+    ctx.stroke();
+  });
+
+  // center medallion motif
+  ctx.save();
+  ctx.translate(W/2,H/2);
+  ctx.strokeStyle='rgba(255,255,255,0.15)';
+  ctx.lineWidth=1.5;
+  for(let i=0;i<6;i++){
+    ctx.save();ctx.rotate(i*Math.PI/3);
+    ctx.beginPath();ctx.ellipse(0,0,8,18,0,0,Math.PI*2);ctx.stroke();
+    ctx.restore();
+  }
+  ctx.restore();
+
+  if(gameState==='ruined'){
+    ctx.fillStyle='rgba(80,10,10,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('ruined_title2','PIECE RUINED'),W/2,H/2-6);
+    ctx.font='15px Arial';
+    ctx.fillText(I18N.t('restart_hint3','Tap or press Space to try again'),W/2,H/2+22);
+  } else if(gameState==='done'){
+    ctx.fillStyle='rgba(20,60,20,0.25)';ctx.fillRect(0,0,W,H);
+  }
+  if(msgTimer>0){
+    msgTimer--;
+    ctx.fillStyle='#fff';ctx.font='bold 17px Arial';ctx.textAlign='center';
+    ctx.globalAlpha=Math.min(1,msgTimer/20);
+    ctx.fillText(msgText,W/2,30);
+    ctx.globalAlpha=1;
+  }
+  requestAnimationFrame(draw);
+}
+
+resetGame();
+draw();
+</script></body></html>

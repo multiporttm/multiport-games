@@ -1,0 +1,301 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Basket Weaving Reed Soaking</title><meta name="description" content="Play Basket Weaving Reed Soaking free online — Watch each tub's flexibility gauge and pull the reed bundle the moment it peaks, not too stiff and not too mushy, before time runs out."><link rel="canonical" href="https://games.multiportllc.com/games/basketweavingreedsoaking"><meta property="og:title" content="Basket Weaving Reed Soaking - Multiport Games"><meta property="og:description" content="Play Basket Weaving Reed Soaking free online — Watch each tub's flexibility gauge and pull the reed bundle the moment it peaks, not too stiff and not too mushy, before time runs out."><meta property="og:url" content="https://games.multiportllc.com/games/basketweavingreedsoaking"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Basket Weaving Reed Soaking - Multiport Games"><meta name="twitter:description" content="Play Basket Weaving Reed Soaking free online — Watch each tub's flexibility gauge and pull the reed bundle the moment it peaks, not too stiff and not too mushy, before time runs out."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Basket Weaving Reed Soaking","description":"Play Basket Weaving Reed Soaking free online instantly. Manage multiple bundles of weaving reed soaking in water tubs in a rustic countryside workshop, pulling each bundle out exactly when its flexibility gauge peaks before its timer runs dry. Pull too early and the reed is still stiff; too late and it turns mushy. More tubs appear and timing grows tighter every round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/basketweavingreedsoaking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3a2a18;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#f3dcb3;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px;color:#e9c46a}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Basket Weaving Reed Soaking</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span id="level-display">Round 1</span>
+      <span id="lives" class="lives">♥♥♥</span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click, tap, or press the <b>number key</b> matching a tub to pull its reed bundle. Each bundle's flexibility gauge rises from stiff to a green <b>peak zone</b>, then sinks into mushy — pull it while the needle sits in the green band! More tubs appear and the peak window shrinks each round. Three bad pulls (or a bundle left to spoil) and you're done.</div>
+</div>
+<script>
+const canvas=document.getElementById('c'),ctx=canvas.getContext('2d');
+const W=800,H=440;
+const scoreEl=document.getElementById('score-display'),levelEl=document.getElementById('level-display'),livesEl=document.getElementById('lives');
+const KEY='basketweavingreedsoaking_hi';
+
+let score=0,hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let level=1,lives=3,gameOver=false,started=false;
+let tubs=[],lastTime=null,roundTimer=0,roundLen=0,pulledCount=0,needCount=0,msg='',msgT=0;
+
+function updateHud(){
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  levelEl.textContent=I18N.t('round_label','Round {n}').replace('{n}',level);
+  livesEl.textContent='♥'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+}
+
+function tubCountFor(lv){return Math.min(3+Math.floor((lv-1)/1),8);}
+function peakWidthFor(lv){return Math.max(0.05,0.16-lv*0.012);}
+function lifespanFor(lv){return Math.max(260,520-lv*18);}
+
+function layoutTubs(n){
+  const cols=Math.min(n,4);
+  const rows=Math.ceil(n/cols);
+  const cellW=W/cols,cellH=(H-40)/rows;
+  const arr=[];
+  for(let i=0;i<n;i++){
+    const cx=cellW*(i%cols)+cellW/2;
+    const cy=40+cellH*Math.floor(i/cols)+cellH/2;
+    arr.push({idx:i,cx,cy,r:Math.min(cellW,cellH)/2-14,pulled:false,ruined:false,
+      phase:Math.random()*0.3,
+      life:lifespanFor(level),
+      t:0,
+      peakWidth:peakWidthFor(level),
+      peakCenter:0.45+Math.random()*0.15});
+  }
+  return arr;
+}
+
+function startRound(){
+  const n=tubCountFor(level);
+  needCount=n;
+  pulledCount=0;
+  tubs=layoutTubs(n);
+  roundLen=lifespanFor(level)*2.2;
+  roundTimer=0;
+  updateHud();
+}
+
+function reset(){
+  score=0;level=1;lives=3;gameOver=false;started=false;lastTime=null;msg='';msgT=0;
+  startRound();
+}
+
+function flexAt(tub){
+  // value 0..1 over tub.t relative to tub.life, rising then falling after peak, zero before phase delay
+  const delay=tub.phase*tub.life;
+  const t=tub.t-delay;
+  if(t<0)return 0;
+  const p=t/tub.life;
+  if(p>=1.4)return 0; // fully spoiled/dried
+  if(p<=tub.peakCenter){
+    return Math.min(1,p/tub.peakCenter);
+  }else{
+    const fall=(p-tub.peakCenter)/(1.4-tub.peakCenter);
+    return Math.max(0,1-fall);
+  }
+}
+
+function tubState(tub){
+  const v=flexAt(tub);
+  const lo=tub.peakCenter-tub.peakWidth/2*2.6+0; // reuse width around flex=1 timeframe
+  // classify by value & whether past peak
+  const delay=tub.phase*tub.life;
+  const p=(tub.t-delay)/tub.life;
+  if(p<0)return 'waiting';
+  if(p<=tub.peakCenter-tub.peakWidth)return 'stiff';
+  if(p<=tub.peakCenter+tub.peakWidth)return 'peak';
+  if(p<1.4)return 'softening';
+  return 'spoiled';
+}
+
+function pullTub(i){
+  if(gameOver||!started)return;
+  const tub=tubs[i];
+  if(!tub||tub.pulled||tub.ruined)return;
+  const st=tubState(tub);
+  tub.pulled=true;
+  if(st==='peak'){
+    score+=15+level;
+    pulledCount++;
+    msg=I18N.t('perfect_pull','Perfect pull!');msgT=60;
+    SFX.success();
+  }else if(st==='waiting'){
+    msg=I18N.t('too_early','Too early — still soaking!');msgT=60;
+    lives--;SFX.error();
+  }else{
+    msg=(st==='stiff')?I18N.t('too_stiff','Too stiff — pulled too soon!'):I18N.t('too_mushy','Too mushy — pulled too late!');
+    msgT=60;
+    lives--;SFX.error();
+  }
+  updateHud();
+  if(lives<=0){endGame();return;}
+  checkRoundComplete();
+}
+
+function checkRoundComplete(){
+  const remaining=tubs.filter(t=>!t.pulled&&!t.ruined);
+  if(remaining.length===0){
+    if(pulledCount>=needCount*0.6){
+      level++;
+      msg=I18N.t('round_clear','Round clear!');msgT=70;
+      SFX.levelup();
+      startRound();
+    }else{
+      endGame();
+    }
+  }
+}
+
+function endGame(){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+  SFX.lose();
+  updateHud();
+}
+
+function handleInput(i){
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  pullTub(i);
+}
+
+canvas.addEventListener('click',e=>{
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  const rect=canvas.getBoundingClientRect();
+  const x=(e.clientX-rect.left)*(W/rect.width);
+  const y=(e.clientY-rect.top)*(H/rect.height);
+  for(const t of tubs){
+    const dx=x-t.cx,dy=y-t.cy;
+    if(dx*dx+dy*dy<=t.r*t.r){pullTub(t.idx);return;}
+  }
+});
+canvas.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  const rect=canvas.getBoundingClientRect();
+  const touch=e.changedTouches[0];
+  const x=(touch.clientX-rect.left)*(W/rect.width);
+  const y=(touch.clientY-rect.top)*(H/rect.height);
+  for(const t of tubs){
+    const dx=x-t.cx,dy=y-t.cy;
+    if(dx*dx+dy*dy<=t.r*t.r){pullTub(t.idx);return;}
+  }
+},{passive:false});
+document.addEventListener('keydown',e=>{
+  if(e.key>='1'&&e.key<='9'){
+    const idx=parseInt(e.key,10)-1;
+    e.preventDefault();
+    handleInput(idx);
+  }else if(e.code==='Space'){
+    e.preventDefault();
+    if(!started)started=true;else if(gameOver)reset();
+  }
+});
+
+function drawTub(t){
+  const st=t.pulled?'pulled':tubState(t);
+  ctx.save();
+  ctx.translate(t.cx,t.cy);
+  // tub rim
+  ctx.beginPath();ctx.arc(0,0,t.r,0,Math.PI*2);
+  ctx.fillStyle='#4a3524';ctx.fill();
+  ctx.lineWidth=6;ctx.strokeStyle='#2b1d12';ctx.stroke();
+  // water
+  ctx.beginPath();ctx.arc(0,0,t.r-10,0,Math.PI*2);
+  ctx.fillStyle=t.pulled?'#2c4a52':'#3d6b78';ctx.fill();
+  // reed bundle (if not pulled)
+  if(!t.pulled){
+    const v=flexAt(t);
+    const stiff=1-v;
+    ctx.save();
+    for(let k=-2;k<=2;k++){
+      ctx.beginPath();
+      const bend=v*18;
+      ctx.moveTo(k*4,-t.r+14);
+      ctx.quadraticCurveTo(k*4+bend,-2,k*4+bend*0.6,t.r-16);
+      ctx.strokeStyle=`rgb(${210-Math.floor(stiff*30)},${170+Math.floor(v*20)},${90+Math.floor(v*10)})`;
+      ctx.lineWidth=5;
+      ctx.stroke();
+    }
+    ctx.restore();
+  }else{
+    ctx.fillStyle='#caa15a';ctx.font='bold 13px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('pulled_label','PULLED'),0,4);
+  }
+  ctx.restore();
+
+  // number label
+  ctx.fillStyle='#f3dcb3';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText('['+(t.idx+1)+']',t.cx,t.cy+t.r+16);
+
+  // gauge bar
+  const gx=t.cx-32,gy=t.cy-t.r-20,gw=64,gh=10;
+  ctx.fillStyle='#1c1208';ctx.fillRect(gx,gy,gw,gh);
+  const v=t.pulled?0:flexAt(t);
+  let color='#8aa9c9';
+  if(st==='peak')color='#5ec26a';
+  else if(st==='stiff')color='#7fb0d8';
+  else if(st==='softening')color='#b5713f';
+  else if(st==='spoiled')color='#6b4226';
+  ctx.fillStyle=color;
+  ctx.fillRect(gx,gy,gw*Math.max(0.03,v),gh);
+  // peak band marker
+  const bandLo=Math.max(0,t.peakCenter-t.peakWidth);
+  const bandHi=Math.min(1.4,t.peakCenter+t.peakWidth);
+  ctx.fillStyle='rgba(94,194,106,0.5)';
+  ctx.fillRect(gx+gw*(bandLo/1.4),gy-3,gw*((bandHi-bandLo)/1.4),3);
+  ctx.strokeStyle='#5a4428';ctx.strokeRect(gx,gy,gw,gh);
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#2a1d12');grad.addColorStop(1,'#4a3524');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+  // workshop beams
+  ctx.strokeStyle='#5a4428';ctx.lineWidth=2;
+  for(let x=0;x<W;x+=100){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+
+  if(!started){
+    ctx.fillStyle='#f3dcb399';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint_soak','Tap or press any number to start'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  if(!gameOver){
+    tubs.forEach(t=>{ if(!t.pulled)t.t+=dt; });
+    tubs.forEach(t=>{
+      if(!t.pulled&&!t.ruined&&tubState(t)==='spoiled'){
+        t.ruined=true;lives--;SFX.error();
+        msg=I18N.t('spoiled_msg','A bundle spoiled!');msgT=60;
+      }
+    });
+    if(lives<=0&&!gameOver){endGame();}
+    else checkRoundComplete();
+  }
+
+  tubs.forEach(drawTub);
+
+  if(msgT>0){
+    msgT-=dt;
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(msg,W/2,30);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-10);
+    ctx.font='20px Arial';ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+28);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+reset();
+loop();
+</script></body></html>

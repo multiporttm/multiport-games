@@ -1,0 +1,293 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Batik Brush Detailing</title><meta name="description" content="Play Batik Brush Detailing free online — Trace your brush smoothly along the glowing guide path to hand-paint fine dye detail lines onto a batik piece before the dye dries."><link rel="canonical" href="https://games.multiportllc.com/games/batikbrushdetailing"><meta property="og:title" content="Batik Brush Detailing - Multiport Games"><meta property="og:description" content="Play Batik Brush Detailing free online — Trace your brush smoothly along the glowing guide path to hand-paint fine dye detail lines onto a batik piece before the dye dries."><meta property="og:url" content="https://games.multiportllc.com/games/batikbrushdetailing"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Batik Brush Detailing - Multiport Games"><meta name="twitter:description" content="Play Batik Brush Detailing free online — Trace your brush smoothly along the glowing guide path to hand-paint fine dye detail lines onto a batik piece before the dye dries."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Batik Brush Detailing","description":"Play Batik Brush Detailing free online instantly. Hand-paint fine detail lines of dye onto a batik piece by tracing a brush smoothly along a glowing guide path before the dye dries. Paths grow more intricate, with sharper turns and tighter tolerances, with every piece. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/batikbrushdetailing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#241510;display:block;border-radius:8px;touch-action:none;cursor:crosshair;margin:0 auto}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#e8c07d;font-size:1.05rem;font-weight:700;padding:8px 10px;flex-wrap:wrap;gap:4px}
+#dryWrap{margin:4px 10px 8px;background:rgba(0,0,0,.3);border-radius:10px;padding:8px}
+#dryLabel{color:#e8c07d;font-size:.85rem;font-weight:700;margin-bottom:4px}
+#dryBar{position:relative;height:14px;background:#1a1008;border-radius:7px;overflow:hidden}
+#dryFill{position:absolute;top:0;bottom:0;left:0;width:100%;background:linear-gradient(90deg,#7ec850,#e8c07d,#e94560);border-radius:7px;transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Batik Brush Detailing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span id="level-display">Piece 1</span>
+    </div>
+    <div id="dryWrap">
+      <div id="dryLabel">Dye Wetness</div>
+      <div id="dryBar"><div id="dryFill"></div></div>
+    </div>
+    <canvas id="c" width="700" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Press and hold on the glowing bead, then trace your brush smoothly along the guide path as it travels the design before the dye dries. Stray too far from the path and you lose accuracy; let the <b>Dye Wetness</b> bar run out and the detail line is ruined. Complete the path to finish the motif. Paths get longer and twistier each round.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=700,H=440;
+const scoreDisplay=document.getElementById('score-display');
+const levelDisplay=document.getElementById('level-display');
+const dryFill=document.getElementById('dryFill');
+
+const HI_KEY='batikbrushdetailing_hi';
+let score=0,hi=parseInt(localStorage.getItem(HI_KEY)||'0',10),level=1;
+let path=[]; // array of {x,y}
+let beadT=0; // 0..1 progress along path, bead moves automatically
+let brushing=false;
+let brushPos={x:0,y:0};
+let accuracy=100; // 0-100 running accuracy
+let wetness=100;
+let gameState='ready'; // ready, playing, dried, done
+let msgTimer=0,msgText='';
+let painted=[]; // trail of painted points {x,y,ok}
+let beadSpeed=0.00065;
+let tolerance=28;
+
+function genPath(lvl){
+  // generate an intricate closed-ish batik motif path: lotus/star curve via parametric function with increasing harmonics
+  const pts=[];
+  const cx=W/2,cy=H/2+10;
+  const baseR=120+Math.min(60,lvl*4);
+  const petals=3+Math.floor(lvl/2);
+  const wobble=0.15+Math.min(0.35,lvl*0.03);
+  const N=240+lvl*20;
+  for(let i=0;i<=N;i++){
+    const t=i/N*Math.PI*2;
+    const r=baseR*(1+wobble*Math.sin(petals*t))*(0.85+0.15*Math.sin(t*2+lvl));
+    const x=cx+Math.cos(t)*r;
+    const y=cy+Math.sin(t)*r*0.82;
+    pts.push({x,y});
+  }
+  return pts;
+}
+
+function newPiece(){
+  path=genPath(level);
+  beadT=0;
+  accuracy=100;
+  wetness=100;
+  painted=[];
+  gameState='ready';
+  beadSpeed=0.00055+level*0.00004;
+  tolerance=Math.max(14,28-level*1.2);
+  levelDisplay.textContent=I18N.t('piece_label2','Piece {n}').replace('{n}',level);
+  updateDryUI();
+}
+
+function resetGame(){
+  score=0;level=1;
+  newPiece();
+  updateScore();
+}
+
+function updateDryUI(){
+  dryFill.style.width=Math.max(0,wetness)+'%';
+}
+function updateScore(){
+  scoreDisplay.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+}
+
+function pos(e){
+  const r=c.getBoundingClientRect();
+  const touch=e.touches&&e.touches[0];
+  const cx=touch?touch.clientX:e.clientX;
+  const cy=touch?touch.clientY:e.clientY;
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+
+function bezierPointAt(t){
+  const idx=Math.min(path.length-1,Math.floor(t*(path.length-1)));
+  return path[idx];
+}
+
+function start(e){
+  e.preventDefault();
+  const p=pos(e);
+  if(gameState==='ready'){
+    const bp=bezierPointAt(beadT);
+    if(Math.hypot(p.x-bp.x,p.y-bp.y)<34){
+      gameState='playing';
+      brushing=true;
+      brushPos=p;
+      SFX.swoosh();
+    }
+  } else if(gameState==='playing'){
+    brushing=true;
+    brushPos=p;
+  } else if(gameState==='dried'){
+    resetGame();
+  }
+}
+function move(e){
+  if(!brushing||gameState!=='playing')return;
+  e.preventDefault();
+  brushPos=pos(e);
+}
+function end(){
+  brushing=false;
+}
+c.addEventListener('mousedown',start);
+c.addEventListener('mousemove',move);
+window.addEventListener('mouseup',end);
+c.addEventListener('touchstart',start,{passive:false});
+c.addEventListener('touchmove',move,{passive:false});
+c.addEventListener('touchend',e=>{end();},{passive:false});
+
+// keyboard controls: arrow keys nudge brush position for accessibility
+document.addEventListener('keydown',e=>{
+  if(gameState==='dried'&&e.code==='Space'){e.preventDefault();SFX.click();resetGame();return;}
+  if(gameState==='ready'&&(e.code==='Space'||e.code==='Enter')){
+    gameState='playing';brushing=true;
+    brushPos=bezierPointAt(beadT);
+    SFX.swoosh();
+    return;
+  }
+  if(gameState!=='playing')return;
+  const step=10;
+  if(e.code==='ArrowLeft'){brushPos.x-=step;brushing=true;}
+  if(e.code==='ArrowRight'){brushPos.x+=step;brushing=true;}
+  if(e.code==='ArrowUp'){brushPos.y-=step;brushing=true;}
+  if(e.code==='ArrowDown'){brushPos.y+=step;brushing=true;}
+});
+
+function dry(){
+  gameState='dried';
+  SFX.fail();
+  msgText=I18N.t('dried_msg','The dye dried! Detail line ruined.');
+  msgTimer=90;
+}
+
+function completePiece(){
+  gameState='done';
+  const bonus=Math.round(60+level*18+accuracy*1.2);
+  score+=bonus;
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+  SFX.win();
+  msgText=I18N.t('piece_complete_msg2','Exquisite detail! +{b} points ({a}% accuracy)').replace('{b}',bonus).replace('{a}',Math.round(accuracy));
+  msgTimer=100;
+  updateScore();
+  setTimeout(()=>{ level++; newPiece(); },1400);
+}
+
+function stepGame(dt){
+  if(gameState!=='playing')return;
+  beadT+=beadSpeed*dt;
+  wetness-=0.028*dt;
+  if(wetness<=0){ dry(); return; }
+
+  const bp=bezierPointAt(beadT);
+  if(brushing){
+    const d=Math.hypot(brushPos.x-bp.x,brushPos.y-bp.y);
+    const ok=d<tolerance;
+    painted.push({x:brushPos.x,y:brushPos.y,ok});
+    if(ok){
+      accuracy=Math.min(100,accuracy+0.06*dt);
+      wetness=Math.min(100,wetness+0.01*dt);
+    } else {
+      accuracy=Math.max(0,accuracy-0.12*dt);
+    }
+  } else {
+    accuracy=Math.max(0,accuracy-0.05*dt);
+  }
+
+  if(beadT>=1){
+    completePiece();
+  }
+}
+
+let lastTime=null;
+function draw(){
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  if(gameState==='playing')stepGame(dt);
+
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#3a2414');bg.addColorStop(1,'#1c1109');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+  // cloth weave
+  ctx.strokeStyle='rgba(232,192,125,0.05)';
+  for(let x=0;x<W;x+=8){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+
+  // guide path (faint)
+  ctx.beginPath();
+  path.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y); });
+  ctx.closePath();
+  ctx.strokeStyle='rgba(232,192,125,0.25)';
+  ctx.lineWidth=tolerance*2;
+  ctx.lineJoin='round';
+  ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,0.5)';
+  ctx.lineWidth=1.5;
+  ctx.stroke();
+
+  // painted trail
+  ctx.lineCap='round';
+  for(let i=1;i<painted.length;i++){
+    const a=painted[i-1],b=painted[i];
+    if(Math.hypot(b.x-a.x,b.y-a.y)>40)continue;
+    ctx.strokeStyle=b.ok?'#c23b3b':'rgba(233,69,96,0.5)';
+    ctx.lineWidth=b.ok?5:3;
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
+  }
+
+  // bead
+  if(gameState==='ready'||gameState==='playing'){
+    const bp=bezierPointAt(beadT);
+    const glow=0.5+0.5*Math.sin(Date.now()/120);
+    ctx.beginPath();
+    ctx.arc(bp.x,bp.y,10+glow*4,0,Math.PI*2);
+    ctx.fillStyle=`rgba(255,215,120,${0.7+glow*0.3})`;
+    ctx.shadowColor='#ffd700';ctx.shadowBlur=18;
+    ctx.fill();
+    ctx.shadowBlur=0;
+  }
+
+  // brush cursor
+  if(brushing&&gameState==='playing'){
+    ctx.beginPath();
+    ctx.arc(brushPos.x,brushPos.y,6,0,Math.PI*2);
+    ctx.fillStyle='#fff';
+    ctx.fill();
+  }
+
+  if(gameState==='ready'){
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('ready_hint','Hold the glowing bead to begin'),W/2,36);
+  }
+
+  if(gameState==='dried'){
+    ctx.fillStyle='rgba(80,10,10,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('dried_title','DYE DRIED'),W/2,H/2-8);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint5','Tap or press Space to try again'),W/2,H/2+24);
+  } else if(gameState==='done'){
+    ctx.fillStyle='rgba(20,60,20,0.25)';ctx.fillRect(0,0,W,H);
+  }
+
+  if(msgTimer>0){
+    msgTimer--;
+    ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+    ctx.globalAlpha=Math.min(1,msgTimer/20);
+    ctx.fillText(msgText,W/2,H-20);
+    ctx.globalAlpha=1;
+  }
+
+  updateDryUI();
+  requestAnimationFrame(draw);
+}
+
+resetGame();
+draw();
+</script></body></html>
