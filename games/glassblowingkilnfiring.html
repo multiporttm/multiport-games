@@ -1,0 +1,324 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Glassblowing Kiln Firing</title><meta name="description" content="Play Glassblowing Kiln Firing free online — Manage a kiln's temperature ramp and hold schedule for a fused glass piece without causing thermal shock cracks."><link rel="canonical" href="https://games.multiportllc.com/games/glassblowingkilnfiring"><meta property="og:title" content="Glassblowing Kiln Firing - Multiport Games"><meta property="og:description" content="Play Glassblowing Kiln Firing free online — Manage a kiln's temperature ramp and hold schedule for a fused glass piece without causing thermal shock cracks."><meta property="og:url" content="https://games.multiportllc.com/games/glassblowingkilnfiring"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Glassblowing Kiln Firing - Multiport Games"><meta name="twitter:description" content="Play Glassblowing Kiln Firing free online — Manage a kiln's temperature ramp and hold schedule for a fused glass piece without causing thermal shock cracks."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Glassblowing Kiln Firing","description":"Play Glassblowing Kiln Firing free online instantly. Manage a kiln's temperature ramp-up and hold schedule for a fused glass piece, adjusting heat within a safe curve shown on a chart to avoid thermal shock cracking, across longer, trickier firing schedules each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/glassblowingkilnfiring","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#140a08;display:block;border-radius:8px;cursor:pointer;touch-action:none}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#ffb74d;font-size:1.05rem;font-weight:700;padding:8px 10px;flex-wrap:wrap;gap:4px}
+#lives{color:#ff6b6b}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Glassblowing Kiln Firing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span id="level-display">Firing 1</span>
+      <span id="lives">♥♥♥</span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">A safe temperature curve (the gray band) scrolls across the chart. Hold <b>Up Arrow</b> / <b>W</b> / the top half of the screen to fire the burners and raise the kiln temperature; release (or hold <b>Down Arrow</b> / <b>S</b> / the bottom half) to let it cool. Keep the glowing temperature line inside the safe band all the way across the chart — straying out risks thermal shock and cracks the piece. Schedules get longer and the safe band narrower each round!</div>
+</div>
+<script>
+const canvas=document.getElementById('c'),ctx=canvas.getContext('2d');
+const W=800,H=440;
+const scoreEl=document.getElementById('score-display'),levelEl=document.getElementById('level-display'),livesEl=document.getElementById('lives');
+
+let score=0,hi=parseInt(localStorage.getItem('glassblowingkilnfiring_hi')||'0',10);
+let level=1,lives=3,gameOver=false,started=false;
+
+let temp=0.08,heating=false,cooling=false;
+let progress=0,duration=1,schedule=[],resultTimer=0,resultText='',resultOk=false,crackFlash=0;
+let strayTime=0;
+let tempHistory=[];
+
+function updateHud(){
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  levelEl.textContent=I18N.t('firing_label','Firing {n}').replace('{n}',level);
+  livesEl.textContent='♥'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+}
+
+// schedule: list of {t0,t1,low,high} segments describing the safe band over normalized time 0..1
+function genSchedule(lv){
+  const segs=3+Math.min(lv,5);
+  const bandWidth=Math.max(0.09,0.26-lv*0.015);
+  const pts=[];
+  let cur=0.1+Math.random()*0.05;
+  pts.push(cur);
+  for(let i=1;i<=segs;i++){
+    const target=i===segs?0.12+Math.random()*0.08: (i===Math.ceil(segs/2)? 0.75+Math.random()*0.15 : Math.min(0.95,Math.max(0.08,cur+(Math.random()-0.3)*0.4)));
+    pts.push(target);
+    cur=target;
+  }
+  return {pts,bandWidth,duration:4+lv*1.1};
+}
+
+function bandAt(t){
+  const n=schedule.pts.length-1;
+  const pos=t*n;
+  const i=Math.min(n-1,Math.floor(pos));
+  const frac=pos-i;
+  const a=schedule.pts[i],b=schedule.pts[i+1];
+  const center=a+(b-a)*frac;
+  return {low:Math.max(0,center-schedule.bandWidth/2),high:Math.min(1,center+schedule.bandWidth/2),center};
+}
+
+function newAttempt(lv){
+  schedule=genSchedule(lv);
+  duration=schedule.duration;
+  progress=0;
+  temp=bandAt(0).center;
+  strayTime=0;
+  heating=false;cooling=false;
+  crackFlash=0;
+  tempHistory=[];
+}
+
+function reset(){
+  score=0;level=1;lives=3;gameOver=false;started=false;
+  newAttempt(level);
+  updateHud();
+}
+reset();
+
+function finishAttempt(fail){
+  if(!fail){
+    SFX.success();
+    const qual=Math.max(0,1-strayTime/duration*3);
+    score+=Math.floor(60+level*10*qual);
+    resultText=I18N.t('firing_complete','FIRING COMPLETE — PIECE ANNEALED!');
+    resultOk=true;
+  } else {
+    SFX.hurt();
+    lives--;
+    resultText=I18N.t('thermal_shock','THERMAL SHOCK — PIECE CRACKED!');
+    resultOk=false;
+    if(lives<=0){
+      setTimeout(()=>{gameOver=true;SFX.lose();},900);
+    }
+  }
+  resultTimer=1.5;
+  if(score>hi){hi=score;localStorage.setItem('glassblowingkilnfiring_hi',String(Math.floor(hi)));}
+  updateHud();
+}
+
+function setHeat(h,c){
+  heating=h;cooling=c;
+}
+
+document.addEventListener('keydown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  if(e.code==='ArrowUp'||e.code==='KeyW'){e.preventDefault();heating=true;cooling=false;}
+  if(e.code==='ArrowDown'||e.code==='KeyS'){e.preventDefault();cooling=true;heating=false;}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowUp'||e.code==='KeyW')heating=false;
+  if(e.code==='ArrowDown'||e.code==='KeyS')cooling=false;
+});
+
+function pointerHandler(clientY,rect,down){
+  const my=(clientY-rect.top)*(H/rect.height);
+  if(down){
+    if(my<H/2){heating=true;cooling=false;}
+    else{cooling=true;heating=false;}
+  }
+}
+canvas.addEventListener('pointerdown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  const rect=canvas.getBoundingClientRect();
+  pointerHandler(e.clientY,rect,true);
+});
+window.addEventListener('pointerup',()=>{heating=false;cooling=false;});
+canvas.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  const rect=canvas.getBoundingClientRect();
+  pointerHandler(e.touches[0].clientY,rect,true);
+},{passive:false});
+canvas.addEventListener('touchend',e=>{e.preventDefault();heating=false;cooling=false;},{passive:false});
+
+function tick(dt){
+  if(!started||gameOver)return;
+  if(resultTimer>0){
+    resultTimer-=dt/60;
+    if(resultTimer<=0){
+      if(resultOk){level++;SFX.levelup();}
+      if(lives>0&&!gameOver)newAttempt(level);
+    }
+    return;
+  }
+
+  if(heating)temp+=0.0055*dt;
+  else if(cooling)temp-=0.005*dt;
+  else temp-=0.0012*dt; // natural slow cooling (radiative loss)
+  temp=Math.max(0,Math.min(1,temp));
+
+  progress+=dt/60/duration;
+  if(progress>=1){
+    progress=1;
+    finishAttempt(false);
+    return;
+  }
+
+  const band=bandAt(progress);
+  const inBand=temp>=band.low&&temp<=band.high;
+  if(!inBand){
+    strayTime+=dt/60;
+    const overBy=temp>band.high?temp-band.high:band.low-temp;
+    if(overBy>0.16){
+      crackFlash=1;
+      finishAttempt(true);
+      return;
+    }
+  }
+}
+
+function drawChart(){
+  ctx.save();
+  const x0=60,x1=W-30,y0=80,y1=350;
+  ctx.fillStyle='#1a1008';
+  ctx.fillRect(x0,y0,x1-x0,y1-y0);
+  ctx.strokeStyle='#5a3a1a';ctx.strokeRect(x0,y0,x1-x0,y1-y0);
+
+  // draw safe band across visible window (show whole schedule, scaled)
+  const steps=120;
+  ctx.beginPath();
+  for(let i=0;i<=steps;i++){
+    const t=i/steps;
+    const b=bandAt(t);
+    const px=x0+(x1-x0)*t;
+    const py=y0+(y1-y0)*(1-b.high);
+    if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+  }
+  for(let i=steps;i>=0;i--){
+    const t=i/steps;
+    const b=bandAt(t);
+    const px=x0+(x1-x0)*t;
+    const py=y0+(y1-y0)*(1-b.low);
+    ctx.lineTo(px,py);
+  }
+  ctx.closePath();
+  ctx.fillStyle='rgba(170,170,170,0.3)';
+  ctx.fill();
+  ctx.strokeStyle='rgba(200,200,200,0.5)';
+  ctx.stroke();
+
+  // progress marker line
+  const px=x0+(x1-x0)*progress;
+  ctx.strokeStyle='#ffd54f';ctx.lineWidth=1.5;ctx.setLineDash([4,4]);
+  ctx.beginPath();ctx.moveTo(px,y0);ctx.lineTo(px,y1);ctx.stroke();
+  ctx.setLineDash([]);
+
+  // temp trace up to current progress
+  ctx.beginPath();
+  const traceSteps=Math.max(1,Math.floor(progress*steps));
+  for(let i=0;i<=traceSteps;i++){
+    const t=(i/steps);
+    if(t>progress)break;
+    const b=bandAt(t);
+    const yy=t===progress?temp:null;
+  }
+  // simpler: just plot current temp point and a short recent trail using stored history
+  ctx.restore();
+}
+
+function drawTempTrace(x0,x1,y0,y1){
+  tempHistory.push({p:progress,v:temp});
+  if(tempHistory.length>500)tempHistory.shift();
+  ctx.save();
+  ctx.beginPath();
+  tempHistory.forEach((h,i)=>{
+    const px=x0+(x1-x0)*h.p;
+    const py=y0+(y1-y0)*(1-h.v);
+    if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+  });
+  ctx.strokeStyle='#ff6b35';ctx.lineWidth=3;ctx.stroke();
+  // glowing current point
+  const cx=x0+(x1-x0)*progress,cy=y0+(y1-y0)*(1-temp);
+  const grad=ctx.createRadialGradient(cx,cy,2,cx,cy,14);
+  grad.addColorStop(0,'#fff7e0');grad.addColorStop(1,'rgba(255,107,53,0)');
+  ctx.fillStyle=grad;
+  ctx.beginPath();ctx.arc(cx,cy,14,0,7);ctx.fill();
+  ctx.fillStyle='#ffd54f';
+  ctx.beginPath();ctx.arc(cx,cy,5,0,7);ctx.fill();
+  ctx.restore();
+}
+
+function drawKiln(){
+  ctx.save();
+  const x=W-130,y=360,w=90,h=60;
+  ctx.fillStyle='#3a2416';
+  ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle='#5a3a1a';ctx.lineWidth=2;ctx.strokeRect(x,y,w,h);
+  // door glow intensity by temp
+  const glowAlpha=0.2+temp*0.7;
+  ctx.fillStyle=`rgba(255,${120-Math.floor(temp*60)},${40-Math.floor(temp*30)},${glowAlpha})`;
+  ctx.fillRect(x+10,y+10,w-20,h-20);
+  ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('kiln_label','KILN'),x+w/2,y-6);
+  if(heating){ctx.fillStyle='#ff6b35';ctx.fillText('▲',x+w/2,y+h+16);}
+  else if(cooling){ctx.fillStyle='#3f7cff';ctx.fillText('▼',x+w/2,y+h+16);}
+  ctx.restore();
+}
+
+let lastTs=null;
+function loop(ts){
+  if(lastTs==null)lastTs=ts;
+  const dt=Math.min((ts-lastTs)/16.6667,3);
+  lastTs=ts;
+
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#140a08');bg.addColorStop(1,'#2a1508');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(started&&!gameOver)tick(dt);
+
+  ctx.fillStyle='#fff';ctx.font='bold 18px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('kilnfiring_title','KILN FIRING SCHEDULE'),W/2,30);
+  ctx.font='13px Arial';ctx.fillStyle='#aaa';
+  ctx.fillText(I18N.t('stay_in_band','Keep the glowing line inside the gray safe band'),W/2,52);
+
+  drawChart();
+  drawTempTrace(60,W-30,80,350);
+  drawKiln();
+
+  ctx.fillStyle='#ffb74d';ctx.font='12px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('temp_label','Temp'),60,74);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('time_label','Time →'),W-30,370);
+
+  if(resultTimer>0){
+    ctx.fillStyle=resultOk?'rgba(76,175,80,0.25)':'rgba(233,69,96,0.3)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle=resultOk?'#4caf50':'#ff6b6b';
+    ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(resultText,W/2,H/2);
+  }
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffb74d';ctx.font='bold 24px Arial';
+    ctx.fillText(I18N.t('kiln_start','Click / Tap / Arrow Keys to begin'),W/2,H/2);
+  } else if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff6b6b';ctx.font='bold 36px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Click or Tap to restart'),W/2,H/2+20);
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>

@@ -1,0 +1,409 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Cheesemaking Curd Cutting</title><meta name="description" content="Play Cheesemaking Curd Cutting free online — Drag the curd knife along the glowing guide lines to slice the vat of set curd into an even grid of cubes before it overworks."><link rel="canonical" href="https://games.multiportllc.com/games/cheesemakingcurdcutting"><meta property="og:title" content="Cheesemaking Curd Cutting - Multiport Games"><meta property="og:description" content="Play Cheesemaking Curd Cutting free online — Drag the curd knife along the glowing guide lines to slice the vat of set curd into an even grid of cubes before it overworks."><meta property="og:url" content="https://games.multiportllc.com/games/cheesemakingcurdcutting"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Cheesemaking Curd Cutting - Multiport Games"><meta name="twitter:description" content="Play Cheesemaking Curd Cutting free online — Drag the curd knife along the glowing guide lines to slice the vat of set curd into an even grid of cubes before it overworks."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Cheesemaking Curd Cutting","description":"Play Cheesemaking Curd Cutting free online instantly. Drag the curd knife along the glowing guide lines to slice a vat of set curd into an even grid of cubes within the time limit before the curd overworks. Target grids get finer and the clock gets tighter every round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/cheesemakingcurdcutting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#fff6dd;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#8a6a2f;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+#timeWrap{max-width:600px;margin:0 auto 8px;background:#5a4420;border-radius:10px;padding:4px}
+#timeBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#f2c14e,#f6e27a);width:100%;transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Cheesemaking Curd Cutting</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="roundLbl">Round 1</span>
+    </div>
+    <div id="timeWrap"><div id="timeBar"></div></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A fresh vat of set curd is marked with faint guide lines. Press and drag (mouse, finger, or <b>Arrow Keys</b> + <b>Enter</b> to confirm a cut) a straight stroke along each guide line, as close to it as you can, to slice the curd into an even grid of cubes. Clean cuts score big; wobbly or missed cuts damage the curd. Finish the whole grid before the timer runs out and before the curd overworks (3 bad cuts) — each round adds more lines and less time!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const VAT={x:60,y:40,w:680,h:300};
+let hi=parseInt(localStorage.getItem('cheesemakingcurdcutting_hi')||'0',10);
+let score=0,lives=3,round=1,gameOver=false,started=false,won=false;
+let lines=[],cutLines=[],timeLeft=0,timeTotal=0;
+let dragging=false,dragStart=null,dragPts=[];
+let activeLineIdx=0; // keyboard mode selection
+let shakeT=0;
+let feedback=null,feedbackT=0;
+
+function gridForRound(r){
+  // rows/cols of cuts (number of internal lines), grows with round
+  const cols=1+Math.min(5,r); // vertical lines
+  const rows=1+Math.min(4,Math.floor(r*0.8));
+  return {cols,rows};
+}
+
+function buildLines(){
+  lines=[];
+  const {cols,rows}=gridForRound(round);
+  for(let i=1;i<=cols;i++){
+    const x=VAT.x+(VAT.w*i)/(cols+1);
+    lines.push({type:'v',pos:x,done:false,quality:0});
+  }
+  for(let i=1;i<=rows;i++){
+    const y=VAT.y+(VAT.h*i)/(rows+1);
+    lines.push({type:'h',pos:y,done:false,quality:0});
+  }
+}
+
+function startRound(){
+  buildLines();
+  cutLines=[];
+  timeTotal=Math.max(9,16-round*0.8);
+  timeLeft=timeTotal;
+  won=false;
+  activeLineIdx=0;
+  feedback=null;
+}
+
+function reset(){
+  score=0;lives=3;round=1;gameOver=false;started=false;
+  startRound();
+}
+reset();
+
+function lineTargetLength(l){
+  return l.type==='v'?VAT.h:VAT.w;
+}
+
+// evaluate a drag path against a target line
+function evalCut(line,pts){
+  if(pts.length<2)return null;
+  // project points onto perpendicular deviation from target pos, and measure coverage along axis
+  let maxDev=0,sumDev=0;
+  let axisMin=Infinity,axisMax=-Infinity;
+  pts.forEach(p=>{
+    const dev=line.type==='v'?Math.abs(p.x-line.pos):Math.abs(p.y-line.pos);
+    maxDev=Math.max(maxDev,dev);
+    sumDev+=dev;
+    const axisVal=line.type==='v'?p.y:p.x;
+    axisMin=Math.min(axisMin,axisVal);
+    axisMax=Math.max(axisMax,axisVal);
+  });
+  const avgDev=sumDev/pts.length;
+  const coverage=(axisMax-axisMin)/lineTargetLength(line);
+  return {maxDev,avgDev,coverage};
+}
+
+function tryMatchLine(pts){
+  // find nearest unfinished line whose axis range overlaps the drag's bounding
+  let best=null,bestScore=Infinity;
+  lines.forEach(l=>{
+    if(l.done)return;
+    const r=evalCut(l,pts);
+    if(!r)return;
+    const err=r.avgDev;
+    if(err<bestScore){bestScore=err;best={line:l,r};}
+  });
+  return best;
+}
+
+function finishDrag(){
+  if(dragPts.length<2){dragging=false;dragPts=[];return;}
+  const best=tryMatchLine(dragPts);
+  dragging=false;
+  if(!best || best.r.coverage<0.55){
+    // bad / wild cut
+    registerBadCut();
+    dragPts=[];
+    return;
+  }
+  const {line,r}=best;
+  const tol=14-round*0.6>5?14-round*0.6:5;
+  if(r.avgDev<=tol){
+    line.done=true;
+    const quality=Math.max(0,1-r.avgDev/tol);
+    line.quality=quality;
+    const pts=Math.round(80+quality*60);
+    score+=pts;
+    SFX.success();
+    showFeedback(quality>0.75?"Perfect cut! +"+pts:"Nice cut! +"+pts,'#2e7d32');
+    cutLines.push({type:line.type,pos:line.pos});
+    checkRoundComplete();
+  } else {
+    registerBadCut();
+  }
+  dragPts=[];
+}
+
+function registerBadCut(){
+  lives--;
+  shakeT=18;
+  SFX.hit();
+  showFeedback("Messy cut!",'#b71c1c');
+  if(lives<=0){
+    endGame(false);
+  }
+}
+
+function showFeedback(text,color){
+  feedback={text,color};
+  feedbackT=50;
+}
+
+function checkRoundComplete(){
+  if(lines.every(l=>l.done)){
+    won=true;
+    score+=120;
+    SFX.levelup();
+    setTimeout(()=>{
+      if(gameOver)return;
+      round++;
+      startRound();
+    },900);
+  }
+}
+
+function endGame(win){
+  gameOver=true;
+  if(score>hi){hi=score;localStorage.setItem('cheesemakingcurdcutting_hi',String(hi));}
+  if(win)SFX.win();else SFX.lose();
+}
+
+function getPos(e){
+  const rect=c.getBoundingClientRect();
+  const sx=c.width/rect.width,sy=c.height/rect.height;
+  let cx,cy;
+  if(e.touches&&e.touches.length){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else{cx=e.clientX;cy=e.clientY;}
+  return {x:(cx-rect.left)*sx,y:(cy-rect.top)*sy};
+}
+
+function pointerDown(e){
+  if(!started){started=true;}
+  if(gameOver){reset();return;}
+  if(won)return;
+  e.preventDefault&&e.preventDefault();
+  const p=getPos(e);
+  if(p.x<VAT.x-20||p.x>VAT.x+VAT.w+20||p.y<VAT.y-20||p.y>VAT.y+VAT.h+20)return;
+  dragging=true;
+  dragPts=[p];
+}
+function pointerMove(e){
+  if(!dragging)return;
+  e.preventDefault&&e.preventDefault();
+  const p=getPos(e);
+  dragPts.push(p);
+}
+function pointerUp(e){
+  if(!dragging)return;
+  e.preventDefault&&e.preventDefault();
+  finishDrag();
+}
+
+c.addEventListener('mousedown',pointerDown);
+c.addEventListener('mousemove',pointerMove);
+window.addEventListener('mouseup',pointerUp);
+c.addEventListener('touchstart',pointerDown,{passive:false});
+c.addEventListener('touchmove',pointerMove,{passive:false});
+c.addEventListener('touchend',pointerUp,{passive:false});
+
+// Keyboard controls: arrow keys select a line, Enter/Space performs an automatic
+// precision cut attempt (quality based on repeated taps timing is simplified to a
+// clean, slightly-imperfect cut so keyboard play is always viable).
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','Enter'].includes(e.key))e.preventDefault();
+  if(!started){started=true;}
+  if(gameOver){if(e.key==='Enter'||e.key===' ')reset();return;}
+  if(won)return;
+  const remaining=lines.filter(l=>!l.done);
+  if(!remaining.length)return;
+  if(e.key==='ArrowUp'||e.key==='ArrowLeft'){
+    activeLineIdx=(activeLineIdx-1+remaining.length)%remaining.length;
+  } else if(e.key==='ArrowDown'||e.key==='ArrowRight'){
+    activeLineIdx=(activeLineIdx+1)%remaining.length;
+  } else if(e.key==='Enter'||e.key===' '){
+    const line=remaining[activeLineIdx%remaining.length];
+    const tol=14-round*0.6>5?14-round*0.6:5;
+    const dev=Math.random()*tol*0.6; // simulated steady hand
+    const quality=Math.max(0,1-dev/tol);
+    line.done=true;line.quality=quality;
+    const pts=Math.round(70+quality*50);
+    score+=pts;
+    SFX.success();
+    showFeedback("Keyboard cut! +"+pts,'#2e7d32');
+    cutLines.push({type:line.type,pos:line.pos});
+    activeLineIdx=0;
+    checkRoundComplete();
+  }
+});
+
+function drawVat(){
+  ctx.save();
+  // wooden vat exterior
+  const grad=ctx.createLinearGradient(VAT.x,VAT.y,VAT.x,VAT.y+VAT.h);
+  grad.addColorStop(0,'#fffaf0');
+  grad.addColorStop(1,'#fdf0cf');
+  ctx.fillStyle=grad;
+  ctx.fillRect(VAT.x,VAT.y,VAT.w,VAT.h);
+  ctx.strokeStyle='#caa052';
+  ctx.lineWidth=6;
+  ctx.strokeRect(VAT.x,VAT.y,VAT.w,VAT.h);
+  // curd texture speckles
+  ctx.fillStyle='rgba(230,200,140,0.25)';
+  for(let i=0;i<40;i++){
+    const sx=VAT.x+ (i*53.7%VAT.w);
+    const sy=VAT.y+ (i*91.3%VAT.h);
+    ctx.beginPath();ctx.arc(sx,sy,2,0,7);ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawGuides(){
+  lines.forEach((l,idx)=>{
+    if(l.done)return;
+    ctx.save();
+    ctx.setLineDash([8,6]);
+    ctx.lineWidth=2;
+    ctx.strokeStyle='rgba(120,90,30,0.45)';
+    ctx.beginPath();
+    if(l.type==='v'){ctx.moveTo(l.pos,VAT.y);ctx.lineTo(l.pos,VAT.y+VAT.h);}
+    else{ctx.moveTo(VAT.x,l.pos);ctx.lineTo(VAT.x+VAT.w,l.pos);}
+    ctx.stroke();
+    ctx.restore();
+  });
+  // highlight keyboard-selected line
+  const remaining=lines.filter(l=>!l.done);
+  if(remaining.length){
+    const sel=remaining[activeLineIdx%remaining.length];
+    ctx.save();
+    ctx.lineWidth=4;
+    ctx.strokeStyle='rgba(255,152,0,0.85)';
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    if(sel.type==='v'){ctx.moveTo(sel.pos,VAT.y);ctx.lineTo(sel.pos,VAT.y+VAT.h);}
+    else{ctx.moveTo(VAT.x,sel.pos);ctx.lineTo(VAT.x+VAT.w,sel.pos);}
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawCuts(){
+  cutLines.forEach(l=>{
+    ctx.save();
+    ctx.lineWidth=3;
+    ctx.strokeStyle='#caa052';
+    ctx.beginPath();
+    if(l.type==='v'){ctx.moveTo(l.pos,VAT.y);ctx.lineTo(l.pos,VAT.y+VAT.h);}
+    else{ctx.moveTo(VAT.x,l.pos);ctx.lineTo(VAT.x+VAT.w,l.pos);}
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
+function drawDrag(){
+  if(!dragging||dragPts.length<2)return;
+  ctx.save();
+  ctx.lineWidth=4;
+  ctx.strokeStyle='#5a4420';
+  ctx.beginPath();
+  ctx.moveTo(dragPts[0].x,dragPts[0].y);
+  for(let i=1;i<dragPts.length;i++)ctx.lineTo(dragPts[i].x,dragPts[i].y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawKnifeIcon(){
+  if(dragging&&dragPts.length){
+    const p=dragPts[dragPts.length-1];
+    ctx.save();
+    ctx.fillStyle='#8c8c99';
+    ctx.beginPath();ctx.arc(p.x,p.y,6,0,7);ctx.fill();
+    ctx.restore();
+  }
+}
+
+function updateHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('roundLbl').textContent=I18N.t('round_label','Round {r}').replace('{r}',round);
+  const pct=Math.max(0,100*timeLeft/timeTotal);
+  document.getElementById('timeBar').style.width=pct+'%';
+}
+
+let lastTime=null;
+function loop(){
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+
+  let ox=0,oy=0;
+  if(shakeT>0){shakeT-=dt;ox=(Math.random()-0.5)*6;oy=(Math.random()-0.5)*6;}
+
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  ctx.translate(ox,oy);
+
+  // background creamery backdrop
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#e9d9b0');
+  bg.addColorStop(1,'#cdb27a');
+  ctx.fillStyle=bg;
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#b99a5c';
+  ctx.fillRect(0,H-40,W,40);
+
+  drawVat();
+  drawGuides();
+  drawCuts();
+  drawDrag();
+  drawKnifeIcon();
+
+  if(started&&!gameOver&&!won){
+    timeLeft-=dt/60;
+    if(timeLeft<=0){
+      timeLeft=0;
+      endGame(false);
+    }
+  }
+
+  ctx.restore();
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='rgba(90,68,32,0.9)';
+    ctx.font='bold 26px Arial';
+    ctx.fillText(I18N.t('start_hint','Drag along a line to start'),W/2,H/2);
+  } else if(gameOver){
+    ctx.fillStyle='rgba(50,30,10,0.55)';
+    ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';
+    ctx.font='bold 36px Arial';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+20);
+  } else if(won){
+    ctx.fillStyle='rgba(46,125,50,0.85)';
+    ctx.font='bold 28px Arial';
+    ctx.fillText(I18N.t('round_clear','Round Cleared!'),W/2,H/2);
+  }
+
+  if(feedback&&feedbackT>0){
+    feedbackT-=dt;
+    ctx.globalAlpha=Math.min(1,feedbackT/20);
+    ctx.fillStyle=feedback.color;
+    ctx.font='bold 22px Arial';
+    ctx.fillText(feedback.text,W/2,VAT.y-14);
+    ctx.globalAlpha=1;
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

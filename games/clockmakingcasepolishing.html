@@ -1,0 +1,376 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Clockmaking Case Polishing</title><meta name="description" content="Play Clockmaking Case Polishing free online — Sweep the polishing wheel over every dull patch on a watch case to a shine before time runs out, without overheating it."><link rel="canonical" href="https://games.multiportllc.com/games/clockmakingcasepolishing"><meta property="og:title" content="Clockmaking Case Polishing - Multiport Games"><meta property="og:description" content="Play Clockmaking Case Polishing free online — Sweep the polishing wheel over every dull patch on a watch case to a shine before time runs out, without overheating it."><meta property="og:url" content="https://games.multiportllc.com/games/clockmakingcasepolishing"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Clockmaking Case Polishing - Multiport Games"><meta name="twitter:description" content="Play Clockmaking Case Polishing free online — Sweep the polishing wheel over every dull patch on a watch case to a shine before time runs out, without overheating it."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Clockmaking Case Polishing","description":"Play Clockmaking Case Polishing free online instantly. Buff a watch case's metal surface with a polishing wheel, sweeping over every dull and scratched patch until it shines, all before time runs out. Don't linger too long in one spot or the metal overheats and warps. Later rounds bring more intricate case shapes and more patches to clear. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/clockmakingcasepolishing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b2b30;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#dcd3c0;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#meterWrap{max-width:600px;margin:0 auto 8px;background:#1a1a1d;border-radius:10px;padding:4px}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#4dd0e1,#ffeb3b,#ff5252);width:0%;transition:width .08s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Clockmaking Case Polishing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Case 1 — 60s</span>
+    </div>
+    <div id="meterWrap"><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold and drag the <b>polishing wheel</b> (mouse, touch, or arrow keys + Space) over every dull, scratched patch on the watch case to buff it to a shine before the timer runs out. Watch the <b>heat meter</b> — lingering too long in one spot overheats and warps the case. Each new case is a more intricate shape with more patches.</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=420;
+const KEY='clockmakingcasepolishing_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,lives=3,caseNum=1,gameOver=false,won=false;
+let patches=[],heat=0,timeLeft=60,buffing=false;
+let wheelX=W/2,wheelY=H/2,caseShape=null;
+let msgTimer=0,msgText='';
+let particles=[];
+let lastTick=null;
+
+const scoreLbl=document.getElementById('scoreLbl');
+const livesLbl=document.getElementById('livesLbl');
+const levelLbl=document.getElementById('levelLbl');
+const meterBar=document.getElementById('meterBar');
+
+function updateHud(){
+  scoreLbl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  livesLbl.textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  levelLbl.textContent=I18N.t('case_time_label','Case {n} — {t}s').replace('{n}',caseNum).replace('{t}',Math.max(0,Math.ceil(timeLeft)));
+}
+
+function patchCountFor(n){ return Math.min(5+n*2,20); }
+function timeFor(n){ return Math.max(60-n*3,30); }
+function wheelRadiusFor(n){ return Math.max(26-n,16); }
+
+function shapeFor(n){
+  // alternate between round, rectangular (tonneau), and octagonal case outlines, growing more complex
+  const kind=n%3;
+  return kind; // 0 round, 1 tonneau(rounded rect), 2 octagon
+}
+
+function isInsideCase(x,y){
+  const cx=W/2,cy=H/2,rw=260,rh=160;
+  const dx=(x-cx),dy=(y-cy);
+  if(caseShape===0){
+    return (dx*dx)/(rw*rw)+(dy*dy)/(rh*rh)<=1;
+  } else if(caseShape===1){
+    // rounded rect
+    const hw=rw-30,hh=rh-30,rad=50;
+    const ax=Math.abs(dx),ay=Math.abs(dy);
+    if(ax<=hw-rad&&ay<=hh) return ay<=hh;
+    if(ax<=hw&&ay<=hh-rad) return ax<=hw;
+    const cxx=Math.max(ax-(hw-rad),0),cyy=Math.max(ay-(hh-rad),0);
+    return cxx*cxx+cyy*cyy<=rad*rad && ax<=hw && ay<=hh;
+  } else {
+    // octagon approx: within ellipse AND within diamond-ish cut corners
+    const inEllipse=(dx*dx)/(rw*rw)+(dy*dy)/(rh*rh)<=1;
+    const cut=Math.abs(dx)*0.7+Math.abs(dy)*0.9<=rw*0.78;
+    return inEllipse&&cut;
+  }
+}
+
+function layoutCase(){
+  caseShape=shapeFor(caseNum);
+  patches=[];
+  const n=patchCountFor(caseNum);
+  let tries=0;
+  while(patches.length<n && tries<2000){
+    tries++;
+    const x=W/2+(Math.random()*2-1)*240;
+    const y=H/2+(Math.random()*2-1)*150;
+    if(!isInsideCase(x,y))continue;
+    if(patches.some(p=>Math.hypot(p.x-x,p.y-y)<28))continue;
+    patches.push({x,y,r:14+Math.random()*8,shine:0,done:false});
+  }
+  timeLeft=timeFor(caseNum);
+  heat=0;
+  wheelX=W/2;wheelY=H/2;
+  lastTick=null;
+  msgTimer=60;msgText=I18N.t('case_start_msg','New case — polish every dull patch!');
+}
+
+function reset(){
+  score=0;lives=3;caseNum=1;gameOver=false;won=false;particles=[];
+  layoutCase();
+  updateHud();
+}
+
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const px=(e.touches?e.touches[0].clientX:e.clientX);
+  const py=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(px-rect.left)*(W/rect.width),y:(py-rect.top)*(H/rect.height)};
+}
+
+function onDown(e){
+  e.preventDefault();
+  if(gameOver){reset();return;}
+  buffing=true;
+  const p=pointerPos(e);
+  wheelX=p.x;wheelY=p.y;
+}
+function onMove(e){
+  if(!buffing)return;
+  e.preventDefault();
+  const p=pointerPos(e);
+  wheelX=p.x;wheelY=p.y;
+}
+function onUp(e){ buffing=false; }
+
+c.addEventListener('mousedown',onDown);
+c.addEventListener('mousemove',onMove);
+window.addEventListener('mouseup',onUp);
+c.addEventListener('touchstart',onDown,{passive:false});
+c.addEventListener('touchmove',onMove,{passive:false});
+c.addEventListener('touchend',onUp,{passive:false});
+
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(gameOver&&(e.code==='Enter'||e.code==='Space')){reset();return;}
+  keys[e.code]=true;
+  if(e.code==='Space'){e.preventDefault();buffing=true;}
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.code))e.preventDefault();
+});
+document.addEventListener('keyup',e=>{
+  keys[e.code]=false;
+  if(e.code==='Space')buffing=false;
+});
+
+function spawnSparkle(x,y){
+  for(let i=0;i<4;i++){
+    const a=Math.random()*Math.PI*2,sp=0.5+Math.random()*1.5;
+    particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:18,color:'#fff8c4'});
+  }
+}
+
+function drawGear(x,y,r,rot,color,alpha){
+  ctx.save();ctx.globalAlpha=alpha!=null?alpha:1;
+  ctx.translate(x,y);ctx.rotate(rot);
+  ctx.fillStyle=color;
+  const teeth=10;
+  ctx.beginPath();
+  for(let i=0;i<teeth;i++){
+    const a0=i/teeth*Math.PI*2;
+    const a1=a0+Math.PI/teeth*0.6;
+    const a2=a0+Math.PI/teeth*1.4;
+    const a3=a0+Math.PI/teeth*2;
+    ctx.lineTo(Math.cos(a0)*r,Math.sin(a0)*r);
+    ctx.lineTo(Math.cos(a1)*r*1.18,Math.sin(a1)*r*1.18);
+    ctx.lineTo(Math.cos(a2)*r*1.18,Math.sin(a2)*r*1.18);
+    ctx.lineTo(Math.cos(a3)*r,Math.sin(a3)*r);
+  }
+  ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+
+function drawCaseOutline(){
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#3a3a40');grad.addColorStop(1,'#1c1c1f');
+  ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+  ctx.save();ctx.globalAlpha=0.07;
+  drawGear(70,H-50,32,performance.now()/4000,'#d4af37');
+  ctx.restore();
+
+  const cx=W/2,cy=H/2,rw=260,rh=160;
+  ctx.save();
+  const heatFrac=heat/100;
+  const metalCold=[198,201,207],metalHot=[255,110,70];
+  const mc=metalCold.map((v,i)=>Math.round(v+(metalHot[i]-v)*heatFrac));
+  const caseGrad=ctx.createLinearGradient(cx-rw,cy-rh,cx+rw,cy+rh);
+  caseGrad.addColorStop(0,`rgb(${mc[0]+30},${mc[1]+30},${mc[2]+30})`);
+  caseGrad.addColorStop(0.5,`rgb(${mc[0]},${mc[1]},${mc[2]})`);
+  caseGrad.addColorStop(1,`rgb(${Math.max(mc[0]-40,0)},${Math.max(mc[1]-40,0)},${Math.max(mc[2]-40,0)})`);
+  ctx.fillStyle=caseGrad;
+
+  ctx.beginPath();
+  if(caseShape===0){
+    ctx.ellipse(cx,cy,rw,rh,0,0,Math.PI*2);
+  } else if(caseShape===1){
+    const hw=rw-30,hh=rh-30,rad=50;
+    ctx.moveTo(cx-hw+rad,cy-hh);
+    ctx.lineTo(cx+hw-rad,cy-hh);
+    ctx.arcTo(cx+hw,cy-hh,cx+hw,cy-hh+rad,rad);
+    ctx.lineTo(cx+hw,cy+hh-rad);
+    ctx.arcTo(cx+hw,cy+hh,cx+hw-rad,cy+hh,rad);
+    ctx.lineTo(cx-hw+rad,cy+hh);
+    ctx.arcTo(cx-hw,cy+hh,cx-hw,cy+hh-rad,rad);
+    ctx.lineTo(cx-hw,cy-hh+rad);
+    ctx.arcTo(cx-hw,cy-hh,cx-hw+rad,cy-hh,rad);
+    ctx.closePath();
+  } else {
+    const pts=8,rwid=rw*0.95,rhei=rh*0.95;
+    for(let i=0;i<pts;i++){
+      const a=i/pts*Math.PI*2-Math.PI/8;
+      const px=cx+Math.cos(a)*rwid,py=cy+Math.sin(a)*rhei;
+      if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+    }
+    ctx.closePath();
+  }
+  ctx.fill();
+  ctx.strokeStyle='#8a8a90';ctx.lineWidth=3;ctx.stroke();
+  ctx.restore();
+}
+
+function drawPatches(){
+  patches.forEach(p=>{
+    if(p.done)return;
+    ctx.save();
+    ctx.globalAlpha=1-p.shine*0.9;
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+    ctx.fillStyle='#6b6b60';ctx.fill();
+    ctx.strokeStyle='#8a8a7a';ctx.lineWidth=1.5;ctx.stroke();
+    // scratch lines
+    for(let i=0;i<3;i++){
+      ctx.beginPath();
+      ctx.moveTo(p.x-p.r*0.6+i*4,p.y-p.r*0.5+i*6);
+      ctx.lineTo(p.x+p.r*0.5+i*2,p.y+p.r*0.4+i*4);
+      ctx.strokeStyle='#4a4a40';ctx.lineWidth=1;ctx.stroke();
+    }
+    ctx.restore();
+  });
+}
+
+function drawWheel(){
+  const r=wheelRadiusFor(caseNum);
+  ctx.save();
+  ctx.translate(wheelX,wheelY);
+  ctx.rotate(performance.now()/60);
+  const g=ctx.createRadialGradient(0,0,0,0,0,r);
+  g.addColorStop(0, buffing?'#fff3b0':'#ddd');
+  g.addColorStop(1, buffing?'#ffb74d':'#999');
+  ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);
+  ctx.fillStyle=g;ctx.fill();
+  ctx.strokeStyle='#555';ctx.lineWidth=2;ctx.stroke();
+  for(let i=0;i<8;i++){
+    const a=i/8*Math.PI*2;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a)*r*0.3,Math.sin(a)*r*0.3);
+    ctx.lineTo(Math.cos(a)*r*0.9,Math.sin(a)*r*0.9);
+    ctx.strokeStyle='#8884';ctx.lineWidth=2;ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function overheat(){
+  lives--;
+  SFX.hurt();
+  heat=40;
+  msgTimer=55;msgText=I18N.t('overheat_msg','Overheated! The case warped a little.');
+  updateHud();
+  if(lives<=0){
+    gameOver=true;won=false;
+    if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+    SFX.lose();
+  }
+}
+
+function finishCase(){
+  caseNum++;
+  score+=50+caseNum*5;
+  if(score>hi)hi=score;
+  SFX.levelup();
+  msgTimer=70;msgText=I18N.t('case_done_msg','Case polished to a shine! Next case...');
+  setTimeout(layoutCase,10);
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=lastTick===null?1:Math.min((now-lastTick)/16.6667,3);
+  lastTick=now;
+
+  // keyboard wheel movement
+  const kstep=5*dt;
+  if(keys['ArrowLeft'])wheelX-=kstep;
+  if(keys['ArrowRight'])wheelX+=kstep;
+  if(keys['ArrowUp'])wheelY-=kstep;
+  if(keys['ArrowDown'])wheelY+=kstep;
+  wheelX=Math.max(10,Math.min(W-10,wheelX));
+  wheelY=Math.max(10,Math.min(H-10,wheelY));
+
+  drawCaseOutline();
+  drawPatches();
+
+  if(!gameOver){
+    timeLeft-=dt/60;
+    if(buffing){
+      heat=Math.min(100,heat+0.6*dt);
+      const r=wheelRadiusFor(caseNum);
+      patches.forEach(p=>{
+        if(p.done)return;
+        if(Math.hypot(p.x-wheelX,p.y-wheelY)<r+p.r*0.6){
+          p.shine=Math.min(1,p.shine+0.02*dt);
+          if(Math.random()<0.3)spawnSparkle(p.x+(Math.random()*10-5),p.y+(Math.random()*10-5));
+          if(p.shine>=1 && !p.done){
+            p.done=true;
+            score+=5;
+            if(score>hi)hi=score;
+            SFX.point();
+          }
+        }
+      });
+      if(heat>=100){
+        overheat();
+      }
+    } else {
+      heat=Math.max(0,heat-0.8*dt);
+    }
+    meterBar.style.width=heat+'%';
+
+    if(patches.length && patches.every(p=>p.done)){
+      finishCase();
+    } else if(timeLeft<=0){
+      gameOver=true;won=false;
+      if(score>hi){hi=score;localStorage.setItem(KEY,String(hi));}
+      SFX.lose();
+    }
+  }
+
+  drawWheel();
+
+  particles.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.life--;});
+  particles=particles.filter(p=>p.life>0);
+  particles.forEach(p=>{
+    ctx.globalAlpha=Math.max(0,p.life/18);
+    ctx.fillStyle=p.color;
+    ctx.beginPath();ctx.arc(p.x,p.y,2,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+  });
+
+  if(msgTimer>0){
+    msgTimer--;
+    ctx.globalAlpha=Math.min(1,msgTimer/15);
+    ctx.fillStyle='#fff';ctx.font='bold 20px Arial';ctx.textAlign='center';
+    ctx.fillText(msgText,W/2,30);
+    ctx.globalAlpha=1;
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 36px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','GAME OVER'),W/2,H/2-20);
+    ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or press Enter to restart'),W/2,H/2+18);
+  }
+
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>

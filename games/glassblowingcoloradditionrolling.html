@@ -1,0 +1,331 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Glassblowing Color Addition Rolling</title><meta name="description" content="Play Glassblowing Color Addition Rolling free online — Roll a hot glass bubble over colored frit piles in the recipe order, then stop before the colors muddy together."><link rel="canonical" href="https://games.multiportllc.com/games/glassblowingcoloradditionrolling"><meta property="og:title" content="Glassblowing Color Addition Rolling - Multiport Games"><meta property="og:description" content="Play Glassblowing Color Addition Rolling free online — Roll a hot glass bubble over colored frit piles in the recipe order, then stop before the colors muddy together."><meta property="og:url" content="https://games.multiportllc.com/games/glassblowingcoloradditionrolling"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Glassblowing Color Addition Rolling - Multiport Games"><meta name="twitter:description" content="Play Glassblowing Color Addition Rolling free online — Roll a hot glass bubble over colored frit piles in the recipe order, then stop before the colors muddy together."><link rel="apple-touch-icon" href="../apple-touch-icon.png"><link rel="manifest" href="../manifest.json"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Glassblowing Color Addition Rolling","description":"Play Glassblowing Color Addition Rolling free online instantly. Roll a hot glass bubble on the marver over colored glass frit piles in the exact order and amount shown on the recipe card to build up a target color pattern, without rolling too long and muddying the colors together. More colors and layers appear each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/glassblowingcoloradditionrolling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1a0e08;display:block;border-radius:8px;cursor:pointer;touch-action:none}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#ffb74d;font-size:1.05rem;font-weight:700;padding:8px 10px;flex-wrap:wrap;gap:4px}
+#heat{color:#ff6b35}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Glassblowing Color Addition Rolling</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="score-display">Score: 0 | Hi: 0</span>
+      <span id="level-display">Round 1</span>
+      <span id="heat">Heat: Good</span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Follow the <b>recipe card</b> at the top: roll the hot bubble (drag left/right, or use <b>Arrow Keys</b>) back and forth over each colored frit pile, in order, until its gauge fills — then move to the next color before the glass cools too much. Hold still too long on one pile or keep rolling after a color is full and it muddies the pattern. Complete every color in the recipe before the bubble cools out to win the round — more colors and tighter amounts appear each round!</div>
+</div>
+<script>
+const canvas=document.getElementById('c'),ctx=canvas.getContext('2d');
+const W=800,H=440;
+const scoreEl=document.getElementById('score-display'),levelEl=document.getElementById('level-display'),heatEl=document.getElementById('heat');
+
+let score=0,hi=parseInt(localStorage.getItem('glassblowingcoloradditionrolling_hi')||'0',10);
+let level=1,gameOver=false,won=false,started=false;
+
+const PALETTE=[
+  {name:'Ruby',col:'#e94560'},
+  {name:'Amber',col:'#ffb300'},
+  {name:'Cobalt',col:'#3f7cff'},
+  {name:'Emerald',col:'#2ecc71'},
+  {name:'Violet',col:'#9b59b6'},
+  {name:'Teal',col:'#1abc9c'}
+];
+
+let piles=[],recipe=[],recipeIdx=0,bubbleX=400,bubbleColorMix=[],heat=100,muddied=false,particles=[];
+let keys={};
+let pointerX=null,lastPileTouchColor=null,onPileTime=0;
+
+function updateHud(){
+  scoreEl.textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',Math.floor(score)).replace('{h}',Math.floor(hi));
+  levelEl.textContent=I18N.t('round_label','Round {n}').replace('{n}',level);
+  if(heat>60)heatEl.textContent=I18N.t('heat_good','Heat: Good');
+  else if(heat>30)heatEl.textContent=I18N.t('heat_cooling','Heat: Cooling!');
+  else heatEl.textContent=I18N.t('heat_cold','Heat: Almost Cold!');
+}
+
+function genLevel(lv){
+  const n=Math.min(2+Math.floor(lv/1.3),6);
+  const idxs=[...Array(PALETTE.length).keys()].sort(()=>Math.random()-0.5).slice(0,n);
+  const rec=idxs.map(i=>({
+    name:PALETTE[i].name,col:PALETTE[i].col,
+    target:60+Math.floor(Math.random()*30)+lv*2,
+    amount:0,done:false
+  }));
+  const spacing=W/(n+1);
+  const pls=rec.map((r,i)=>({x:spacing*(i+1),col:r.col,name:r.name,r:38}));
+  return {recipe:rec,piles:pls};
+}
+
+function newLevel(){
+  const g=genLevel(level);
+  recipe=g.recipe;piles=g.piles;
+  recipeIdx=0;bubbleColorMix=[];heat=100;muddied=false;won=false;
+  bubbleX=W/2;particles=[];
+  onPileTime=0;lastPileTouchColor=null;
+}
+
+function reset(){
+  score=0;level=1;gameOver=false;won=false;started=false;
+  newLevel();
+  updateHud();
+}
+reset();
+
+function failRound(reason){
+  gameOver=true;
+  SFX.lose();
+}
+
+function pileUnder(x){
+  for(let i=0;i<piles.length;i++){
+    const p=piles[i];
+    if(Math.abs(x-p.x)<p.r)return i;
+  }
+  return -1;
+}
+
+function tick(dt){
+  if(gameOver||won||!started)return;
+  heat-=dt*4.2;
+  if(heat<=0){failRound('cold');return;}
+
+  // movement
+  let vx=0;
+  if(keys['ArrowLeft']||keys['KeyA'])vx-=1;
+  if(keys['ArrowRight']||keys['KeyD'])vx+=1;
+  if(pointerX!=null){
+    vx=(pointerX-bubbleX)/40;
+    vx=Math.max(-1,Math.min(1,vx));
+  }
+  bubbleX+=vx*6.5*dt;
+  bubbleX=Math.max(30,Math.min(W-30,bubbleX));
+
+  const curRecipe=recipe[recipeIdx];
+  const pileIdx=pileUnder(bubbleX);
+
+  if(pileIdx>=0){
+    const pile=piles[pileIdx];
+    if(curRecipe && pile.name===curRecipe.name){
+      // correct pile, rolling adds color
+      if(Math.abs(vx)>0.15){
+        curRecipe.amount+=dt*22;
+        if(particles.length<80 && Math.random()<0.5)particles.push({x:bubbleX+(Math.random()-0.5)*40,y:300+Math.random()*10,vy:-0.6-Math.random(),life:1,col:pile.col});
+        if(curRecipe.amount>=curRecipe.target && !curRecipe.done){
+          curRecipe.done=true;
+          score+=40+level*5;
+          SFX.success();
+        }
+        // overfill -> muddy if way over and still rolling
+        if(curRecipe.done && curRecipe.amount>curRecipe.target*1.6){
+          muddied=true;
+        }
+      }
+    } else if(curRecipe && pile.name!==curRecipe.name){
+      // wrong pile touched while rolling: small risk, mild heat loss already happening; nothing drastic but no credit
+    }
+  }
+
+  // advance recipe index once current is done and bubble leaves that pile
+  if(curRecipe && curRecipe.done){
+    const stillOnIt = pileIdx>=0 && piles[pileIdx].name===curRecipe.name;
+    if(!stillOnIt){
+      recipeIdx++;
+    }
+  }
+
+  if(muddied){
+    failRound('muddy');
+    return;
+  }
+
+  if(recipeIdx>=recipe.length){
+    won=true;
+    score+=60+level*8;
+    if(score>hi){hi=score;localStorage.setItem('glassblowingcoloradditionrolling_hi',String(Math.floor(hi)));}
+    SFX.levelup();
+    updateHud();
+    setTimeout(()=>{level++;newLevel();started=true;},1400);
+    return;
+  }
+
+  particles.forEach(p=>{p.y+=p.vy*dt*10;p.life-=dt*0.6;});
+  particles=particles.filter(p=>p.life>0);
+
+  if(score>hi){hi=score;localStorage.setItem('glassblowingcoloradditionrolling_hi',String(Math.floor(hi)));}
+  updateHud();
+}
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','KeyA','KeyD'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function pointerPos(e){
+  const rect=canvas.getBoundingClientRect();
+  const clientX=(e.touches?e.touches[0].clientX:e.clientX);
+  return (clientX-rect.left)*(W/rect.width);
+}
+canvas.addEventListener('pointerdown',e=>{
+  if(!started){started=true;return;}
+  if(gameOver){reset();return;}
+  pointerX=pointerPos(e);
+});
+canvas.addEventListener('pointermove',e=>{ if(pointerX!=null)pointerX=pointerPos(e); });
+window.addEventListener('pointerup',()=>{pointerX=null;});
+canvas.addEventListener('touchstart',e=>{e.preventDefault();if(!started){started=true;return;}if(gameOver){reset();return;}pointerX=pointerPos(e);},{passive:false});
+canvas.addEventListener('touchmove',e=>{e.preventDefault();pointerX=pointerPos(e);},{passive:false});
+canvas.addEventListener('touchend',e=>{e.preventDefault();pointerX=null;},{passive:false});
+
+function drawPile(p,curName){
+  ctx.save();
+  const isCurrent=curName===p.name;
+  ctx.globalAlpha=isCurrent?1:0.55;
+  const grad=ctx.createRadialGradient(p.x,320,2,p.x,320,p.r);
+  grad.addColorStop(0,p.col);
+  grad.addColorStop(1,'#000');
+  ctx.fillStyle=grad;
+  ctx.beginPath();ctx.ellipse(p.x,320,p.r,p.r*0.5,0,0,7);ctx.fill();
+  if(isCurrent){
+    ctx.lineWidth=3;ctx.strokeStyle='#fff';
+    ctx.beginPath();ctx.ellipse(p.x,320,p.r+4,p.r*0.5+4,0,0,7);ctx.stroke();
+  }
+  ctx.fillStyle='#fff';ctx.font='12px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t(p.name.toLowerCase()+'_color',p.name),p.x,320+p.r*0.5+18);
+  ctx.restore();
+}
+
+function drawBubble(){
+  ctx.save();
+  const grad=ctx.createRadialGradient(bubbleX-10,200,5,bubbleX,210,42);
+  grad.addColorStop(0,'#fff7e0');
+  grad.addColorStop(0.4,'#ffb347');
+  grad.addColorStop(1,'#d2401a');
+  ctx.fillStyle=grad;
+  ctx.beginPath();ctx.arc(bubbleX,210,38,0,7);ctx.fill();
+  // tinge by done colors
+  const doneColors=recipe.filter(r=>r.done).map(r=>r.col);
+  doneColors.forEach((c,i)=>{
+    ctx.globalAlpha=0.18;
+    ctx.fillStyle=c;
+    ctx.beginPath();ctx.arc(bubbleX+(i-doneColors.length/2)*6,210+(i%2)*4,30-i*2,0,7);ctx.fill();
+  });
+  ctx.globalAlpha=1;
+  ctx.strokeStyle='rgba(255,255,255,0.4)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(bubbleX,210,38,0,7);ctx.stroke();
+  ctx.restore();
+}
+
+function drawRecipeCard(){
+  ctx.save();
+  ctx.fillStyle='rgba(20,10,5,0.85)';
+  ctx.fillRect(20,50,W-40,60);
+  ctx.strokeStyle='#5a3a1a';ctx.lineWidth=2;
+  ctx.strokeRect(20,50,W-40,60);
+  const n=recipe.length;
+  const cw=(W-60)/n;
+  recipe.forEach((r,i)=>{
+    const x=40+cw*i+cw/2;
+    ctx.fillStyle=r.col;
+    ctx.beginPath();ctx.arc(x,70,10,0,7);ctx.fill();
+    if(r.done){
+      ctx.strokeStyle='#fff';ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(x,70,13,0,7);ctx.stroke();
+    } else if(i===recipeIdx){
+      ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;
+      ctx.beginPath();ctx.arc(x,70,13,0,7);ctx.stroke();
+    }
+    ctx.fillStyle='#fff';ctx.font='11px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t(r.name.toLowerCase()+'_color',r.name),x,92);
+    // gauge
+    const pct=Math.min(1,r.amount/r.target);
+    ctx.fillStyle='#222';
+    ctx.fillRect(x-25,98,50,6);
+    ctx.fillStyle=r.done?'#4caf50':r.col;
+    ctx.fillRect(x-25,98,50*pct,6);
+  });
+  ctx.restore();
+}
+
+function drawHeatBar(){
+  ctx.save();
+  const w=W-40;
+  ctx.fillStyle='#222';
+  ctx.fillRect(20,H-28,w,10);
+  const pct=Math.max(0,heat)/100;
+  const col=heat>60?'#ff6b35':heat>30?'#ffb300':'#e94560';
+  ctx.fillStyle=col;
+  ctx.fillRect(20,H-28,w*pct,10);
+  ctx.strokeStyle='#5a3a1a';ctx.strokeRect(20,H-28,w,10);
+  ctx.fillStyle='#aaa';ctx.font='11px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('glass_heat_label','Glass Heat'),20,H-32);
+  ctx.restore();
+}
+
+let lastTs=null;
+function loop(ts){
+  if(lastTs==null)lastTs=ts;
+  const dt=Math.min((ts-lastTs)/16.6667,3);
+  lastTs=ts;
+
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#1a0e08');bg.addColorStop(1,'#2a1508');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // marver surface
+  ctx.fillStyle='#3a2416';
+  ctx.fillRect(0,290,W,60);
+  ctx.strokeStyle='#5a3a1a';ctx.lineWidth=2;
+  ctx.strokeRect(0,290,W,60);
+
+  if(started && !gameOver)tick(dt);
+
+  const curName=recipe[recipeIdx]?recipe[recipeIdx].name:null;
+  piles.forEach(p=>drawPile(p,curName));
+
+  particles.forEach(p=>{
+    ctx.globalAlpha=Math.max(0,p.life);
+    ctx.fillStyle=p.col;
+    ctx.beginPath();ctx.arc(p.x,p.y,3,0,7);ctx.fill();
+  });
+  ctx.globalAlpha=1;
+
+  drawBubble();
+  drawRecipeCard();
+  drawHeatBar();
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ffb74d';ctx.font='bold 24px Arial';
+    ctx.fillText(I18N.t('roll_start','Click / Tap / Arrow Keys to begin rolling'),W/2,H/2);
+  } else if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff6b6b';ctx.font='bold 36px Arial';
+    ctx.fillText(muddied?I18N.t('muddied_title','COLORS MUDDIED!'):I18N.t('cooled_title','GLASS WENT COLD!'),W/2,H/2-20);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('restart_hint2','Click or Tap to restart'),W/2,H/2+20);
+  } else if(won){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#4caf50';ctx.font='bold 28px Arial';
+    ctx.fillText(I18N.t('pattern_complete','PATTERN COMPLETE!'),W/2,H/2);
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script></body></html>
