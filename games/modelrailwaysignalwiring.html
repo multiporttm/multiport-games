@@ -1,0 +1,284 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Model Railway Signal Wiring</title><meta name="description" content="Play Model Railway Signal Wiring free online — Connect color-coded wires from a control panel to the correct signal lights and switch motors shown on a wiring diagram, without crossing mismatched wires, across more complex wiring each round."><link rel="canonical" href="https://games.multiportllc.com/games/modelrailwaysignalwiring"><meta property="og:title" content="Model Railway Signal Wiring - Multiport Games"><meta property="og:description" content="Play Model Railway Signal Wiring free online — Connect color-coded wires from a control panel to the correct signal lights and switch motors shown on a wiring diagram, without crossing mismatched wires, across more complex wiring each round."><meta property="og:url" content="https://games.multiportllc.com/games/modelrailwaysignalwiring"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Model Railway Signal Wiring - Multiport Games"><meta name="twitter:description" content="Play Model Railway Signal Wiring free online — Connect color-coded wires from a control panel to the correct signal lights and switch motors shown on a wiring diagram, without crossing mismatched wires, across more complex wiring each round."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Model Railway Signal Wiring","description":"Play Model Railway Signal Wiring free online instantly. Under the layout benchtop, drag each color-coded wire from the control panel terminals to the matching signal light or switch motor shown on the wiring diagram, reading the diagram carefully so no wire crosses to the wrong terminal. A wrong connection sparks and costs a life. Each round wires up a bigger panel with more signals, switch motors and crisscrossing color codes. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/modelrailwaysignalwiring","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#1c1f1a;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#ffd9a0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#controls{text-align:center;margin:4px 0 8px}
+#controls button{padding:8px 18px;background:#c97b3d;border:none;border-radius:16px;color:#2b1a0e;font-weight:800;cursor:pointer;font-size:.95rem;margin:0 5px}
+#controls button:hover{background:#e0924f}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Model Railway Signal Wiring</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="levelLbl">Panel 1</span>
+      <span id="wireLbl">Wires left: 0</span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+    <div id="controls">
+      <button id="newBtn">New Panel</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Click a color-coded terminal on the left control panel, then click the signal light or switch motor on the right wiring diagram that matches it — each terminal has exactly one correct target, shown by matching colors and labels. Connecting a wire to the wrong target sparks and costs a life. Wire up every terminal correctly to energize the whole panel and advance to a bigger, more tangled one — lose all 3 lives and the panel shorts out!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+let hi=parseInt(localStorage.getItem('modelrailwaysignalwiring_hi')||'0',10);
+let score=0,lives=3,level=1,gameOver=false;
+let terminals=[],targets=[],connections=[],selected=-1;
+let flashTimer=0,flashGood=true;
+let sparkFx=[];
+
+const WIRE_COLORS=['#e94560','#ffd54f','#4fc3f7','#7ec850','#ba68c8','#ff8a3d','#4dd0e1','#f06292'];
+const TARGET_TYPES=['signal','motor'];
+
+function shuffle(arr){ return arr.map(v=>[Math.random(),v]).sort((a,b)=>a[0]-b[0]).map(p=>p[1]); }
+
+function genPanel(lvl){
+  const n = Math.min(3+Math.floor(lvl/1.2), 8);
+  const colors = shuffle(WIRE_COLORS.slice()).slice(0,n);
+  const term=[], targ=[];
+  const leftX=120, rightX=680;
+  const topY=70, gap=(H-160)/Math.max(1,n-1);
+  const order = shuffle([...Array(n).keys()]);
+  for(let i=0;i<n;i++){
+    const y = n===1? H/2 : topY+i*gap;
+    const type = TARGET_TYPES[i%2];
+    term.push({id:i, x:leftX, y, color:colors[i], type});
+  }
+  // shuffle target vertical order independently so matching requires reading, not just row alignment
+  const shuffledIdx = shuffle([...Array(n).keys()]);
+  for(let i=0;i<n;i++){
+    const y = n===1? H/2 : topY+i*gap;
+    const srcIdx = shuffledIdx[i];
+    targ.push({id:srcIdx, x:rightX, y, color:colors[srcIdx], type:term[srcIdx].type});
+  }
+  return {term, targ};
+}
+
+function setupLevel(){
+  const panel=genPanel(level);
+  terminals=panel.term.map(t=>({...t, wired:false}));
+  targets=panel.targ.map(t=>({...t, wired:false}));
+  connections=[];
+  selected=-1;
+  updateHud();
+}
+
+function updateHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('levelLbl').textContent=I18N.t('panel_label','Panel {n}').replace('{n}',level);
+  const left=terminals.filter(t=>!t.wired).length;
+  document.getElementById('wireLbl').textContent=I18N.t('wires_left_label','Wires left: {n}').replace('{n}',left);
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;
+  setupLevel();
+}
+
+function pointToCanvas(ev){
+  const r=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return {x:cx*(W/r.width), y:cy*(H/r.height)};
+}
+
+function handleClick(pt){
+  if(gameOver){reset();return;}
+  for(const t of terminals){
+    if(t.wired)continue;
+    if(Math.hypot(pt.x-t.x,pt.y-t.y)<22){
+      selected = selected===t.id ? -1 : t.id;
+      SFX.click();
+      return;
+    }
+  }
+  if(selected>=0){
+    for(const tg of targets){
+      if(tg.wired)continue;
+      if(Math.hypot(pt.x-tg.x,pt.y-tg.y)<22){
+        attemptConnect(selected,tg);
+        return;
+      }
+    }
+  }
+}
+
+function attemptConnect(termId,target){
+  const term=terminals.find(t=>t.id===termId);
+  const correct = target.id===termId;
+  if(correct){
+    term.wired=true;
+    target.wired=true;
+    connections.push({term,target,good:true});
+    selected=-1;
+    score+=20+level*2;
+    SFX.point();
+    flashTimer=14;flashGood=true;
+    if(terminals.every(t=>t.wired)){
+      completePanel();
+    }
+  } else {
+    lives--;
+    SFX.error();
+    sparkFx.push({x:target.x,y:target.y,life:20});
+    flashTimer=14;flashGood=false;
+    selected=-1;
+    if(lives<=0){
+      gameOver=true;
+      SFX.lose();
+      if(score>hi){hi=score;localStorage.setItem('modelrailwaysignalwiring_hi',hi);}
+    }
+  }
+  updateHud();
+}
+
+function completePanel(){
+  score+=70;
+  SFX.success();
+  SFX.levelup();
+  level++;
+  if(score>hi){hi=score;localStorage.setItem('modelrailwaysignalwiring_hi',hi);}
+  setupLevel();
+}
+
+c.addEventListener('mousedown',e=>{handleClick(pointToCanvas(e));});
+c.addEventListener('touchstart',e=>{e.preventDefault();handleClick(pointToCanvas(e));},{passive:false});
+document.getElementById('newBtn').addEventListener('click',()=>{SFX.click();reset();});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();if(gameOver)reset();}
+});
+
+function drawTerminal(t){
+  ctx.save();
+  ctx.beginPath();ctx.arc(t.x,t.y,16,0,Math.PI*2);
+  ctx.fillStyle = t.wired ? '#333' : t.color;
+  ctx.fill();
+  ctx.strokeStyle = (t.id===selected) ? '#fff' : '#111';
+  ctx.lineWidth = (t.id===selected) ? 4 : 2;
+  ctx.stroke();
+  ctx.fillStyle='#111';ctx.font='bold 10px Arial';ctx.textAlign='center';
+  ctx.fillText(t.type==='signal'?'SIG':'SW', t.x, t.y+3);
+  ctx.restore();
+}
+
+function drawTarget(tg){
+  ctx.save();
+  if(tg.type==='signal'){
+    // signal light housing
+    ctx.fillStyle='#2a2a2a';
+    ctx.fillRect(tg.x-10,tg.y-18,20,36);
+    ctx.beginPath();ctx.arc(tg.x,tg.y,12,0,Math.PI*2);
+    ctx.fillStyle = tg.wired? tg.color : '#444';
+    ctx.fill();
+    if(tg.wired){ ctx.shadowColor=tg.color;ctx.shadowBlur=14;ctx.fill(); ctx.shadowBlur=0; }
+    ctx.strokeStyle='#111';ctx.lineWidth=2;ctx.stroke();
+  } else {
+    // switch motor box
+    ctx.fillStyle = tg.wired? '#3a3a3a' : '#2a2a2a';
+    ctx.fillRect(tg.x-18,tg.y-14,36,28);
+    ctx.strokeStyle = tg.wired? tg.color : '#555';
+    ctx.lineWidth=3;
+    ctx.strokeRect(tg.x-18,tg.y-14,36,28);
+    ctx.fillStyle=tg.wired?tg.color:'#888';
+    ctx.beginPath();ctx.arc(tg.x,tg.y,5,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawWireCurve(x1,y1,x2,y2,color,width){
+  ctx.strokeStyle=color;ctx.lineWidth=width;ctx.lineCap='round';
+  ctx.beginPath();
+  ctx.moveTo(x1,y1);
+  const midx=(x1+x2)/2;
+  ctx.bezierCurveTo(midx,y1,midx,y2,x2,y2);
+  ctx.stroke();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#141712');bg.addColorStop(1,'#1c1f1a');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  ctx.strokeStyle='rgba(255,255,255,0.03)';
+  for(let i=0;i<W;i+=24){ctx.beginPath();ctx.moveTo(i,0);ctx.lineTo(i,H);ctx.stroke();}
+
+  ctx.textAlign='center';
+  ctx.fillStyle='#ffd9a0';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('wiring_header','Wire each terminal to its matching target'),W/2,24);
+
+  ctx.textAlign='left';
+  ctx.fillStyle='#ffd9a0';ctx.font='bold 13px Arial';
+  ctx.fillText(I18N.t('control_panel_label','Control Panel'),40,55);
+  ctx.textAlign='right';
+  ctx.fillText(I18N.t('diagram_label','Wiring Diagram'),W-40,55);
+
+  // control panel backdrop
+  ctx.fillStyle='rgba(0,0,0,0.25)';
+  ctx.fillRect(60,56,120,H-110);
+  ctx.fillRect(W-180,56,120,H-110);
+
+  // completed connections
+  connections.forEach(con=>{
+    drawWireCurve(con.term.x,con.term.y,con.target.x,con.target.y,con.term.color,4);
+  });
+
+  terminals.forEach(drawTerminal);
+  targets.forEach(drawTarget);
+
+  // spark fx
+  sparkFx=sparkFx.filter(s=>s.life>0);
+  sparkFx.forEach(s=>{
+    s.life--;
+    ctx.save();
+    ctx.globalAlpha=s.life/20;
+    ctx.strokeStyle='#ffd54f';ctx.lineWidth=2;
+    for(let i=0;i<6;i++){
+      const ang=Math.random()*Math.PI*2;
+      const len=10+Math.random()*14;
+      ctx.beginPath();ctx.moveTo(s.x,s.y);ctx.lineTo(s.x+Math.cos(ang)*len,s.y+Math.sin(ang)*len);ctx.stroke();
+    }
+    ctx.restore();
+  });
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.18)':'rgba(255,80,100,0.22)';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(10,6,3,0.72)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','PANEL SHORTED OUT'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+16);
+  }
+
+  ctx.textAlign='right';
+  ctx.fillStyle='#ffd9a0';ctx.font='bold 14px Arial';
+  ctx.fillText('❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives)),W-16,20);
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>

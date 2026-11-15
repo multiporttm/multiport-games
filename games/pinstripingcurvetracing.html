@@ -1,0 +1,256 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Pinstriping Curve Tracing</title><meta name="description" content="Play Pinstriping Curve Tracing free online — Drag your brush (mouse or finger) along the glowing scroll design from the start star to the end flag, staying inside the safe zone the whole way. Designs get more intricate each round."><link rel="canonical" href="https://games.multiportllc.com/games/pinstripingcurvetracing"><meta property="og:title" content="Pinstriping Curve Tracing - Multiport Games"><meta property="og:description" content="Play Pinstriping Curve Tracing free online — Drag your brush along the glowing scroll design from start to finish, staying inside the safe zone. Designs get more intricate each round."><meta property="og:url" content="https://games.multiportllc.com/games/pinstripingcurvetracing"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Pinstriping Curve Tracing - Multiport Games"><meta name="twitter:description" content="Play Pinstriping Curve Tracing free online — trace the glowing scroll design and keep inside the safe zone."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Pinstriping Curve Tracing","description":"Play Pinstriping Curve Tracing free online instantly. Drag your brush along the glowing scroll design from the start star to the end flag, staying inside the safe zone the whole way and keeping your line width consistent. Designs get more intricate each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/pinstripingcurvetracing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#17171f;display:block;border-radius:8px;touch-action:none}
+#score-display{color:#ffd54f;font-size:1.2rem;font-weight:700;text-align:center;padding:8px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Pinstriping Curve Tracing</div>
+  <div class="game-frame">
+    <div id="score-display">Level 1 | Coverage: 0% | Hi: 0</div>
+    <canvas id="c" width="800" height="400"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag your brush (<b>mouse</b> or <b>finger</b>) along the glowing scroll design from the <b>star</b> to the <b>flag</b>, keeping inside the safe zone and your line width steady the whole way. Designs grow more intricate each round!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=400;
+const HI_KEY='pinstripingcurvetracing_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let level=1,coveragePct=0,gameOver=false,win=false,started=false;
+let pathPts=[],traced=[],drawing=false;
+let cursor=null,offTrackTime=0;
+const SAFE_R=22;
+
+function bezier(p0,p1,p2,p3,t){
+  const u=1-t;
+  return {
+    x:u*u*u*p0.x+3*u*u*t*p1.x+3*u*t*t*p2.x+t*t*t*p3.x,
+    y:u*u*u*p0.y+3*u*u*t*p1.y+3*u*t*t*p2.y+t*t*t*p3.y
+  };
+}
+
+function buildPath(lvl){
+  // chain of bezier segments forming a scroll/flourish, more segments per level
+  const segs=2+Math.min(lvl,5);
+  const pts=[];
+  let cx=90,cy=200+((Math.random()-0.5)*20);
+  const dir=1;
+  for(let s=0;s<segs;s++){
+    const amp=50+Math.random()*40+lvl*4;
+    const sign=s%2===0?1:-1;
+    const p0={x:cx,y:cy};
+    const p1={x:cx+70,y:cy+sign*amp};
+    const p2={x:cx+140,y:cy-sign*amp*0.6};
+    const p3={x:cx+210,y:cy+sign*amp*0.15};
+    const steps=40;
+    for(let i=0;i<=steps;i++){
+      pts.push(bezier(p0,p1,p2,p3,i/steps));
+    }
+    cx=p3.x;cy=p3.y;
+  }
+  // normalize x to fit width
+  const maxX=pts[pts.length-1].x;
+  const scale=(W-180)/(maxX-90);
+  pts.forEach(p=>{p.x=90+(p.x-90)*scale;});
+  return pts;
+}
+
+function reset(lvl){
+  level=lvl;
+  pathPts=buildPath(level);
+  traced=new Array(pathPts.length).fill(false);
+  coveragePct=0;gameOver=false;win=false;started=false;cursor=null;offTrackTime=0;
+}
+newGame();
+function newGame(){reset(1);}
+
+function nearestIdx(x,y){
+  let best=0,bd=Infinity;
+  for(let i=0;i<pathPts.length;i+=2){
+    const d=(pathPts[i].x-x)**2+(pathPts[i].y-y)**2;
+    if(d<bd){bd=d;best=i;}
+  }
+  return {idx:best,dist:Math.sqrt(bd)};
+}
+
+function pointerPos(e){
+  const r=c.getBoundingClientRect();
+  const cx=(e.touches?e.touches[0].clientX:e.clientX);
+  const cy=(e.touches?e.touches[0].clientY:e.clientY);
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+
+function beginDraw(e){
+  if(gameOver){restart();return;}
+  started=true;
+  drawing=true;
+  const p=pointerPos(e);
+  cursor=p;
+  handleMove(p);
+}
+function moveDraw(e){
+  if(!drawing)return;
+  e.preventDefault&&e.preventDefault();
+  const p=pointerPos(e);
+  cursor=p;
+  handleMove(p);
+}
+function endDraw(){drawing=false;}
+
+function handleMove(p){
+  const {idx,dist}=nearestIdx(p.x,p.y);
+  if(dist<=SAFE_R){
+    traced[idx]=true;
+    if(idx>0)traced[idx-1]=true;
+    if(idx<traced.length-1)traced[idx+1]=true;
+    offTrackTime=Math.max(0,offTrackTime-1);
+  } else if(dist<=SAFE_R*2.4){
+    offTrackTime+=0.5;
+  } else {
+    offTrackTime+=1.2;
+  }
+  if(offTrackTime>=40&&!gameOver){fail();}
+}
+
+c.addEventListener('pointerdown',beginDraw);
+c.addEventListener('pointermove',moveDraw);
+window.addEventListener('pointerup',endDraw);
+
+function fail(){
+  gameOver=true;win=false;SFX.fail();
+  const score=Math.floor(coveragePct*5+level*20);
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+}
+function complete(){
+  gameOver=true;win=true;SFX.win();
+  const score=Math.floor(coveragePct*5+level*40);
+  if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+}
+function restart(){
+  if(win)reset(level+1);else reset(1);
+  started=true;SFX.select();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const g=ctx.createLinearGradient(0,0,W,H);
+  g.addColorStop(0,'#1a1a24');g.addColorStop(1,'#242430');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // hood sheen
+  ctx.fillStyle='rgba(255,255,255,0.03)';
+  ctx.beginPath();ctx.ellipse(W/2,H/2,W*0.46,H*0.4,0,0,Math.PI*2);ctx.fill();
+
+  // full guide path (dim)
+  drawPathStroke(pathPts,'rgba(126,200,255,0.18)',SAFE_R*2);
+  drawPathStroke(pathPts,'#7ec8ff',2.4);
+
+  // traced segments (bright)
+  ctx.save();
+  ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.strokeStyle='#ffd54f';
+  ctx.lineWidth=6;
+  ctx.shadowColor='#ffd54f';ctx.shadowBlur=8;
+  ctx.beginPath();
+  let open=false;
+  for(let i=0;i<pathPts.length;i++){
+    if(traced[i]){
+      const p=pathPts[i];
+      if(!open){ctx.moveTo(p.x,p.y);open=true;}else ctx.lineTo(p.x,p.y);
+    } else { open=false; }
+  }
+  ctx.stroke();
+  ctx.shadowBlur=0;
+  ctx.restore();
+
+  // start/end markers
+  drawStar(pathPts[0].x,pathPts[0].y);
+  drawFlag(pathPts[pathPts.length-1].x,pathPts[pathPts.length-1].y);
+
+  const tracedCount=traced.filter(Boolean).length;
+  coveragePct=Math.round((tracedCount/traced.length)*100);
+  if(coveragePct>=97&&!gameOver)complete();
+
+  if(cursor){
+    ctx.save();
+    const {dist}=nearestIdx(cursor.x,cursor.y);
+    ctx.fillStyle=dist<=SAFE_R?'#9ad6ff':(dist<=SAFE_R*2.4?'#ffb74d':'#e94560');
+    ctx.beginPath();ctx.arc(cursor.x,cursor.y,8,0,Math.PI*2);ctx.fill();
+    ctx.restore();
+  }
+
+  // off-track meter
+  ctx.fillStyle='rgba(255,255,255,0.08)';ctx.fillRect(W-170,16,150,10);
+  ctx.fillStyle=offTrackTime>25?'#e94560':'#ffd54f';
+  ctx.fillRect(W-170,16,150*Math.min(1,offTrackTime/40),10);
+  ctx.fillStyle='#aaa';ctx.font='11px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('curve_wobble','WOBBLE'),W-170,12);
+
+  if(!started){
+    ctx.fillStyle='rgba(0,0,0,0.45)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('curve_start','Drag from the star to trace the design'),W/2,H/2);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.55)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    if(win){
+      ctx.fillStyle='#7ec850';ctx.font='bold 32px Arial';
+      ctx.fillText(I18N.t('curve_done','DESIGN TRACED!'),W/2,H/2-14);
+      ctx.font='17px Arial';ctx.fillStyle='#fff';
+      ctx.fillText(I18N.t('curve_next','Tap to start Level {n}').replace('{n}',level+1),W/2,H/2+20);
+    } else {
+      ctx.fillStyle='#e94560';ctx.font='bold 32px Arial';
+      ctx.fillText(I18N.t('curve_smudged','LINE SMUDGED'),W/2,H/2-14);
+      ctx.font='17px Arial';ctx.fillStyle='#fff';
+      ctx.fillText(I18N.t('curve_retry','Tap to retry Level 1'),W/2,H/2+20);
+    }
+  }
+
+  document.getElementById('score-display').textContent=
+    I18N.t('curve_hud','Level {lv} | Coverage: {c}% | Hi: {h}')
+      .replace('{lv}',level).replace('{c}',coveragePct).replace('{h}',hi);
+
+  requestAnimationFrame(loop);
+}
+
+function drawPathStroke(pts,color,width){
+  ctx.save();
+  ctx.strokeStyle=color;ctx.lineWidth=width;ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();
+  pts.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y); });
+  ctx.stroke();
+  ctx.restore();
+}
+function drawStar(x,y){
+  ctx.save();ctx.translate(x,y);ctx.fillStyle='#ffd54f';
+  ctx.beginPath();
+  for(let i=0;i<5;i++){
+    const a1=-Math.PI/2+i*(2*Math.PI/5);
+    const a2=a1+Math.PI/5;
+    ctx.lineTo(Math.cos(a1)*11,Math.sin(a1)*11);
+    ctx.lineTo(Math.cos(a2)*5,Math.sin(a2)*5);
+  }
+  ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+function drawFlag(x,y){
+  ctx.save();ctx.translate(x,y);
+  ctx.strokeStyle='#ccc';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(0,-20);ctx.lineTo(0,10);ctx.stroke();
+  ctx.fillStyle='#e94560';ctx.beginPath();ctx.moveTo(0,-20);ctx.lineTo(16,-14);ctx.lineTo(0,-8);ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+
+loop();
+</script></body></html>

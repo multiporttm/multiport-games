@@ -1,0 +1,356 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Model Railway Bridge Building</title><meta name="description" content="Play Model Railway Bridge Building free online — Fit miniature trestle beams together in the order and position shown on the blueprint, keeping the wobble gauge steady so the bridge never collapses."><link rel="canonical" href="https://games.multiportllc.com/games/modelrailwaybridgebuilding"><meta property="og:title" content="Model Railway Bridge Building - Multiport Games"><meta property="og:description" content="Play Model Railway Bridge Building free online — Fit miniature trestle beams together in the order and position shown on the blueprint, keeping the wobble gauge steady so the bridge never collapses."><meta property="og:url" content="https://games.multiportllc.com/games/modelrailwaybridgebuilding"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Model Railway Bridge Building - Multiport Games"><meta name="twitter:description" content="Play Model Railway Bridge Building free online — Fit miniature trestle beams together in the order and position shown on the blueprint, keeping the wobble gauge steady so the bridge never collapses."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Model Railway Bridge Building","description":"Play Model Railway Bridge Building free online instantly. On a miniature workshop benchtop, pick up support-beam pieces from the parts tray and fit them into the correct slot and order shown on the blueprint to assemble a miniature trestle bridge, watching the wobble gauge so the half-built structure never tips past its balance limit and collapses. Each round the bridge grows taller and longer with more beams to place. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/modelrailwaybridgebuilding","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#3b2a1d;display:block;border-radius:8px;touch-action:none;cursor:pointer}
+#hud{color:#ffd9a0;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#controls{text-align:center;margin:4px 0 8px}
+#controls button{padding:8px 18px;background:#c97b3d;border:none;border-radius:16px;color:#2b1a0e;font-weight:800;cursor:pointer;font-size:.95rem;margin:0 5px}
+#controls button:hover{background:#e0924f}
+#wobbleWrap{width:300px;height:14px;margin:4px auto 0;background:rgba(255,255,255,0.12);border-radius:7px;overflow:hidden;position:relative;border:1px solid #2b1a0e}
+#wobbleFill{position:absolute;left:50%;top:0;height:100%;width:2px;background:#7ec850}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Model Railway Bridge Building</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="levelLbl">Bridge 1</span>
+      <span id="beamLbl">Beams left: 0</span>
+    </div>
+    <canvas id="c" width="800" height="440"></canvas>
+    <div id="controls">
+      <button id="newBtn">New Bridge</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> Click a beam in the parts tray, then click the highlighted slot on the blueprint where it belongs — beams must go in from the bottom up, in the exact order shown, or the structure gets unstable. Watch the <b>wobble gauge</b>: placing a beam off-balance (far from the bridge's center) nudges it left or right — let the needle swing too far and the bridge collapses! Finish every slot before it tips over to advance to a taller, longer bridge.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=440;
+const KEY='modelrailwaybridgebuilding_hi';
+let hi=parseInt(localStorage.getItem(KEY)||'0',10);
+let score=0,level=1,gameOver=false;
+let slots=[],tray=[],selected=-1,wobble=0,collapsed=false;
+let flashTimer=0,flashGood=true;
+let shakeTimer=0;
+
+// Bridge model: a row of vertical "towers" (support columns), each made of a stack of beam segments.
+// Each tower has N segments, built bottom-up. Towers must be completed in left-to-right-ish order
+// for structural order, but we simplify: each slot has a required build order index overall.
+function genBridge(lvl){
+  const numTowers=3+Math.min(4,Math.floor((lvl-1)/2));
+  const segsPerTower=2+Math.min(3,Math.floor((lvl-1)/2));
+  const towers=[];
+  for(let t=0;t<numTowers;t++){
+    towers.push({segs:segsPerTower,filled:0});
+  }
+  // overall build order: bottom segment of every tower first (wave by height), left to right within a wave,
+  // mimicking real trestle construction (courses built level by level)
+  const order=[];
+  for(let h=0;h<segsPerTower;h++){
+    for(let t=0;t<numTowers;t++){
+      order.push({tower:t,height:h});
+    }
+  }
+  return {towers,order,numTowers,segsPerTower};
+}
+
+let bridge=null;
+
+function setupLevel(){
+  bridge=genBridge(level);
+  tray=bridge.order.map((o,i)=>({tower:o.tower,height:o.height,seq:i,used:false}));
+  // present tray already in a shuffled-looking but still logically ordered-by-necessity queue:
+  // only ever show the next few plausible pieces, but keep all pieces, shuffle visual order within blocks
+  // Easiest: keep tray order == build order (classic puzzle: must pick in sequence), but shuffle a window
+  shuffleWindow(tray,3+Math.floor(level/2));
+  selected=-1;
+  wobble=0;collapsed=false;
+  updateHud();
+}
+
+function shuffleWindow(arr,winSize){
+  for(let i=0;i<arr.length;i+=winSize){
+    const slice=arr.slice(i,i+winSize);
+    for(let k=slice.length-1;k>0;k--){
+      const j=Math.floor(Math.random()*(k+1));
+      [slice[k],slice[j]]=[slice[j],slice[k]];
+    }
+    for(let k=0;k<slice.length;k++)arr[i+k]=slice[k];
+  }
+}
+
+function updateHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('levelLbl').textContent=I18N.t('bridge_label','Bridge {n}').replace('{n}',level);
+  const left=tray.filter(t=>!t.used).length;
+  document.getElementById('beamLbl').textContent=I18N.t('beams_left_label','Beams left: {n}').replace('{n}',left);
+}
+
+function reset(){
+  score=0;level=1;gameOver=false;
+  setupLevel();
+}
+
+function pointToCanvas(ev){
+  const r=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return {x:cx*(W/r.width), y:cy*(H/r.height)};
+}
+
+function towerX(t){
+  const margin=90;
+  const spacing=(W-margin*2)/(bridge.numTowers-1||1);
+  return margin+t*spacing;
+}
+const deckY=140,segH=42;
+
+function slotScreenPos(tower,height){
+  const x=towerX(tower);
+  const y=deckY+ (bridge.segsPerTower-1-height)*segH + segH/2;
+  return {x,y};
+}
+
+function trayLayout(){
+  const left=tray.filter(t=>!t.used);
+  const startX=50,y=H-50,gap=54;
+  return left.slice(0,10).map((t,i)=>({t,x:startX+i*gap,y}));
+}
+
+function nextAllowed(){
+  // the piece(s) that are legally placeable now: for each tower, only its next-unfilled height
+  const map={};
+  for(let t=0;t<bridge.numTowers;t++)map[t]=bridge.towers[t].filled;
+  return map;
+}
+
+function handleClick(pt){
+  if(gameOver){reset();return;}
+  const layout=trayLayout();
+  for(const item of layout){
+    if(Math.hypot(pt.x-item.x,pt.y-item.y)<24){
+      const idx=tray.indexOf(item.t);
+      selected=selected===idx?-1:idx;
+      SFX.click();
+      return;
+    }
+  }
+  if(selected>=0 && !tray[selected].used){
+    const piece=tray[selected];
+    for(let t=0;t<bridge.numTowers;t++){
+      const nextH=bridge.towers[t].filled;
+      if(nextH>=bridge.segsPerTower)continue;
+      const {x,y}=slotScreenPos(t,nextH);
+      if(Math.hypot(pt.x-x,pt.y-y)<28){
+        attemptPlace(t,piece);
+        return;
+      }
+    }
+  }
+}
+
+function attemptPlace(tower,piece){
+  const nextH=bridge.towers[tower].filled;
+  const correct = piece.tower===tower && piece.height===nextH;
+  if(correct){
+    bridge.towers[tower].filled++;
+    piece.used=true;
+    selected=-1;
+    score+=20+level*2;
+    SFX.point();
+    flashTimer=14;flashGood=true;
+    // balance effect: distance of tower from center influences wobble
+    const center=(bridge.numTowers-1)/2;
+    const dist=(tower-center);
+    wobble+=dist*2.2;
+    // natural settle pull toward 0 a bit after each placement handled in loop
+    const allDone=bridge.towers.every(tw=>tw.filled>=tw.segs);
+    if(allDone){
+      completeLevel();
+    }
+  } else {
+    wobble += (Math.random()<0.5?-1:1)*14;
+    SFX.error();
+    flashTimer=14;flashGood=false;
+    shakeTimer=10;
+  }
+  updateHud();
+  checkCollapse();
+}
+
+function checkCollapse(){
+  if(Math.abs(wobble)>=100 && !collapsed && !gameOver){
+    collapsed=true;
+    gameOver=true;
+    SFX.lose();
+    SFX.fail();
+    if(score>hi){hi=score;localStorage.setItem(KEY,hi);}
+  }
+}
+
+function completeLevel(){
+  score+=100;
+  SFX.success();
+  SFX.levelup();
+  level++;
+  if(score>hi){hi=score;localStorage.setItem(KEY,hi);}
+  setupLevel();
+}
+
+c.addEventListener('mousedown',e=>{handleClick(pointToCanvas(e));});
+c.addEventListener('touchstart',e=>{e.preventDefault();handleClick(pointToCanvas(e));},{passive:false});
+document.getElementById('newBtn').addEventListener('click',()=>{SFX.click();reset();});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'){e.preventDefault();if(gameOver)reset();}
+  if(e.code==='ArrowLeft'||e.code==='ArrowRight'){
+    e.preventDefault();
+    const left=tray.filter(t=>!t.used);
+    if(left.length===0)return;
+    let idx = selected>=0?tray.indexOf(left.find(t=>tray.indexOf(t)===selected)):-1;
+    let pos=left.findIndex((t,i)=>tray.indexOf(t)===selected);
+    if(pos<0)pos=0;else pos=(pos+(e.code==='ArrowRight'?1:-1)+left.length)%left.length;
+    selected=tray.indexOf(left[pos]);
+    SFX.select();
+  }
+  if(e.code==='Enter'){
+    e.preventDefault();
+    if(selected>=0 && !tray[selected].used){
+      const piece=tray[selected];
+      attemptPlace(piece.tower===undefined?0:findTargetTower(piece),piece);
+    }
+  }
+});
+function findTargetTower(piece){
+  // Enter key auto-targets the tower this piece is meant for (if it's legally next)
+  const nextH=bridge.towers[piece.tower].filled;
+  return piece.height===nextH ? piece.tower : piece.tower;
+}
+
+function drawBeamIcon(x,y,w,h,dim){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle=dim?'rgba(140,100,60,0.35)':'#8a5a30';
+  ctx.fillRect(-w/2,-h/2,w,h);
+  ctx.strokeStyle=dim?'rgba(43,26,14,0.4)':'#2b1a0e';ctx.lineWidth=2;
+  ctx.strokeRect(-w/2,-h/2,w,h);
+  ctx.strokeStyle=dim?'rgba(255,217,160,0.2)':'rgba(255,217,160,0.5)';ctx.lineWidth=1.5;
+  ctx.beginPath();ctx.moveTo(-w/2,-h/2);ctx.lineTo(w/2,h/2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(w/2,-h/2);ctx.lineTo(-w/2,h/2);ctx.stroke();
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#2b1d12');bg.addColorStop(1,'#3b2a1d');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  // settle wobble slightly toward zero each frame, and shake effect
+  if(!gameOver){
+    wobble *= 0.985;
+  }
+  let shakeX=0;
+  if(shakeTimer>0){shakeTimer--;shakeX=(Math.random()-0.5)*6;}
+
+  ctx.save();
+  ctx.translate(shakeX,0);
+
+  ctx.textAlign='center';
+  ctx.fillStyle='#ffd9a0';ctx.font='bold 16px Arial';
+  ctx.fillText(I18N.t('bridge_header','Blueprint — build towers bottom-up, keep it balanced'),W/2,20);
+
+  // chasm
+  ctx.fillStyle='#1a1008';
+  ctx.fillRect(0,deckY+bridge.segsPerTower*segH,W,H-(deckY+bridge.segsPerTower*segH)-70);
+
+  // deck line (railway track on top)
+  const deckTop=deckY-6;
+  ctx.strokeStyle='#d8d8d8';ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(40,deckTop);ctx.lineTo(W-40,deckTop);ctx.stroke();
+  ctx.strokeStyle='#6b4a2e';ctx.lineWidth=6;
+  for(let x=40;x<W-40;x+=16){ctx.beginPath();ctx.moveTo(x,deckTop-6);ctx.lineTo(x,deckTop+2);ctx.stroke();}
+
+  // towers (blueprint ghost + filled beams)
+  for(let t=0;t<bridge.numTowers;t++){
+    const tw=bridge.towers[t];
+    for(let h=0;h<tw.segs;h++){
+      const {x,y}=slotScreenPos(t,h);
+      const filled = h<tw.filled;
+      const isNext = h===tw.filled;
+      ctx.save();
+      if(isNext){
+        ctx.strokeStyle='rgba(255,213,79,0.8)';ctx.lineWidth=2;
+        ctx.strokeRect(x-18,y-segH/2+3,36,segH-6);
+      }
+      drawBeamIcon(x,y,34,segH-8,!filled);
+      ctx.restore();
+    }
+  }
+
+  // wobble visualization: tilt a thin overlay line across the deck
+  const tiltPx=Math.max(-40,Math.min(40,wobble*0.4));
+  ctx.strokeStyle=Math.abs(wobble)>70?'rgba(255,80,80,0.6)':'rgba(255,217,160,0.25)';
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(40,deckTop-tiltPx*0.15);ctx.lineTo(W-40,deckTop+tiltPx*0.15);ctx.stroke();
+
+  ctx.restore();
+
+  // tray
+  ctx.fillStyle='rgba(0,0,0,0.25)';
+  ctx.fillRect(0,H-82,W,82);
+  ctx.fillStyle='#ffd9a0';ctx.font='bold 13px Arial';ctx.textAlign='left';
+  ctx.fillText(I18N.t('tray_label2','Parts Tray (click a beam, then its slot)'),16,H-66);
+  const layout=trayLayout();
+  layout.forEach(item=>{
+    const idx=tray.indexOf(item.t);
+    drawBeamIcon(item.x,item.y,30,30,false);
+    if(idx===selected){
+      ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+      ctx.beginPath();ctx.arc(item.x,item.y,24,0,Math.PI*2);ctx.stroke();
+    }
+  });
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.18)':'rgba(255,80,100,0.22)';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  if(gameOver){
+    ctx.fillStyle='rgba(10,6,3,0.72)';ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title2','BRIDGE COLLAPSED'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),W/2,H/2+16);
+  }
+
+  // wobble gauge (DOM-ish drawn on canvas at top right)
+  const gx=W-170,gy=56,gw=140;
+  ctx.fillStyle='rgba(255,255,255,0.12)';ctx.fillRect(gx,gy,gw,12);
+  ctx.strokeStyle='#2b1a0e';ctx.lineWidth=1;ctx.strokeRect(gx,gy,gw,12);
+  const needleX=gx+gw/2+Math.max(-1,Math.min(1,wobble/100))*(gw/2-4);
+  ctx.fillStyle=Math.abs(wobble)>70?'#ff6b6b':'#7ec850';
+  ctx.fillRect(needleX-2,gy-3,4,18);
+  ctx.textAlign='center';ctx.fillStyle='#ffd9a0';ctx.font='bold 11px Arial';
+  ctx.fillText(I18N.t('wobble_label','WOBBLE'),gx+gw/2,gy-8);
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+loop();
+</script></body></html>

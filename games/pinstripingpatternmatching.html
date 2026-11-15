@@ -1,0 +1,329 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Pinstriping Pattern Matching</title><meta name="description" content="Play Pinstriping Pattern Matching free online — Quickly match a customer's pattern card to the correct stencil on the wall before time runs out, with more similar-looking options and larger walls each round."><link rel="canonical" href="https://games.multiportllc.com/games/pinstripingpatternmatching"><meta property="og:title" content="Pinstriping Pattern Matching - Multiport Games"><meta property="og:description" content="Play Pinstriping Pattern Matching free online — Quickly match a customer's pattern card to the correct stencil on the wall before time runs out, with more similar-looking options and larger walls each round."><meta property="og:url" content="https://games.multiportllc.com/games/pinstripingpatternmatching"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Pinstriping Pattern Matching - Multiport Games"><meta name="twitter:description" content="Play Pinstriping Pattern Matching free online — Quickly match a customer's pattern card to the correct stencil on the wall before time runs out, with more similar-looking options and larger walls each round."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Pinstriping Pattern Matching","description":"Play Pinstriping Pattern Matching free online instantly. A customer hands you a pattern card showing the exact pinstripe design they want - match it to the one correct stencil hanging on the shop wall before the clock runs out. Every order brings a bigger wall of stencils and more near-identical decoys to tell apart. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/pinstripingpatternmatching","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#2b2420;display:block;border-radius:8px;touch-action:manipulation;cursor:pointer}
+#hud{color:#ffd54f;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+.lives{letter-spacing:2px;color:#ff6b6b}
+#timeWrap{max-width:600px;margin:0 auto 6px;background:#0e1a28;border-radius:10px;padding:4px}
+#timeBar{height:12px;border-radius:8px;background:linear-gradient(90deg,#ff9800,#ffd54f);width:100%;transition:width .1s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Pinstriping Pattern Matching</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Order 1</span>
+    </div>
+    <div id="timeWrap"><div id="timeBar"></div></div>
+    <canvas id="c" width="800" height="480"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> The order card at the top shows the pinstripe pattern the customer wants. Click or tap the one stencil on the wall below that matches it exactly, or use the <b>Arrow Keys</b> + <b>Enter</b> to select. Pick a decoy and you lose a life. Each order brings a bigger wall and trickier near-matches.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=480;
+const HI_KEY='pinstripingpatternmatching_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+let score=0,lives=3,level=1,gameOver=false,started=false;
+
+const COLORS=['#d6263a','#ffd400','#1d6fd6','#1f9c5a','#ff8c1a','#e040fb'];
+const SHAPES=['flame','scallop','zigzag','dual'];
+
+function randParams(){
+  return {
+    shape:SHAPES[Math.floor(Math.random()*SHAPES.length)],
+    color:COLORS[Math.floor(Math.random()*COLORS.length)],
+    dir:Math.random()<0.5?1:-1,
+    stripes:1+Math.floor(Math.random()*3),
+  };
+}
+
+function sameParams(a,b){
+  return a.shape===b.shape&&a.color===b.color&&a.dir===b.dir&&a.stripes===b.stripes;
+}
+
+function mutate(p,amount){
+  const q={...p};
+  const fields=['shape','color','dir','stripes'];
+  const n=Math.max(1,amount);
+  const chosen=new Set();
+  while(chosen.size<Math.min(n,fields.length)){
+    chosen.add(fields[Math.floor(Math.random()*fields.length)]);
+  }
+  chosen.forEach(f=>{
+    if(f==='shape'){let s;do{s=SHAPES[Math.floor(Math.random()*SHAPES.length)]}while(s===q.shape);q.shape=s;}
+    if(f==='color'){let cc;do{cc=COLORS[Math.floor(Math.random()*COLORS.length)]}while(cc===q.color);q.color=cc;}
+    if(f==='dir')q.dir=-q.dir;
+    if(f==='stripes'){let s;do{s=1+Math.floor(Math.random()*3)}while(s===q.stripes);q.stripes=s;}
+  });
+  return q;
+}
+
+let target=null;
+let wall=[]; // {params,x,y,w,h}
+let cols=3,rows=3;
+let maxTime=18,timeLeft=18,lastTime=null;
+let selIdx=0;
+let correctIdx=0;
+let resultFlash=0; // >0 green, <0 red
+
+function buildWall(){
+  cols=Math.min(3+Math.floor((level-1)/2),6);
+  rows=Math.min(3+Math.floor((level-1)/3),5);
+  const total=cols*rows;
+  target=randParams();
+  const similarity=Math.min(3,1+Math.floor(level/2)); // how close decoys are (fewer mutated fields = harder)
+  const mutateAmount=Math.max(1,4-similarity);
+  wall=[];
+  correctIdx=Math.floor(Math.random()*total);
+  for(let i=0;i<total;i++){
+    if(i===correctIdx){wall.push({...target});continue;}
+    let p;
+    let tries=0;
+    do{p=mutate(target,mutateAmount);tries++;}while(sameParams(p,target)&&tries<10);
+    wall.push(p);
+  }
+  maxTime=Math.max(6,16-level*0.5);
+  timeLeft=maxTime;
+  selIdx=correctIdx===0?1:0;
+}
+
+function start(){
+  started=true;score=0;lives=3;level=1;gameOver=false;
+  buildWall();
+}
+function restart(){start();}
+
+function drawStencil(p,x,y,s,highlight){
+  ctx.save();
+  ctx.translate(x,y);
+  if(highlight){
+    ctx.fillStyle='rgba(255,213,79,0.18)';
+    ctx.beginPath();ctx.arc(0,0,s*0.62,0,Math.PI*2);ctx.fill();
+  }
+  ctx.strokeStyle=p.color;
+  ctx.lineWidth=Math.max(2,s*0.07);
+  ctx.lineCap='round';
+  ctx.shadowColor=p.color;ctx.shadowBlur=4;
+  const spacing=s*0.16;
+  for(let i=0;i<p.stripes;i++){
+    const off=(i-(p.stripes-1)/2)*spacing;
+    ctx.beginPath();
+    if(p.shape==='flame'){
+      for(let t=-1;t<=1;t+=0.08){
+        const yy=t*s*0.4;
+        const xx=off+p.dir*Math.sin(t*Math.PI*0.9)*s*0.32*(1-Math.abs(t)*0.3);
+        if(t===-1)ctx.moveTo(xx,yy);else ctx.lineTo(xx,yy);
+      }
+    } else if(p.shape==='scallop'){
+      for(let t=-1;t<=1;t+=0.05){
+        const xx=t*s*0.42;
+        const yy=off+p.dir*Math.sin(t*Math.PI*2.1)*s*0.22;
+        if(t===-1)ctx.moveTo(xx,yy);else ctx.lineTo(xx,yy);
+      }
+    } else if(p.shape==='zigzag'){
+      const pts=6;
+      for(let k=0;k<=pts;k++){
+        const xx=-s*0.4+ (s*0.8)*(k/pts);
+        const yy=off+ (k%2===0?-1:1)*p.dir*s*0.18;
+        if(k===0)ctx.moveTo(xx,yy);else ctx.lineTo(xx,yy);
+      }
+    } else { // dual - two parallel smooth curves
+      for(let t=-1;t<=1;t+=0.08){
+        const xx=t*s*0.42;
+        const yy=off+p.dir*t*s*0.22;
+        if(t===-1)ctx.moveTo(xx,yy);else ctx.lineTo(xx,yy);
+      }
+    }
+    ctx.stroke();
+  }
+  ctx.shadowBlur=0;
+  ctx.restore();
+}
+
+function layoutWall(){
+  const top=160,bottom=H-10;
+  const availH=bottom-top,availW=W-20;
+  const cw=availW/cols,ch=availH/rows;
+  const size=Math.min(cw,ch)*0.85;
+  const items=[];
+  for(let r=0;r<rows;r++){
+    for(let col=0;col<cols;col++){
+      const idx=r*cols+col;
+      if(idx>=wall.length)continue;
+      const x=10+cw*col+cw/2;
+      const y=top+ch*r+ch/2;
+      items.push({idx,x,y,size});
+    }
+  }
+  return items;
+}
+
+function pickIndex(idx){
+  if(!started){start();return;}
+  if(gameOver){restart();return;}
+  if(idx===correctIdx){
+    SFX.success();
+    score+=10*level;
+    resultFlash=14;
+    level++;
+    buildWall();
+  } else {
+    SFX.error();
+    lives--;
+    resultFlash=-14;
+    if(lives<=0){
+      gameOver=true;
+      if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+      SFX.lose();
+    } else {
+      buildWall();
+    }
+  }
+}
+
+c.addEventListener('click',e=>{
+  if(!started){start();return;}
+  if(gameOver){restart();return;}
+  const rect=c.getBoundingClientRect();
+  const x=(e.clientX-rect.left)*(W/rect.width);
+  const y=(e.clientY-rect.top)*(H/rect.height);
+  const items=layoutWall();
+  for(const it of items){
+    if(Math.hypot(x-it.x,y-it.y)<=it.size*0.6){pickIndex(it.idx);return;}
+  }
+});
+c.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(!started){start();return;}
+  if(gameOver){restart();return;}
+  const rect=c.getBoundingClientRect();
+  const t=e.changedTouches[0];
+  const x=(t.clientX-rect.left)*(W/rect.width);
+  const y=(t.clientY-rect.top)*(H/rect.height);
+  const items=layoutWall();
+  for(const it of items){
+    if(Math.hypot(x-it.x,y-it.y)<=it.size*0.6){pickIndex(it.idx);return;}
+  }
+},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
+  if(!started){start();return;}
+  if(gameOver){if(e.code==='Space'||e.key==='Enter')restart();return;}
+  if(e.code==='ArrowLeft')selIdx=(selIdx-1+wall.length)%wall.length;
+  else if(e.code==='ArrowRight')selIdx=(selIdx+1)%wall.length;
+  else if(e.code==='ArrowUp')selIdx=(selIdx-cols+wall.length)%wall.length;
+  else if(e.code==='ArrowDown')selIdx=(selIdx+cols)%wall.length;
+  else if(e.key==='Enter')pickIndex(selIdx);
+});
+
+function drawCard(){
+  const cw=220,ch=120,cx=W/2-cw/2,cy=14;
+  ctx.fillStyle='#f0e6d2';
+  ctx.strokeStyle='#8a7550';ctx.lineWidth=3;
+  ctx.fillRect(cx,cy,cw,ch);
+  ctx.strokeRect(cx,cy,cw,ch);
+  ctx.fillStyle='#333';ctx.font='bold 13px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('order_title','CUSTOMER ORDER'),W/2,cy+16);
+  drawStencil(target,W/2,cy+72,90,false);
+}
+
+function drawWall(){
+  const items=layoutWall();
+  items.forEach(it=>{
+    const p=wall[it.idx];
+    ctx.save();
+    ctx.fillStyle='#3a2f28';
+    ctx.strokeStyle='#5a4a3a';ctx.lineWidth=2;
+    const hw=it.size*0.58;
+    ctx.beginPath();
+    ctx.roundRect?ctx.roundRect(it.x-hw,it.y-hw,hw*2,hw*2,8):ctx.rect(it.x-hw,it.y-hw,hw*2,hw*2);
+    ctx.fill();ctx.stroke();
+    const highlight=(it.idx===selIdx);
+    drawStencil(p,it.x,it.y,it.size*0.7,highlight);
+    if(highlight){
+      ctx.strokeStyle='#ffd54f';ctx.lineWidth=3;
+      ctx.strokeRect(it.x-hw,it.y-hw,hw*2,hw*2);
+    }
+    ctx.restore();
+  });
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#3a3028');bg.addColorStop(1,'#1c1712');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  if(!started){
+    ctx.fillStyle='#ffd54f';ctx.font='bold 24px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('start_hint','Click / Tap / any key to take an order'),W/2,H/2);
+    requestAnimationFrame(loop);return;
+  }
+
+  if(gameOver){
+    drawCard();drawWall();
+    ctx.fillStyle='rgba(0,0,0,0.6)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 32px Arial';ctx.textAlign='center';
+    ctx.fillText(I18N.t('game_over_title','ORDER LOST'),W/2,H/2-20);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Click / Tap / Enter to restart'),W/2,H/2+18);
+    updateHud();
+    requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?0:Math.min((now-lastTime)/1000,0.2);
+  lastTime=now;
+  timeLeft-=dt;
+  if(timeLeft<=0){
+    timeLeft=0;
+    SFX.error();
+    lives--;
+    resultFlash=-14;
+    if(lives<=0){
+      gameOver=true;
+      if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+      SFX.lose();
+    } else {
+      buildWall();
+    }
+  }
+
+  drawCard();
+  drawWall();
+
+  if(resultFlash!==0){
+    ctx.fillStyle=resultFlash>0?'rgba(80,255,150,0.18)':'rgba(255,60,60,0.22)';
+    ctx.fillRect(0,0,W,H);
+    resultFlash+= resultFlash>0?-1:1;
+  }
+
+  document.getElementById('timeBar').style.width=Math.max(0,(timeLeft/maxTime*100))+'%';
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function updateHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('order_label','Order {n}').replace('{n}',level);
+}
+
+updateHud();
+loop();
+</script></body></html>
