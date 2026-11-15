@@ -1,3 +1,4 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 /* Shared in-game translation helper. Each game page includes this before its own
    script. It infers the game's id from the URL, fetches that language's per-game
    string table (languages/games-<lang>.json), and exposes I18N.t(key, fallback)

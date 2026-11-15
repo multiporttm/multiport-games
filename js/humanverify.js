@@ -1,3 +1,4 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 /* Site's own human-verification widget (slide-to-verify puzzle), used on
    login/signup in place of a third-party CAPTCHA service. Mirrors the
    data-callback / data-expired-callback pattern the rest of the site
