@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. --><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Miniature Paint Washing</title><meta name="description" content="Play Miniature Paint Washing free online — Trace your brush along the glowing recessed guide lines, letting dark wash pool naturally in the details without overflowing onto raised surfaces."><link rel="canonical" href="https://games.multiportllc.com/games/miniaturepaintwashing"><meta property="og:title" content="Miniature Paint Washing - Multiport Games"><meta property="og:description" content="Play Miniature Paint Washing free online — Trace your brush along the glowing recessed guide lines, letting dark wash pool naturally in the details without overflowing onto raised surfaces."><meta property="og:url" content="https://games.multiportllc.com/games/miniaturepaintwashing"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Miniature Paint Washing - Multiport Games"><meta name="twitter:description" content="Play Miniature Paint Washing free online — Trace your brush along the glowing recessed guide lines, letting dark wash pool naturally in the details without overflowing onto raised surfaces."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Miniature Paint Washing","description":"Play Miniature Paint Washing free online instantly. Apply a dark wash shade into a tabletop wargame miniature's recessed details by tracing your brush along glowing recessed guide lines, letting the wash pool naturally into the recess without lingering too long and overflowing onto the raised surfaces around it. Each round brings a more detailed miniature with a longer, trickier recess network. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/miniaturepaintwashing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080f}
+#c{background:#121a1a;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#9fd8c8;font-size:1.1rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap}
+.lives{letter-spacing:2px}
+#meterWrap{max-width:600px;margin:0 auto 8px;background:#0d1616;border-radius:10px;padding:4px}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#2e8b74,#7ee8c6);width:100%;transition:width .1s}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Miniature Paint Washing</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Miniature 1/10</span>
+    </div>
+    <div id="meterWrap"><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="300"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> A glowing bead creeps along the miniature's recessed detail line — drag your <b>mouse or finger</b> (or steer with the <b>Arrow Keys</b>) to keep your brush tip inside the dark tolerance channel around it. Linger too long in one spot and the wash overflows onto the raised surface, draining your flow meter; empty it and the wash is ruined, costing a life. Drift away and you miss shading the recess. Follow the whole recess line to finish the miniature and move on. The wash dries faster and the channel narrows every miniature — lose all 3 lives and the model is ruined!
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const TOTAL_MINIS=10;
+let hi=parseInt(localStorage.getItem('miniaturepaintwashing_hi')||'0',10);
+let score=0,lives=3,miniIndex=0,gameOver=false,started=false,won=false;
+let t=0,speed=0.0032,tolerance=34,flow=100,path=[],brush={x:400,y:150};
+let flashTimer=0,flashGood=true;
+const keys={};
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'🖤'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('mini_label2','Miniature {n}/{t}').replace('{n}',Math.min(miniIndex+1,TOTAL_MINIS)).replace('{t}',TOTAL_MINIS);
+}
+
+function buildPath(){
+  // Recess line: a jagged multi-segment path (armor seams / joint grooves), complexity grows with level
+  path=[];
+  const segs=3+Math.floor(miniIndex/2);
+  const pts=[];
+  pts.push({x:120,y:150+Math.sin(miniIndex)*20});
+  for(let i=1;i<=segs;i++){
+    const u=i/segs;
+    const x=120+u*560;
+    const jag=(i%2===0?1:-1)*(28+(miniIndex*4)%60);
+    const y=150+jag*Math.sin(u*Math.PI*1.3+miniIndex*0.6);
+    pts.push({x,y:Math.max(40,Math.min(260,y))});
+  }
+  // sample smooth-ish polyline with slight curvature via simple interpolation
+  const N=420;
+  for(let i=0;i<=N;i++){
+    const u=i/N;
+    const segLen=1/segs;
+    const segIdx=Math.min(segs-1,Math.floor(u/segLen));
+    const localU=(u-segIdx*segLen)/segLen;
+    const a=pts[segIdx],b=pts[segIdx+1];
+    path.push({x:a.x+(b.x-a.x)*localU,y:a.y+(b.y-a.y)*localU});
+  }
+}
+
+function setupMini(){
+  t=0;
+  speed=0.0024+miniIndex*0.00042;
+  tolerance=Math.max(15,34-miniIndex*1.9);
+  flow=100;
+  buildPath();
+  brush={x:path[0].x,y:path[0].y};
+}
+
+function reset(){
+  score=0;lives=3;miniIndex=0;gameOver=false;started=false;won=false;flashTimer=0;
+  setupMini();
+  setHud();
+}
+
+function guidePoint(){
+  const idx=Math.min(path.length-1,Math.floor(t*(path.length-1)));
+  return path[idx];
+}
+
+function failMini(){
+  lives--;
+  SFX.error();
+  flashTimer=20;flashGood=false;
+  if(lives<=0){
+    gameOver=true;
+    if(score>hi){hi=score;localStorage.setItem('miniaturepaintwashing_hi',hi);}
+    setHud();
+    return true;
+  }
+  miniIndex++;
+  if(miniIndex>=TOTAL_MINIS){ miniIndex=TOTAL_MINIS-1; }
+  setupMini();
+  setHud();
+  return false;
+}
+
+function completeMini(){
+  score+=Math.round(60+flow*1.4);
+  SFX.success();
+  flashTimer=20;flashGood=true;
+  miniIndex++;
+  if(miniIndex>=TOTAL_MINIS){
+    won=true;
+    SFX.levelup();
+    if(score>hi){hi=score;localStorage.setItem('miniaturepaintwashing_hi',hi);}
+    setHud();
+    return;
+  }
+  setupMini();
+  setHud();
+}
+
+function startOrRestart(){
+  if(!started){started=true;return;}
+  if(gameOver||won){reset();}
+}
+
+function canvasPos(ev){
+  const r=c.getBoundingClientRect();
+  const cx=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  const cy=(ev.touches?ev.touches[0].clientY:ev.clientY)-r.top;
+  return {x:cx*(800/r.width),y:cy*(300/r.height)};
+}
+
+let pointerActive=false;
+c.addEventListener('mousedown',e=>{startOrRestart();pointerActive=true;const p=canvasPos(e);brush.x=p.x;brush.y=p.y;});
+c.addEventListener('mousemove',e=>{if(pointerActive&&started&&!gameOver&&!won){const p=canvasPos(e);brush.x=p.x;brush.y=p.y;}});
+window.addEventListener('mouseup',()=>{pointerActive=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();startOrRestart();pointerActive=true;const p=canvasPos(e);brush.x=p.x;brush.y=p.y;},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(started&&!gameOver&&!won){const p=canvasPos(e);brush.x=p.x;brush.y=p.y;}},{passive:false});
+c.addEventListener('touchend',e=>{e.preventDefault();},{passive:false});
+
+document.addEventListener('keydown',e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+  if(e.code==='Space')startOrRestart();
+});
+document.addEventListener('keyup',e=>{keys[e.code]=false;});
+
+function drawPath(){
+  ctx.strokeStyle='rgba(20,60,55,0.65)';
+  ctx.lineWidth=tolerance*2;
+  ctx.lineCap='round';ctx.lineJoin='round';
+  ctx.beginPath();
+  path.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+  ctx.stroke();
+  ctx.strokeStyle='#2e8b74';
+  ctx.lineWidth=4;
+  ctx.beginPath();
+  path.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+  ctx.stroke();
+}
+
+let pathBuilt=false;
+function buildPathOnce(){ if(!pathBuilt){ buildPath(); pathBuilt=true; } }
+
+function loop(){
+  ctx.clearRect(0,0,800,300);
+  const sky=ctx.createLinearGradient(0,0,0,300);
+  sky.addColorStop(0,'#0c1515');sky.addColorStop(1,'#121a1a');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,800,300);
+
+  ctx.textAlign='center';
+  if(!started){
+    ctx.fillStyle='#fff';ctx.font='bold 22px Arial';
+    ctx.fillText(I18N.t('start_hint','Drag / Tap / Space to start'),400,30);
+    buildPathOnce();
+    drawPath();
+    requestAnimationFrame(loop);return;
+  }
+  if(gameOver){
+    ctx.fillStyle='#fff';ctx.font='bold 34px Arial';
+    ctx.fillText(I18N.t('game_over_title','WASH RUINED'),400,110);
+    ctx.font='18px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,145);
+    requestAnimationFrame(loop);return;
+  }
+  if(won){
+    ctx.fillStyle='#7ec850';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('win_title2','ALL MINIATURES WASHED! 🖌️'),400,100);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,135);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,165);
+    requestAnimationFrame(loop);return;
+  }
+
+  const kSpd=5.5;
+  if(keys['ArrowUp'])brush.y-=kSpd;
+  if(keys['ArrowDown'])brush.y+=kSpd;
+  if(keys['ArrowLeft'])brush.x-=kSpd;
+  if(keys['ArrowRight'])brush.x+=kSpd;
+  brush.x=Math.max(10,Math.min(790,brush.x));
+  brush.y=Math.max(10,Math.min(290,brush.y));
+
+  t+=speed;
+  if(t>=1){t=1;}
+
+  drawPath();
+
+  const gp=guidePoint();
+  const dist=Math.hypot(brush.x-gp.x,brush.y-gp.y);
+  if(dist>tolerance){
+    flow-=0.9; // missing the recess: wash doesn't reach the groove
+  }else{
+    const closeness=1-(dist/tolerance);
+    // lingering precisely on the line too long pools and overflows; moving along keeps it healthy
+    flow+=closeness*0.5-0.15;
+    flow=Math.min(100,flow);
+  }
+
+  if(flow<=0){
+    if(!failMini()){ requestAnimationFrame(loop);return; }
+  }else if(t>=1){
+    completeMini();
+  }
+
+  ctx.strokeStyle='rgba(126,232,198,0.6)';
+  ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(gp.x,gp.y,tolerance,0,Math.PI*2);ctx.stroke();
+
+  ctx.fillStyle='#7ee8c6';
+  ctx.beginPath();ctx.arc(gp.x,gp.y,7,0,Math.PI*2);ctx.fill();
+
+  ctx.fillStyle='#1a1a2e';
+  ctx.beginPath();ctx.arc(brush.x,brush.y,9,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+
+  document.getElementById('meterBar').style.width=Math.max(0,flow)+'%';
+
+  ctx.fillStyle='#9fd8c8';ctx.font='bold 18px Arial';
+  ctx.fillText(I18N.t('wash_hint','Trace the groove — do not linger too long'),400,25);
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(126,200,80,0.2)':'rgba(255,80,100,0.2)';
+    ctx.fillRect(0,0,800,300);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+reset();
+setHud();
+loop();
+</script></body></html>
