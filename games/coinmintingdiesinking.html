@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Coin Minting Die Sinking</title><meta name="description" content="Play Coin Minting Die Sinking free online — Sweep your graving tool along the glowing target outline to engrave the coin design into the steel die. Keep your cut depth in the safe zone and follow intricate designs across rounds."><link rel="canonical" href="https://games.multiportllc.com/games/coinmintingdiesinking"><meta property="og:title" content="Coin Minting Die Sinking - Multiport Games"><meta property="og:description" content="Play Coin Minting Die Sinking free online — Sweep your graving tool along the glowing target outline to engrave the coin design into the steel die. Keep your cut depth in the safe zone and follow intricate designs across rounds."><meta property="og:url" content="https://games.multiportllc.com/games/coinmintingdiesinking"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Coin Minting Die Sinking - Multiport Games"><meta name="twitter:description" content="Play Coin Minting Die Sinking free online — Sweep your graving tool along the glowing target outline to engrave the coin design into the steel die. Keep your cut depth in the safe zone and follow intricate designs across rounds."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Coin Minting Die Sinking","description":"Play Coin Minting Die Sinking free online instantly. Engrave a coin design into a steel die by sweeping a graving tool along a glowing target outline without cutting too deep or damaging fine detail, across more intricate designs each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/coinmintingdiesinking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0a0a0f}
+#stage{background:radial-gradient(ellipse at center,#2b2b33 0%,#15151a 70%,#0a0a0d 100%);border-radius:10px;display:block;touch-action:none;cursor:crosshair}
+#hud{display:flex;justify-content:space-between;align-items:center;color:#e8c77e;font-weight:700;padding:6px 10px;font-size:1rem;flex-wrap:wrap;gap:6px}
+#hud span{white-space:nowrap}
+#depthWrap{width:100%;max-width:800px;margin:4px auto 2px;background:#1c1c22;border-radius:8px;height:18px;position:relative;overflow:hidden;border:1px solid #3a3a42}
+#depthSafe{position:absolute;top:0;bottom:0;background:rgba(126,208,80,.28);border-left:2px solid #7ed050;border-right:2px solid #7ed050}
+#depthFill{position:absolute;top:0;bottom:0;left:0;width:4px;background:#e8c77e;box-shadow:0 0 8px #e8c77e;transition:left .05s linear}
+#msg{color:#ffd54f;text-align:center;font-weight:800;min-height:1.6em;font-size:1.05rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Coin Minting Die Sinking</div>
+  <div class="game-frame">
+    <div id="hud"><span id="roundLabel">Design 1/6</span><span id="scoreLabel">Score: 0</span><span id="hiLabel">Hi: 0</span></div>
+    <div id="depthWrap"><div id="depthSafe"></div><div id="depthFill"></div></div>
+    <div id="msg">&nbsp;</div>
+    <canvas id="stage" width="800" height="420"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Click/tap and hold, then drag (or use Arrow keys) to sweep the graving tool along the glowing target outline. Keep the depth gauge needle inside the green safe zone the whole time — too shallow and the detail is weak, too deep and you damage the die. Trace the full design before time runs out to finish the die and move to a more intricate design.</div>
+</div>
+<script>
+const cv=document.getElementById('stage'),ctx=cv.getContext('2d');
+const W=800,H=420;
+const HI_KEY='coinmintingdiesinking_hi';
+let hi=parseInt(localStorage.getItem(HI_KEY)||'0',10);
+document.getElementById('hiLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+
+let round=1,score=0,progress=0,depth=0.5,gameState='intro',toolPos=0,timeLeft=0,path=[],pathLen=0,damaged=false,targetDepth=0.5,safeHalf=0.16;
+const MAX_ROUND=6;
+
+function buildPath(r){
+  // build a closed-loop set of points representing the coin design outline.
+  const pts=[];
+  const cx=W/2, cy=H/2, baseR=150;
+  const lobes=2+r; // more intricate with higher round
+  const wobble=8+r*3;
+  const steps=200+r*40;
+  for(let i=0;i<=steps;i++){
+    const t=i/steps*Math.PI*2;
+    const rr=baseR + Math.sin(t*lobes)*wobble + Math.sin(t*(lobes*2+1))*(wobble*0.4);
+    pts.push({x:cx+Math.cos(t)*rr, y:cy+Math.sin(t)*rr*0.72});
+  }
+  return pts;
+}
+
+function pathLength(pts){
+  let len=0;
+  for(let i=1;i<pts.length;i++){
+    const dx=pts[i].x-pts[i-1].x, dy=pts[i].y-pts[i-1].y;
+    len+=Math.sqrt(dx*dx+dy*dy);
+  }
+  return len;
+}
+
+function pointAt(frac){
+  // frac in [0,1) along closed path
+  const n=path.length-1;
+  const idx=Math.max(0,Math.min(n-1, Math.floor(frac*n)));
+  return path[idx];
+}
+
+function startRound(){
+  path=buildPath(round);
+  pathLen=pathLength(path);
+  toolPos=0;
+  progress=0;
+  depth=0.5;
+  damaged=false;
+  timeLeft=14+round*2.5;
+  safeHalf=Math.max(0.07,0.17-round*0.015);
+  targetDepth=0.5;
+  gameState='playing';
+  layoutDepthGauge();
+  updateHud();
+  setMsg(I18N.t('trace_hint','Trace the glowing outline — keep depth in the green zone!'));
+}
+
+function setMsg(t){document.getElementById('msg').textContent=t;}
+
+function updateHud(){
+  document.getElementById('roundLabel').textContent=I18N.t('design_label','Design {r}/{m}').replace('{r}',round).replace('{m}',MAX_ROUND);
+  document.getElementById('scoreLabel').textContent=I18N.t('score_label','Score: {s}').replace('{s}',score);
+  document.getElementById('hiLabel').textContent=I18N.t('hi_label','Hi: {h}').replace('{h}',hi);
+}
+
+// depth gauge DOM
+const depthSafe=document.getElementById('depthSafe'),depthFill=document.getElementById('depthFill');
+function layoutDepthGauge(){
+  const wrapW=depthSafe.parentElement.clientWidth;
+  const loPct=(targetDepth-safeHalf)*100, hiPct=(targetDepth+safeHalf)*100;
+  depthSafe.style.left=loPct+'%';
+  depthSafe.style.width=(hiPct-loPct)+'%';
+}
+function updateDepthFill(){
+  depthFill.style.left=(Math.max(0,Math.min(1,depth))*100)+'%';
+  const inSafe=Math.abs(depth-targetDepth)<=safeHalf;
+  depthFill.style.background=inSafe?'#7ed050':'#ff5252';
+  depthFill.style.boxShadow=inSafe?'0 0 8px #7ed050':'0 0 8px #ff5252';
+}
+
+// input
+let dragging=false, lastAngle=null, pointerDir=0;
+const keys={};
+document.addEventListener('keydown',e=>{
+  if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown',' '].includes(e.key))e.preventDefault();
+  keys[e.key]=true;
+  if(e.key===' '&&(gameState==='intro'||gameState==='roundover'||gameState==='gameover'))advance();
+});
+document.addEventListener('keyup',e=>{keys[e.key]=false;});
+
+function advance(){
+  SFX.click();
+  if(gameState==='intro'){startRound();}
+  else if(gameState==='roundover'){
+    round++;
+    if(round>MAX_ROUND){gameState='complete';SFX.win();}
+    else startRound();
+  } else if(gameState==='gameover'||gameState==='complete'){
+    round=1;score=0;gameState='intro';
+    setMsg(I18N.t('intro_hint','Tap / Click or press Space to begin sinking the first die'));
+  }
+}
+
+cv.addEventListener('pointerdown',e=>{
+  if(gameState==='intro'||gameState==='roundover'||gameState==='gameover'||gameState==='complete'){advance();return;}
+  dragging=true;
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+cv.addEventListener('pointermove',e=>{
+  if(!dragging||gameState!=='playing')return;
+  const r=cv.getBoundingClientRect();
+  const mx=(e.clientX-r.left)*(W/r.width), my=(e.clientY-r.top)*(H/r.height);
+  pointerTarget={x:mx,y:my};
+});
+let pointerTarget=null;
+
+function closestFracNear(px,py,curFrac){
+  // search a window around current fraction for the nearest path point (keeps direction stable)
+  const n=path.length-1;
+  let best=curFrac,bestD=Infinity;
+  const windowSize=Math.max(8,Math.floor(n*0.08));
+  for(let d=-windowSize;d<=windowSize;d++){
+    let idx=Math.round(curFrac*n)+d;
+    idx=((idx%n)+n)%n;
+    const p=path[idx];
+    const dx=p.x-px,dy=p.y-py;
+    const dist=dx*dx+dy*dy;
+    if(dist<bestD){bestD=dist;best=idx/n;}
+  }
+  return best;
+}
+
+function loop(ts){
+  ctx.clearRect(0,0,W,H);
+  drawDieBase();
+
+  if(gameState==='intro'){
+    drawIntro();
+  } else if(gameState==='playing'){
+    stepPlaying(ts);
+    drawPlaying();
+  } else if(gameState==='roundover'){
+    drawPlaying();
+    drawOverlay(I18N.t('design_done','Design complete!'),I18N.t('continue_hint','Tap / Click or press Space to continue'));
+  } else if(gameState==='gameover'){
+    drawPlaying();
+    drawOverlay(I18N.t('die_damaged','Die damaged!'),I18N.t('retry_hint','Tap / Click or press Space to try again'));
+  } else if(gameState==='complete'){
+    drawOverlay(I18N.t('all_dies_done','All dies sunk! Mint master!'),I18N.t('play_again_hint','Tap / Click or press Space to play again'));
+  }
+  requestAnimationFrame(loop);
+}
+
+let lastTs=null;
+function stepPlaying(ts){
+  const dt=lastTs===null?16:Math.min(ts-lastTs,50);
+  lastTs=ts;
+  const dtSec=dt/1000;
+
+  // keyboard control: move along path with left/right (reverse not needed, just forward speed modulation)
+  let moveSpeed=0;
+  if(keys['ArrowRight']||keys['ArrowUp'])moveSpeed=0.18;
+  if(keys['ArrowLeft']||keys['ArrowDown'])moveSpeed=0.18; // still move forward along path, keyboard just advances
+  if(moveSpeed>0){
+    toolPos+=moveSpeed*dtSec;
+    if(toolPos>=1)toolPos-=1;
+  }
+  if(pointerTarget){
+    const n=path.length-1;
+    toolPos=closestFracNear(pointerTarget.x,pointerTarget.y,toolPos);
+  }
+
+  // depth control
+  let depthSpeed=0;
+  if(keys['ArrowUp'])depthSpeed=0.6;
+  if(keys['ArrowDown'])depthSpeed=-0.6;
+  depth+=depthSpeed*dtSec;
+  // pointer vertical distance from path also nudges depth for mouse play
+  if(pointerTarget){
+    const p=pointAt(toolPos);
+    const dy=pointerTarget.y-p.y;
+    depth+=(-dy/400)*dtSec*6;
+  }
+  depth=Math.max(0,Math.min(1,depth));
+  updateDepthFill();
+
+  const inSafe=Math.abs(depth-targetDepth)<=safeHalf;
+  const onPath = pointerTarget? (dist2(pointerTarget,pointAt(toolPos))<40*40) : true;
+
+  if(onPath && inSafe){
+    progress=Math.max(progress,toolPos);
+    score+=Math.round(1*dtSec*20);
+  } else if(!inSafe){
+    damaged=true;
+  }
+
+  timeLeft-=dtSec;
+  if(progress>=0.985 || toolPos>0.97 && progress>0.9){
+    // completed enough of loop
+    finishRound(true);
+    return;
+  }
+  if(timeLeft<=0){
+    finishRound(false);
+    return;
+  }
+  if(damaged){
+    SFX.hurt();
+    finishRound(false);
+    return;
+  }
+}
+
+function dist2(a,b){const dx=a.x-b.x,dy=a.y-b.y;return dx*dx+dy*dy;}
+
+function finishRound(success){
+  if(gameState!=='playing')return;
+  pointerTarget=null;
+  if(success){
+    gameState='roundover';
+    score+=100+round*20;
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    SFX.success();
+    SFX.coin();
+  } else {
+    gameState='gameover';
+    if(score>hi){hi=score;localStorage.setItem(HI_KEY,String(hi));}
+    SFX.fail();
+  }
+  updateHud();
+}
+
+function drawDieBase(){
+  const grad=ctx.createRadialGradient(W/2,H/2,20,W/2,H/2,320);
+  grad.addColorStop(0,'#3a3a42');
+  grad.addColorStop(1,'#121216');
+  ctx.fillStyle=grad;
+  ctx.fillRect(0,0,W,H);
+  // steel ring
+  ctx.strokeStyle='#55555e';
+  ctx.lineWidth=14;
+  ctx.beginPath();
+  ctx.arc(W/2,H/2,200,0,Math.PI*2);
+  ctx.stroke();
+}
+
+function drawIntro(){
+  ctx.fillStyle='#e8c77e';
+  ctx.font='bold 26px Arial';
+  ctx.textAlign='center';
+  ctx.fillText(I18N.t('game_title_display','COIN MINTING: DIE SINKING'),W/2,H/2-20);
+  ctx.font='16px Arial';
+  ctx.fillStyle='#cfcfcf';
+  ctx.fillText(I18N.t('intro_hint','Tap / Click or press Space to begin sinking the first die'),W/2,H/2+20);
+}
+
+function drawPath(){
+  ctx.save();
+  ctx.lineWidth=3;
+  ctx.strokeStyle='rgba(255,213,79,.35)';
+  ctx.beginPath();
+  path.forEach((p,i)=>{ if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); });
+  ctx.closePath();
+  ctx.stroke();
+
+  // completed portion (progress) glow
+  const n=path.length-1;
+  const upto=Math.floor(progress*n);
+  ctx.strokeStyle='#7ed050';
+  ctx.lineWidth=5;
+  ctx.shadowColor='#7ed050';ctx.shadowBlur=10;
+  ctx.beginPath();
+  for(let i=0;i<=upto;i++){ const p=path[i]; if(i===0)ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); }
+  ctx.stroke();
+  ctx.shadowBlur=0;
+  ctx.restore();
+}
+
+function drawTool(){
+  const p=pointAt(toolPos);
+  const inSafe=Math.abs(depth-targetDepth)<=safeHalf;
+  ctx.save();
+  ctx.fillStyle=inSafe?'#ffe08a':'#ff8a8a';
+  ctx.shadowColor=inSafe?'#ffe08a':'#ff5252';
+  ctx.shadowBlur=18;
+  ctx.beginPath();
+  ctx.arc(p.x,p.y,10,0,Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawPlaying(){
+  drawPath();
+  drawTool();
+  ctx.fillStyle='#e8c77e';
+  ctx.font='bold 14px Arial';
+  ctx.textAlign='left';
+  ctx.fillText(I18N.t('time_label','Time: {t}s').replace('{t}',Math.max(0,timeLeft).toFixed(1)),16,24);
+}
+
+function drawOverlay(title,sub){
+  ctx.fillStyle='rgba(0,0,0,.55)';
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#ffd54f';
+  ctx.font='bold 28px Arial';
+  ctx.textAlign='center';
+  ctx.fillText(title,W/2,H/2-10);
+  ctx.font='16px Arial';
+  ctx.fillStyle='#fff';
+  ctx.fillText(sub,W/2,H/2+24);
+}
+
+layoutDepthGauge();
+window.addEventListener('resize',layoutDepthGauge);
+updateHud();
+setMsg(I18N.t('intro_hint','Tap / Click or press Space to begin sinking the first die'));
+requestAnimationFrame(loop);
+</script></body></html>

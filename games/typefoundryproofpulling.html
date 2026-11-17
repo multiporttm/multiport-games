@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. --><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Typefoundry Proof Pulling</title><meta name="description" content="Play Typefoundry Proof Pulling free online — Roll ink evenly onto composed type with a brayer, then press a proof sheet down with even pressure, without missing spots or smudging."><link rel="canonical" href="https://games.multiportllc.com/games/typefoundryproofpulling"><meta property="og:title" content="Typefoundry Proof Pulling - Multiport Games"><meta property="og:description" content="Play Typefoundry Proof Pulling free online — Roll ink evenly onto composed type with a brayer, then press a proof sheet down with even pressure, without missing spots or smudging."><meta property="og:url" content="https://games.multiportllc.com/games/typefoundryproofpulling"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Typefoundry Proof Pulling - Multiport Games"><meta name="twitter:description" content="Play Typefoundry Proof Pulling free online — Roll ink evenly onto composed type with a brayer, then press a proof sheet down with even pressure, without missing spots or smudging."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Typefoundry Proof Pulling","description":"Play Typefoundry Proof Pulling free online instantly. Roll a hand brayer back and forth over a composed line of type to spread ink evenly inside the safe coverage band on the ink gauge, then lower a proof sheet and press it down with steady, even pressure to pull a clean proof. Miss spots, over-ink, or press unevenly and the proof is spoiled. Lines get longer and tolerances tighter each round. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/typefoundryproofpulling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="manifest" href="../manifest.json">
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#08080a}
+#c{background:#2b2622;display:block;border-radius:8px;touch-action:none;cursor:crosshair}
+#hud{color:#e8d9b8;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#gaugeWrap{max-width:600px;margin:0 auto 6px;background:#1d1a16;border-radius:10px;padding:4px;position:relative}
+#gaugeSafe{position:absolute;top:4px;bottom:4px;background:rgba(126,200,80,0.35);border-left:2px solid #7ec850;border-right:2px solid #7ec850}
+#gaugeBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#8a6a3a,#2a1f14);width:0%;transition:width .08s linear}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Typefoundry Proof Pulling</div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="livesLbl" class="lives">❤❤❤</span>
+      <span id="levelLbl">Line 1/8</span>
+    </div>
+    <div id="gaugeWrap"><div id="gaugeSafe"></div><div id="gaugeBar"></div></div>
+    <canvas id="c" width="800" height="320"></canvas>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">
+    <b>How to play:</b> <b>Stage 1 — Inking:</b> drag the brayer (mouse, finger, or <b>Arrow Keys</b>) back and forth across the composed type to roll ink over every letter, keeping the gauge's needle inside the green safe band — too little ink and spots stay dry, too much and it floods. <b>Stage 2 — Pressing:</b> once evenly inked, press and hold (or hold <b>Space</b>) to lower the proof sheet, keeping pressure steady and even across the whole line to pull a clean proof. Miss spots or smudge it and you lose a life. Lines get longer and the margin for error shrinks each round.
+  </div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=800,H=320;
+let hi=parseInt(localStorage.getItem('typefoundryproofpulling_hi')||'0',10);
+let score=0,lives=3,level=1,gameOver=false,started=false,won=false;
+const TOTAL=8;
+const FORME_X=100,FORME_Y=90,FORME_W=600,FORME_H=70;
+let stage='ink'; // ink | press | result
+let cells=[]; // ink coverage per letter cell
+let brayer={x:400,y:90,down:false};
+let safeLo=0.45,safeHi=0.8;
+let pressAvg=0,pressStart=0,pressSamples=[],pressing=false;
+let keys={};
+let resultTimer=0,resultOk=false;
+let shakeTimer=0;
+
+function buildLevel(){
+  const nCells=6+Math.min(level,6);
+  cells=[];
+  for(let i=0;i<nCells;i++)cells.push({ink:0});
+  safeLo=Math.max(0.35,0.5-level*0.015);
+  safeHi=Math.min(0.95,0.78+level*0.01);
+  stage='ink';
+  brayer.x=FORME_X+FORME_W/2;brayer.y=FORME_Y+FORME_H/2;brayer.down=false;
+  pressSamples=[];
+  document.getElementById('gaugeSafe').style.left=(safeLo*100)+'%';
+  document.getElementById('gaugeSafe').style.right=((1-safeHi)*100)+'%';
+}
+
+function reset(){
+  score=0;lives=3;level=1;gameOver=false;started=false;won=false;
+  buildLevel();
+}
+reset();
+
+function avgInk(){
+  return cells.reduce((s,c)=>s+c.ink,0)/cells.length;
+}
+
+function cellAt(x){
+  const w=FORME_W/cells.length;
+  const idx=Math.floor((x-FORME_X)/w);
+  return idx>=0&&idx<cells.length?idx:-1;
+}
+
+function rollInk(x,y){
+  if(y<FORME_Y-20||y>FORME_Y+FORME_H+20)return;
+  const idx=cellAt(x);
+  // affect nearby cells too (brayer width)
+  const w=FORME_W/cells.length;
+  const radius=1;
+  for(let i=idx-radius;i<=idx+radius;i++){
+    if(i>=0&&i<cells.length){
+      const dist=Math.abs(i-idx);
+      const amt=(dist===0?0.028:0.012);
+      cells[i].ink=Math.min(1.1,cells[i].ink+amt);
+    }
+  }
+}
+
+function canvasPos(e){
+  const r=c.getBoundingClientRect();
+  let cx,cy;
+  if(e.touches&&e.touches.length){cx=e.touches[0].clientX;cy=e.touches[0].clientY;}
+  else{cx=e.clientX;cy=e.clientY;}
+  return {x:(cx-r.left)*(W/r.width),y:(cy-r.top)*(H/r.height)};
+}
+
+function startIfNeeded(){
+  if(!started&&!gameOver&&!won){started=true;}
+  else if(gameOver||won){reset();started=true;}
+}
+
+c.addEventListener('mousedown',e=>{startIfNeeded();const p=canvasPos(e);brayer.down=true;brayer.x=p.x;brayer.y=p.y; if(stage==='press')beginPress();});
+c.addEventListener('mousemove',e=>{if(!brayer.down)return;const p=canvasPos(e);brayer.x=p.x;brayer.y=p.y;if(stage==='ink')rollInk(p.x,p.y);});
+window.addEventListener('mouseup',()=>{brayer.down=false;if(stage==='press')endPress();});
+c.addEventListener('touchstart',e=>{e.preventDefault();startIfNeeded();const p=canvasPos(e);brayer.down=true;brayer.x=p.x;brayer.y=p.y;if(stage==='press')beginPress();},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();if(!brayer.down)return;const p=canvasPos(e);brayer.x=p.x;brayer.y=p.y;if(stage==='ink')rollInk(p.x,p.y);},{passive:false});
+c.addEventListener('touchend',e=>{brayer.down=false;if(stage==='press')endPress();});
+
+document.addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(e.code==='Space'){e.preventDefault();startIfNeeded();if(stage==='press'&&!pressing)beginPress();}
+  if(e.code==='Enter'){startIfNeeded();}
+});
+document.addEventListener('keyup',e=>{
+  keys[e.code]=false;
+  if(e.code==='Space'){if(stage==='press'&&pressing)endPress();}
+});
+
+function moveToInkStage(){
+  const avg=avgInk();
+  if(avg>=safeLo&&avg<=safeHi*1.15){
+    stage='press';
+    pressSamples=[];
+  } else {
+    // not ready — just a hint, no penalty yet; player presses button below via continue check
+  }
+}
+
+function tryAdvanceFromInk(){
+  const avg=avgInk();
+  const minCell=Math.min(...cells.map(c=>c.ink));
+  if(minCell<safeLo*0.5){
+    // some spot too dry — warn only visually
+  }
+  if(avg>=safeLo){
+    stage='press';
+    SFX.select();
+  } else {
+    SFX.error();
+    shakeTimer=10;
+  }
+}
+
+function beginPress(){
+  pressing=true;
+  pressStart=performance.now();
+  pressSamples=[];
+}
+function endPress(){
+  if(!pressing)return;
+  pressing=false;
+  evaluateProof();
+}
+
+function evaluateProof(){
+  const minCell=Math.min(...cells.map(c=>c.ink));
+  const maxCell=Math.max(...cells.map(c=>c.ink));
+  const avg=avgInk();
+  const inkOk=minCell>=safeLo*0.75&&avg<=safeHi*1.2;
+  let pressOk=false;
+  if(pressSamples.length>3){
+    const pavg=pressSamples.reduce((a,b)=>a+b,0)/pressSamples.length;
+    const variance=pressSamples.reduce((a,b)=>a+(b-pavg)*(b-pavg),0)/pressSamples.length;
+    pressOk=pavg>=0.4&&pavg<=0.95&&variance<0.03;
+  }
+  stage='result';
+  resultOk=inkOk&&pressOk;
+  resultTimer=70;
+  if(resultOk){
+    SFX.success();
+    score+=40+level*5;
+    if(score>hi){hi=score;localStorage.setItem('typefoundryproofpulling_hi',String(hi));}
+  } else {
+    SFX.fail();
+    lives--;
+    shakeTimer=14;
+    if(lives<=0){
+      setTimeout(()=>{gameOver=true;SFX.lose();},900);
+    }
+  }
+  setTimeout(()=>{
+    if(gameOver)return;
+    level++;
+    if(level>TOTAL){won=true;SFX.win();started=false;}
+    else{buildLevel();}
+  },1000);
+}
+
+function loop(){
+  // keyboard brayer movement during ink stage
+  if(started&&stage==='ink'){
+    const spd=6;
+    if(keys['ArrowLeft']){brayer.x-=spd;brayer.down=true;rollInk(brayer.x,brayer.y);}
+    if(keys['ArrowRight']){brayer.x+=spd;brayer.down=true;rollInk(brayer.x,brayer.y);}
+    if(keys['ArrowUp']){brayer.y-=spd;}
+    if(keys['ArrowDown']){brayer.y+=spd;}
+    brayer.x=Math.max(FORME_X,Math.min(FORME_X+FORME_W,brayer.x));
+    brayer.y=Math.max(FORME_Y-10,Math.min(FORME_Y+FORME_H+10,brayer.y));
+  }
+  if(started&&stage==='press'&&pressing){
+    // pressure derived from how centered + how long held consistently
+    const t=(performance.now()-pressStart)/1000;
+    const target=0.7;
+    const wobble=keys['ArrowUp']?0.15:(keys['ArrowDown']?-0.15:0);
+    const p=Math.max(0,Math.min(1,target+wobble+Math.sin(t*2)*0.03));
+    pressSamples.push(p);
+  }
+
+  ctx.clearRect(0,0,W,H);
+  const bg=ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0,'#332c24');bg.addColorStop(1,'#241f1a');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  ctx.save();
+  if(shakeTimer>0){ctx.translate((Math.random()-0.5)*8,(Math.random()-0.5)*4);shakeTimer--;}
+
+  // forme frame
+  ctx.fillStyle='#3a332b';
+  ctx.fillRect(FORME_X-16,FORME_Y-16,FORME_W+32,FORME_H+32);
+  ctx.fillStyle='#161412';
+  ctx.fillRect(FORME_X,FORME_Y,FORME_W,FORME_H);
+
+  const cw=FORME_W/cells.length;
+  cells.forEach((cell,i)=>{
+    const x=FORME_X+i*cw;
+    const inkLevel=Math.min(1,cell.ink);
+    // base metal
+    ctx.fillStyle='#4a4238';
+    ctx.fillRect(x+3,FORME_Y+8,cw-6,FORME_H-16);
+    // ink overlay
+    if(inkLevel>0){
+      ctx.fillStyle=`rgba(20,16,24,${0.55*inkLevel+0.25})`;
+      ctx.fillRect(x+3,FORME_Y+8,cw-6,FORME_H-16);
+    }
+    if(cell.ink>safeHi*1.1){
+      ctx.fillStyle='rgba(30,10,10,0.5)';
+      ctx.fillRect(x+3,FORME_Y+8,cw-6,FORME_H-16);
+    }
+    ctx.strokeStyle='#2a2520';ctx.lineWidth=1;
+    ctx.strokeRect(x+3,FORME_Y+8,cw-6,FORME_H-16);
+  });
+
+  if(stage==='press'){
+    // proof sheet overlay
+    const alpha=pressing?0.55:0.3;
+    ctx.fillStyle=`rgba(240,230,204,${alpha})`;
+    ctx.fillRect(FORME_X-6,FORME_Y-6,FORME_W+12,FORME_H+12);
+    ctx.strokeStyle='#c9b88a';ctx.lineWidth=2;
+    ctx.strokeRect(FORME_X-6,FORME_Y-6,FORME_W+12,FORME_H+12);
+  }
+
+  // brayer visual during ink stage
+  if(stage==='ink'){
+    ctx.fillStyle='#8a6a3a';
+    ctx.strokeStyle='#5a4228';ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.ellipse(brayer.x,brayer.y,18,34,0,0,Math.PI*2);
+    ctx.fill();ctx.stroke();
+    ctx.fillStyle='#2a2015';
+    ctx.fillRect(brayer.x-4,brayer.y-55,8,24);
+  }
+  ctx.restore();
+
+  // gauge update
+  const avg=avgInk();
+  document.getElementById('gaugeBar').style.width=Math.min(100,avg*100)+'%';
+
+  // hud
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('livesLbl').textContent='❤'.repeat(Math.max(0,lives))+'♡'.repeat(Math.max(0,3-lives));
+  document.getElementById('levelLbl').textContent=I18N.t('line_of_label','Line {n}/{t}').replace('{n}',level).replace('{t}',TOTAL);
+
+  ctx.textAlign='center';
+  if(!started&&!gameOver&&!won){
+    ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#f0e6cc';ctx.font='bold 24px Georgia';
+    ctx.fillText(I18N.t('start_hint','Drag / Tap / Space to start'),400,230);
+  } else if(started&&stage==='ink'){
+    ctx.fillStyle='#f0e6cc';ctx.font='16px Georgia';
+    ctx.fillText(I18N.t('ink_hint','Roll the brayer until the gauge sits in the green zone'),400,200);
+    if(avg>=safeLo){
+      ctx.fillStyle='#7ec850';ctx.font='bold 16px Georgia';
+      ctx.fillText(I18N.t('ink_ready_hint','Ink is ready — click/tap to lower the proof sheet'),400,225);
+      if(brayer.down===false){
+        // small helper: clicking anywhere now advances
+      }
+    }
+  } else if(started&&stage==='press'){
+    ctx.fillStyle='#f0e6cc';ctx.font='16px Georgia';
+    ctx.fillText(I18N.t('press_hint','Press and hold evenly, then release'),400,200);
+  } else if(stage==='result'){
+    ctx.fillStyle=resultOk?'#7ec850':'#e05a3a';
+    ctx.font='bold 28px Georgia';
+    ctx.fillText(resultOk?I18N.t('proof_clean','CLEAN PROOF!'):I18N.t('proof_spoiled','PROOF SPOILED'),400,200);
+  }
+  if(gameOver){
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#e05a3a';ctx.font='bold 34px Georgia';
+    ctx.fillText(I18N.t('game_over_title','PRESS SHUT DOWN'),400,140);
+    ctx.fillStyle='#f0e6cc';ctx.font='18px Georgia';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,174);
+    ctx.font='16px Georgia';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,204);
+  }
+  if(won){
+    ctx.fillStyle='rgba(0,0,0,0.65)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#7ec850';ctx.font='bold 28px Georgia';
+    ctx.fillText(I18N.t('win_title','MASTER PRESSMAN! 🏆'),400,140);
+    ctx.fillStyle='#f0e6cc';ctx.font='18px Georgia';
+    ctx.fillText(I18N.t('final_score','Final score: ')+score,400,174);
+    ctx.font='16px Georgia';
+    ctx.fillText(I18N.t('restart_hint','Tap or Space to restart'),400,204);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+// allow click to trigger advance from ink to press when ready (handled in mousedown via beginPress check)
+c.addEventListener('mousedown',()=>{
+  if(stage==='ink'&&avgInk()>=safeLo){
+    tryAdvanceFromInk();
+  }
+});
+c.addEventListener('touchstart',()=>{
+  if(stage==='ink'&&avgInk()>=safeLo){
+    tryAdvanceFromInk();
+  }
+},{passive:true});
+
+loop();
+</script></body></html>
