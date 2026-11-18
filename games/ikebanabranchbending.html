@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Ikebana Branch Bending</title><meta name="description" content="Play Ikebana Branch Bending free online — Carefully bend each branch to match the target curve without snapping it or letting it spring back."><link rel="canonical" href="https://games.multiportllc.com/games/ikebanabranchbending"><meta property="og:title" content="Ikebana Branch Bending - Multiport Games"><meta property="og:description" content="Play Ikebana Branch Bending free online — Carefully bend each branch to match the target curve without snapping it or letting it spring back."><meta property="og:url" content="https://games.multiportllc.com/games/ikebanabranchbending"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Ikebana Branch Bending - Multiport Games"><meta name="twitter:description" content="Play Ikebana Branch Bending free online — Carefully bend each branch to match the target curve without snapping it or letting it spring back."><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Ikebana Branch Bending","description":"Play Ikebana Branch Bending free online instantly. Carefully bend each branch to match the target curve without snapping it or letting it spring back. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/ikebanabranchbending","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icon.png">
+<link rel="manifest" href="../manifest.json">
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#0c140a}
+#stage{background:#172612;border-radius:14px;padding:18px;text-align:center;max-width:620px;margin:0 auto}
+#info{color:#cfe3bf;font-size:.95rem;margin-bottom:8px;font-weight:700}
+#info b{color:#ffd54f}
+#status{color:#ffd54f;font-size:1.02rem;font-weight:800;margin:4px 0 10px;min-height:1.6em}
+#canvasWrap{display:flex;justify-content:center;margin-bottom:12px}
+canvas{background:#0f1a0c;border-radius:10px;border:1px solid #37532b;touch-action:none}
+#tensionbar{background:#0b140a;border-radius:6px;height:14px;margin:0 auto 10px;overflow:hidden;border:1px solid #000;max-width:480px}
+#tensionfill{height:100%;background:linear-gradient(90deg,#4caf50,#ffd54f,#e94560);width:0%;transition:width .08s}
+#controls button{padding:9px 20px;background:#7a9a5e;border:none;border-radius:20px;color:#102008;cursor:pointer;font-size:1rem;margin:4px;font-weight:800}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+#round{color:#a8c890;font-size:.85rem;margin-bottom:6px}
+.hint{color:#8fae7a;font-size:.8rem}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Ikebana Branch Bending</div>
+  <div class="game-frame" style="padding:16px">
+    <div id="stage">
+      <div id="info"><span data-i18n="score_label">Score</span>: <span id="score">0</span> &nbsp; <span data-i18n="hi_label">Best</span>: <span id="hi">0</span> &nbsp; <span data-i18n="misses_label">Breaks</span>: <span id="misses">0</span>/3</div>
+      <div id="round"></div>
+      <div id="status">Loading…</div>
+      <div id="canvasWrap"><canvas id="cv" width="540" height="300"></canvas></div>
+      <div id="tensionbar"><div id="tensionfill"></div></div>
+      <div class="hint" data-i18n="bend_controls">Hold ← / → or drag left/right to bend. Release to lock in the shape.</div>
+      <div id="controls">
+        <button id="lockBtn">🔒 Lock Shape</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions"><b>How to play:</b> Each branch has a dashed target curve. Hold the Left/Right arrow keys (or press-and-drag on the canvas) to bend the branch toward the target angle. Bend gently — the tension meter rises the longer and harder you bend, and if it maxes out the branch snaps. Get the curve close to the target and click <b>Lock Shape</b> to score. Snap 3 branches and the session ends.</div>
+</div>
+<script>
+const KEY='ikebanabranchbending_hi';
+const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+const W=cv.width,H=cv.height;
+const baseX=70, baseY=H-30;
+const branchLen=200;
+
+let score=0, hi=parseInt(localStorage.getItem(KEY)||'0',10), misses=0, round=0;
+let gameOver=true, locked=false, snapped=false;
+let angle=0;       // current bend angle in radians (0 = straight up)
+let targetAngle=0;
+let tension=0;
+let holding=0;     // -1 left, 1 right, 0 none
+let dragging=false, dragStartX=0;
+let resultTimer=null;
+
+document.getElementById('hi').textContent=hi;
+function setStatus(t){document.getElementById('status').textContent=t;}
+
+function newRound(){
+  round++;
+  locked=false; snapped=false; tension=0; angle=0; holding=0;
+  const dir=Math.random()<0.5?-1:1;
+  targetAngle = dir*(0.35+Math.random()*0.75); // up to ~63 degrees either way
+  document.getElementById('round').textContent=I18N.t('round_label','Branch {n}').replace('{n}',round);
+  setStatus(I18N.t('bend_hint','Bend the branch to match the dashed target line'));
+  document.getElementById('tensionfill').style.width='0%';
+}
+
+function branchTip(a,len){
+  // curve approx: tip offset using angle, with slight curvature droop
+  return {x:baseX+Math.sin(a)*len, y:baseY-Math.cos(a)*len};
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // pot
+  ctx.fillStyle='#4a3424';
+  ctx.beginPath();
+  ctx.moveTo(baseX-40,baseY);
+  ctx.lineTo(baseX+40,baseY);
+  ctx.lineTo(baseX+30,baseY+28);
+  ctx.lineTo(baseX-30,baseY+28);
+  ctx.closePath();ctx.fill();
+
+  // target dashed branch
+  ctx.save();
+  ctx.setLineDash([8,6]);
+  ctx.strokeStyle='#ffd54f';
+  ctx.lineWidth=4;
+  const tt=branchTip(targetAngle,branchLen);
+  ctx.beginPath();
+  ctx.moveTo(baseX,baseY);
+  ctx.quadraticCurveTo(baseX+Math.sin(targetAngle)*branchLen*0.5, baseY-Math.cos(targetAngle)*branchLen*0.5, tt.x,tt.y);
+  ctx.stroke();
+  ctx.restore();
+
+  // actual branch
+  ctx.strokeStyle = snapped ? '#8a5a3a' : '#5a3a22';
+  ctx.lineWidth=9;
+  ctx.lineCap='round';
+  const bt=branchTip(angle,branchLen);
+  ctx.beginPath();
+  ctx.moveTo(baseX,baseY);
+  if(snapped){
+    const midx=baseX+Math.sin(angle)*branchLen*0.6, midy=baseY-Math.cos(angle)*branchLen*0.6;
+    ctx.quadraticCurveTo(baseX+Math.sin(angle)*branchLen*0.3, baseY-Math.cos(angle)*branchLen*0.3, midx,midy);
+    ctx.stroke();
+    // broken tip hanging
+    ctx.beginPath();
+    ctx.moveTo(midx,midy);
+    ctx.lineTo(midx+18,midy+40);
+    ctx.stroke();
+  } else {
+    ctx.quadraticCurveTo(baseX+Math.sin(angle)*branchLen*0.5, baseY-Math.cos(angle)*branchLen*0.5, bt.x,bt.y);
+    ctx.stroke();
+    // leaf buds
+    ctx.fillStyle='#6cae4a';
+    for(let f=0.3;f<0.95;f+=0.25){
+      const lx=baseX+Math.sin(angle)*branchLen*f, ly=baseY-Math.cos(angle)*branchLen*f;
+      ctx.beginPath();ctx.ellipse(lx,ly,8,4,angle,0,Math.PI*2);ctx.fill();
+    }
+    ctx.font='22px sans-serif';
+    ctx.fillText('🌿',bt.x-10,bt.y-6);
+  }
+}
+
+function tick(){
+  if(gameOver)return;
+  if(!locked && !snapped){
+    if(holding!==0){
+      angle += holding*0.028;
+      angle = Math.max(-1.4,Math.min(1.4,angle));
+      tension += 0.9;
+    } else {
+      tension = Math.max(0,tension-1.2);
+    }
+    // overbend beyond target range adds extra tension
+    if(Math.abs(angle) > 1.0) tension += 0.6;
+    tension = Math.min(100,tension);
+    document.getElementById('tensionfill').style.width=tension+'%';
+    if(tension>=100){
+      snap();
+    }
+  }
+  draw();
+  requestAnimationFrame(tick);
+}
+
+function snap(){
+  snapped=true;
+  misses++;
+  SFX.hit();
+  document.getElementById('misses').textContent=misses;
+  setStatus(I18N.t('branch_snapped','Snap! The branch broke from too much tension.'));
+  clearTimeout(resultTimer);
+  if(misses>=3){
+    resultTimer=setTimeout(endGame,1000);
+  } else {
+    resultTimer=setTimeout(()=>{ if(!gameOver)newRound(); },1100);
+  }
+}
+
+function lockShape(){
+  if(gameOver||locked||snapped)return;
+  locked=true;
+  const diff=Math.abs(angle-targetAngle);
+  SFX.click();
+  let pts=0;
+  if(diff<=0.05){pts=100;SFX.success();setStatus(I18N.t('bend_perfect','Perfect bend! +{p}').replace('{p}',pts));}
+  else if(diff<=0.15){pts=60;SFX.point();setStatus(I18N.t('bend_great','Nice shape! +{p}').replace('{p}',pts));}
+  else if(diff<=0.3){pts=30;SFX.point();setStatus(I18N.t('bend_ok','Close enough. +{p}').replace('{p}',pts));}
+  else {SFX.error();setStatus(I18N.t('bend_off','Not quite the right shape — no points.'));}
+  if(pts>0){
+    score+=pts;
+    if(score>hi){hi=score;localStorage.setItem(KEY,hi);}
+    document.getElementById('score').textContent=score;
+    document.getElementById('hi').textContent=hi;
+  }
+  clearTimeout(resultTimer);
+  resultTimer=setTimeout(()=>{ if(!gameOver)newRound(); },1000);
+}
+
+function endGame(){
+  gameOver=true;
+  SFX.lose();
+  setStatus(I18N.t('session_over2','Too many branches broken! Final score: {s} — tap Lock to try again').replace('{s}',score));
+  draw();
+}
+
+function resetGame(){
+  score=0;misses=0;round=0;gameOver=false;
+  document.getElementById('score').textContent=0;
+  document.getElementById('misses').textContent=0;
+  newRound();
+  tick();
+}
+
+document.getElementById('lockBtn').addEventListener('click',()=>{
+  if(gameOver){resetGame();return;}
+  lockShape();
+});
+document.addEventListener('keydown',e=>{
+  if(gameOver)return;
+  if(e.code==='ArrowLeft'){e.preventDefault();holding=-1;}
+  if(e.code==='ArrowRight'){e.preventDefault();holding=1;}
+  if(e.code==='Space'){e.preventDefault();lockShape();}
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='ArrowLeft'&&holding===-1)holding=0;
+  if(e.code==='ArrowRight'&&holding===1)holding=0;
+});
+cv.addEventListener('pointerdown',e=>{
+  if(gameOver){resetGame();return;}
+  dragging=true;dragStartX=e.clientX;
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const dx=e.clientX-dragStartX;
+  holding = dx>6?1:(dx<-6?-1:0);
+});
+window.addEventListener('pointerup',()=>{dragging=false;holding=0;});
+
+resetGame();
+</script></body></html>
