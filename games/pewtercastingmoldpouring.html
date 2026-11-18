@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Pewter Mold Pouring</title><meta name="description" content="Play Pewter Mold Pouring free online — Tilt the crucible of molten pewter and pour it steadily into the mold cavity. Fill every mold to the line without overflowing or leaving gaps, across shapes of increasing difficulty."><link rel="canonical" href="https://games.multiportllc.com/games/pewtercastingmoldpouring"><meta property="og:title" content="Pewter Mold Pouring - Multiport Games"><meta property="og:description" content="Play Pewter Mold Pouring free online — Tilt the crucible of molten pewter and pour it steadily into the mold cavity. Fill every mold to the line without overflowing or leaving gaps, across shapes of increasing difficulty."><meta property="og:url" content="https://games.multiportllc.com/games/pewtercastingmoldpouring"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Pewter Mold Pouring - Multiport Games"><meta name="twitter:description" content="Tilt the crucible of molten pewter and pour it steadily into the mold cavity without overflowing."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Pewter Mold Pouring","description":"Play Pewter Mold Pouring free online instantly. Tilt the crucible of molten pewter and pour it steadily into the mold cavity, filling every mold to the fill line without overflowing or leaving gaps, across shapes of increasing difficulty. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/pewtercastingmoldpouring","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<script src="https://cdn.counter.dev/script.js" data-id="24591d8d-bdbf-4574-877c-3fc91c262d01" data-utcoffset="-5"></script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#17171a}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#d8d8e0;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#c89a4a}
+#c{background:#0e0e10;border-radius:10px;touch-action:none;cursor:grab;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.5)}
+#msg{min-height:1.6em;color:#f0c97a;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#5a5a62;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+#tiltRow{color:#d8d8e0;margin-top:6px;font-size:.9rem}
+#tiltRow input{vertical-align:middle;width:160px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Pewter Mold Pouring</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span data-i18n="hud_mold">Mold: <b id="moldLabel">1</b></span>
+        <span data-i18n="hud_fill">Fill: <b id="fillLabel">0%</b></span>
+        <span data-i18n="hud_score">Score: <b id="scoreLabel">0</b></span>
+        <span data-i18n="hud_best">Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="520" height="420"></canvas>
+      <div id="msg"></div>
+      <div id="tiltRow"><span data-i18n="tilt_label">Tilt angle</span>: <input type="range" id="tiltSlider" min="-45" max="45" value="0"></div>
+      <div id="controls">
+        <button id="pourBtn" data-i18n="pour_btn">Hold to Pour</button>
+        <button id="resetBtn" data-i18n="reset_btn">Reset Mold</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Use the <b>slider</b> (or Left/Right arrow keys) to tilt the crucible of molten pewter over the mold. Hold <b>Hold to Pour</b> (or Space / press and hold the canvas) to stream metal into the cavity. Fill the mold up to the marked line without overflowing the edges or leaving bubbles below the line — the stream drifts with your tilt angle, so steady hands win. Each new mold is a trickier shape!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=c.width,H=c.height;
+const tiltSlider=document.getElementById('tiltSlider');
+const moldLabel=document.getElementById('moldLabel');
+const fillLabel=document.getElementById('fillLabel');
+const scoreLabel=document.getElementById('scoreLabel');
+const bestLabel=document.getElementById('bestLabel');
+const msg=document.getElementById('msg');
+const pourBtn=document.getElementById('pourBtn');
+const resetBtn=document.getElementById('resetBtn');
+
+let moldIndex=0;
+let score=0;
+let best=parseInt(localStorage.getItem("pewtercastingmoldpouring_best")||"0",10);
+bestLabel.textContent=best;
+
+let pouring=false;
+let roundOver=false;
+let tiltAngle=0; // degrees
+let streamX=W/2, streamY=60;
+let metal=[]; // settled droplets as grid fill
+let cols, rows=H, cell=2;
+cols=Math.ceil(W/cell);
+let grid; // 0 = empty, 1 = pewter
+let cavity=null; // boolean mask of mold cavity
+let cavityOutline=[];
+let fillLine=0; // target fill height ratio (0..1) within cavity bounding box
+let spillCount=0;
+let bounds=null;
+
+function moldDef(n){
+  const cx=W/2, cy=H*0.62;
+  const shapes=[
+    {w:140,h:120,type:'rect'},
+    {w:150,h:130,type:'round'},
+    {w:170,h:110,type:'tri'},
+    {w:160,h:140,type:'star'},
+    {w:180,h:120,type:'wavy'}
+  ];
+  return shapes[Math.min(n,shapes.length-1)];
+}
+
+function buildCavity(){
+  const off=document.createElement('canvas');off.width=W;off.height=H;
+  const og=off.getContext('2d');
+  og.clearRect(0,0,W,H);
+  og.fillStyle='#000';
+  const def=moldDef(moldIndex);
+  const cx=W/2, cy=H*0.62;
+  og.save();
+  if(def.type==='rect'){
+    og.fillRect(cx-def.w/2,cy-def.h/2,def.w,def.h);
+  } else if(def.type==='round'){
+    og.beginPath();og.ellipse(cx,cy,def.w/2,def.h/2,0,0,7);og.fill();
+  } else if(def.type==='tri'){
+    og.beginPath();
+    og.moveTo(cx,cy-def.h/2);
+    og.lineTo(cx+def.w/2,cy+def.h/2);
+    og.lineTo(cx-def.w/2,cy+def.h/2);
+    og.closePath();og.fill();
+  } else if(def.type==='star'){
+    og.beginPath();
+    const spikes=5,outerR=def.w/2,innerR=def.w/4.2;
+    let rot=Math.PI/2*3;
+    const step=Math.PI/spikes;
+    og.moveTo(cx,cy-outerR);
+    for(let i=0;i<spikes;i++){
+      let x=cx+Math.cos(rot)*outerR,y=cy+Math.sin(rot)*outerR;
+      og.lineTo(x,y);rot+=step;
+      x=cx+Math.cos(rot)*innerR;y=cy+Math.sin(rot)*innerR;
+      og.lineTo(x,y);rot+=step;
+    }
+    og.closePath();og.fill();
+  } else if(def.type==='wavy'){
+    og.beginPath();
+    og.moveTo(cx-def.w/2,cy-def.h/2);
+    og.quadraticCurveTo(cx,cy-def.h/2-25,cx+def.w/2,cy-def.h/2);
+    og.lineTo(cx+def.w/2+10,cy+def.h/2);
+    og.quadraticCurveTo(cx,cy+def.h/2+25,cx-def.w/2-10,cy+def.h/2);
+    og.closePath();og.fill();
+  }
+  og.restore();
+  const data=og.getImageData(0,0,W,H).data;
+  cavity=new Uint8Array(W*H);
+  let minX=W,maxX=0,minY=H,maxY=0;
+  for(let y=0;y<H;y++){
+    for(let x=0;x<W;x++){
+      const i=y*W+x;
+      if(data[i*4+3]>128){
+        cavity[i]=1;
+        if(x<minX)minX=x; if(x>maxX)maxX=x;
+        if(y<minY)minY=y; if(y>maxY)maxY=y;
+      }
+    }
+  }
+  bounds={minX,maxX,minY,maxY};
+  fillLine=0.78; // fill to 78% height of cavity for a "good pour"
+}
+
+function newMold(){
+  buildCavity();
+  grid=new Uint8Array(W*H);
+  spillCount=0;
+  roundOver=false;
+  pouring=false;
+  tiltAngle=0;
+  tiltSlider.value=0;
+  msg.textContent='';
+  pourBtn.disabled=false;
+  moldLabel.textContent=(moldIndex+1);
+  fillLabel.textContent='0%';
+  render();
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#0e0e10';
+  ctx.fillRect(0,0,W,H);
+  // mold wall outline
+  ctx.save();
+  ctx.strokeStyle='#5a5a62';
+  ctx.lineWidth=5;
+  ctx.globalAlpha=0.9;
+  tracePath();
+  ctx.stroke();
+  ctx.restore();
+  // fill line marker
+  if(bounds){
+    const lineY=bounds.maxY-(bounds.maxY-bounds.minY)*fillLine;
+    ctx.save();
+    ctx.setLineDash([6,5]);
+    ctx.strokeStyle='#e8c76a';
+    ctx.lineWidth=2;
+    ctx.globalAlpha=0.8;
+    ctx.beginPath();
+    ctx.moveTo(bounds.minX-10,lineY);
+    ctx.lineTo(bounds.maxX+10,lineY);
+    ctx.stroke();
+    ctx.restore();
+  }
+  // pewter metal (settled)
+  const img=ctx.createImageData(W,H);
+  const d=img.data;
+  for(let i=0;i<W*H;i++){
+    if(grid[i]){
+      const idx=i*4;
+      d[idx]=176;d[idx+1]=176;d[idx+2]=186;d[idx+3]=255;
+    }
+  }
+  ctx.putImageData(img,0,0,0,0,W,H);
+  // re-draw mold outline on top (metal may have covered it near edges)
+  ctx.save();
+  ctx.strokeStyle='#7a7a86';
+  ctx.lineWidth=3;
+  ctx.globalAlpha=0.9;
+  tracePath();
+  ctx.stroke();
+  ctx.restore();
+  // crucible + stream
+  drawCrucible();
+}
+
+function tracePath(){
+  const def=moldDef(moldIndex);
+  const cx=W/2, cy=H*0.62;
+  ctx.beginPath();
+  if(def.type==='rect'){
+    ctx.rect(cx-def.w/2,cy-def.h/2,def.w,def.h);
+  } else if(def.type==='round'){
+    ctx.ellipse(cx,cy,def.w/2,def.h/2,0,0,7);
+  } else if(def.type==='tri'){
+    ctx.moveTo(cx,cy-def.h/2);
+    ctx.lineTo(cx+def.w/2,cy+def.h/2);
+    ctx.lineTo(cx-def.w/2,cy+def.h/2);
+    ctx.closePath();
+  } else if(def.type==='star'){
+    const spikes=5,outerR=def.w/2,innerR=def.w/4.2;
+    let rot=Math.PI/2*3;
+    const step=Math.PI/spikes;
+    ctx.moveTo(cx,cy-outerR);
+    for(let i=0;i<spikes;i++){
+      let x=cx+Math.cos(rot)*outerR,y=cy+Math.sin(rot)*outerR;
+      ctx.lineTo(x,y);rot+=step;
+      x=cx+Math.cos(rot)*innerR;y=cy+Math.sin(rot)*innerR;
+      ctx.lineTo(x,y);rot+=step;
+    }
+    ctx.closePath();
+  } else if(def.type==='wavy'){
+    ctx.moveTo(cx-def.w/2,cy-def.h/2);
+    ctx.quadraticCurveTo(cx,cy-def.h/2-25,cx+def.w/2,cy-def.h/2);
+    ctx.lineTo(cx+def.w/2+10,cy+def.h/2);
+    ctx.quadraticCurveTo(cx,cy+def.h/2+25,cx-def.w/2-10,cy+def.h/2);
+    ctx.closePath();
+  }
+}
+
+function drawCrucible(){
+  const rad=tiltAngle*Math.PI/180;
+  const baseX=W/2, baseY=50;
+  ctx.save();
+  ctx.translate(baseX,baseY);
+  ctx.rotate(rad*0.5);
+  ctx.fillStyle='#3a3a40';
+  ctx.beginPath();
+  ctx.moveTo(-45,-10);
+  ctx.lineTo(45,-10);
+  ctx.lineTo(30,20);
+  ctx.lineTo(-30,20);
+  ctx.closePath();
+  ctx.fill();
+  if(pouring){
+    ctx.fillStyle='#c89a4a';
+    ctx.beginPath();
+    ctx.ellipse(30,15,8,5,0,0,7);
+    ctx.fill();
+  }
+  ctx.restore();
+  streamX=baseX+Math.sin(rad)*60+30;
+  streamY=70;
+  if(pouring){
+    ctx.save();
+    ctx.strokeStyle='#e0b05a';
+    ctx.lineWidth=5;
+    ctx.globalAlpha=0.9;
+    ctx.beginPath();
+    ctx.moveTo(streamX,streamY);
+    ctx.lineTo(streamX+Math.sin(rad)*30,H*0.4);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function pourStep(){
+  if(!pouring||roundOver)return;
+  const rad=tiltAngle*Math.PI/180;
+  let dripX=Math.round(streamX+Math.sin(rad)*30+(Math.random()*4-2));
+  let dripY=Math.round(H*0.42);
+  // simulate falling droplet with slight drift, then settle into grid using simple fill-from-bottom
+  for(let step=0;step<6;step++){
+    dripY+=14;
+    dripX+=Math.sin(rad)*2;
+    if(dripY>=H-2)break;
+  }
+  settleDroplet(Math.round(dripX),Math.round(dripY));
+  updateFillStat();
+}
+
+function settleDroplet(x,y){
+  x=Math.max(0,Math.min(W-1,x));
+  // find lowest empty cavity cell at/below starting column that has support (cell below is wall/filled/bottom)
+  let placed=false;
+  let searchX=x;
+  for(let attempt=0;attempt<30 && !placed;attempt++){
+    let yy=bounds?bounds.maxY:H-1;
+    // find topmost already-filled or bottom in this column within cavity
+    let targetY=-1;
+    for(let row=bounds.maxY;row>=bounds.minY;row--){
+      const i=row*W+searchX;
+      if(cavity[i] && !grid[i]){ targetY=row; break; }
+      if(cavity[i] && grid[i]) continue;
+    }
+    if(targetY>=0){
+      // fill a small blob here
+      const r=4;
+      for(let dy=-r;dy<=r;dy++){
+        for(let dx=-r;dx<=r;dx++){
+          const xx=searchX+dx, yy2=targetY+dy;
+          if(xx<0||xx>=W||yy2<0||yy2>=H)continue;
+          const i=yy2*W+xx;
+          if(cavity[i] && !grid[i] && dx*dx+dy*dy<=r*r){ grid[i]=1; placed=true; }
+        }
+      }
+      if(placed){ render(); return; }
+    }
+    // if column is full or not in cavity, check if it's overflow (spill)
+    if(bounds && (searchX<bounds.minX-6 || searchX>bounds.maxX+6)){
+      spillCount++;
+      SFX.error();
+      checkSpillFail();
+      return;
+    }
+    searchX+=(Math.random()<0.5?-1:1)*3;
+    searchX=Math.max(0,Math.min(W-1,searchX));
+  }
+  // nothing found — treat as overflow spill onto floor
+  spillCount++;
+  checkSpillFail();
+}
+
+function checkSpillFail(){
+  if(spillCount>=8 && !roundOver){
+    finishRound(false);
+  }
+}
+
+function updateFillStat(){
+  if(!bounds)return;
+  let filled=0,total=0;
+  for(let i=0;i<W*H;i++){
+    if(cavity[i]){ total++; if(grid[i])filled++; }
+  }
+  const pct=total?Math.round(filled/total*100):0;
+  fillLabel.textContent=pct+'%';
+  if(pct>=92){
+    finishRound(true);
+  }
+}
+
+let pourTimer=null;
+function startPour(e){
+  if(roundOver)return;
+  if(e)e.preventDefault();
+  if(pouring)return;
+  pouring=true;
+  SFX.click();
+  pourTimer=setInterval(pourStep,90);
+}
+function stopPour(e){
+  if(e)e.preventDefault();
+  pouring=false;
+  if(pourTimer){clearInterval(pourTimer);pourTimer=null;}
+  render();
+}
+
+pourBtn.addEventListener('mousedown',startPour);
+pourBtn.addEventListener('mouseup',stopPour);
+pourBtn.addEventListener('mouseleave',stopPour);
+pourBtn.addEventListener('touchstart',startPour,{passive:false});
+pourBtn.addEventListener('touchend',stopPour);
+c.addEventListener('mousedown',startPour);
+window.addEventListener('mouseup',stopPour);
+c.addEventListener('touchstart',startPour,{passive:false});
+c.addEventListener('touchend',stopPour);
+
+tiltSlider.addEventListener('input',()=>{ tiltAngle=parseInt(tiltSlider.value,10); render(); });
+
+document.addEventListener('keydown',e=>{
+  if(roundOver)return;
+  let handled=true;
+  if(e.code==='ArrowLeft'){ tiltAngle=Math.max(-45,tiltAngle-4); tiltSlider.value=tiltAngle; render(); }
+  else if(e.code==='ArrowRight'){ tiltAngle=Math.min(45,tiltAngle+4); tiltSlider.value=tiltAngle; render(); }
+  else if(e.code==='Space'){ startPour(); }
+  else handled=false;
+  if(handled)e.preventDefault();
+});
+document.addEventListener('keyup',e=>{
+  if(e.code==='Space') stopPour();
+});
+
+function finishRound(success){
+  if(roundOver)return;
+  roundOver=true;
+  pourBtn.disabled=true;
+  stopPour();
+  let filled=0,total=0;
+  for(let i=0;i<W*H;i++){ if(cavity[i]){ total++; if(grid[i])filled++; } }
+  const pct=total?Math.round(filled/total*100):0;
+  if(success || pct>=70){
+    const gain=10+moldIndex*5+(pct>=92?15:0);
+    score+=gain;
+    scoreLabel.textContent=score;
+    if(score>best){
+      best=score;
+      localStorage.setItem("pewtercastingmoldpouring_best",String(best));
+      bestLabel.textContent=best;
+    }
+    msg.textContent=I18N.t("pmp_great","Perfect pour! ")+pct+"% filled — next mold unlocked!";
+    SFX.win();
+    moldIndex=Math.min(moldIndex+1,4);
+    setTimeout(newMold,1700);
+  } else {
+    msg.textContent=I18N.t("pmp_spill","Too much spillage! ")+pct+"% filled. Try this mold again.";
+    SFX.fail();
+    setTimeout(newMold,1700);
+  }
+}
+
+resetBtn.addEventListener('click',()=>{ SFX.select(); newMold(); });
+
+newMold();
+</script></body></html>
