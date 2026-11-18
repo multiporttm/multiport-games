@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Handmade Papermaking Screen Pulling</title><meta name="description" content="Play Handmade Papermaking Screen Pulling free online — Dip the deckle screen level into the vat, lift it straight and steady, then shake off the excess water evenly to form a clean sheet."><link rel="canonical" href="https://games.multiportllc.com/games/handmadepapermakingscreenpulling"><meta property="og:title" content="Handmade Papermaking Screen Pulling - Multiport Games"><meta property="og:description" content="Play Handmade Papermaking Screen Pulling free online — Dip the deckle screen level into the vat, lift it straight and steady, then shake off the excess water evenly to form a clean sheet."><meta property="og:url" content="https://games.multiportllc.com/games/handmadepapermakingscreenpulling"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Handmade Papermaking Screen Pulling - Multiport Games"><meta name="twitter:description" content="Dip the deckle screen level, lift it steady, and shake off water evenly to form a clean sheet."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Handmade Papermaking Screen Pulling","description":"Play Handmade Papermaking Screen Pulling free online instantly. Dip the deckle screen level into the pulp vat, lift it straight and steady at the right speed, then shake off the excess water evenly across rounds of increasing difficulty. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/handmadepapermakingscreenpulling","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#17171a}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#e8e0d0;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#b09060}
+#c{background:#241d14;border-radius:10px;touch-action:none;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.5);cursor:pointer}
+#msg{min-height:1.6em;color:#f0d08a;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#5a4a3a;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+#phaseLabel{color:#e8e0d0;margin-top:6px;font-size:.95rem;font-weight:700}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Handmade Papermaking Screen Pulling</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span data-i18n="hud_sheet">Sheet: <b id="sheetLabel">1</b></span>
+        <span data-i18n="hud_quality">Quality: <b id="qualityLabel">0%</b></span>
+        <span data-i18n="hud_score">Score: <b id="scoreLabel">0</b></span>
+        <span data-i18n="hud_best">Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="520" height="380"></canvas>
+      <div id="phaseLabel"></div>
+      <div id="msg"></div>
+      <div id="controls">
+        <button id="startBtn" data-i18n="start_btn">Start Pull</button>
+        <button id="resetBtn" data-i18n="reset_btn">Reset</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click/tap, press <b>Space</b>, or hold your finger down to act in each phase: first <b>dip</b> the screen level into the vat by stopping the tilt needle in the green zone, then <b>lift</b> it straight up at a steady pace by tapping in rhythm with the rising marker, then <b>shake</b> off the excess water by tapping evenly left-right as the water splashes settle. Nail all three phases for a clean, even sheet — rushing or mistiming any phase leaves streaks and thin spots!</div>
+</div>
+<script>
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const W=c.width,H=c.height;
+const sheetLabel=document.getElementById("sheetLabel");
+const qualityLabel=document.getElementById("qualityLabel");
+const scoreLabel=document.getElementById("scoreLabel");
+const bestLabel=document.getElementById("bestLabel");
+const phaseLabel=document.getElementById("phaseLabel");
+const msg=document.getElementById("msg");
+const startBtn=document.getElementById("startBtn");
+const resetBtn=document.getElementById("resetBtn");
+
+let sheet=1;
+let score=0;
+let best=parseInt(localStorage.getItem("handmadepapermakingscreenpulling_best")||"0",10);
+bestLabel.textContent=best;
+
+let phase="idle"; // idle, dip, lift, shake, done
+let roundOver=true;
+let raf=null;
+let lastT=0;
+
+// dip phase: needle oscillates, must stop in green zone
+let dipAngle=0, dipDir=1, dipSpeed=0;
+let dipZoneCenter=0, dipZoneWidth=0;
+let dipScore=0;
+
+// lift phase: marker rises, tap to match rising target band
+let liftPos=0, liftTarget=0, liftTolerance=0;
+let liftTaps=[], liftScore=0, liftTicks=0, liftTotalTicks=0;
+
+// shake phase: alternate left/right taps in time
+let shakeSide=0, shakeBeat=0, shakeNextBeat=0, shakeScore=0, shakeHits=0, shakeTotal=8;
+let shakeDroplets=[];
+
+function diffScale(){ return Math.max(0.5,1-(sheet-1)*0.06); }
+
+function newSheet(){
+  phase="dip";
+  roundOver=false;
+  dipAngle=0; dipDir=1;
+  dipSpeed=(2.2+sheet*0.25);
+  dipZoneWidth=Math.max(18,40*diffScale());
+  dipZoneCenter=0;
+  dipScore=0;
+  msg.textContent="";
+  startBtn.disabled=true;
+  resetBtn.disabled=false;
+  sheetLabel.textContent=sheet;
+  qualityLabel.textContent="0%";
+  phaseLabel.textContent=I18N.t("phase_dip","Phase 1: DIP — stop the needle in the green zone");
+  lastT=performance.now();
+  if(raf)cancelAnimationFrame(raf);
+  loop();
+}
+
+function startLift(){
+  phase="lift";
+  liftPos=0;
+  liftTarget=0;
+  liftTolerance=Math.max(12,28*diffScale());
+  liftTaps=0;
+  liftScore=0;
+  liftTicks=0;
+  liftTotalTicks=Math.min(10,5+sheet);
+  phaseLabel.textContent=I18N.t("phase_lift","Phase 2: LIFT — tap when the marker enters the band");
+  msg.textContent="";
+}
+
+function startShake(){
+  phase="shake";
+  shakeSide=-1;
+  shakeBeat=0;
+  shakeHits=0;
+  shakeTotal=Math.min(12,6+sheet);
+  shakeScore=0;
+  shakeDroplets=[];
+  phaseLabel.textContent=I18N.t("phase_shake","Phase 3: SHAKE — tap left/right evenly to settle the pulp");
+  msg.textContent="";
+}
+
+function act(){
+  if(roundOver)return;
+  if(phase==="dip"){
+    const d=Math.abs(dipAngle-dipZoneCenter);
+    const pct=Math.max(0,1-d/dipZoneWidth);
+    dipScore=pct;
+    if(pct>0.35){
+      SFX.point();
+      msg.textContent=I18N.t("ppb_dipgood","Nice dip! ")+Math.round(pct*100)+"%";
+      setTimeout(startLift,500);
+    } else {
+      SFX.hit();
+      dipScore=pct*0.6;
+      msg.textContent=I18N.t("ppb_dipmiss","Off-angle dip — moving on anyway.");
+      setTimeout(startLift,600);
+    }
+    phase="dip-wait";
+  } else if(phase==="lift"){
+    const d=Math.abs(liftPos-liftTarget);
+    const pct=Math.max(0,1-d/liftTolerance);
+    liftScore+=pct;
+    liftTicks++;
+    if(pct>0.5)SFX.tick(); else SFX.hurt();
+    if(liftTicks>=liftTotalTicks){
+      setTimeout(startShake,400);
+      phase="lift-wait";
+    }
+  } else if(phase==="shake"){
+    // handled by shakeTap
+  }
+}
+
+function shakeTap(side){
+  if(roundOver||phase!=="shake")return;
+  const want=shakeSide;
+  const hit=side===want;
+  const timing=Math.abs(shakeBeat-shakeNextBeat);
+  const pct=hit?Math.max(0,1-timing/14):0;
+  shakeScore+=pct;
+  shakeHits++;
+  shakeDroplets.push({x:side<0?W*0.3:W*0.7,y:H*0.72,life:1});
+  if(pct>0.5)SFX.swoosh(); else SFX.error();
+  shakeSide*=-1;
+  shakeNextBeat=shakeBeat+22;
+  if(shakeHits>=shakeTotal){
+    finishRound();
+  }
+}
+
+function finishRound(){
+  if(roundOver)return;
+  roundOver=true;
+  phase="done";
+  startBtn.disabled=false;
+  const liftPct=liftTotalTicks?liftScore/liftTotalTicks:0;
+  const shakePct=shakeTotal?shakeScore/shakeTotal:0;
+  const overall=(dipScore*0.3+liftPct*0.35+shakePct*0.35);
+  const qPct=Math.round(overall*100);
+  qualityLabel.textContent=qPct+"%";
+  phaseLabel.textContent="";
+  if(qPct>=55){
+    const gain=Math.round(qPct*0.5)+sheet*3;
+    score+=gain;
+    scoreLabel.textContent=score;
+    if(score>best){
+      best=score;
+      localStorage.setItem("handmadepapermakingscreenpulling_best",String(best));
+      bestLabel.textContent=best;
+    }
+    msg.textContent=I18N.t("sp_clean","Clean sheet pulled! ")+qPct+"% quality — +"+gain+" pts";
+    SFX.win();
+    sheet++;
+  } else {
+    msg.textContent=I18N.t("sp_streaky","Streaky, uneven sheet. ")+qPct+"% quality — try again!";
+    SFX.lose();
+  }
+}
+
+function loop(){
+  const now=performance.now();
+  const dt=Math.min(0.05,(now-lastT)/1000);
+  lastT=now;
+  if(phase==="dip"||phase==="dip-wait"){
+    dipAngle+=dipDir*dipSpeed*dt*40;
+    if(dipAngle>90){dipAngle=90;dipDir=-1;}
+    if(dipAngle<-90){dipAngle=-90;dipDir=1;}
+  } else if(phase==="lift"||phase==="lift-wait"){
+    liftPos+=dt*60*(1+sheet*0.04);
+    if(liftPos>300)liftPos=0;
+    liftTarget=150+Math.sin(now/600)*100;
+  } else if(phase==="shake"||phase==="done"){
+    shakeBeat+=dt*60;
+    shakeDroplets.forEach(d=>d.life-=dt*1.5);
+    shakeDroplets=shakeDroplets.filter(d=>d.life>0);
+  }
+  render();
+  raf=requestAnimationFrame(loop);
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#241d14";
+  ctx.fillRect(0,0,W,H);
+  if(phase==="dip"||phase==="dip-wait"){
+    // vat
+    ctx.fillStyle="#3a5a70";
+    ctx.fillRect(60,220,400,100);
+    ctx.strokeStyle="#5a4a3a";
+    ctx.lineWidth=3;
+    ctx.strokeRect(60,220,400,100);
+    // pivot and needle
+    const cx=W/2, cy=120, r=120;
+    ctx.save();
+    ctx.translate(cx,cy);
+    // dial arc
+    ctx.strokeStyle="#4a3f2e";
+    ctx.lineWidth=14;
+    ctx.beginPath();
+    ctx.arc(0,0,r,Math.PI*0.8,Math.PI*0.2+Math.PI,false);
+    ctx.stroke();
+    // green zone
+    const zoneA=(dipZoneCenter-dipZoneWidth)*Math.PI/180;
+    const zoneB=(dipZoneCenter+dipZoneWidth)*Math.PI/180;
+    ctx.strokeStyle="#5ab06a";
+    ctx.lineWidth=14;
+    ctx.beginPath();
+    ctx.arc(0,0,r,-Math.PI/2+zoneA,-Math.PI/2+zoneB,false);
+    ctx.stroke();
+    // needle
+    const ang=dipAngle*Math.PI/180-Math.PI/2;
+    ctx.strokeStyle="#f0d08a";
+    ctx.lineWidth=4;
+    ctx.beginPath();
+    ctx.moveTo(0,0);
+    ctx.lineTo(Math.cos(ang)*r,Math.sin(ang)*r);
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle="#e8e0d0";
+    ctx.font="bold 14px sans-serif";
+    ctx.textAlign="center";
+    ctx.fillText(I18N.t("dip_hint","Tap when needle is centered"),W/2,280);
+  } else if(phase==="lift"||phase==="lift-wait"){
+    const trackX=W/2, trackTop=40, trackBot=320;
+    ctx.strokeStyle="#4a3f2e";
+    ctx.lineWidth=20;
+    ctx.beginPath();
+    ctx.moveTo(trackX,trackTop);
+    ctx.lineTo(trackX,trackBot);
+    ctx.stroke();
+    // target band
+    const bandY=trackBot-liftTarget;
+    ctx.strokeStyle="#5ab06a";
+    ctx.lineWidth=20;
+    ctx.beginPath();
+    ctx.moveTo(trackX,bandY-liftTolerance*0.6);
+    ctx.lineTo(trackX,bandY+liftTolerance*0.6);
+    ctx.stroke();
+    // marker
+    const markY=trackBot-liftPos;
+    ctx.fillStyle="#f0d08a";
+    ctx.beginPath();
+    ctx.arc(trackX,markY,12,0,7);
+    ctx.fill();
+    ctx.fillStyle="#e8e0d0";
+    ctx.font="bold 14px sans-serif";
+    ctx.textAlign="center";
+    ctx.fillText(I18N.t("lift_count","Tap: ")+liftTicks+" / "+liftTotalTicks,W/2,360);
+  } else if(phase==="shake"||phase==="done"){
+    ctx.fillStyle="#3a5a70";
+    ctx.fillRect(W/2-130,180,260,90);
+    ctx.strokeStyle="#5a4a3a";
+    ctx.lineWidth=3;
+    ctx.strokeRect(W/2-130,180,260,90);
+    ctx.fillStyle="#e8e0d0";
+    ctx.font="bold 30px sans-serif";
+    ctx.textAlign="center";
+    ctx.fillText(shakeSide<0?"⬅":"➡",W/2,140);
+    shakeDroplets.forEach(d=>{
+      ctx.save();
+      ctx.globalAlpha=Math.max(0,d.life);
+      ctx.fillStyle="#9fd0e8";
+      ctx.beginPath();
+      ctx.arc(d.x,d.y,8,0,7);
+      ctx.fill();
+      ctx.restore();
+    });
+    ctx.fillStyle="#e8e0d0";
+    ctx.font="bold 14px sans-serif";
+    ctx.fillText(I18N.t("shake_count","Shakes: ")+shakeHits+" / "+shakeTotal,W/2,320);
+  } else {
+    ctx.fillStyle="#e8e0d0";
+    ctx.font="bold 16px sans-serif";
+    ctx.textAlign="center";
+    ctx.fillText(I18N.t("press_start","Press Start Pull to begin"),W/2,H/2);
+  }
+}
+
+c.addEventListener("click",()=>{
+  if(phase==="shake")return; // shake uses left/right zones
+  act();
+});
+c.addEventListener("mousedown",e=>{
+  if(phase!=="shake")return;
+  const rect=c.getBoundingClientRect();
+  const x=(e.clientX-rect.left)*(W/rect.width);
+  shakeTap(x<W/2?-1:1);
+});
+c.addEventListener("touchstart",e=>{
+  e.preventDefault();
+  const rect=c.getBoundingClientRect();
+  const t=e.touches[0];
+  const x=(t.clientX-rect.left)*(W/rect.width);
+  if(phase==="shake"){ shakeTap(x<W/2?-1:1); }
+  else { act(); }
+},{passive:false});
+
+document.addEventListener("keydown",e=>{
+  if(roundOver)return;
+  if(e.code==="Space"){
+    e.preventDefault();
+    if(phase!=="shake")act();
+  } else if(e.code==="ArrowLeft"&&phase==="shake"){
+    e.preventDefault();
+    shakeTap(-1);
+  } else if(e.code==="ArrowRight"&&phase==="shake"){
+    e.preventDefault();
+    shakeTap(1);
+  }
+});
+
+startBtn.addEventListener("click",()=>{
+  SFX.select();
+  newSheet();
+});
+resetBtn.addEventListener("click",()=>{
+  SFX.select();
+  sheet=1; score=0; scoreLabel.textContent=score;
+  roundOver=true; phase="idle";
+  startBtn.disabled=false;
+  qualityLabel.textContent="0%";
+  phaseLabel.textContent="";
+  msg.textContent="";
+  render();
+});
+
+render();
+</script></body></html>
