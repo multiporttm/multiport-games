@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bell Founding Alloy Mixing</title><meta name="description" content="Play Bell Founding Alloy Mixing free online — shovel copper and tin into the crucible to hit the exact bell bronze ratio before the melt overheats."><link rel="canonical" href="https://games.multiportllc.com/games/bellfoundingalloymixing"><meta property="og:title" content="Bell Founding Alloy Mixing - Multiport Games"><meta property="og:description" content="Play Bell Founding Alloy Mixing free online — shovel copper and tin into the crucible to hit the exact bell bronze ratio before the melt overheats."><meta property="og:url" content="https://games.multiportllc.com/games/bellfoundingalloymixing"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Bell Founding Alloy Mixing - Multiport Games"><meta name="twitter:description" content="Shovel copper and tin into the crucible to hit the exact bell bronze ratio before the melt overheats."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bell Founding Alloy Mixing","description":"Play Bell Founding Alloy Mixing free online instantly. Shovel measured scoops of copper and tin into a glowing crucible, watching the live ratio gauge, to land the melt inside the narrow target band for proper bell bronze before the furnace overheats and ruins the pour, across increasingly tight batches. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/bellfoundingalloymixing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#141c14}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#e2ecdc;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#8ad08a}
+#c{background:#1e2a1e;border-radius:10px;touch-action:none;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.5);cursor:pointer}
+#msg{min-height:1.6em;color:#b8e0a8;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#2e4a2e;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bell Founding Alloy Mixing</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span data-i18n="hud_batch">Batch: <b id="batchLabel">1</b></span>
+        <span data-i18n="hud_heat">Heat: <b id="heatLabel">0</b>%</span>
+        <span data-i18n="hud_score">Score: <b id="scoreLabel">0</b></span>
+        <span data-i18n="hud_best">Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="520" height="380"></canvas>
+      <div id="msg"></div>
+      <div id="controls">
+        <button id="pourBtn" data-i18n="pour_btn">Pour Melt</button>
+        <button id="resetBtn" data-i18n="reset_btn">New Batch</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Shovel scoops of <b>copper</b> (press <b>C</b> or tap the copper pile) and <b>tin</b> (press <b>T</b> or tap the tin pile) into the crucible to match the target ratio shown on the gauge. Each scoop raises the furnace heat a little — if it maxes out before you pour, the melt scorches. When the needle sits in the gold target band, press <b>Enter/Space</b> or hit <b>Pour Melt</b> to cast that batch and move on to a tighter target.</div>
+</div>
+<script>
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const W=c.width,H=c.height;
+const batchLabel=document.getElementById("batchLabel");
+const heatLabel=document.getElementById("heatLabel");
+const scoreLabel=document.getElementById("scoreLabel");
+const bestLabel=document.getElementById("bestLabel");
+const msg=document.getElementById("msg");
+const pourBtn=document.getElementById("pourBtn");
+const resetBtn=document.getElementById("resetBtn");
+
+let batch=1;
+let score=0;
+let best=parseInt(localStorage.getItem("bellfoundingalloymixing_best")||"0",10);
+bestLabel.textContent=best;
+
+let copperScoops=0, tinScoops=0;
+let targetPct=22; // target tin % (bell bronze is roughly 78/22 copper/tin)
+let tolerance=6;
+let heat=0, heatMax=100;
+let roundOver=false;
+let scoopAnim=null; // {type,t}
+
+function newBatch(){
+  copperScoops=0; tinScoops=0;
+  heat=0;
+  heatLabel.textContent=heat;
+  targetPct=18+Math.round(Math.random()*14); // 18-32
+  tolerance=Math.max(3,7-Math.floor((batch-1)/2));
+  roundOver=false;
+  batchLabel.textContent=batch;
+  msg.textContent=I18N.t("alloy_go","Shovel copper and tin to hit the target band, then pour!");
+  pourBtn.disabled=false;
+  resetBtn.disabled=false;
+  render();
+}
+
+function currentTinPct(){
+  const total=copperScoops+tinScoops;
+  if(total===0)return 0;
+  return (tinScoops/total)*100;
+}
+
+function addScoop(type){
+  if(roundOver)return;
+  if(type==="copper"){ copperScoops++; SFX.click(); }
+  else { tinScoops++; SFX.click(); }
+  heat=Math.min(heatMax,heat+6);
+  heatLabel.textContent=Math.round(heat);
+  scoopAnim={type,t:0};
+  if(heat>=heatMax){
+    finishBatch(false,"scorch");
+    return;
+  }
+  render();
+}
+
+function pour(){
+  if(roundOver)return;
+  const total=copperScoops+tinScoops;
+  if(total<3){
+    SFX.error();
+    msg.textContent=I18N.t("alloy_toofew","Not enough metal in the crucible yet!");
+    return;
+  }
+  const pct=currentTinPct();
+  const diff=Math.abs(pct-targetPct);
+  if(diff<=tolerance){
+    finishBatch(true,"ok");
+  } else {
+    finishBatch(false,"miss");
+  }
+}
+
+function finishBatch(success,reason){
+  if(roundOver)return;
+  roundOver=true;
+  pourBtn.disabled=true;
+  if(success){
+    const pct=currentTinPct();
+    const diff=Math.abs(pct-targetPct);
+    const bonus=Math.round(60+(tolerance-diff)*8+batch*5);
+    score+=bonus;
+    scoreLabel.textContent=score;
+    if(score>best){
+      best=score;
+      localStorage.setItem("bellfoundingalloymixing_best",String(best));
+      bestLabel.textContent=best;
+    }
+    msg.textContent=I18N.t("alloy_win","Perfect bell bronze! +")+bonus+I18N.t("alloy_pts_suffix"," pts");
+    SFX.win();
+    batch++;
+    setTimeout(newBatch,1500);
+  } else if(reason==="scorch"){
+    msg.textContent=I18N.t("alloy_scorch","The melt overheated and scorched — batch ruined!");
+    SFX.lose();
+    setTimeout(()=>{ batch=1; score=0; scoreLabel.textContent=score; newBatch(); },1700);
+  } else {
+    msg.textContent=I18N.t("alloy_miss","Off-ratio pour — that bronze will ring flat.");
+    SFX.fail();
+    setTimeout(()=>{ batch=1; score=0; scoreLabel.textContent=score; newBatch(); },1700);
+  }
+  render();
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#1e2a1e";
+  ctx.fillRect(0,0,W,H);
+
+  // copper pile (left)
+  ctx.beginPath();
+  ctx.ellipse(110,290,70,30,0,0,Math.PI*2);
+  ctx.fillStyle="#c17a4a";
+  ctx.fill();
+  ctx.fillStyle="#f0ece0";
+  ctx.font="bold 13px sans-serif";
+  ctx.textAlign="center";
+  ctx.fillText(I18N.t("alloy_copper","COPPER (C)"),110,250);
+  ctx.font="bold 20px sans-serif";
+  ctx.fillText(copperScoops,110,296);
+
+  // tin pile (right)
+  ctx.beginPath();
+  ctx.ellipse(410,290,70,30,0,0,Math.PI*2);
+  ctx.fillStyle="#b8b8c0";
+  ctx.fill();
+  ctx.fillStyle="#2a2a2a";
+  ctx.font="bold 13px sans-serif";
+  ctx.fillText(I18N.t("alloy_tin","TIN (T)"),410,250);
+  ctx.font="bold 20px sans-serif";
+  ctx.fillText(tinScoops,410,296);
+
+  // crucible
+  ctx.beginPath();
+  ctx.moveTo(210,150);
+  ctx.lineTo(230,210);
+  ctx.quadraticCurveTo(260,230,290,210);
+  ctx.lineTo(310,150);
+  ctx.closePath();
+  const total=copperScoops+tinScoops;
+  const pct=currentTinPct();
+  const meltColor=total===0?"#3a3a3a":mixColor(pct);
+  ctx.fillStyle=meltColor;
+  ctx.fill();
+  ctx.strokeStyle="#111";
+  ctx.lineWidth=3;
+  ctx.stroke();
+  ctx.fillStyle="#cfe8cf";
+  ctx.font="bold 13px sans-serif";
+  ctx.fillText(I18N.t("alloy_crucible","CRUCIBLE"),260,135);
+
+  // scoop animation
+  if(scoopAnim){
+    scoopAnim.t+=0.06;
+    const fromX=scoopAnim.type==="copper"?110:410;
+    const prog=Math.min(1,scoopAnim.t);
+    const x=fromX+(260-fromX)*prog;
+    const y=290+(190-290)*prog;
+    ctx.beginPath();
+    ctx.arc(x,y,8,0,Math.PI*2);
+    ctx.fillStyle=scoopAnim.type==="copper"?"#c17a4a":"#b8b8c0";
+    ctx.fill();
+    if(prog>=1)scoopAnim=null;
+  }
+
+  // ratio gauge
+  const gx=120,gy=340,gw=280,gh=18;
+  ctx.fillStyle="#111";
+  ctx.fillRect(gx,gy,gw,gh);
+  // target band
+  const bandLo=Math.max(0,targetPct-tolerance);
+  const bandHi=Math.min(100,targetPct+tolerance);
+  ctx.fillStyle="#d8b84a";
+  ctx.fillRect(gx+gw*(bandLo/100),gy,gw*((bandHi-bandLo)/100),gh);
+  // needle
+  const nx=gx+gw*(pct/100);
+  ctx.strokeStyle="#fff";
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(nx,gy-6);
+  ctx.lineTo(nx,gy+gh+6);
+  ctx.stroke();
+  ctx.fillStyle="#cfe8cf";
+  ctx.font="bold 12px sans-serif";
+  ctx.fillText(I18N.t("alloy_gauge","Tin % of melt — hit the gold target band"),gx+gw/2,gy-12);
+  ctx.fillText(Math.round(pct)+"%  ("+I18N.t("alloy_target","target")+" "+targetPct+"%)",gx+gw/2,gy+gh+22);
+
+  // heat bar
+  const hbx=120,hby=372,hbw=280,hbh=6;
+  ctx.fillStyle="#333";
+  ctx.fillRect(hbx,hby,hbw,hbh);
+  ctx.fillStyle=heat>75?"#e06a4a":"#e0b04a";
+  ctx.fillRect(hbx,hby,hbw*(heat/heatMax),hbh);
+}
+
+function mixColor(pct){
+  const t=pct/100;
+  const r=Math.round(0xc1+(0xb8-0xc1)*t);
+  const g=Math.round(0x7a+(0xb8-0x7a)*t);
+  const b=Math.round(0x4a+(0xc0-0x4a)*t);
+  return "rgb("+r+","+g+","+b+")";
+}
+
+pourBtn.addEventListener("click",()=>{ SFX.select(); pour(); });
+resetBtn.addEventListener("click",()=>{
+  SFX.select();
+  batch=1; score=0; scoreLabel.textContent=score;
+  newBatch();
+});
+
+c.addEventListener("click",(e)=>{
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  const mx=(e.clientX-rect.left)*scaleX;
+  const my=(e.clientY-rect.top)*scaleY;
+  if(Math.hypot(mx-110,my-290)<=75){ addScoop("copper"); }
+  else if(Math.hypot(mx-410,my-290)<=75){ addScoop("tin"); }
+});
+
+document.addEventListener("keydown",e=>{
+  if(e.code==="KeyC"){ addScoop("copper"); }
+  else if(e.code==="KeyT"){ addScoop("tin"); }
+  else if(e.code==="Enter"||e.code==="Space"){ e.preventDefault(); pour(); }
+});
+
+let heatTimer=setInterval(()=>{
+  if(!roundOver){
+    heat=Math.max(0,heat-1);
+    heatLabel.textContent=Math.round(heat);
+    render();
+  }
+},800);
+
+newBatch();
+</script></body></html>

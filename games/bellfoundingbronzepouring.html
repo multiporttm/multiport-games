@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Bell Founding Bronze Pouring</title><meta name="description" content="Play Bell Founding Bronze Pouring free online — tilt the crucible to pour molten bronze into each bell mold, filling the fill line exactly before it cools."><link rel="canonical" href="https://games.multiportllc.com/games/bellfoundingbronzepouring"><meta property="og:title" content="Bell Founding Bronze Pouring - Multiport Games"><meta property="og:description" content="Play Bell Founding Bronze Pouring free online — tilt the crucible to pour molten bronze into each bell mold, filling the fill line exactly before it cools."><meta property="og:url" content="https://games.multiportllc.com/games/bellfoundingbronzepouring"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Bell Founding Bronze Pouring - Multiport Games"><meta name="twitter:description" content="Tilt the crucible and pour molten bronze into each bell mold right to the fill line."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Bell Founding Bronze Pouring","description":"Play Bell Founding Bronze Pouring free online instantly. Hold the pour control to tilt a crucible of molten bronze over a line of bell molds gliding past on a foundry floor, filling each one right up to its fill line without overflowing hot metal or leaving it short, across faster and narrower rounds. No download or signup required.","genre":"Action","url":"https://games.multiportllc.com/games/bellfoundingbronzepouring","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1e140a}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#fbe8cf;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#f0a040}
+#c{background:#2a1c0e;border-radius:10px;touch-action:none;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.5);cursor:pointer}
+#msg{min-height:1.6em;color:#f0a040;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#8a5a1f;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Bell Founding Bronze Pouring</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span data-i18n="hud_lives">Lives: <b id="livesLabel">3</b></span>
+        <span data-i18n="hud_round">Round: <b id="roundLabel">1</b></span>
+        <span data-i18n="hud_score">Score: <b id="scoreLabel">0</b></span>
+        <span data-i18n="hud_best">Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="520" height="340"></canvas>
+      <div id="msg"></div>
+      <div id="controls">
+        <button id="startBtn" data-i18n="start_btn">Start Pour</button>
+        <button id="resetBtn" data-i18n="reset_btn">New Run</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Hold <b>Space</b>, the mouse/touch button, or tap and hold anywhere on the canvas to tilt the crucible and pour a stream of molten bronze. Release to stop. Fill each mold up to its glowing fill line as it glides past — overflow scalds the floor and spoils the casting, while a mold left short rings hollow. Clear molds to speed up the conveyor and earn bigger scores, but you only get three ruined pours before the furnace shuts down.</div>
+</div>
+<script>
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const W=c.width,H=c.height;
+const livesLabel=document.getElementById("livesLabel");
+const roundLabel=document.getElementById("roundLabel");
+const scoreLabel=document.getElementById("scoreLabel");
+const bestLabel=document.getElementById("bestLabel");
+const msg=document.getElementById("msg");
+const startBtn=document.getElementById("startBtn");
+const resetBtn=document.getElementById("resetBtn");
+
+let best=parseInt(localStorage.getItem("bellfoundingbronzepouring_best")||"0",10);
+bestLabel.textContent=best;
+
+let lives=3, round=1, score=0;
+let running=false;
+let roundOver=false;
+let gameOver=false;
+let pouring=false;
+let rafId=null;
+let lastT=0;
+
+const laneY=H-60;
+const spoutX=90, spoutY=60;
+let conveyorSpeed=1.4;
+let moldSpacing=220;
+let molds=[]; // {x, fill, target, locked, result}
+let nextMoldX=380;
+let streamParticles=[];
+let moldsClearedThisRound=0;
+let moldsNeeded=5;
+
+function newMoldObj(x){
+  const target=0.55+Math.random()*0.3; // target fill 0.55..0.85
+  return {x:x, fill:0, target:target, radius:38, done:false, result:null};
+}
+
+function setupRound(){
+  conveyorSpeed=1.3+round*0.22;
+  moldSpacing=Math.max(150,220-round*8);
+  moldsNeeded=4+Math.min(round,6);
+  molds=[];
+  let x=420;
+  for(let i=0;i<3;i++){ molds.push(newMoldObj(x)); x+=moldSpacing; }
+  nextMoldX=x;
+  moldsClearedThisRound=0;
+  roundLabel.textContent=round;
+  roundOver=false;
+}
+
+function startRun(){
+  lives=3; round=1; score=0;
+  livesLabel.textContent=lives;
+  scoreLabel.textContent=score;
+  gameOver=false;
+  setupRound();
+  running=true;
+  msg.textContent="";
+  startBtn.disabled=true;
+  lastT=performance.now();
+  if(rafId)cancelAnimationFrame(rafId);
+  rafId=requestAnimationFrame(loop);
+}
+
+function loop(t){
+  const dt=Math.min(0.05,(t-lastT)/1000);
+  lastT=t;
+  if(running&&!gameOver){
+    update(dt);
+    render();
+    rafId=requestAnimationFrame(loop);
+  }
+}
+
+function update(dt){
+  // move molds along conveyor
+  for(let i=molds.length-1;i>=0;i--){
+    const m=molds[i];
+    m.x-=conveyorSpeed*dt*60;
+    if(!m.done && m.x<spoutX-50){
+      // missed entirely
+      judgeMold(m,true);
+    }
+    if(m.x<-80){
+      molds.splice(i,1);
+    }
+  }
+  // spawn new molds
+  if(molds.length<4){
+    const last=molds.length?molds[molds.length-1].x:nextMoldX;
+    molds.push(newMoldObj(last+moldSpacing));
+  }
+  // pouring logic: the mold nearest under the spout gets filled
+  const target=molds.find(m=>!m.done && Math.abs(m.x-spoutX)<40);
+  if(pouring && target){
+    target.fill+=dt*0.55;
+    if(target.fill>1.15){
+      judgeMold(target,false,true);
+    }
+  }
+  if(pouring){
+    streamParticles.push({x:spoutX+(Math.random()-0.5)*4,y:spoutY,vy:4+Math.random()*2,life:1});
+  }
+  streamParticles.forEach(p=>{ p.y+=p.vy*dt*60; p.life-=dt*0.6; });
+  streamParticles=streamParticles.filter(p=>p.life>0 && p.y<laneY+20);
+}
+
+function judgeMold(m,missed,overflow){
+  if(m.done)return;
+  m.done=true;
+  if(overflow){
+    m.result="overflow";
+    SFX.hurt();
+    msg.textContent=I18N.t("pour_overflow","Overflow! Molten bronze spilled.");
+    loseLife();
+  } else if(missed){
+    m.result="missed";
+    SFX.fail();
+    msg.textContent=I18N.t("pour_missed","That mold rolled by empty!");
+    loseLife();
+  } else {
+    const diff=Math.abs(m.fill-m.target);
+    if(diff<0.05){
+      m.result="perfect";
+      score+=20+round*3;
+      SFX.success();
+      msg.textContent=I18N.t("pour_perfect","Perfect pour!");
+      moldsClearedThisRound++;
+    } else if(diff<0.14){
+      m.result="good";
+      score+=10+round;
+      SFX.point();
+      msg.textContent=I18N.t("pour_good","Good casting.");
+      moldsClearedThisRound++;
+    } else {
+      m.result="poor";
+      SFX.error();
+      msg.textContent=I18N.t("pour_short","Underfilled — the bell will ring hollow.");
+      loseLife();
+    }
+  }
+  scoreLabel.textContent=score;
+  if(moldsClearedThisRound>=moldsNeeded && !gameOver){
+    nextRound();
+  }
+}
+
+function loseLife(){
+  lives--;
+  livesLabel.textContent=lives;
+  if(lives<=0){
+    endGame();
+  }
+}
+
+function nextRound(){
+  round++;
+  msg.textContent=I18N.t("pour_round_up","Furnace stoked! Faster conveyor ahead.");
+  SFX.levelup();
+  setupRound();
+}
+
+function endGame(){
+  gameOver=true;
+  running=false;
+  pouring=false;
+  if(score>best){
+    best=score;
+    localStorage.setItem("bellfoundingbronzepouring_best",String(best));
+    bestLabel.textContent=best;
+  }
+  msg.textContent=I18N.t("pour_gameover","Furnace shut down! Final score: ")+score;
+  SFX.lose();
+  startBtn.disabled=false;
+  startBtn.textContent=I18N.t("start_btn","Start Pour");
+  render();
+}
+
+function triggerPour(on){
+  if(!running||gameOver)return;
+  if(on&&!pouring)SFX.swoosh();
+  pouring=on;
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#2a1c0e";
+  ctx.fillRect(0,0,W,H);
+  // conveyor floor
+  ctx.fillStyle="#1c1208";
+  ctx.fillRect(0,laneY+38,W,H-laneY-38);
+  ctx.strokeStyle="#4a3420";
+  ctx.lineWidth=1;
+  for(let x=0;x<W;x+=24){
+    ctx.beginPath(); ctx.moveTo(x,laneY+38); ctx.lineTo(x-10,H); ctx.stroke();
+  }
+  // crucible
+  ctx.fillStyle="#3a2a18";
+  ctx.beginPath();
+  ctx.ellipse(spoutX,spoutY-6,34,20,0,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle=pouring?"#ffb860":"#e08030";
+  ctx.beginPath();
+  ctx.ellipse(spoutX,spoutY-10,26,12,0,0,Math.PI*2);
+  ctx.fill();
+  // stream
+  if(pouring){
+    ctx.strokeStyle="#ffcc70";
+    ctx.lineWidth=6;
+    ctx.beginPath();
+    ctx.moveTo(spoutX,spoutY);
+    ctx.lineTo(spoutX,laneY-20);
+    ctx.stroke();
+  }
+  streamParticles.forEach(p=>{
+    ctx.fillStyle="rgba(255,190,100,"+Math.max(0,p.life)+")";
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,2.5,0,Math.PI*2);
+    ctx.fill();
+  });
+
+  // molds
+  molds.forEach(m=>{
+    ctx.save();
+    ctx.translate(m.x,laneY);
+    // mold cup shape
+    ctx.fillStyle="#44321c";
+    ctx.beginPath();
+    ctx.moveTo(-m.radius,0);
+    ctx.lineTo(-m.radius*0.6,30);
+    ctx.lineTo(m.radius*0.6,30);
+    ctx.lineTo(m.radius,0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle="#6a4e2a";
+    ctx.lineWidth=2;
+    ctx.stroke();
+    // fill level
+    const fillH=Math.min(1,m.fill)*26;
+    ctx.fillStyle=m.done&&m.result==="overflow"?"#ff4a2a":"#ff9a3a";
+    ctx.fillRect(-m.radius*0.75,28-fillH,m.radius*1.5,fillH);
+    // target line
+    ctx.strokeStyle="#ffe070";
+    ctx.lineWidth=2;
+    ctx.setLineDash([3,3]);
+    const ty=28-m.target*26;
+    ctx.beginPath();
+    ctx.moveTo(-m.radius,ty);
+    ctx.lineTo(m.radius,ty);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if(m.done){
+      ctx.fillStyle=m.result==="perfect"?"#8af08a":(m.result==="good"?"#f0d060":"#f06a6a");
+      ctx.font="bold 11px sans-serif";
+      ctx.textAlign="center";
+      ctx.fillText(m.result.toUpperCase(),0,-8);
+    }
+    ctx.restore();
+  });
+
+  // spout marker on floor
+  ctx.strokeStyle="rgba(255,255,255,0.25)";
+  ctx.lineWidth=1;
+  ctx.setLineDash([4,4]);
+  ctx.beginPath();
+  ctx.moveTo(spoutX,laneY-40);
+  ctx.lineTo(spoutX,laneY+10);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  if(!running && !gameOver){
+    ctx.fillStyle="#fbe8cf";
+    ctx.font="bold 16px sans-serif";
+    ctx.textAlign="center";
+    ctx.fillText(I18N.t("pour_ready","Press Start Pour to light the furnace"),W/2,H/2);
+  }
+}
+
+startBtn.addEventListener("click",()=>{ SFX.select(); startRun(); });
+resetBtn.addEventListener("click",()=>{
+  SFX.select();
+  gameOver=false; running=false; pouring=false;
+  lives=3; round=1; score=0;
+  livesLabel.textContent=lives; roundLabel.textContent=round; scoreLabel.textContent=score;
+  molds=[]; streamParticles=[];
+  msg.textContent="";
+  startBtn.disabled=false;
+  render();
+});
+
+document.addEventListener("keydown",e=>{
+  if(e.code==="Space"){ e.preventDefault(); triggerPour(true); }
+});
+document.addEventListener("keyup",e=>{
+  if(e.code==="Space"){ e.preventDefault(); triggerPour(false); }
+});
+c.addEventListener("pointerdown",e=>{ e.preventDefault(); if(!running&&!gameOver){ SFX.select(); startRun(); } triggerPour(true); });
+window.addEventListener("pointerup",()=>{ triggerPour(false); });
+c.addEventListener("pointercancel",()=>{ triggerPour(false); });
+
+render();
+</script></body></html>
