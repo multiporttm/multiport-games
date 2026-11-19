@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Jukebox Restoration Neon Rewiring</title><meta name="description" content="Play Jukebox Restoration Neon Rewiring free online — rotate glass tube segments to complete a glowing neon circuit around a vintage jukebox marquee before the transformer overheats."><link rel="canonical" href="https://games.multiportllc.com/games/jukeboxrestorationneonrewiring"><meta property="og:title" content="Jukebox Restoration Neon Rewiring - Multiport Games"><meta property="og:description" content="Play Jukebox Restoration Neon Rewiring free online — rotate glass tube segments to complete a glowing neon circuit around a vintage jukebox marquee before the transformer overheats."><meta property="og:url" content="https://games.multiportllc.com/games/jukeboxrestorationneonrewiring"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Jukebox Restoration Neon Rewiring - Multiport Games"><meta name="twitter:description" content="Rotate glass tube segments to complete a glowing neon circuit before the transformer overheats."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Jukebox Restoration Neon Rewiring","description":"Play Jukebox Restoration Neon Rewiring free online instantly. Rotate hand-bent glass neon tube segments on a grid to connect the transformer to every marquee letter and complete a glowing circuit before the high-voltage transformer overheats, across larger marquee grids each round. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/jukeboxrestorationneonrewiring","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#160f1a}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#ecdcf5;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#c06ae0}
+#c{background:#241a2c;border-radius:10px;touch-action:none;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.5);cursor:pointer}
+#msg{min-height:1.6em;color:#d6a0f0;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#4a2e5a;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Jukebox Restoration Neon Rewiring</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span data-i18n="hud_marquee">Marquee: <b id="marqueeLabel">1</b></span>
+        <span data-i18n="hud_heat">Heat: <b id="heatLabel">0</b>%</span>
+        <span data-i18n="hud_score">Score: <b id="scoreLabel">0</b></span>
+        <span data-i18n="hud_best">Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="520" height="360"></canvas>
+      <div id="msg"></div>
+      <div id="controls">
+        <button id="resetBtn" data-i18n="reset_btn">New Marquee</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click or tap a glass tube tile to rotate it 90°, lining up its glowing path with its neighbors so power flows from the <b>transformer</b> (yellow) to every letter socket (pink). Use arrow keys to move the selector and <b>Enter/Space</b> to rotate the highlighted tile. Every wasted rotation builds heat in the transformer — complete the circuit before it overheats!</div>
+</div>
+<script>
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const W=c.width,H=c.height;
+const marqueeLabel=document.getElementById("marqueeLabel");
+const heatLabel=document.getElementById("heatLabel");
+const scoreLabel=document.getElementById("scoreLabel");
+const bestLabel=document.getElementById("bestLabel");
+const msg=document.getElementById("msg");
+const resetBtn=document.getElementById("resetBtn");
+
+let marquee=1;
+let score=0;
+let heat=0;
+let best=parseInt(localStorage.getItem("jukeboxrestorationneonrewiring_best")||"0",10);
+bestLabel.textContent=best;
+
+// tile types: "I" straight (connects 2 opposite sides), "L" elbow (connects 2 adjacent sides), "T" (3 sides), "X" (0, source/sink handled separately)
+let gridCols=4, gridRows=3;
+let tiles=[]; // {type, rot, x,y, isSource, isSink}
+let cellSize=80;
+let cursor=0;
+let roundOver=false;
+let heatTimer=null;
+let sourceIdx=0;
+let sinkIdxs=[];
+
+function shuffle(a){
+  for(let i=a.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [a[i],a[j]]=[a[j],a[i]];
+  }
+  return a;
+}
+
+// side bits: 0=N,1=E,2=S,3=W
+const TYPE_SIDES={
+  "I":[0,2],
+  "L":[0,1],
+  "T":[0,1,2],
+  "P":[0] // dead-end stub, only one side
+};
+
+function rotateSides(sides,rot){
+  return sides.map(s=>(s+rot)%4);
+}
+
+function buildSolvedGrid(){
+  // Build a spanning structure on grid guaranteeing connectivity from source to all sinks using simple random tree,
+  // then derive tile type+base rotation per cell from the set of connected directions required.
+  gridCols=3+Math.min(3,Math.floor((marquee-1)/2));
+  gridRows=3;
+  const cols=gridCols, rows=gridRows;
+  const cellConns=[]; // array of Set of directions needed, per cell index
+  for(let i=0;i<cols*rows;i++) cellConns.push(new Set());
+
+  const idx=(x,y)=>y*cols+x;
+  const visited=new Array(cols*rows).fill(false);
+  sourceIdx=idx(0,Math.floor(rows/2));
+  visited[sourceIdx]=true;
+  const frontier=[sourceIdx];
+  const dirsOf=(x,y)=>{
+    const d=[];
+    if(y>0) d.push({dir:0,nx:x,ny:y-1,odir:2});
+    if(x<cols-1) d.push({dir:1,nx:x+1,ny:y,odir:3});
+    if(y<rows-1) d.push({dir:2,nx:x,ny:y+1,odir:0});
+    if(x>0) d.push({dir:3,nx:x-1,ny:y,odir:1});
+    return d;
+  };
+  // random spanning tree via randomized BFS/DFS
+  let stack=[sourceIdx];
+  while(stack.length){
+    const cur=stack[stack.length-1];
+    const cx=cur%cols, cy=Math.floor(cur/cols);
+    const options=shuffle(dirsOf(cx,cy)).filter(o=>!visited[idx(o.nx,o.ny)]);
+    if(options.length===0){ stack.pop(); continue; }
+    const o=options[0];
+    const ni=idx(o.nx,o.ny);
+    visited[ni]=true;
+    cellConns[cur].add(o.dir);
+    cellConns[ni].add(o.odir);
+    stack.push(ni);
+  }
+  // pick sink count based on marquee level, choose leaf-ish far cells
+  const sinkCount=Math.min(3+Math.floor((marquee-1)/2),6);
+  let candidates=[];
+  for(let i=0;i<cols*rows;i++) if(i!==sourceIdx) candidates.push(i);
+  shuffle(candidates);
+  sinkIdxs=candidates.slice(0,Math.min(sinkCount,candidates.length));
+
+  tiles=[];
+  for(let y=0;y<rows;y++){
+    for(let x=0;x<cols;x++){
+      const i=idx(x,y);
+      const sidesSet=cellConns[i];
+      let sides=Array.from(sidesSet);
+      let type="P";
+      if(sides.length===0){ sides=[0]; type="P"; }
+      else if(sides.length===1){ type="P"; }
+      else if(sides.length===2){
+        const [a,b]=sides;
+        type = ((a+2)%4===b) ? "I" : "L";
+      } else if(sides.length>=3){ type="T"; }
+      // normalize base sides for type, then find rot that matches actual 'sides'
+      const base=TYPE_SIDES[type];
+      let rot=0;
+      for(let r=0;r<4;r++){
+        const rotated=rotateSides(base,r).sort().join(",");
+        if(rotated===sides.slice().sort().join(",")){ rot=r; break; }
+      }
+      tiles.push({
+        type, correctRot:rot, rot: Math.floor(Math.random()*4),
+        x, y, isSource:i===sourceIdx, isSink:sinkIdxs.includes(i)
+      });
+    }
+  }
+}
+
+function newMarquee(){
+  clearInterval(heatTimer);
+  buildSolvedGrid();
+  cursor=0;
+  roundOver=false;
+  heat=0;
+  heatLabel.textContent=heat;
+  marqueeLabel.textContent=marquee;
+  msg.textContent="";
+  resetBtn.disabled=false;
+  const availW=W-40, availH=H-40;
+  cellSize=Math.min(Math.floor(availW/gridCols),Math.floor(availH/gridRows));
+  render();
+  heatTimer=setInterval(()=>{
+    if(roundOver)return;
+    heat=Math.min(100,heat+2+marquee*0.3);
+    heatLabel.textContent=Math.round(heat);
+    if(heat>=100){ finishRound(false); }
+    render();
+  },1000);
+}
+
+function tileSides(t){
+  return rotateSides(TYPE_SIDES[t.type],t.rot);
+}
+
+function computePower(){
+  const cols=gridCols, rows=gridRows;
+  const idx=(x,y)=>y*cols+x;
+  const powered=new Array(cols*rows).fill(false);
+  powered[sourceIdx]=true;
+  let changed=true;
+  while(changed){
+    changed=false;
+    for(let y=0;y<rows;y++){
+      for(let x=0;x<cols;x++){
+        const i=idx(x,y);
+        if(!powered[i])continue;
+        const sides=tileSides(tiles[i]);
+        sides.forEach(dir=>{
+          let nx=x,ny=y,odir;
+          if(dir===0){ ny=y-1; odir=2; }
+          else if(dir===1){ nx=x+1; odir=3; }
+          else if(dir===2){ ny=y+1; odir=0; }
+          else { nx=x-1; odir=1; }
+          if(nx<0||ny<0||nx>=cols||ny>=rows)return;
+          const ni=idx(nx,ny);
+          if(powered[ni])return;
+          const nsides=tileSides(tiles[ni]);
+          if(nsides.includes(odir)){
+            powered[ni]=true;
+            changed=true;
+          }
+        });
+      }
+    }
+  }
+  return powered;
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#241a2c";
+  ctx.fillRect(0,0,W,H);
+  const gridW=gridCols*cellSize, gridH=gridRows*cellSize;
+  const OX=(W-gridW)/2, OY=(H-gridH)/2;
+  const powered=computePower();
+  tiles.forEach((t,i)=>{
+    const px=OX+t.x*cellSize, py=OY+t.y*cellSize;
+    ctx.strokeStyle="#3a2a44";
+    ctx.lineWidth=1;
+    ctx.strokeRect(px,py,cellSize,cellSize);
+    const cx=px+cellSize/2, cy=py+cellSize/2;
+    const sides=tileSides(t);
+    const isPowered=powered[i];
+    ctx.lineWidth=8;
+    ctx.strokeStyle = isPowered ? "#c06ae0" : "#5a4a66";
+    ctx.shadowColor = isPowered ? "#e0a0ff" : "transparent";
+    ctx.shadowBlur = isPowered ? 10 : 0;
+    const len=cellSize/2-6;
+    ctx.beginPath();
+    sides.forEach(dir=>{
+      let ex=cx, ey=cy;
+      if(dir===0) ey=cy-len;
+      else if(dir===1) ex=cx+len;
+      else if(dir===2) ey=cy+len;
+      else ex=cx-len;
+      ctx.moveTo(cx,cy);
+      ctx.lineTo(ex,ey);
+    });
+    ctx.stroke();
+    ctx.shadowBlur=0;
+    if(t.isSource){
+      ctx.beginPath();
+      ctx.arc(cx,cy,10,0,Math.PI*2);
+      ctx.fillStyle="#f0d98a";
+      ctx.fill();
+    } else if(t.isSink){
+      ctx.beginPath();
+      ctx.arc(cx,cy,8,0,Math.PI*2);
+      ctx.fillStyle = isPowered? "#e06ac0" : "#6a4a5a";
+      ctx.fill();
+    }
+    if(i===cursor && !roundOver){
+      ctx.strokeStyle="#fff";
+      ctx.lineWidth=2;
+      ctx.setLineDash([3,3]);
+      ctx.strokeRect(px+3,py+3,cellSize-6,cellSize-6);
+      ctx.setLineDash([]);
+    }
+  });
+}
+
+function rotateTile(i){
+  if(roundOver)return;
+  const t=tiles[i];
+  if(t.isSource)return; // source fixed
+  t.rot=(t.rot+1)%4;
+  SFX.click();
+  render();
+  checkWin();
+}
+
+function checkWin(){
+  const powered=computePower();
+  const allSinksLit=tiles.every((t,i)=> !t.isSink || powered[i]);
+  if(allSinksLit){
+    finishRound(true);
+  }
+}
+
+function finishRound(success){
+  if(roundOver)return;
+  roundOver=true;
+  clearInterval(heatTimer);
+  if(success){
+    const bonus=Math.round((100-heat))+marquee*5;
+    score+=bonus;
+    scoreLabel.textContent=score;
+    if(score>best){
+      best=score;
+      localStorage.setItem("jukeboxrestorationneonrewiring_best",String(best));
+      bestLabel.textContent=best;
+    }
+    msg.textContent=I18N.t("neon_win","Circuit complete! +")+bonus+I18N.t("neon_pts_suffix"," pts bonus");
+    SFX.win();
+    marquee++;
+    setTimeout(newMarquee,1400);
+  } else {
+    msg.textContent=I18N.t("neon_lose","Transformer overheated! Resetting the marquee.");
+    SFX.lose();
+    setTimeout(()=>{ marquee=1; score=0; scoreLabel.textContent=score; newMarquee(); },1700);
+  }
+  render();
+}
+
+resetBtn.addEventListener("click",()=>{
+  SFX.select();
+  marquee=1; score=0; scoreLabel.textContent=score;
+  newMarquee();
+});
+
+c.addEventListener("click",(e)=>{
+  if(roundOver)return;
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  const mx=(e.clientX-rect.left)*scaleX;
+  const my=(e.clientY-rect.top)*scaleY;
+  const gridW=gridCols*cellSize, gridH=gridRows*cellSize;
+  const OX=(W-gridW)/2, OY=(H-gridH)/2;
+  const gx=Math.floor((mx-OX)/cellSize);
+  const gy=Math.floor((my-OY)/cellSize);
+  if(gx>=0&&gx<gridCols&&gy>=0&&gy<gridRows){
+    cursor=gy*gridCols+gx;
+    rotateTile(cursor);
+  }
+});
+
+document.addEventListener("keydown",e=>{
+  if(roundOver)return;
+  let moved=false;
+  if(e.code==="ArrowLeft"){ cursor=(cursor-1+tiles.length)%tiles.length; moved=true; }
+  else if(e.code==="ArrowRight"){ cursor=(cursor+1)%tiles.length; moved=true; }
+  else if(e.code==="ArrowUp"){ cursor=(cursor-gridCols+tiles.length)%tiles.length; moved=true; }
+  else if(e.code==="ArrowDown"){ cursor=(cursor+gridCols)%tiles.length; moved=true; }
+  else if(e.code==="Enter"||e.code==="Space"){ e.preventDefault(); rotateTile(cursor); return; }
+  if(moved){ e.preventDefault(); SFX.tick(); render(); }
+});
+
+newMarquee();
+</script></body></html>

@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Jukebox Restoration Tonearm Calibrating</title><meta name="description" content="Play Jukebox Restoration Tonearm Calibrating free online — Balance the counterweight and steer the tonearm needle smoothly through each warped vinyl groove."><link rel="canonical" href="https://games.multiportllc.com/games/jukeboxrestorationtonearmcalibrating"><meta property="og:title" content="Jukebox Restoration Tonearm Calibrating - Multiport Games"><meta property="og:description" content="Play Jukebox Restoration Tonearm Calibrating free online — Balance the counterweight and steer the tonearm needle smoothly through each warped vinyl groove."><meta property="og:url" content="https://games.multiportllc.com/games/jukeboxrestorationtonearmcalibrating"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Jukebox Restoration Tonearm Calibrating - Multiport Games"><meta name="twitter:description" content="Balance the counterweight and steer the tonearm needle smoothly through each warped groove."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Jukebox Restoration Tonearm Calibrating","description":"Play Jukebox Restoration Tonearm Calibrating free online instantly. Dial in the tonearm's counterweight to the correct tracking force, then steer the needle along a wavering vinyl groove without letting it drift off the track or skip, across progressively warped records. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/jukeboxrestorationtonearmcalibrating","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#17171a}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#e8e2d0;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#6ac08a}
+#c{background:#1e2a22;border-radius:10px;touch-action:none;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.5);cursor:pointer}
+#msg{min-height:1.6em;color:#9fdfb8;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#2e4a3a;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Jukebox Restoration Tonearm Calibrating</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span data-i18n="hud_record">Record: <b id="recordLabel">1</b></span>
+        <span data-i18n="hud_integrity">Groove: <b id="integrityLabel">100%</b></span>
+        <span data-i18n="hud_score">Score: <b id="scoreLabel">0</b></span>
+        <span data-i18n="hud_best">Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="520" height="340"></canvas>
+      <div id="msg"></div>
+      <div id="controls">
+        <button id="resetBtn" data-i18n="reset_btn">New Record</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">First set the counterweight dial to the target tracking force with <b>Left/Right arrows</b> (or dragging on mobile) and lock it in with <b>Space</b>. Then steer the needle with <b>Up/Down arrows</b>, or by dragging up/down on the canvas, to hug the center of the wavering groove as the record spins — stray too far and the needle skips, costing groove integrity. Reach the end of the side before integrity runs out!</div>
+</div>
+<script>
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const W=c.width,H=c.height;
+const recordLabel=document.getElementById("recordLabel");
+const integrityLabel=document.getElementById("integrityLabel");
+const scoreLabel=document.getElementById("scoreLabel");
+const bestLabel=document.getElementById("bestLabel");
+const msg=document.getElementById("msg");
+const resetBtn=document.getElementById("resetBtn");
+
+let record=1;
+let score=0;
+let best=parseInt(localStorage.getItem("jukeboxrestorationtonearmcalibrating_best")||"0",10);
+bestLabel.textContent=best;
+
+let phase="calibrate"; // calibrate | track | done
+let roundOver=false;
+let busy=false;
+
+// calibration phase
+let dialValue=0.5;
+let targetValue=0.5;
+let targetTol=0.08;
+
+// tracking phase
+let needleY=0.5; // 0..1 vertical position in groove lane
+let grooveWave=[]; // precomputed target center positions
+let progress=0; // 0..1 along the groove
+let speed=0;
+let integrity=100;
+let wobbleAmp=0;
+let wobbleFreq=0;
+let calibOffset=0; // how far off the dial was, affects lane width
+
+function newRecord(){
+  phase="calibrate";
+  roundOver=false;
+  busy=false;
+  dialValue=0.5;
+  targetValue=0.15+Math.random()*0.7;
+  targetTol=Math.max(0.05,0.12-record*0.008);
+  integrity=100;
+  progress=0;
+  needleY=0.5;
+  wobbleAmp=0.12+Math.min(0.25,record*0.02);
+  wobbleFreq=1.2+record*0.15;
+  speed=0.09+record*0.01;
+  recordLabel.textContent=record;
+  integrityLabel.textContent="100%";
+  msg.textContent=I18N.t("tonearm_calib_msg","Set the counterweight dial to match the target zone, then press Space to lock it in.");
+  resetBtn.disabled=false;
+  render();
+}
+
+function laneHalfWidth(){
+  // calibration accuracy narrows/widens how forgiving the lane is
+  const err=Math.abs(dialValue-targetValue);
+  calibOffset=err;
+  const base=0.16-Math.min(0.08,record*0.006);
+  return Math.max(0.05, base - err*0.3);
+}
+
+function lockCalibration(){
+  if(phase!=="calibrate"||busy) return;
+  const err=Math.abs(dialValue-targetValue);
+  if(err<=targetTol){
+    SFX.success();
+    score+=Math.round(30+(targetTol-err)/targetTol*20);
+    scoreLabel.textContent=score;
+    msg.textContent=I18N.t("tonearm_calib_good","Tracking force locked in! Now steer the needle through the groove.");
+  } else {
+    SFX.error();
+    score=Math.max(0,score-5);
+    scoreLabel.textContent=score;
+    msg.textContent=I18N.t("tonearm_calib_bad","Not quite calibrated — the groove will be touchier because of it.");
+  }
+  startTracking();
+}
+
+function startTracking(){
+  phase="track";
+  SFX.swoosh();
+  render();
+}
+
+function grooveCenterAt(p){
+  return 0.5+Math.sin(p*Math.PI*2*wobbleFreq)*wobbleAmp*Math.sin(p*Math.PI*3.1+record);
+}
+
+function tickTrack(dt){
+  progress+=speed*dt;
+  const center=grooveCenterAt(progress);
+  const half=laneHalfWidth();
+  const dist=Math.abs(needleY-center);
+  if(dist>half){
+    integrity-=dt*45;
+    if(Math.random()<0.04) SFX.hurt();
+  } else {
+    integrity=Math.min(100,integrity+dt*4);
+  }
+  integrityLabel.textContent=Math.max(0,Math.round(integrity))+"%";
+  if(integrity<=0){
+    finishRecord(false);
+    return;
+  }
+  if(progress>=1){
+    finishRecord(true);
+  }
+}
+
+function finishRecord(success){
+  if(roundOver)return;
+  roundOver=true;
+  busy=true;
+  phase="done";
+  if(success){
+    const bonus=Math.round(integrity*0.8)+record*10;
+    score+=bonus;
+    scoreLabel.textContent=score;
+    if(score>best){
+      best=score;
+      localStorage.setItem("jukeboxrestorationtonearmcalibrating_best",String(best));
+      bestLabel.textContent=best;
+    }
+    msg.textContent=I18N.t("tonearm_win","Side complete! +")+bonus+I18N.t("tonearm_pts_suffix"," pts bonus");
+    SFX.win();
+    record++;
+    setTimeout(()=>{ busy=false; newRecord(); },1600);
+  } else {
+    msg.textContent=I18N.t("tonearm_lose","The needle skipped right off the groove! Starting over.");
+    SFX.lose();
+    setTimeout(()=>{ busy=false; record=1; score=0; scoreLabel.textContent=score; newRecord(); },1800);
+  }
+  render();
+}
+
+function drawCalibration(){
+  const cx=W/2, cy=160, r=100;
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.strokeStyle="#3a4a40";
+  ctx.lineWidth=18;
+  ctx.beginPath();
+  ctx.arc(0,0,r,Math.PI*0.75,Math.PI*2.25);
+  ctx.stroke();
+  const a1=Math.PI*0.75+(targetValue-targetTol)*Math.PI*1.5;
+  const a2=Math.PI*0.75+(targetValue+targetTol)*Math.PI*1.5;
+  ctx.strokeStyle="rgba(106,192,138,0.7)";
+  ctx.lineWidth=18;
+  ctx.beginPath();
+  ctx.arc(0,0,r,a1,a2);
+  ctx.stroke();
+  const needleAngle=Math.PI*0.75+dialValue*Math.PI*1.5;
+  ctx.strokeStyle="#e8e2d0";
+  ctx.lineWidth=4;
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  ctx.lineTo(Math.cos(needleAngle)*r*0.85,Math.sin(needleAngle)*r*0.85);
+  ctx.stroke();
+  ctx.fillStyle="#6ac08a";
+  ctx.beginPath();
+  ctx.arc(0,0,10,0,Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+  ctx.fillStyle="#e8e2d0";
+  ctx.font="bold 13px sans-serif";
+  ctx.textAlign="center";
+  ctx.fillText(I18N.t("tonearm_dial_label","COUNTERWEIGHT DIAL"),cx,cy+r+36);
+  ctx.fillText(I18N.t("tonearm_lock_hint","Arrows to adjust — Space to lock"),cx,cy+r+56);
+}
+
+function drawTracking(){
+  const laneX1=40, laneX2=W-40, laneTop=40, laneBot=H-30;
+  ctx.fillStyle="#17221b";
+  ctx.fillRect(laneX1,laneTop,laneX2-laneX1,laneBot-laneTop);
+  const half=laneHalfWidth();
+  const segs=60;
+  ctx.beginPath();
+  for(let i=0;i<=segs;i++){
+    const p=progress-0.3+ (i/segs)*0.6;
+    if(p<0||p>1.05){ continue; }
+    const cxp=laneX1+ (i/segs)*(laneX2-laneX1);
+    const center=grooveCenterAt(Math.max(0,Math.min(1,p)));
+    const cy=laneTop+center*(laneBot-laneTop);
+    if(i===0) ctx.moveTo(cxp,cy); else ctx.lineTo(cxp,cy);
+  }
+  ctx.strokeStyle="rgba(106,192,138,0.35)";
+  ctx.lineWidth=half*(laneBot-laneTop)*2;
+  ctx.lineCap="round";
+  ctx.stroke();
+  ctx.strokeStyle="#6ac08a";
+  ctx.lineWidth=2;
+  ctx.stroke();
+  // needle marker in center column
+  const midX=(laneX1+laneX2)/2;
+  const needlePxY=laneTop+needleY*(laneBot-laneTop);
+  ctx.fillStyle="#e8e2d0";
+  ctx.beginPath();
+  ctx.moveTo(midX-14,needlePxY-10);
+  ctx.lineTo(midX+14,needlePxY);
+  ctx.lineTo(midX-14,needlePxY+10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle="#2a2a2c";
+  ctx.lineWidth=2;
+  ctx.stroke();
+  // progress bar
+  ctx.fillStyle="#2a3a30";
+  ctx.fillRect(laneX1,laneBot+8,laneX2-laneX1,10);
+  ctx.fillStyle="#6ac08a";
+  ctx.fillRect(laneX1,laneBot+8,(laneX2-laneX1)*Math.min(1,progress),10);
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#1e2a22";
+  ctx.fillRect(0,0,W,H);
+  if(phase==="calibrate"){
+    drawCalibration();
+  } else if(phase==="track" || phase==="done"){
+    drawTracking();
+  }
+}
+
+let lastT=performance.now();
+function loop(t){
+  const dt=Math.min(0.05,(t-lastT)/1000);
+  lastT=t;
+  if(phase==="track" && !roundOver){
+    tickTrack(dt);
+  }
+  render();
+  requestAnimationFrame(loop);
+}
+
+resetBtn.addEventListener("click",()=>{
+  SFX.select();
+  record=1; score=0; scoreLabel.textContent=score;
+  newRecord();
+});
+
+document.addEventListener("keydown",e=>{
+  if(roundOver)return;
+  if(phase==="calibrate"){
+    if(e.code==="ArrowLeft"){ e.preventDefault(); dialValue=Math.max(0,dialValue-0.02); SFX.tick(); render(); }
+    else if(e.code==="ArrowRight"){ e.preventDefault(); dialValue=Math.min(1,dialValue+0.02); SFX.tick(); render(); }
+    else if(e.code==="Space"){ e.preventDefault(); lockCalibration(); }
+  } else if(phase==="track"){
+    if(e.code==="ArrowUp"){ e.preventDefault(); needleY=Math.max(0,needleY-0.035); }
+    else if(e.code==="ArrowDown"){ e.preventDefault(); needleY=Math.min(1,needleY+0.035); }
+  }
+});
+
+let dragging=false;
+function pointerPos(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+  const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  return {x:(clientX-rect.left)*scaleX, y:(clientY-rect.top)*scaleY};
+}
+
+c.addEventListener("mousedown",(e)=>{
+  if(roundOver)return;
+  dragging=true;
+  handlePointer(pointerPos(e));
+});
+c.addEventListener("mousemove",(e)=>{ if(dragging) handlePointer(pointerPos(e)); });
+window.addEventListener("mouseup",()=>{ dragging=false; });
+c.addEventListener("touchstart",(e)=>{
+  if(roundOver)return;
+  dragging=true;
+  handlePointer(pointerPos(e));
+  e.preventDefault();
+},{passive:false});
+c.addEventListener("touchmove",(e)=>{
+  if(dragging){ handlePointer(pointerPos(e)); e.preventDefault(); }
+},{passive:false});
+c.addEventListener("touchend",(e)=>{
+  dragging=false;
+  if(phase==="calibrate"){ lockCalibration(); }
+});
+
+function handlePointer(pos){
+  if(phase==="calibrate"){
+    const cx=W/2, cy=160;
+    const dx=pos.x-cx, dy=pos.y-cy;
+    let ang=Math.atan2(dy,dx);
+    if(ang<Math.PI*0.75-Math.PI*2) ang+=Math.PI*2;
+    while(ang<Math.PI*0.75) ang+=Math.PI*2;
+    let v=(ang-Math.PI*0.75)/(Math.PI*1.5);
+    dialValue=Math.max(0,Math.min(1,v));
+    render();
+  } else if(phase==="track"){
+    const laneTop=40, laneBot=H-30;
+    needleY=Math.max(0,Math.min(1,(pos.y-laneTop)/(laneBot-laneTop)));
+  }
+}
+
+c.addEventListener("click",(e)=>{
+  if(phase==="calibrate" && !dragging){
+    handlePointer(pointerPos(e));
+  }
+});
+
+newRecord();
+requestAnimationFrame(loop);
+</script></body></html>
