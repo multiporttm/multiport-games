@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Kilt Making Sporran Pairing</title><meta name="description" content="Play Kilt Making Sporran Pairing free online — flip tiles to match each sporran pouch with its correct tartan outfit before the memory timer runs out."><link rel="canonical" href="https://games.multiportllc.com/games/kiltmakingsporranpairing"><meta property="og:title" content="Kilt Making Sporran Pairing - Multiport Games"><meta property="og:description" content="Play Kilt Making Sporran Pairing free online — flip tiles to match each sporran pouch with its correct tartan outfit before the memory timer runs out."><meta property="og:url" content="https://games.multiportllc.com/games/kiltmakingsporranpairing"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Kilt Making Sporran Pairing - Multiport Games"><meta name="twitter:description" content="Flip tiles to match each sporran pouch with its correct tartan outfit before time runs out."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Kilt Making Sporran Pairing","description":"Play Kilt Making Sporran Pairing free online instantly. Flip hidden tiles on the fitting-room shelf to remember and match each leather sporran pouch to the one tartan outfit it was tailored for, racing a shrinking timer across harder shelves with more pairs. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/kiltmakingsporranpairing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#17171a}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#e8e2d0;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#b08a5a}
+#c{background:#241c14;border-radius:10px;touch-action:none;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.5);cursor:pointer}
+#msg{min-height:1.6em;color:#f0d2a0;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#4a3a2e;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Kilt Making Sporran Pairing</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span data-i18n="hud_shelf">Shelf: <b id="shelfLabel">1</b></span>
+        <span data-i18n="hud_pairs">Pairs: <b id="pairsLabel">0/8</b></span>
+        <span data-i18n="hud_score">Score: <b id="scoreLabel">0</b></span>
+        <span data-i18n="hud_best">Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="520" height="340"></canvas>
+      <div id="msg"></div>
+      <div id="controls">
+        <button id="resetBtn" data-i18n="reset_btn">Restart</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Click or tap tiles to flip them over, two at a time. Each sporran pouch 🎒 has exactly one matching tartan outfit 🏴󠁧󠁢󠁳󠁣󠁴󠁿 tile hidden on the shelf — use arrow keys plus <b>Enter</b> or <b>Space</b> to move the highlighted tile and flip it from the keyboard. Match every pair before the shelf timer empties to move on to a bigger shelf with more pairs; fewer wasted flips means a higher score.</div>
+</div>
+<script>
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const W=c.width,H=c.height;
+const shelfLabel=document.getElementById("shelfLabel");
+const pairsLabel=document.getElementById("pairsLabel");
+const scoreLabel=document.getElementById("scoreLabel");
+const bestLabel=document.getElementById("bestLabel");
+const msg=document.getElementById("msg");
+const resetBtn=document.getElementById("resetBtn");
+
+let best=parseInt(localStorage.getItem("kiltmakingsporranpairing_best")||"0",10);
+bestLabel.textContent=best;
+
+const SPORRANS=["🎒","👜","🧳","💼","🪣","🛍️","🧰","👝","🎁","🪙","🧵","📦"];
+const OUTFITS=["🏴","🧥","🧦","👔","🥾","🎽","🧣","🧤","🩳","👕","🩴","🧑‍🦱"];
+
+let shelf=1, score=0, flips=0;
+let cols=4, rows=4;
+let tiles=[]; // {id, symbol, matched, x,y,w,h}
+let revealed=[]; // indices currently face up (0,1, or 2 briefly)
+let locked=false;
+let cursorIdx=0;
+let roundOver=false;
+let timeLeft=0, maxTime=0;
+let timerId=null;
+let pairsTotal=0, pairsFound=0;
+
+function shuffle(arr){
+  for(let i=arr.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]]=[arr[j],arr[i]];
+  }
+  return arr;
+}
+
+function setupShelf(){
+  const pairCount=Math.min(8,4+Math.floor(shelf/1));
+  pairsTotal=pairCount;
+  pairsFound=0;
+  // choose grid shape close to square covering pairCount*2 cells
+  const total=pairCount*2;
+  cols = total<=8?4: (total<=12?4:6);
+  rows = Math.ceil(total/cols);
+  const deck=[];
+  for(let i=0;i<pairCount;i++){
+    deck.push({pairId:i,role:"sporran",symbol:SPORRANS[i%SPORRANS.length]});
+    deck.push({pairId:i,role:"outfit",symbol:OUTFITS[i%OUTFITS.length]});
+  }
+  shuffle(deck);
+  const marginX=20,marginY=20,gap=6;
+  const tw=(W-marginX*2-gap*(cols-1))/cols;
+  const th=(H-marginY*2-gap*(rows-1))/rows;
+  tiles=deck.map((d,i)=>{
+    const col=i%cols, rowI=Math.floor(i/cols);
+    return {
+      pairId:d.pairId, role:d.role, symbol:d.symbol, matched:false,
+      x:marginX+col*(tw+gap), y:marginY+rowI*(th+gap), w:tw, h:th
+    };
+  });
+  revealed=[];
+  locked=false;
+  cursorIdx=0;
+  flips=0;
+  roundOver=false;
+  maxTime=Math.max(25,55-shelf*4);
+  timeLeft=maxTime;
+  shelfLabel.textContent=shelf;
+  pairsLabel.textContent=pairsFound+"/"+pairsTotal;
+  msg.textContent=I18N.t("sp_go","Flip two tiles to find a sporran-outfit pair!");
+  render();
+  if(timerId)clearInterval(timerId);
+  timerId=setInterval(tick,1000);
+}
+
+function tick(){
+  if(roundOver)return;
+  timeLeft--;
+  if(timeLeft<=0){
+    timeLeft=0;
+    finishRound(false);
+  }
+  render();
+}
+
+function flipTile(idx){
+  if(locked||roundOver)return;
+  const t=tiles[idx];
+  if(!t||t.matched||revealed.includes(idx))return;
+  revealed.push(idx);
+  SFX.click();
+  render();
+  if(revealed.length===2){
+    locked=true;
+    flips++;
+    const [a,b]=revealed;
+    const ta=tiles[a],tb=tiles[b];
+    if(ta.pairId===tb.pairId && ta.role!==tb.role){
+      setTimeout(()=>{
+        ta.matched=true; tb.matched=true;
+        revealed=[];
+        locked=false;
+        pairsFound++;
+        pairsLabel.textContent=pairsFound+"/"+pairsTotal;
+        SFX.coin();
+        msg.textContent=I18N.t("sp_match","Matched! A sporran found its outfit.");
+        render();
+        if(pairsFound>=pairsTotal){
+          finishRound(true);
+        }
+      },350);
+    } else {
+      SFX.error();
+      msg.textContent=I18N.t("sp_nomatch","No match — try to remember where these were.");
+      setTimeout(()=>{
+        revealed=[];
+        locked=false;
+        render();
+      },700);
+    }
+  }
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#241c14";
+  ctx.fillRect(0,0,W,H);
+  tiles.forEach((t,i)=>{
+    const faceUp = t.matched || revealed.includes(i);
+    ctx.fillStyle = t.matched ? "#3a4a2e" : (faceUp ? "#5a4a3a" : "#4a3a2e");
+    ctx.strokeStyle = (i===cursorIdx && !roundOver) ? "#f0d98a" : "#6a5a4a";
+    ctx.lineWidth = (i===cursorIdx && !roundOver) ? 3 : 1.5;
+    ctx.fillRect(t.x,t.y,t.w,t.h);
+    ctx.strokeRect(t.x,t.y,t.w,t.h);
+    if(faceUp){
+      ctx.font=Math.floor(Math.min(t.w,t.h)*0.55)+"px sans-serif";
+      ctx.textAlign="center";
+      ctx.textBaseline="middle";
+      ctx.fillText(t.symbol,t.x+t.w/2,t.y+t.h/2);
+    } else {
+      ctx.fillStyle="#b08a5a";
+      ctx.font="bold "+Math.floor(Math.min(t.w,t.h)*0.4)+"px sans-serif";
+      ctx.textAlign="center";
+      ctx.textBaseline="middle";
+      ctx.fillText("?",t.x+t.w/2,t.y+t.h/2);
+    }
+  });
+  // timer bar
+  const pct=maxTime?timeLeft/maxTime:0;
+  ctx.fillStyle="#1f1812";
+  ctx.fillRect(10,H-8,W-20,5);
+  ctx.fillStyle=pct>0.4?"#b08a5a":"#c06a6a";
+  ctx.fillRect(10,H-8,(W-20)*pct,5);
+}
+
+function finishRound(success){
+  if(roundOver)return;
+  roundOver=true;
+  if(timerId)clearInterval(timerId);
+  if(success){
+    const efficiency=Math.max(0,pairsTotal*2-flips);
+    const pts=pairsTotal*10+efficiency*3+shelf*5;
+    score+=pts;
+    scoreLabel.textContent=score;
+    if(score>best){
+      best=score;
+      localStorage.setItem("kiltmakingsporranpairing_best",String(best));
+      bestLabel.textContent=best;
+    }
+    msg.textContent=I18N.t("sp_shelfdone","Shelf cleared! +"+pts+" pts — next shelf loading...");
+    SFX.win();
+    shelf++;
+    setTimeout(setupShelf,1600);
+  } else {
+    msg.textContent=I18N.t("sp_timeout","Time's up — the fitting room closed!");
+    SFX.lose();
+    setTimeout(()=>{ shelf=1; score=0; scoreLabel.textContent=score; setupShelf(); },1800);
+  }
+}
+
+c.addEventListener("click",(e)=>{
+  if(roundOver||locked)return;
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  const mx=(e.clientX-rect.left)*scaleX;
+  const my=(e.clientY-rect.top)*scaleY;
+  const idx=tiles.findIndex(t=>mx>=t.x&&mx<=t.x+t.w&&my>=t.y&&my<=t.y+t.h);
+  if(idx>=0){ cursorIdx=idx; flipTile(idx); }
+});
+
+document.addEventListener("keydown",e=>{
+  if(roundOver||locked)return;
+  let moved=false;
+  if(e.code==="ArrowRight"){ cursorIdx=Math.min(tiles.length-1,cursorIdx+1); moved=true; }
+  else if(e.code==="ArrowLeft"){ cursorIdx=Math.max(0,cursorIdx-1); moved=true; }
+  else if(e.code==="ArrowDown"){ cursorIdx=Math.min(tiles.length-1,cursorIdx+cols); moved=true; }
+  else if(e.code==="ArrowUp"){ cursorIdx=Math.max(0,cursorIdx-cols); moved=true; }
+  else if(e.code==="Enter"||e.code==="Space"){ e.preventDefault(); flipTile(cursorIdx); return; }
+  if(moved){ e.preventDefault(); SFX.tick(); render(); }
+});
+
+resetBtn.addEventListener("click",()=>{
+  SFX.select();
+  shelf=1; score=0; scoreLabel.textContent=score;
+  setupShelf();
+});
+
+setupShelf();
+</script></body></html>
