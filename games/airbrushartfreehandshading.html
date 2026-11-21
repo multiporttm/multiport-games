@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Airbrush Art Freehand Shading</title><meta name="description" content="Play Airbrush Art Freehand Shading free online — sweep the airbrush at the right distance and speed to build smooth gradient shading on each target shape before you run out of paint."><link rel="canonical" href="https://games.multiportllc.com/games/airbrushartfreehandshading"><meta property="og:title" content="Airbrush Art Freehand Shading - Multiport Games"><meta property="og:description" content="Play Airbrush Art Freehand Shading free online — sweep the airbrush at the right distance and speed to build smooth gradient shading on each target shape before you run out of paint."><meta property="og:url" content="https://games.multiportllc.com/games/airbrushartfreehandshading"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Airbrush Art Freehand Shading - Multiport Games"><meta name="twitter:description" content="Sweep the airbrush at the right distance and speed to build smooth gradient shading on each target shape before you run out of paint."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Airbrush Art Freehand Shading","description":"Play Airbrush Art Freehand Shading free online instantly. Hold the airbrush steady over the stencil, build smooth light-to-dark gradients by controlling distance and dwell time, and finish every shape before your paint reservoir runs dry. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/airbrushartfreehandshading","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#101a10}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#eaf6ea;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#6ac06a}
+#c{background:#152015;border-radius:10px;touch-action:none;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.5);cursor:crosshair}
+#msg{min-height:1.6em;color:#8ad88a;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#2e4a2e;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Airbrush Art Freehand Shading</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span data-i18n="hud_piece">Piece: <b id="pieceLabel">1</b></span>
+        <span data-i18n="hud_paint">Paint: <b id="paintLabel">100</b>%</span>
+        <span data-i18n="hud_score">Score: <b id="scoreLabel">0</b></span>
+        <span data-i18n="hud_best">Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="440" height="420"></canvas>
+      <div id="msg"></div>
+      <div id="controls">
+        <button id="resetBtn" data-i18n="reset_btn">New Canvas</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Move the mouse (or drag with your finger) over the stencil shape to spray gradient shading — hold the trigger with <b>mouse-down</b> or touch, and use <b>Up/Down</b> arrows (or pinch) to change the airbrush distance, which controls how soft or dark the spray lands. Fill the shaded zone evenly: too close and too long leaves dark blotches, too far leaves it bare. Watch your paint gauge — release the trigger (lift finger / release mouse) to stop spraying and save paint. Finish each shape within the target shading band before the canvas runs dry!</div>
+</div>
+<script>
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const W=c.width,H=c.height;
+const pieceLabel=document.getElementById("pieceLabel");
+const paintLabel=document.getElementById("paintLabel");
+const scoreLabel=document.getElementById("scoreLabel");
+const bestLabel=document.getElementById("bestLabel");
+const msg=document.getElementById("msg");
+const resetBtn=document.getElementById("resetBtn");
+
+const KEY="airbrushartfreehandshading_best";
+let best=parseInt(localStorage.getItem(KEY)||"0",10);
+bestLabel.textContent=best;
+
+let piece=1;
+let score=0;
+let paint=100;
+let spraying=false;
+let distance=40; // px, controls softness/intensity
+let mx=W/2,my=H/2;
+let gameOver=false;
+let rafId=null;
+
+// shading grid: coverage[cell] = 0..1 how much paint applied
+const GRID=36;
+let cellW,cellH;
+let mask=[]; // boolean inside shape
+let coverage=[];
+let targetLo=0.45, targetHi=0.75; // ideal coverage band
+let shapeKind=0;
+
+function buildShape(){
+  cellW=W/GRID; cellH=H/GRID;
+  mask=new Array(GRID*GRID).fill(false);
+  coverage=new Array(GRID*GRID).fill(0);
+  shapeKind=(piece-1)%3;
+  for(let gy=0;gy<GRID;gy++){
+    for(let gx=0;gx<GRID;gx++){
+      const cx=(gx+0.5)*cellW, cy=(gy+0.5)*cellH;
+      let inside=false;
+      if(shapeKind===0){
+        // circle
+        const dx=cx-W/2, dy=cy-(H/2-10);
+        inside=Math.sqrt(dx*dx+dy*dy)<130;
+      } else if(shapeKind===1){
+        // star-ish diamond
+        const dx=Math.abs(cx-W/2)/150, dy=Math.abs(cy-(H/2-10))/150;
+        inside=(dx+dy)<1.0;
+      } else {
+        // wavy blob via two overlapping circles
+        const dx1=cx-(W/2-60), dy1=cy-(H/2-30);
+        const dx2=cx-(W/2+60), dy2=cy-(H/2+20);
+        inside=Math.sqrt(dx1*dx1+dy1*dy1)<110 || Math.sqrt(dx2*dx2+dy2*dy2)<110;
+      }
+      mask[gy*GRID+gx]=inside;
+    }
+  }
+  targetLo=0.45+Math.min(0.1,piece*0.01);
+  targetHi=targetLo+0.28;
+}
+
+function newCanvas(){
+  piece=1;score=0;paint=100;gameOver=false;
+  scoreLabel.textContent=score;
+  paintLabel.textContent=paint;
+  pieceLabel.textContent=piece;
+  buildShape();
+  msg.textContent="";
+  resetBtn.disabled=false;
+}
+
+function nextPiece(){
+  piece++;
+  pieceLabel.textContent=piece;
+  buildShape();
+}
+
+function sprayAt(x,y,dist){
+  // radius grows with distance, intensity shrinks with distance
+  const radius=20+dist*0.9;
+  const intensity=Math.max(0.01,0.09*(60/Math.max(20,dist)));
+  const gx0=Math.max(0,Math.floor((x-radius)/cellW));
+  const gx1=Math.min(GRID-1,Math.ceil((x+radius)/cellW));
+  const gy0=Math.max(0,Math.floor((y-radius)/cellH));
+  const gy1=Math.min(GRID-1,Math.ceil((y+radius)/cellH));
+  for(let gy=gy0;gy<=gy1;gy++){
+    for(let gx=gx0;gx<=gx1;gx++){
+      const idx=gy*GRID+gx;
+      if(!mask[idx])continue;
+      const cx=(gx+0.5)*cellW, cy=(gy+0.5)*cellH;
+      const dx=cx-x, dy=cy-y;
+      const d=Math.sqrt(dx*dx+dy*dy);
+      if(d>radius)continue;
+      const falloff=1-(d/radius);
+      coverage[idx]=Math.min(1.4,coverage[idx]+intensity*falloff);
+    }
+  }
+}
+
+function checkComplete(){
+  let total=0,good=0,sum=0;
+  for(let i=0;i<mask.length;i++){
+    if(!mask[i])continue;
+    total++;
+    sum+=coverage[i];
+    if(coverage[i]>=targetLo && coverage[i]<=targetHi) good++;
+  }
+  if(total===0)return;
+  const ratio=good/total;
+  if(ratio>=0.85){
+    const bonus=Math.round(40+ratio*60);
+    score+=bonus;
+    scoreLabel.textContent=score;
+    msg.textContent=I18N.t("shade_done","Beautiful gradient! +")+bonus;
+    SFX.success();
+    if(score>best){ best=score; localStorage.setItem(KEY,String(best)); bestLabel.textContent=best; }
+    resetBtn.disabled=true;
+    setTimeout(()=>{ resetBtn.disabled=false; nextPiece(); msg.textContent=""; },1300);
+  }
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#1a2a1a";
+  ctx.fillRect(0,0,W,H);
+  // draw coverage cells
+  for(let gy=0;gy<GRID;gy++){
+    for(let gx=0;gx<GRID;gx++){
+      const idx=gy*GRID+gx;
+      if(!mask[idx])continue;
+      const cov=coverage[idx];
+      let r,g,b;
+      if(cov<targetLo){
+        // under-shaded: pale outline color
+        const t=cov/Math.max(0.0001,targetLo);
+        r=40+t*40; g=70+t*60; b=40+t*40;
+      } else if(cov<=targetHi){
+        r=60+((cov-targetLo)/(targetHi-targetLo))*20;
+        g=170+((cov-targetLo)/(targetHi-targetLo))*30;
+        b=60;
+      } else {
+        const over=Math.min(1,(cov-targetHi)/0.4);
+        r=20+over*10; g=60-over*30; b=20;
+      }
+      ctx.fillStyle=`rgb(${r|0},${g|0},${b|0})`;
+      ctx.fillRect(gx*cellW,gy*cellH,cellW+0.5,cellH+0.5);
+    }
+  }
+  // shape outline
+  ctx.strokeStyle="#6ac06a";
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  for(let gy=0;gy<GRID;gy++){
+    for(let gx=0;gx<GRID;gx++){
+      if(!mask[gy*GRID+gx])continue;
+    }
+  }
+  ctx.stroke();
+
+  // airbrush cursor
+  const radius=20+distance*0.9;
+  ctx.save();
+  ctx.globalAlpha=spraying?0.5:0.25;
+  ctx.strokeStyle=spraying?"#fff6c8":"#cfe8cf";
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.arc(mx,my,radius,0,Math.PI*2);
+  ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle="#eaf6ea";
+  ctx.beginPath();
+  ctx.arc(mx,my,4,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.fillStyle="#cfe8cf";
+  ctx.font="11px sans-serif";
+  ctx.textAlign="left";
+  ctx.fillText(I18N.t("shade_dist","dist: ")+Math.round(distance),10,16);
+}
+
+function loop(){
+  if(!gameOver){
+    if(spraying && paint>0){
+      sprayAt(mx,my,distance);
+      paint-=0.35;
+      if(paint<0)paint=0;
+      paintLabel.textContent=Math.round(paint);
+      if(paint<=0){
+        gameOver=true;
+        msg.textContent=I18N.t("shade_outofpaint","Out of paint! Final score: ")+score;
+        SFX.lose();
+        resetBtn.disabled=false;
+        if(score>best){ best=score; localStorage.setItem(KEY,String(best)); bestLabel.textContent=best; }
+      }
+      checkComplete();
+    }
+    render();
+  }
+  rafId=requestAnimationFrame(loop);
+}
+
+function localPos(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+
+c.addEventListener("pointerdown",e=>{
+  if(gameOver)return;
+  spraying=true;
+  const p=localPos(e.clientX,e.clientY);
+  mx=p.x;my=p.y;
+  SFX.click();
+});
+c.addEventListener("pointermove",e=>{
+  const p=localPos(e.clientX,e.clientY);
+  mx=p.x;my=p.y;
+});
+window.addEventListener("pointerup",()=>{ spraying=false; });
+
+document.addEventListener("keydown",e=>{
+  if(["ArrowUp","ArrowDown","Space"].includes(e.code))e.preventDefault();
+  if(e.code==="ArrowUp") distance=Math.max(15,distance-4);
+  if(e.code==="ArrowDown") distance=Math.min(90,distance+4);
+  if(e.code==="Space" && !gameOver) spraying=true;
+});
+document.addEventListener("keyup",e=>{
+  if(e.code==="Space") spraying=false;
+});
+
+resetBtn.addEventListener("click",()=>{
+  SFX.select();
+  newCanvas();
+});
+
+newCanvas();
+loop();
+</script></body></html>
