@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Mirror Silvering Frame Fitting</title><meta name="description" content="Play Mirror Silvering Frame Fitting free online — drag resilvered mirror panes into the matching antique frame openings and lock each one down with the right clips."><link rel="canonical" href="https://games.multiportllc.com/games/mirrorsilveringframefitting"><meta property="og:title" content="Mirror Silvering Frame Fitting - Multiport Games"><meta property="og:description" content="Play Mirror Silvering Frame Fitting free online — drag resilvered mirror panes into the matching antique frame openings and lock each one down with the right clips."><meta property="og:url" content="https://games.multiportllc.com/games/mirrorsilveringframefitting"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Mirror Silvering Frame Fitting - Multiport Games"><meta name="twitter:description" content="Drag resilvered mirror panes into the matching antique frame openings and lock each one down."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Mirror Silvering Frame Fitting","description":"Play Mirror Silvering Frame Fitting free online instantly. Drag each freshly resilvered mirror pane to the antique frame opening matching its size and shape, nudge it square, and lock it down with corner clips before the shop closes, across increasingly crowded workbenches of frames and panes. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/mirrorsilveringframefitting","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1c160e}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#f0e6d0;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#c0a070}
+#c{background:#241c10;border-radius:10px;touch-action:none;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.5);cursor:pointer}
+#msg{min-height:1.6em;color:#c0a070;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#5a4a3a;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Mirror Silvering Frame Fitting</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span data-i18n="hud_batch">Batch: <b id="batchLabel">1</b></span>
+        <span data-i18n="hud_time">Time: <b id="timeLabel">0</b>s</span>
+        <span data-i18n="hud_fitted">Fitted: <b id="fittedLabel">0</b>/<b id="totalLabel">0</b></span>
+        <span data-i18n="hud_score">Score: <b id="scoreLabel">0</b></span>
+        <span data-i18n="hud_best">Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="460" height="400"></canvas>
+      <div id="msg"></div>
+      <div id="controls">
+        <button id="resetBtn" data-i18n="reset_btn">New Batch</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag each silvered pane on the workbench (bottom) up to the frame opening that matches its size and shape. Drop it near the right opening to snap and lock it with clips. Use <b>Tab</b> or click to select a pane and <b>Arrow keys</b> plus <b>Enter</b> to place it with the keyboard. Fit every pane before time runs out — wrong-sized drops bounce back and cost a moment!</div>
+</div>
+<script>
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const W=c.width,H=c.height;
+const batchLabel=document.getElementById("batchLabel");
+const timeLabel=document.getElementById("timeLabel");
+const fittedLabel=document.getElementById("fittedLabel");
+const totalLabel=document.getElementById("totalLabel");
+const scoreLabel=document.getElementById("scoreLabel");
+const bestLabel=document.getElementById("bestLabel");
+const msg=document.getElementById("msg");
+const resetBtn=document.getElementById("resetBtn");
+
+let batch=1;
+let score=0;
+let best=parseInt(localStorage.getItem("mirrorsilveringframefitting_best")||"0",10);
+bestLabel.textContent=best;
+
+const frameAreaTop=20, frameAreaBottom=H*0.55;
+const trayTop=H*0.62, trayBottom=H-16;
+
+let frames=[]; // {x,y,w,h,filled,id}
+let panes=[]; // {w,h,id,placed,x,y,homeX,homeY,frameId}
+let selected=null;
+let dragOffset=null;
+let dragging=null;
+let timeLeft=0,timeMax=0;
+let roundOver=false;
+let timerId=null;
+let fittedCount=0;
+
+function makeSizes(n){
+  const sizes=[];
+  const base=[[60,60],[50,70],[70,50],[46,46],[80,44],[44,80]];
+  for(let i=0;i<n;i++){
+    sizes.push(base[i%base.length]);
+  }
+  return sizes;
+}
+
+function newBatch(){
+  clearInterval(timerId);
+  const n=Math.min(3+Math.floor(batch/1),7);
+  const sizes=makeSizes(n);
+  // shuffle sizes for pane order but keep frame order based on sizes
+  const frameOrder=sizes.slice();
+  frames=[];
+  const cols=Math.min(n,5);
+  const rows=Math.ceil(n/cols);
+  const areaW=W-40;
+  const cellW=areaW/cols;
+  const areaH=frameAreaBottom-frameAreaTop-10;
+  const cellH=areaH/rows;
+  for(let i=0;i<n;i++){
+    const row=Math.floor(i/cols), col=i%cols;
+    const [fw,fh]=frameOrder[i];
+    const cx=20+col*cellW+cellW/2;
+    const cy=frameAreaTop+row*cellH+cellH/2+10;
+    frames.push({x:cx-fw/2,y:cy-fh/2,w:fw,h:fh,filled:false,id:i});
+  }
+  const shuffledPaneSizes=sizes.map((s,i)=>({w:s[0],h:s[1],frameId:i}));
+  for(let i=shuffledPaneSizes.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [shuffledPaneSizes[i],shuffledPaneSizes[j]]=[shuffledPaneSizes[j],shuffledPaneSizes[i]];
+  }
+  panes=[];
+  const trayCols=Math.min(n,6);
+  const trayCellW=(W-40)/trayCols;
+  for(let i=0;i<shuffledPaneSizes.length;i++){
+    const p=shuffledPaneSizes[i];
+    const hx=20+i*trayCellW+trayCellW/2;
+    const hy=(trayTop+trayBottom)/2;
+    panes.push({w:p.w,h:p.h,frameId:p.frameId,placed:false,x:hx,y:hy,homeX:hx,homeY:hy,id:i});
+  }
+  selected=null;
+  fittedCount=0;
+  roundOver=false;
+  timeMax=Math.max(20,18+n*4-batch);
+  timeLeft=timeMax;
+  timeLabel.textContent=timeLeft;
+  batchLabel.textContent=batch;
+  fittedLabel.textContent="0";
+  totalLabel.textContent=n;
+  msg.textContent="";
+  resetBtn.disabled=false;
+  render();
+  timerId=setInterval(tick,1000);
+}
+
+function tick(){
+  if(roundOver)return;
+  timeLeft--;
+  timeLabel.textContent=timeLeft;
+  if(timeLeft<=5){ SFX.tick(); }
+  if(timeLeft<=0){ finishRound(false); }
+  render();
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#241c10";
+  ctx.fillRect(0,0,W,H);
+
+  ctx.strokeStyle="#4a3a24";
+  ctx.lineWidth=1;
+  ctx.beginPath();
+  ctx.moveTo(0,trayTop-8); ctx.lineTo(W,trayTop-8);
+  ctx.stroke();
+
+  // frames
+  for(const f of frames){
+    ctx.strokeStyle=f.filled?"#8fc08f":"#c0a070";
+    ctx.lineWidth=4;
+    ctx.strokeRect(f.x,f.y,f.w,f.h);
+    if(!f.filled){
+      ctx.fillStyle="rgba(192,160,112,0.08)";
+      ctx.fillRect(f.x,f.y,f.w,f.h);
+    }
+  }
+
+  // panes (unplaced ones sit in tray, placed ones are hidden inside frame)
+  for(const p of panes){
+    if(p.placed)continue;
+    const isSel=selected===p;
+    ctx.fillStyle="rgba(144,180,220,0.55)";
+    ctx.strokeStyle=isSel?"#fff":"#9090c0";
+    ctx.lineWidth=isSel?3:2;
+    ctx.fillRect(p.x-p.w/2,p.y-p.h/2,p.w,p.h);
+    ctx.strokeRect(p.x-p.w/2,p.y-p.h/2,p.w,p.h);
+  }
+
+  // placed panes drawn inside their frame with clip marks
+  for(const f of frames){
+    if(!f.filled)continue;
+    ctx.fillStyle="rgba(144,180,220,0.55)";
+    ctx.fillRect(f.x+2,f.y+2,f.w-4,f.h-4);
+    ctx.fillStyle="#8fc08f";
+    const clipPts=[[f.x,f.y],[f.x+f.w,f.y],[f.x,f.y+f.h],[f.x+f.w,f.y+f.h]];
+    for(const [cx,cy] of clipPts){
+      ctx.beginPath();
+      ctx.arc(cx,cy,4,0,Math.PI*2);
+      ctx.fill();
+    }
+  }
+
+  ctx.fillStyle="#c0b090";
+  ctx.font="bold 12px sans-serif";
+  ctx.textAlign="left";
+  ctx.fillText(I18N.t("frame_workbench","Workbench panes"),10,trayTop+2);
+}
+
+function tolMatch(pane,frame){
+  return Math.abs(pane.w-frame.w)<=4 && Math.abs(pane.h-frame.h)<=4;
+}
+
+function tryPlace(pane,px,py){
+  let best=null,bestD=Infinity;
+  for(const f of frames){
+    if(f.filled)continue;
+    const fcx=f.x+f.w/2, fcy=f.y+f.h/2;
+    const d=Math.hypot(px-fcx,py-fcy);
+    if(d<bestD){bestD=d;best=f;}
+  }
+  if(best && bestD<60){
+    if(tolMatch(pane,best)){
+      pane.placed=true;
+      best.filled=true;
+      fittedCount++;
+      fittedLabel.textContent=fittedCount;
+      score+=10+batch;
+      scoreLabel.textContent=score;
+      SFX.success();
+      msg.textContent=I18N.t("frame_snap","Snapped in and clipped!");
+      if(fittedCount>=panes.length){
+        finishRound(true);
+      }
+      return true;
+    } else {
+      SFX.error();
+      msg.textContent=I18N.t("frame_wrongsize","Wrong size — that pane does not fit this frame!");
+      pane.x=pane.homeX; pane.y=pane.homeY;
+      timeLeft=Math.max(0,timeLeft-1);
+      timeLabel.textContent=timeLeft;
+      return false;
+    }
+  }
+  pane.x=pane.homeX; pane.y=pane.homeY;
+  return false;
+}
+
+function finishRound(success){
+  if(roundOver)return;
+  roundOver=true;
+  clearInterval(timerId);
+  if(success){
+    const bonus=timeLeft*2+batch*5;
+    score+=bonus;
+    scoreLabel.textContent=score;
+    if(score>best){
+      best=score;
+      localStorage.setItem("mirrorsilveringframefitting_best",String(best));
+      bestLabel.textContent=best;
+    }
+    msg.textContent=I18N.t("frame_win","All panes fitted! +")+bonus+I18N.t("frame_pts_suffix"," pts bonus");
+    SFX.win();
+    batch++;
+    setTimeout(newBatch,1500);
+  } else {
+    msg.textContent=I18N.t("frame_lose","Time is up — unfitted panes left the shop!");
+    SFX.lose();
+    setTimeout(()=>{ batch=1; score=0; scoreLabel.textContent=score; newBatch(); },1700);
+  }
+  render();
+}
+
+resetBtn.addEventListener("click",()=>{
+  SFX.select();
+  batch=1; score=0; scoreLabel.textContent=score;
+  newBatch();
+});
+
+function toCanvasCoords(e){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  return {x:(e.clientX-rect.left)*scaleX,y:(e.clientY-rect.top)*scaleY};
+}
+
+function paneAt(x,y){
+  for(let i=panes.length-1;i>=0;i--){
+    const p=panes[i];
+    if(p.placed)continue;
+    if(x>=p.x-p.w/2&&x<=p.x+p.w/2&&y>=p.y-p.h/2&&y<=p.y+p.h/2)return p;
+  }
+  return null;
+}
+
+c.addEventListener("pointerdown",(e)=>{
+  if(roundOver)return;
+  const p=toCanvasCoords(e);
+  const pane=paneAt(p.x,p.y);
+  if(pane){
+    dragging=pane;
+    selected=pane;
+    dragOffset={dx:p.x-pane.x,dy:p.y-pane.y};
+    SFX.click();
+  }
+});
+c.addEventListener("pointermove",(e)=>{
+  if(!dragging||roundOver)return;
+  const p=toCanvasCoords(e);
+  dragging.x=p.x-dragOffset.dx;
+  dragging.y=p.y-dragOffset.dy;
+  render();
+});
+window.addEventListener("pointerup",(e)=>{
+  if(dragging&&!roundOver){
+    tryPlace(dragging,dragging.x,dragging.y);
+    render();
+  }
+  dragging=null;
+});
+
+document.addEventListener("keydown",e=>{
+  if(roundOver)return;
+  if(e.code==="Tab"){
+    e.preventDefault();
+    const remaining=panes.filter(p=>!p.placed);
+    if(remaining.length===0)return;
+    let idx=remaining.indexOf(selected);
+    idx=(idx+1)%remaining.length;
+    selected=remaining[idx];
+    SFX.select();
+    render();
+  } else if(selected && !selected.placed){
+    const step=10;
+    if(e.code==="ArrowUp"){ e.preventDefault(); selected.y-=step; render(); }
+    else if(e.code==="ArrowDown"){ e.preventDefault(); selected.y+=step; render(); }
+    else if(e.code==="ArrowLeft"){ e.preventDefault(); selected.x-=step; render(); }
+    else if(e.code==="ArrowRight"){ e.preventDefault(); selected.x+=step; render(); }
+    else if(e.code==="Enter"){ e.preventDefault(); tryPlace(selected,selected.x,selected.y); render(); }
+  }
+});
+
+newBatch();
+</script></body></html>
