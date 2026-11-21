@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Leather Tanning Hide Soaking</title><meta name="description" content="Play Leather Tanning Hide Soaking free online — rotate raw hides through the lime soak pits, timing each batch so every hide softens perfectly before the pits turn sour."><link rel="canonical" href="https://games.multiportllc.com/games/leathertanninghidesoaking"><meta property="og:title" content="Leather Tanning Hide Soaking - Multiport Games"><meta property="og:description" content="Play Leather Tanning Hide Soaking free online — rotate raw hides through the lime soak pits, timing each batch so every hide softens perfectly before the pits turn sour."><meta property="og:url" content="https://games.multiportllc.com/games/leathertanninghidesoaking"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Leather Tanning Hide Soaking - Multiport Games"><meta name="twitter:description" content="Rotate raw hides through the lime soak pits, timing each batch so every hide softens perfectly before the pits turn sour."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Leather Tanning Hide Soaking","description":"Play Leather Tanning Hide Soaking free online instantly. Drop raw hides into the lime soak pits, stir them to the right moisture level, and pull each one out at the perfect moment before it over-soaks. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/leathertanninghidesoaking","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1a1510}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#f2e6d0;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#c0a070}
+#c{background:#2a2016;border-radius:10px;touch-action:none;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.5);cursor:pointer}
+#msg{min-height:1.6em;color:#c0a070;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#5a4a3a;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Leather Tanning Hide Soaking</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span data-i18n="hud_round">Batch: <b id="roundLabel">1</b></span>
+        <span data-i18n="hud_pits">Pits full: <b id="pitsLabel">0</b>/<b id="pitsMaxLabel">3</b></span>
+        <span data-i18n="hud_score">Score: <b id="scoreLabel">0</b></span>
+        <span data-i18n="hud_best">Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="440" height="420"></canvas>
+      <div id="msg"></div>
+      <div id="controls">
+        <button id="resetBtn" data-i18n="reset_btn">New Batch</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag a waiting hide into an open lime pit (or press <b>1/2/3</b> to select a hide and <b>Space</b> to drop it in the first open pit). Each pit has a moisture dial on its side that rises as the hide soaks — click the pit (or press <b>A/S/D</b> for pits 1/2/3) to pull the hide out right when the dial sits in the green "ready" band. Pull too early and the hide stays stiff; wait too long and it rots in the lime. Tan every hide in the drum to finish the batch!</div>
+</div>
+<script>
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const W=c.width,H=c.height;
+const roundLabel=document.getElementById("roundLabel");
+const pitsLabel=document.getElementById("pitsLabel");
+const pitsMaxLabel=document.getElementById("pitsMaxLabel");
+const scoreLabel=document.getElementById("scoreLabel");
+const bestLabel=document.getElementById("bestLabel");
+const msg=document.getElementById("msg");
+const resetBtn=document.getElementById("resetBtn");
+
+const KEY="leathertanninghidesoaking_best";
+let best=parseInt(localStorage.getItem(KEY)||"0",10);
+bestLabel.textContent=best;
+
+const PIT_COUNT=3;
+const PIT_W=120,PIT_H=140;
+const pitX=[40,160,280+40];
+const pitY=200;
+
+let round=1;
+let score=0;
+let hidesLeft=0;
+let hidesTotal=0;
+let hidesDone=0;
+let roundOver=false;
+let rafId=null;
+let keys={};
+
+// waiting hides queue (not yet placed), and pit state
+let queue=[]; // {id}
+let nextHideId=1;
+let pits=[null,null,null]; // null or {hideId, moisture, speed, readyLo, readyHi, state:'soaking'|'done'|'ruined'}
+let dragHide=null; // currently selected hide id from queue to place
+let dragPos=null; // {x,y} while dragging
+let selIndex=0; // for keyboard selection among queue
+
+function speedFor(round){
+  return 0.0028+Math.min(0.0022,round*0.0002);
+}
+
+function newBatch(){
+  round=1;score=0;scoreLabel.textContent=score;
+  startRound();
+}
+
+function startRound(){
+  roundOver=false;
+  hidesTotal=4+Math.min(5,Math.floor(round/1));
+  hidesLeft=hidesTotal;
+  hidesDone=0;
+  queue=[];
+  for(let i=0;i<Math.min(3,hidesLeft);i++){ queue.push({id:nextHideId++}); hidesLeft--; }
+  pits=[null,null,null];
+  roundLabel.textContent=round;
+  pitsMaxLabel.textContent=PIT_COUNT;
+  msg.textContent="";
+  resetBtn.disabled=false;
+  updatePitsLabel();
+}
+
+function updatePitsLabel(){
+  let n=0;
+  for(const p of pits) if(p) n++;
+  pitsLabel.textContent=n;
+}
+
+function refillQueue(){
+  while(queue.length<3 && hidesLeft>0){
+    queue.push({id:nextHideId++});
+    hidesLeft--;
+  }
+}
+
+function placeHideInPit(hideIdx,pitIdx){
+  if(pits[pitIdx]) return false;
+  if(hideIdx<0||hideIdx>=queue.length) return false;
+  const hide=queue[hideIdx];
+  const spd=speedFor(round)*(0.85+Math.random()*0.3);
+  const lo=0.55+Math.random()*0.1;
+  const hi=lo+0.14;
+  pits[pitIdx]={hideId:hide.id,moisture:0,speed:spd,readyLo:lo,readyHi:hi,state:"soaking"};
+  queue.splice(hideIdx,1);
+  refillQueue();
+  updatePitsLabel();
+  SFX.swoosh();
+  return true;
+}
+
+function pullHide(pitIdx){
+  const p=pits[pitIdx];
+  if(!p||p.state!=="soaking")return;
+  if(p.moisture>=p.readyLo && p.moisture<=p.readyHi){
+    p.state="done";
+    const bonus=Math.round(10+ (1-(p.moisture-p.readyLo)/(p.readyHi-p.readyLo+0.0001))*8);
+    score+=bonus;
+    scoreLabel.textContent=score;
+    SFX.success();
+    hidesDone++;
+    setTimeout(()=>{ if(pits[pitIdx]===p) pits[pitIdx]=null; updatePitsLabel(); },500);
+  } else if(p.moisture<p.readyLo){
+    p.state="ruined";
+    msg.textContent=I18N.t("soak_too_early","Pulled too early — hide stayed stiff!");
+    SFX.fail();
+    setTimeout(()=>{ if(pits[pitIdx]===p) pits[pitIdx]=null; updatePitsLabel(); msg.textContent=""; },700);
+  } else {
+    p.state="ruined";
+    msg.textContent=I18N.t("soak_too_late","Left in too long — hide rotted in the pit!");
+    SFX.fail();
+    setTimeout(()=>{ if(pits[pitIdx]===p) pits[pitIdx]=null; updatePitsLabel(); msg.textContent=""; },700);
+  }
+  checkRoundEnd();
+}
+
+function checkRoundEnd(){
+  if(roundOver)return;
+  const totalAccountedFor = hidesDone + (hidesTotal - hidesLeft - queue.length - pits.filter(p=>p).length);
+  if(hidesDone>=hidesTotal){
+    roundOver=true;
+    resetBtn.disabled=true;
+    const bonus=round*5;
+    score+=bonus;
+    scoreLabel.textContent=score;
+    if(score>best){
+      best=score;
+      localStorage.setItem(KEY,String(best));
+      bestLabel.textContent=best;
+    }
+    msg.textContent=I18N.t("soak_win","Batch tanned-ready! +")+bonus+I18N.t("soak_pts_suffix"," bonus pts");
+    SFX.win();
+    round++;
+    setTimeout(()=>{ resetBtn.disabled=false; startRound(); },1500);
+  }
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#2a2016";
+  ctx.fillRect(0,0,W,H);
+  // queue area
+  ctx.fillStyle="#f0e6d0";
+  ctx.font="bold 13px sans-serif";
+  ctx.textAlign="left";
+  ctx.fillText(I18N.t("soak_waiting","Waiting hides:"),16,24);
+  for(let i=0;i<queue.length;i++){
+    const hx=20+i*70, hy=42;
+    drawHide(hx,hy,60,38, i===selIndex? "#e8c888":"#d8b878", i===selIndex);
+  }
+  ctx.fillStyle="#cbb48a";
+  ctx.font="12px sans-serif";
+  ctx.fillText(I18N.t("soak_left","In drum: ")+hidesLeft,230,24);
+
+  // pits
+  for(let i=0;i<PIT_COUNT;i++){
+    const px=pitX[i], py=pitY;
+    ctx.fillStyle="#1b150e";
+    roundRect(px,py,PIT_W,PIT_H,10);
+    ctx.fill();
+    ctx.strokeStyle="#4a3a2a";
+    ctx.lineWidth=4;
+    ctx.stroke();
+    const p=pits[i];
+    // lime liquid level
+    ctx.save();
+    roundRect(px+6,py+6,PIT_W-12,PIT_H-12,6);
+    ctx.clip();
+    ctx.fillStyle="#9ca878";
+    ctx.fillRect(px+6,py+40,PIT_W-12,PIT_H-46);
+    ctx.restore();
+
+    if(p){
+      // moisture dial bar on right side of pit
+      const barX=px+PIT_W-18, barY=py+14, barH=PIT_H-28;
+      ctx.fillStyle="#120f0a";
+      ctx.fillRect(barX,barY,10,barH);
+      const loY=barY+barH-(p.readyLo*barH);
+      const hiY=barY+barH-(p.readyHi*barH);
+      ctx.fillStyle="rgba(130,200,110,0.55)";
+      ctx.fillRect(barX,hiY,10,loY-hiY);
+      const mY=barY+barH-(Math.min(1,p.moisture)*barH);
+      ctx.fillStyle=p.state==="ruined"?"#a05050":(p.state==="done"?"#7ac060":"#d0b060");
+      ctx.fillRect(barX-1,mY,12,barH-(mY-barY));
+      ctx.fillStyle="#e8e0cc";
+      ctx.fillRect(barX-2,mY-2,14,2);
+
+      // hide shape floating in pit
+      let col="#c8a878";
+      if(p.state==="done") col="#8fd080";
+      if(p.state==="ruined") col="#a06050";
+      drawHide(px+PIT_W/2-30,py+PIT_H/2-16,60,42,col,false);
+    } else {
+      ctx.fillStyle="#6a5a44";
+      ctx.font="12px sans-serif";
+      ctx.textAlign="center";
+      ctx.fillText(I18N.t("soak_empty_pit","empty pit"),px+PIT_W/2,py+PIT_H/2+4);
+      ctx.textAlign="left";
+    }
+    ctx.fillStyle="#cbb48a";
+    ctx.font="11px sans-serif";
+    ctx.textAlign="center";
+    ctx.fillText((i+1)+"",px+PIT_W/2,py-6);
+    ctx.textAlign="left";
+  }
+
+  if(dragHide!==null && dragPos){
+    drawHide(dragPos.x-30,dragPos.y-19,60,38,"#f0d090",true);
+  }
+}
+
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+function drawHide(x,y,w,h,color,highlight){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle=color;
+  ctx.beginPath();
+  ctx.moveTo(w*0.2,0);
+  ctx.quadraticCurveTo(w*0.0,h*0.3,w*0.08,h*0.55);
+  ctx.quadraticCurveTo(w*0.0,h*0.8,w*0.25,h);
+  ctx.quadraticCurveTo(w*0.5,h*0.85,w*0.55,h);
+  ctx.quadraticCurveTo(w*0.7,h*0.85,w*0.8,h);
+  ctx.quadraticCurveTo(w,h*0.75,w*0.92,h*0.5);
+  ctx.quadraticCurveTo(w,h*0.2,w*0.78,h*0.05);
+  ctx.quadraticCurveTo(w*0.5,h*0.15,w*0.2,0);
+  ctx.closePath();
+  ctx.fill();
+  if(highlight){
+    ctx.strokeStyle="#fff6d8";
+    ctx.lineWidth=2;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function loop(){
+  if(!roundOver){
+    for(let i=0;i<PIT_COUNT;i++){
+      const p=pits[i];
+      if(p && p.state==="soaking"){
+        p.moisture+=p.speed;
+        if(p.moisture>1.15){
+          p.state="ruined";
+          msg.textContent=I18N.t("soak_too_late","Left in too long — hide rotted in the pit!");
+          SFX.fail();
+          setTimeout(()=>{ if(pits[i]===p) pits[i]=null; updatePitsLabel(); msg.textContent=""; },700);
+          checkRoundEnd();
+        }
+      }
+    }
+    render();
+  }
+  rafId=requestAnimationFrame(loop);
+}
+
+resetBtn.addEventListener("click",()=>{
+  SFX.select();
+  newBatch();
+});
+
+document.addEventListener("keydown",e=>{
+  if(["ArrowLeft","ArrowRight","Space","Digit1","Digit2","Digit3"].includes(e.code))e.preventDefault();
+  if(roundOver)return;
+  if(e.code==="Digit1") selIndex=0;
+  if(e.code==="Digit2") selIndex=1;
+  if(e.code==="Digit3") selIndex=2;
+  if(e.code==="ArrowLeft") selIndex=Math.max(0,selIndex-1);
+  if(e.code==="ArrowRight") selIndex=Math.min(queue.length-1,selIndex+1);
+  if(e.code==="Space"){
+    // try pull a ready/active pit first if one matches selIndex mapped to pit, else place
+    if(dragHide===null){
+      // if any pit is soaking and this is "pull" mode via keyboard: use number row 7/8/9? Simpler: Space places into first open pit, and ArrowDown pulls
+    }
+    if(selIndex<queue.length){
+      // place selected hide into first empty pit
+      for(let i=0;i<PIT_COUNT;i++){
+        if(!pits[i]){ placeHideInPit(selIndex,i); selIndex=Math.min(selIndex,Math.max(0,queue.length-1)); break; }
+      }
+    }
+  }
+  if(e.code==="ArrowUp"||e.code==="ArrowDown"){
+    // pull from pit matching keys 1/2/3 context: use last-touched pit via hovered? simplify: pull all ready pits is too easy.
+  }
+  if(e.code==="KeyA") pullHide(0);
+  if(e.code==="KeyS") pullHide(1);
+  if(e.code==="KeyD") pullHide(2);
+});
+document.addEventListener("keyup",e=>{ keys[e.code]=false; });
+
+function localPos(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+
+function hideAtQueuePos(x,y){
+  for(let i=0;i<queue.length;i++){
+    const hx=20+i*70, hy=42;
+    if(x>=hx-4&&x<=hx+64&&y>=hy-4&&y<=hy+42){ return i; }
+  }
+  return -1;
+}
+function pitAtPos(x,y){
+  for(let i=0;i<PIT_COUNT;i++){
+    if(x>=pitX[i]&&x<=pitX[i]+PIT_W&&y>=pitY&&y<=pitY+PIT_H) return i;
+  }
+  return -1;
+}
+
+c.addEventListener("pointerdown",e=>{
+  if(roundOver)return;
+  const p=localPos(e.clientX,e.clientY);
+  const qi=hideAtQueuePos(p.x,p.y);
+  if(qi>=0){
+    dragHide=qi;
+    dragPos={x:p.x,y:p.y};
+    SFX.click();
+    return;
+  }
+  const pi=pitAtPos(p.x,p.y);
+  if(pi>=0 && pits[pi]){
+    pullHide(pi);
+  }
+});
+c.addEventListener("pointermove",e=>{
+  if(dragHide===null)return;
+  const p=localPos(e.clientX,e.clientY);
+  dragPos=p;
+});
+window.addEventListener("pointerup",e=>{
+  if(dragHide===null)return;
+  const p=localPos(e.clientX,e.clientY);
+  const pi=pitAtPos(p.x,p.y);
+  if(pi>=0){
+    placeHideInPit(dragHide,pi);
+  }
+  dragHide=null;
+  dragPos=null;
+});
+
+newBatch();
+loop();
+</script></body></html>

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Leather Tanning Fleshing</title><meta name="description" content="Play Leather Tanning Fleshing free online — drag the fleshing knife across the hide to scrape away flesh and fat without tearing through the skin."><link rel="canonical" href="https://games.multiportllc.com/games/leathertanningfleshing"><meta property="og:title" content="Leather Tanning Fleshing - Multiport Games"><meta property="og:description" content="Play Leather Tanning Fleshing free online — drag the fleshing knife across the hide to scrape away flesh and fat without tearing through the skin."><meta property="og:url" content="https://games.multiportllc.com/games/leathertanningfleshing"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Leather Tanning Fleshing - Multiport Games"><meta name="twitter:description" content="Drag the fleshing knife across the hide to scrape away flesh and fat without tearing through the skin."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Leather Tanning Fleshing","description":"Play Leather Tanning Fleshing free online instantly. Drag the fleshing knife over the raw hide to scrape off every patch of flesh and fat before the inspection timer runs out — but scrape the same spot too many times and the hide tears, costing you points. No download or signup required.","genre":"Skill","url":"https://games.multiportllc.com/games/leathertanningfleshing","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#1c1210}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#f5e6df;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#d99}
+#c{background:#2a1a16;border-radius:10px;touch-action:none;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.5);cursor:crosshair}
+#msg{min-height:1.6em;color:#d99;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#4a2e2e;border:none;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Leather Tanning Fleshing</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span data-i18n="hud_hide">Hide: <b id="hideLabel">1</b></span>
+        <span data-i18n="hud_time">Time: <b id="timeLabel">0</b>s</span>
+        <span data-i18n="hud_flesh">Fleshed: <b id="fleshLabel">0</b>%</span>
+        <span data-i18n="hud_tears">Tears: <b id="tearLabel">0</b></span>
+        <span data-i18n="hud_score">Score: <b id="scoreLabel">0</b></span>
+        <span data-i18n="hud_best">Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="420" height="420"></canvas>
+      <div id="msg"></div>
+      <div id="controls">
+        <button id="resetBtn" data-i18n="reset_btn">New Hide</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Drag the fleshing knife across the hide (or use <b>Arrow keys</b> to move the blade and hold <b>Space</b> to scrape) to strip away every patch of flesh and fat before the timer runs out. Clear at least 90% to pass inspection — but scraping the same spot too many times tears the hide and costs you points, so keep the blade moving!</div>
+</div>
+<script>
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const W=c.width,H=c.height;
+const hideLabel=document.getElementById("hideLabel");
+const timeLabel=document.getElementById("timeLabel");
+const fleshLabel=document.getElementById("fleshLabel");
+const tearLabel=document.getElementById("tearLabel");
+const scoreLabel=document.getElementById("scoreLabel");
+const bestLabel=document.getElementById("bestLabel");
+const msg=document.getElementById("msg");
+const resetBtn=document.getElementById("resetBtn");
+
+let hide=1;
+let score=0;
+let tears=0;
+let best=parseInt(localStorage.getItem("leathertanningfleshing_best")||"0",10);
+bestLabel.textContent=best;
+
+const GRID=44;
+let cols=GRID, rows=GRID;
+let cellW=W/cols, cellH=H/rows;
+let flesh=[]; // 0..1 remaining flesh per cell
+let scrapeCount=[]; // how many times a cell has been scraped (too many => tear)
+let torn=[]; // boolean torn flag per cell
+let padX=W/2, padY=H/2;
+let padR=22;
+let scrubbing=false;
+let timeLeft=0, timeMax=0;
+let roundOver=false;
+let timerId=null;
+let rafId=null;
+let keys={};
+
+function makeFlesh(level){
+  const n=cols*rows;
+  const arr=new Float32Array(n);
+  for(let i=0;i<n;i++) arr[i]=0.55+Math.random()*0.45;
+  const clean=2+Math.min(level,5);
+  for(let s=0;s<clean;s++){
+    const cx0=Math.random()*cols, cy0=Math.random()*rows;
+    const r=2+Math.random()*3;
+    for(let y=Math.max(0,cy0-r);y<Math.min(rows,cy0+r);y++){
+      for(let x=Math.max(0,cx0-r);x<Math.min(cols,cx0+r);x++){
+        const d=Math.hypot(x-cx0,y-cy0);
+        if(d<r){
+          const idx=Math.floor(y)*cols+Math.floor(x);
+          arr[idx]=Math.max(0,arr[idx]-0.5);
+        }
+      }
+    }
+  }
+  return arr;
+}
+
+function newHide(){
+  clearInterval(timerId);
+  flesh=makeFlesh(hide);
+  scrapeCount=new Float32Array(cols*rows);
+  torn=new Uint8Array(cols*rows);
+  padX=W/2; padY=H/2;
+  roundOver=false;
+  timeMax=Math.max(20,36-hide);
+  timeLeft=timeMax;
+  timeLabel.textContent=timeLeft;
+  hideLabel.textContent=hide;
+  fleshLabel.textContent="0";
+  tears=0;
+  tearLabel.textContent=tears;
+  msg.textContent="";
+  resetBtn.disabled=false;
+  render();
+  timerId=setInterval(tick,1000);
+}
+
+function tick(){
+  if(roundOver)return;
+  timeLeft--;
+  timeLabel.textContent=timeLeft;
+  if(timeLeft<=5) SFX.tick();
+  if(timeLeft<=0) finishRound(false);
+}
+
+function fleshPct(){
+  let sum=0;
+  for(let i=0;i<flesh.length;i++) sum+=flesh[i];
+  const cleaned=1-(sum/flesh.length);
+  return Math.max(0,Math.min(100,Math.round(cleaned*100)));
+}
+
+function scrapeAt(x,y){
+  const r=padR;
+  const minCx=Math.max(0,Math.floor((x-r)/cellW));
+  const maxCx=Math.min(cols-1,Math.ceil((x+r)/cellW));
+  const minCy=Math.max(0,Math.floor((y-r)/cellH));
+  const maxCy=Math.min(rows-1,Math.ceil((y+r)/cellH));
+  let any=false;
+  for(let cy=minCy;cy<=maxCy;cy++){
+    for(let cx=minCx;cx<=maxCx;cx++){
+      const px=(cx+0.5)*cellW, py=(cy+0.5)*cellH;
+      if(Math.hypot(px-x,py-y)<=r){
+        const idx=cy*cols+cx;
+        if(torn[idx])continue;
+        if(flesh[idx]>0){
+          flesh[idx]=Math.max(0,flesh[idx]-0.08);
+          any=true;
+        } else {
+          scrapeCount[idx]+=1;
+          if(scrapeCount[idx]>9 && !torn[idx]){
+            torn[idx]=1;
+            tears++;
+            tearLabel.textContent=tears;
+            SFX.hurt();
+          }
+        }
+      }
+    }
+  }
+  return any;
+}
+
+function render(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#caa88a";
+  ctx.fillRect(0,0,W,H);
+  for(let cy=0;cy<rows;cy++){
+    for(let cx=0;cx<cols;cx++){
+      const idx=cy*cols+cx;
+      if(torn[idx]){
+        ctx.fillStyle="#140a08";
+        ctx.fillRect(cx*cellW,cy*cellH,cellW+0.5,cellH+0.5);
+        continue;
+      }
+      const f=flesh[idx];
+      if(f>0.01){
+        ctx.fillStyle="rgba(150,60,50,"+(0.15+f*0.65)+")";
+        ctx.fillRect(cx*cellW,cy*cellH,cellW+0.5,cellH+0.5);
+      }
+    }
+  }
+  if(!roundOver){
+    ctx.beginPath();
+    ctx.arc(padX,padY,padR,0,Math.PI*2);
+    ctx.fillStyle=scrubbing?"rgba(220,120,110,0.6)":"rgba(220,120,110,0.35)";
+    ctx.strokeStyle="#4a2e2e";
+    ctx.lineWidth=2;
+    ctx.fill();
+    ctx.stroke();
+    // knife edge indicator
+    ctx.strokeStyle="#eee";
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(padX-padR*0.6,padY);
+    ctx.lineTo(padX+padR*0.6,padY);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle="#2a1a16";
+  ctx.font="bold 13px sans-serif";
+  ctx.textAlign="center";
+  ctx.fillText(I18N.t("hide_n","Hide")+" "+hide,W/2,16);
+  fleshLabel.textContent=fleshPct();
+}
+
+function loop(){
+  if(!roundOver){
+    let mx=0,my=0;
+    if(keys["ArrowLeft"])mx-=1;
+    if(keys["ArrowRight"])mx+=1;
+    if(keys["ArrowUp"])my-=1;
+    if(keys["ArrowDown"])my+=1;
+    if(mx||my){
+      const len=Math.hypot(mx,my)||1;
+      padX=Math.max(padR,Math.min(W-padR,padX+mx/len*5));
+      padY=Math.max(padR,Math.min(H-padR,padY+my/len*5));
+    }
+    if(keys["Space"]||scrubbing){
+      const did=scrapeAt(padX,padY);
+      if(did && Math.random()<0.15) SFX.swoosh();
+    }
+    render();
+    const pct=fleshPct();
+    if(pct>=90) finishRound(true);
+  }
+  rafId=requestAnimationFrame(loop);
+}
+
+function finishRound(success){
+  if(roundOver)return;
+  roundOver=true;
+  clearInterval(timerId);
+  resetBtn.disabled=true;
+  if(success){
+    const penalty=tears*4;
+    const bonus=Math.max(5,timeLeft*3+hide*5-penalty);
+    score+=bonus;
+    scoreLabel.textContent=score;
+    if(score>best){
+      best=score;
+      localStorage.setItem("leathertanningfleshing_best",String(best));
+      bestLabel.textContent=best;
+    }
+    msg.textContent=I18N.t("flesh_win","Clean scrape! +")+bonus+I18N.t("flesh_pts_suffix"," pts bonus");
+    SFX.win();
+    hide++;
+    setTimeout(newHide,1400);
+  } else {
+    msg.textContent=I18N.t("flesh_lose","Inspection failed — too much flesh left on the hide!");
+    SFX.lose();
+    setTimeout(()=>{ hide=1; score=0; scoreLabel.textContent=score; newHide(); },1700);
+  }
+  render();
+}
+
+resetBtn.addEventListener("click",()=>{
+  SFX.select();
+  hide=1; score=0; scoreLabel.textContent=score;
+  newHide();
+});
+
+document.addEventListener("keydown",e=>{
+  if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Space"].includes(e.code))e.preventDefault();
+  keys[e.code]=true;
+});
+document.addEventListener("keyup",e=>{ keys[e.code]=false; });
+
+function localPos(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+
+c.addEventListener("pointerdown",e=>{
+  if(roundOver)return;
+  scrubbing=true;
+  const p=localPos(e.clientX,e.clientY);
+  padX=p.x; padY=p.y;
+});
+c.addEventListener("pointermove",e=>{
+  if(roundOver)return;
+  const p=localPos(e.clientX,e.clientY);
+  padX=p.x; padY=p.y;
+});
+window.addEventListener("pointerup",()=>{ scrubbing=false; });
+
+newHide();
+loop();
+</script></body></html>
