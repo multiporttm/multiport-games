@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. -->
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Automaton Making Camshaft Design</title><meta name="description" content="Play Automaton Making Camshaft Design free online — rotate and shape cam lobes on a brass shaft so their lift profile matches the target automaton motion."><link rel="canonical" href="https://games.multiportllc.com/games/automatonmakingcamshaftdesign"><meta property="og:title" content="Automaton Making Camshaft Design - Multiport Games"><meta property="og:description" content="Play Automaton Making Camshaft Design free online — rotate and shape cam lobes on a brass shaft so their lift profile matches the target automaton motion."><meta property="og:url" content="https://games.multiportllc.com/games/automatonmakingcamshaftdesign"><meta property="og:type" content="website"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Automaton Making Camshaft Design - Multiport Games"><meta name="twitter:description" content="Rotate and shape cam lobes on a brass shaft so their lift profile matches the target automaton motion."><link rel="apple-touch-icon" href="../icons/icon-192.png"><link rel="manifest" href="../manifest.json">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Automaton Making Camshaft Design","description":"Play Automaton Making Camshaft Design free online instantly. Dial in the angle and height of each cam lobe on a spinning brass camshaft so the follower's lift profile traces the target curve for the automaton's motion before the clockwork spring runs down. No download or signup required.","genre":"Puzzle","url":"https://games.multiportllc.com/games/automatonmakingcamshaftdesign","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+body{background:#17171a}
+#wrap{text-align:center}
+#hud{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;color:#e6e6e6;font-weight:800;margin-bottom:8px;font-size:1.05rem}
+#hud span b{color:#909090}
+#c{background:#20201f;border-radius:10px;touch-action:none;max-width:100%;box-shadow:0 6px 18px rgba(0,0,0,.5)}
+#msg{min-height:1.6em;color:#909090;font-weight:800;margin-top:8px;font-size:1.1rem}
+#controls{margin-top:10px}
+#controls button{padding:9px 20px;background:#3a3a3a;border:1px solid #666;border-radius:20px;color:#fff;cursor:pointer;font-size:1rem;margin:4px;font-weight:700}
+#controls button:disabled{opacity:.4;cursor:not-allowed}
+#lobeRow{display:flex;justify-content:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+#lobeRow button{padding:7px 14px;background:#2a2a2a;border:1px solid #555;border-radius:14px;color:#ccc;cursor:pointer;font-weight:700}
+#lobeRow button.active{background:#909090;color:#111}
+.hint{color:#888;font-size:.85rem;margin-top:4px}
+</style></head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Automaton Making Camshaft Design</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span data-i18n="hud_shaft">Shaft: <b id="shaftLabel">1</b></span>
+        <span data-i18n="hud_match">Match: <b id="matchLabel">0</b>%</span>
+        <span data-i18n="hud_score">Score: <b id="scoreLabel">0</b></span>
+        <span data-i18n="hud_best">Best: <b id="bestLabel">0</b></span>
+      </div>
+      <canvas id="c" width="440" height="420"></canvas>
+      <div id="lobeRow"></div>
+      <div class="hint" data-i18n="hint_text">Select a lobe above, then drag it on the shaft ring or use ←/→ to turn it and ↑/↓ to grow/shrink its lift.</div>
+      <div id="msg"></div>
+      <div id="controls">
+        <button id="lockBtn" data-i18n="lock_btn">Lock In Camshaft</button>
+        <button id="resetBtn" data-i18n="reset_btn">New Shaft</button>
+      </div>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Each cam lobe on the shaft lifts a follower at a certain angle and height — tap a lobe button to select it, then drag inside the ring (or use the arrow keys) to rotate it around the shaft and change how far it lifts. Shape all the lobes so the blue follower curve traces over the gold target curve as closely as possible, then lock in the camshaft before the spring unwinds (the timer) to score — the closer your match, the more points you earn!</div>
+</div>
+<script>
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const W=c.width,H=c.height;
+const shaftLabel=document.getElementById("shaftLabel");
+const matchLabel=document.getElementById("matchLabel");
+const scoreLabel=document.getElementById("scoreLabel");
+const bestLabel=document.getElementById("bestLabel");
+const msg=document.getElementById("msg");
+const lockBtn=document.getElementById("lockBtn");
+const resetBtn=document.getElementById("resetBtn");
+const lobeRow=document.getElementById("lobeRow");
+
+const KEY="automatonmakingcamshaftdesign_best";
+let best=parseInt(localStorage.getItem(KEY)||"0",10);
+bestLabel.textContent=best;
+
+const N=360; // angle samples
+let level=1;
+let score=0;
+let target=[];
+let lobes=[]; // {angle, lift} each 0-360 and 0-1
+let selected=0;
+let dragging=false;
+let timeLeft=0, maxTime=0;
+let over=false;
+let rafId=null;
+let lastTickTime=0;
+let shakeT=0;
+const cx=W/2, cy=H/2-6, R=150;
+
+function lobeCount(lv){ return Math.min(3+Math.floor((lv-1)/2),6); }
+
+function makeTarget(lv){
+  const arr=new Float32Array(N);
+  const bumps=2+((lv-1)%4);
+  const seed=lv*13.7;
+  for(let i=0;i<N;i++){
+    const t=i/N*Math.PI*2;
+    let v=0;
+    for(let b=0;b<bumps;b++){
+      const center=(b/bumps)*Math.PI*2+Math.sin(seed+b)*0.3;
+      let d=Math.abs(((t-center+Math.PI)%(Math.PI*2))-Math.PI);
+      const width=0.55+0.15*Math.sin(seed*2+b);
+      const h=Math.max(0,1-d/width);
+      v=Math.max(v,h*h*(3-2*h));
+    }
+    arr[i]=v;
+  }
+  return arr;
+}
+
+function lobeProfile(lobe){
+  // returns Float32Array N contribution of this lobe (bump shape)
+  const arr=new Float32Array(N);
+  const centerIdx=Math.round(lobe.angle/360*N);
+  const widthIdx=Math.round(N*0.12);
+  for(let i=0;i<N;i++){
+    let d=Math.abs(i-centerIdx);
+    d=Math.min(d,N-d);
+    if(d<widthIdx){
+      const h=1-d/widthIdx;
+      arr[i]=h*h*(3-2*h)*lobe.lift;
+    }
+  }
+  return arr;
+}
+
+function combinedProfile(){
+  const arr=new Float32Array(N);
+  for(const lobe of lobes){
+    const lp=lobeProfile(lobe);
+    for(let i=0;i<N;i++) arr[i]=Math.max(arr[i],lp[i]);
+  }
+  return arr;
+}
+
+function computeMatch(){
+  const cur=combinedProfile();
+  let err=0;
+  for(let i=0;i<N;i++) err+=Math.abs(cur[i]-target[i]);
+  const avgErr=err/N;
+  const pct=Math.max(0,Math.round(100*(1-avgErr/1.0)));
+  return pct;
+}
+
+function buildLobeButtons(){
+  lobeRow.innerHTML="";
+  for(let i=0;i<lobes.length;i++){
+    const b=document.createElement("button");
+    b.textContent="Lobe "+(i+1);
+    b.dataset.i=i;
+    if(i===selected)b.classList.add("active");
+    b.addEventListener("click",()=>{
+      selected=i;
+      SFX.select();
+      buildLobeButtons();
+    });
+    lobeRow.appendChild(b);
+  }
+}
+
+function startLevel(){
+  over=false;
+  target=makeTarget(level);
+  const count=lobeCount(level);
+  lobes=[];
+  for(let i=0;i<count;i++){
+    lobes.push({angle:(360/count)*i, lift:0.5});
+  }
+  selected=0;
+  buildLobeButtons();
+  maxTime=35+level*3;
+  timeLeft=maxTime;
+  shaftLabel.textContent=level;
+  matchLabel.textContent=computeMatch();
+  msg.textContent="";
+  lockBtn.disabled=false;
+  resetBtn.disabled=false;
+  lastTickTime=performance.now();
+}
+
+function newGame(){
+  level=1;score=0;scoreLabel.textContent=score;
+  startLevel();
+}
+
+function lockIn(){
+  if(over)return;
+  over=true;
+  lockBtn.disabled=true;
+  const pct=computeMatch();
+  const bonus=Math.round(pct*1.5)+level*4;
+  score+=bonus;
+  scoreLabel.textContent=score;
+  if(score>best){ best=score; localStorage.setItem(KEY,String(best)); bestLabel.textContent=best; }
+  if(pct>=60){
+    msg.textContent=I18N.t("cam_win","Smooth motion! +")+bonus+I18N.t("cam_pts_suffix"," pts");
+    SFX.success();
+    SFX.win();
+    level++;
+  } else {
+    msg.textContent=I18N.t("cam_fail","Jerky motion — the figure jams. +")+bonus+I18N.t("cam_pts_suffix"," pts");
+    SFX.fail();
+    SFX.lose();
+  }
+  setTimeout(()=>{ startLevel(); },1500);
+}
+
+function timeOut(){
+  if(over)return;
+  over=true;
+  lockBtn.disabled=true;
+  msg.textContent=I18N.t("cam_timeout","The mainspring unwound before you finished!");
+  SFX.fail();
+  SFX.lose();
+  setTimeout(()=>{ startLevel(); },1400);
+}
+
+function angleAt(mx,my){
+  let a=Math.atan2(my-cy,mx-cx)*180/Math.PI;
+  if(a<0)a+=360;
+  return a;
+}
+
+function render(){
+  ctx.save();
+  if(shakeT>0){
+    ctx.translate((Math.random()-0.5)*5,(Math.random()-0.5)*5);
+    shakeT--;
+  }
+  ctx.clearRect(-10,-10,W+20,H+20);
+  ctx.fillStyle="#1b1b1b";
+  ctx.fillRect(0,0,W,H);
+
+  // shaft ring
+  ctx.strokeStyle="#444";
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  ctx.arc(cx,cy,R,0,Math.PI*2);
+  ctx.stroke();
+  ctx.fillStyle="#2b2b2b";
+  ctx.beginPath();
+  ctx.arc(cx,cy,24,0,Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle="#777";
+  ctx.stroke();
+
+  // lobes as draggable handles on the ring
+  for(let i=0;i<lobes.length;i++){
+    const lobe=lobes[i];
+    const rad=lobe.angle*Math.PI/180;
+    const hx=cx+Math.cos(rad)*R, hy=cy+Math.sin(rad)*R;
+    ctx.beginPath();
+    ctx.arc(hx,hy,10+lobe.lift*8,0,Math.PI*2);
+    ctx.fillStyle=i===selected?"#ffe066":"#c0c0c0";
+    ctx.fill();
+    ctx.strokeStyle="#111";
+    ctx.lineWidth=2;
+    ctx.stroke();
+    ctx.fillStyle="#aaa";
+    ctx.font="bold 11px sans-serif";
+    ctx.textAlign="center";
+    ctx.fillText(String(i+1),hx,hy-16);
+  }
+
+  // graphs below: target (gold) vs current (blue), mapped to a strip
+  const gy=H-110, gh=80, gx=30, gw=W-60;
+  ctx.strokeStyle="#333";
+  ctx.strokeRect(gx,gy,gw,gh);
+  ctx.beginPath();
+  ctx.strokeStyle="#c0a040";
+  ctx.lineWidth=2;
+  for(let i=0;i<N;i++){
+    const x=gx+gw*i/N, y=gy+gh-(target[i]*gh);
+    if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  const cur=combinedProfile();
+  ctx.beginPath();
+  ctx.strokeStyle="#6ab0ff";
+  ctx.lineWidth=2;
+  for(let i=0;i<N;i++){
+    const x=gx+gw*i/N, y=gy+gh-(cur[i]*gh);
+    if(i===0)ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  ctx.fillStyle="#c0a040";
+  ctx.font="bold 11px sans-serif";
+  ctx.textAlign="left";
+  ctx.fillText("target",gx+4,gy+12);
+  ctx.fillStyle="#6ab0ff";
+  ctx.fillText("your cam",gx+60,gy+12);
+
+  // timer bar
+  const tw=W-40;
+  ctx.fillStyle="#333";
+  ctx.fillRect(20,H-18,tw,8);
+  ctx.fillStyle=timeLeft<maxTime*0.25? "#c05050":"#909090";
+  ctx.fillRect(20,H-18,tw*Math.max(0,timeLeft/maxTime),8);
+  ctx.restore();
+}
+
+function loop(ts){
+  if(!over){
+    const dt=(ts-lastTickTime)/1000;
+    lastTickTime=ts;
+    timeLeft-=dt;
+    if(timeLeft<=0){ timeLeft=0; timeOut(); }
+    matchLabel.textContent=computeMatch();
+  }
+  render();
+  rafId=requestAnimationFrame(loop);
+}
+
+function localPos(clientX,clientY){
+  const rect=c.getBoundingClientRect();
+  const scaleX=W/rect.width, scaleY=H/rect.height;
+  return {x:(clientX-rect.left)*scaleX,y:(clientY-rect.top)*scaleY};
+}
+
+c.addEventListener("pointerdown",e=>{
+  if(over)return;
+  const p=localPos(e.clientX,e.clientY);
+  // find nearest handle
+  let bestI=-1,bestD=Infinity;
+  for(let i=0;i<lobes.length;i++){
+    const rad=lobes[i].angle*Math.PI/180;
+    const hx=cx+Math.cos(rad)*R, hy=cy+Math.sin(rad)*R;
+    const d=Math.hypot(p.x-hx,p.y-hy);
+    if(d<bestD){bestD=d;bestI=i;}
+  }
+  if(bestD<28){
+    selected=bestI;
+    buildLobeButtons();
+    dragging=true;
+    SFX.click();
+  }
+});
+c.addEventListener("pointermove",e=>{
+  if(!dragging||over)return;
+  const p=localPos(e.clientX,e.clientY);
+  lobes[selected].angle=angleAt(p.x,p.y);
+});
+window.addEventListener("pointerup",()=>{ dragging=false; });
+
+document.addEventListener("keydown",e=>{
+  if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.code))e.preventDefault();
+  if(over)return;
+  const lobe=lobes[selected];
+  if(!lobe)return;
+  if(e.code==="ArrowLeft"){ lobe.angle=(lobe.angle-5+360)%360; SFX.tick(); }
+  if(e.code==="ArrowRight"){ lobe.angle=(lobe.angle+5)%360; SFX.tick(); }
+  if(e.code==="ArrowUp"){ lobe.lift=Math.min(1,lobe.lift+0.05); SFX.tick(); }
+  if(e.code==="ArrowDown"){ lobe.lift=Math.max(0.05,lobe.lift-0.05); SFX.tick(); }
+});
+
+lockBtn.addEventListener("click",()=>{
+  SFX.select();
+  lockIn();
+});
+resetBtn.addEventListener("click",()=>{
+  SFX.select();
+  newGame();
+});
+
+newGame();
+rafId=requestAnimationFrame(loop);
+</script></body></html>
