@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<!--
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at http://mozilla.org/MPL/2.0/.
+-->
+<html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Mixer Making Packaging - Multiport Games</title>
+<meta name="description" content="Play Mixer Making Packaging free online - tap the right conveyor lane the instant each mixer box hits the pack zone to seal it for shipping.">
+<link rel="canonical" href="https://multiportgames.com/games/mixermakingpackaging.html">
+<meta property="og:title" content="Mixer Making Packaging - Multiport Games">
+<meta property="og:description" content="Play Mixer Making Packaging free online - tap the right conveyor lane the instant each mixer box hits the pack zone to seal it for shipping.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://multiportgames.com/games/mixermakingpackaging.html">
+<meta property="og:image" content="../thumbs/mixermakingpackaging.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Mixer Making Packaging - Multiport Games">
+<meta name="twitter:description" content="Play Mixer Making Packaging free online - tap the right conveyor lane the instant each mixer box hits the pack zone to seal it for shipping.">
+<meta name="twitter:image" content="../thumbs/mixermakingpackaging.jpg">
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "VideoGame", "name": "Mixer Making Packaging", "description": "Play Mixer Making Packaging free online instantly. Tap the right conveyor lane the instant each mixer box hits the pack zone to seal it for shipping. No download or signup required.", "genre": "Skill", "applicationCategory": "GameApplication", "operatingSystem": "Any", "url": "https://multiportgames.com/games/mixermakingpackaging.html", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<meta name="theme-color" content="#c0392b">
+<link rel="stylesheet" href="../css/style.css">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+  body{background:#3b2314}
+  #wrap{padding:10px;display:flex;flex-direction:column;align-items:center}
+  #c{display:block;border-radius:8px;margin:0 auto;touch-action:none;cursor:pointer}
+  #hud{display:flex;justify-content:space-between;width:360px;max-width:100%;color:#fff;font-weight:700;padding:4px 6px 8px;font-size:.95rem;box-sizing:border-box}
+  #hud span{opacity:.92}
+  #startBtn{
+    margin-top:14px;width:240px;max-width:90%;padding:16px 10px;border-radius:14px;border:none;
+    font-size:1.2rem;font-weight:800;letter-spacing:.5px;cursor:pointer;color:#111;
+    background:linear-gradient(135deg,#fff,#ffcdb8);
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
+  }
+</style>
+</head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">📦 Mixer Making Packaging</div>
+  <div class="game-frame">
+    <div id="wrap">
+      <div id="hud">
+        <span id="scoreDisp" data-i18n="score_label">Score: 0</span>
+        <span id="roundDisp" data-i18n="round_label">Round 1</span>
+        <span id="bestDisp" data-i18n="best_label">Best: 0</span>
+      </div>
+      <canvas id="c" width="360" height="520"></canvas>
+      <button id="startBtn" data-i18n="start_label">Start</button>
+    </div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Three conveyor lanes carry finished mixers toward the pack zone. Tap, click, or press 1/2/3 (matching a lane from top to bottom) the instant a mixer box is inside the glowing pack zone to seal it for shipping. Pack early or late, or let a box roll off the end, and your Line Safety meter drops. Keep up with faster, busier lanes to beat your best score.</div>
+</div>
+<script>
+const THEME = {"id":"mixermakingpackaging","name":"Mixer Making Packaging","emoji":"📦","c1":"#c0392b","c2":"#3b2314","zoneColor":"#ffd166","accent":"#ffcdb8","meterLabel":"Line Safety","focusTopLabel":"LINE SAFETY","unitName":"Mixer","idleSub1":"Tap the lane when a box is in the pack zone.","flavor_idle":["Belts running.","Boxes stacked.","Tape gun loaded."],"flavor_hit":["Boxed up!","Sealed tight!","Shipped!","Clean pack!"],"flavor_miss":["Box missed!","Fell off line!","Mispacked!","Too late!"]};
+
+function roundRectPath(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=360,H=520;
+const HS_KEY=THEME.id+'_highscore';
+let best=0;
+try{ best=parseInt(localStorage.getItem(HS_KEY)||'0',10)||0; }catch(e){}
+
+const LANES=3;
+const LANE_Y=[130,250,370];
+const LANE_H=72;
+const TRACK_X0=20, TRACK_X1=W-20;
+const ZONE_X0=TRACK_X1-100, ZONE_X1=TRACK_X1-30; // pack zone near right edge
+
+let state='idle'; // idle | play | gameover
+let score=0, round=1, hitsInRound=0, HITS_PER_ROUND=8;
+let focus=100;
+const FOCUS_MAX=100, FOCUS_MISS_PENALTY=22, FOCUS_FALLOFF_PENALTY=30, FOCUS_HIT_GAIN=5;
+let boxSpeed=0.055; // px per ms
+let spawnEvery=1050; // ms
+let spawnTimer=0;
+let boxes=[]; // {lane,x,id}
+let nextId=1;
+let lastT=0;
+let feedbackUntil=0, feedbackText='', feedbackGood=false;
+let flavor='';
+let flavorUntil=0;
+let shakeUntil=0;
+let particles=[];
+let flashLane=-1, flashUntil=0, flashGood=false;
+
+const scoreDisp=document.getElementById('scoreDisp');
+const roundDisp=document.getElementById('roundDisp');
+const bestDisp=document.getElementById('bestDisp');
+const startBtn=document.getElementById('startBtn');
+
+function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+
+function resetRun(){
+  score=0; round=1; hitsInRound=0; focus=FOCUS_MAX;
+  boxSpeed=0.055; spawnEvery=1050; spawnTimer=0;
+  boxes=[]; nextId=1;
+  particles=[];
+  flavor=pick(THEME.flavor_idle);
+}
+
+function startGame(){
+  resetRun();
+  state='play';
+  lastT=performance.now();
+  startBtn.style.display='none';
+  updateHud();
+  requestAnimationFrame(loop);
+}
+
+function updateHud(){
+  scoreDisp.textContent=I18N.t('score_label','Score: {n}').replace('{n}',score);
+  roundDisp.textContent=I18N.t('round_label','Round {n}').replace('{n}',round);
+  bestDisp.textContent=I18N.t('best_label','Best: {n}').replace('{n}',best);
+}
+
+function endGame(){
+  state='gameover';
+  SFX.lose();
+  if(score>best){
+    best=score;
+    try{ localStorage.setItem(HS_KEY,String(best)); }catch(e){}
+  }
+  updateHud();
+  startBtn.style.display='block';
+  startBtn.setAttribute('data-i18n','play_again_label');
+  startBtn.textContent=I18N.t('play_again_label','Play Again');
+}
+
+function spawnParticles(good,lane,x){
+  const col=good?THEME.zoneColor:'#ff5252';
+  const py=LANE_Y[lane];
+  for(let i=0;i<12;i++){
+    particles.push({
+      x:x, y:py,
+      vx:(Math.random()-0.5)*4,
+      vy:(Math.random()-0.9)*4,
+      life:1,
+      col
+    });
+  }
+}
+
+function updateParticles(dt){
+  for(const p of particles){
+    p.x+=p.vx*dt*0.06; p.y+=p.vy*dt*0.06; p.vy+=0.012*dt*0.06;
+    p.life-=dt*0.0018;
+  }
+  particles=particles.filter(p=>p.life>0);
+}
+
+function drawParticles(){
+  for(const p of particles){
+    ctx.globalAlpha=Math.max(0,p.life);
+    ctx.fillStyle=p.col;
+    ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fill();
+  }
+  ctx.globalAlpha=1;
+}
+
+function spawnBox(){
+  const lane=Math.floor(Math.random()*LANES);
+  // avoid stacking two boxes too close in the same lane
+  const existing=boxes.filter(b=>b.lane===lane);
+  if(existing.some(b=>b.x<80)) return;
+  boxes.push({lane,x:TRACK_X0-20,id:nextId++});
+}
+
+function packLane(lane){
+  if(state!=='play') return;
+  // find the box in this lane closest to / inside the zone
+  let best=null, bestDist=1e9;
+  for(const b of boxes){
+    if(b.lane!==lane) continue;
+    const d=Math.abs(b.x-(ZONE_X0+ZONE_X1)/2);
+    if(d<bestDist){ bestDist=d; best=b; }
+  }
+  flashLane=lane; flashUntil=performance.now()+180;
+  if(best && best.x>=ZONE_X0-14 && best.x<=ZONE_X1+14){
+    const center=(ZONE_X0+ZONE_X1)/2;
+    const half=(ZONE_X1-ZONE_X0)/2+14;
+    const precision=1-Math.min(1,Math.abs(best.x-center)/half);
+    const gained=Math.round(10*round+20*precision);
+    score+=gained;
+    hitsInRound++;
+    focus=Math.min(FOCUS_MAX,focus+FOCUS_HIT_GAIN);
+    flavor=pick(THEME.flavor_hit);
+    flashGood=true;
+    feedbackGood=true;
+    feedbackText=I18N.t('hit_text','Nice!');
+    spawnParticles(true,lane,best.x);
+    if(precision>0.75){ SFX.coin(); } else { SFX.point(); }
+    boxes=boxes.filter(b=>b!==best);
+    if(hitsInRound>=HITS_PER_ROUND){
+      hitsInRound=0; round++;
+      boxSpeed=Math.min(0.17, boxSpeed*1.12+0.004);
+      spawnEvery=Math.max(430, spawnEvery*0.9);
+      SFX.levelup();
+      feedbackText=I18N.t('round_up','Round {n}!').replace('{n}',round);
+    }
+  } else {
+    focus-=FOCUS_MISS_PENALTY;
+    flavor=pick(THEME.flavor_miss);
+    flashGood=false;
+    feedbackGood=false;
+    feedbackText=I18N.t('miss_text','Missed!');
+    spawnParticles(false,lane,ZONE_X0+40);
+    SFX.hurt();
+    shakeUntil=performance.now()+200;
+  }
+  feedbackUntil=performance.now()+420;
+  updateHud();
+  if(focus<=0){
+    focus=0;
+    endGame();
+  }
+}
+
+function roundRectPathLocal(x,y,w,h,r){ roundRectPath(ctx,x,y,w,h,r); }
+
+function drawBackdrop(now){
+  const g=ctx.createLinearGradient(0,0,W,H);
+  g.addColorStop(0,THEME.c1);
+  g.addColorStop(1,THEME.c2);
+  ctx.fillStyle=g;
+  ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='rgba(255,255,255,.08)';
+  ctx.font='bold 13px Arial';
+  ctx.textAlign='center';
+  ctx.fillText('PACKING LINE 4', W/2, 40);
+}
+
+function drawLanes(now){
+  for(let lane=0;lane<LANES;lane++){
+    const ly=LANE_Y[lane];
+    // belt track
+    roundRectPathLocal(TRACK_X0,ly-LANE_H/2,TRACK_X1-TRACK_X0,LANE_H,12);
+    ctx.fillStyle='rgba(0,0,0,.35)';
+    ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,.2)';ctx.lineWidth=2;ctx.stroke();
+    // pack zone highlight
+    roundRectPathLocal(ZONE_X0,ly-LANE_H/2+4,ZONE_X1-ZONE_X0,LANE_H-8,8);
+    ctx.fillStyle=THEME.zoneColor;
+    ctx.globalAlpha=0.5;
+    ctx.fill();
+    ctx.globalAlpha=1;
+    ctx.strokeStyle=THEME.zoneColor;ctx.lineWidth=2;ctx.stroke();
+    // lane number badge
+    ctx.fillStyle='rgba(255,255,255,.85)';
+    ctx.beginPath();ctx.arc(TRACK_X0-2,ly,16,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#3b2314';
+    ctx.font='bold 14px Arial';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(String(lane+1), TRACK_X0-2, ly+1);
+    ctx.textBaseline='alphabetic';
+    // tap flash
+    if(now<flashUntil && flashLane===lane){
+      ctx.fillStyle = flashGood ? 'rgba(255,209,102,.3)' : 'rgba(255,82,82,.32)';
+      roundRectPathLocal(TRACK_X0,ly-LANE_H/2,TRACK_X1-TRACK_X0,LANE_H,12);
+      ctx.fill();
+    }
+  }
+  // boxes
+  for(const b of boxes){
+    const ly=LANE_Y[b.lane];
+    const inZone=b.x>=ZONE_X0-14 && b.x<=ZONE_X1+14;
+    ctx.save();
+    ctx.translate(b.x,ly);
+    ctx.fillStyle=inZone?'#fff3cf':'#d8b48a';
+    roundRectPathLocal(-20,-20,40,40,6);
+    ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,.4)';ctx.lineWidth=2;ctx.stroke();
+    ctx.strokeStyle='rgba(0,0,0,.25)';ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(-20,0);ctx.lineTo(20,0);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(0,-20);ctx.lineTo(0,20);ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawFocusBar(){
+  const bx=30,by=445,bw=W-60,bh=16;
+  roundRectPathLocal(bx,by,bw,bh,8);
+  ctx.fillStyle='rgba(0,0,0,.45)';ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.2)';ctx.lineWidth=1.5;ctx.stroke();
+  const pct=Math.max(0,focus)/100;
+  const col = pct>0.5 ? THEME.zoneColor : (pct>0.22? '#ffd23f':'#ff5252');
+  roundRectPathLocal(bx+2,by+2,Math.max(0,(bw-4)*pct),bh-4,6);
+  ctx.fillStyle=col;ctx.fill();
+  ctx.fillStyle='#fff';ctx.font='bold 11px Arial';ctx.textAlign='left';
+  ctx.fillText(THEME.focusTopLabel, bx, by-6);
+}
+
+function drawFlavor(now){
+  ctx.textAlign='center';
+  ctx.fillStyle='rgba(255,255,255,.85)';
+  ctx.font='13px Arial';
+  ctx.fillText(flavor, W/2, 490);
+
+  if(now<feedbackUntil){
+    const t=1-( (feedbackUntil-now)/420 );
+    ctx.globalAlpha=1-t*0.2;
+    ctx.fillStyle=feedbackGood?THEME.zoneColor:'#ff5252';
+    ctx.font='bold 22px Arial';
+    ctx.fillText(feedbackText, W/2, 80 - t*10);
+    ctx.globalAlpha=1;
+  }
+}
+
+function drawCenterPanel(title,sub1,sub2){
+  roundRectPathLocal(30,150,W-60,220,18);
+  ctx.fillStyle='rgba(0,0,0,.55)';
+  ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.18)';ctx.lineWidth=1.5;ctx.stroke();
+  ctx.textAlign='center';
+  ctx.fillStyle='#fff';
+  ctx.font='bold 26px Arial';
+  ctx.fillText(THEME.emoji,W/2,215);
+  ctx.font='bold 22px Arial';
+  ctx.fillText(title,W/2,260);
+  ctx.font='15px Arial';
+  ctx.fillStyle='rgba(255,255,255,.85)';
+  if(sub1) ctx.fillText(sub1,W/2,290);
+  if(sub2) ctx.fillText(sub2,W/2,314);
+  ctx.font='12px Arial';
+  ctx.fillStyle='rgba(255,255,255,.6)';
+  ctx.fillText(I18N.t('tap_hint','Press Start, then tap a lane or press 1/2/3'),W/2,345);
+}
+
+function loop(now){
+  const dt=Math.min(48, now-(lastT||now)); lastT=now;
+  if(state==='play'){
+    spawnTimer+=dt;
+    if(spawnTimer>=spawnEvery){
+      spawnTimer=0;
+      spawnBox();
+    }
+    for(const b of boxes) b.x+=boxSpeed*dt;
+    const fellOff=boxes.filter(b=>b.x>TRACK_X1+24);
+    if(fellOff.length){
+      boxes=boxes.filter(b=>b.x<=TRACK_X1+24);
+      focus-=FOCUS_FALLOFF_PENALTY*fellOff.length;
+      flavor=pick(THEME.flavor_miss);
+      SFX.hurt();
+      shakeUntil=performance.now()+200;
+      updateHud();
+      if(focus<=0){ focus=0; endGame(); }
+    }
+  }
+  updateParticles(dt);
+
+  let ox=0,oy=0;
+  if(now<shakeUntil){ ox=(Math.random()-0.5)*5; oy=(Math.random()-0.5)*5; }
+  ctx.save();
+  ctx.translate(ox,oy);
+  drawBackdrop(now);
+
+  if(state==='idle'){
+    drawCenterPanel(
+      I18N.t('idle_title',THEME.unitName+' Line Idle'),
+      I18N.t('idle_sub1',THEME.idleSub1),
+      I18N.t('idle_sub2','High Score: '+best)
+    );
+  } else if(state==='gameover'){
+    drawCenterPanel(
+      I18N.t('gameover_title','Line Stopped'),
+      I18N.t('score_label','Score: {n}').replace('{n}',score),
+      (score>=best? I18N.t('new_best','New Best!') : I18N.t('best_label','Best: {n}').replace('{n}',best))
+    );
+  } else {
+    drawLanes(now);
+    drawFocusBar();
+    drawFlavor(now);
+    drawParticles();
+  }
+  ctx.restore();
+
+  requestAnimationFrame(loop);
+}
+
+function laneFromY(clientY,rect){
+  const scaleY=H/rect.height;
+  const y=(clientY-rect.top)*scaleY;
+  let best=0, bestDist=1e9;
+  for(let i=0;i<LANES;i++){
+    const d=Math.abs(y-LANE_Y[i]);
+    if(d<bestDist){ bestDist=d; best=i; }
+  }
+  return best;
+}
+
+c.addEventListener('pointerdown',(e)=>{
+  e.preventDefault();
+  if(state==='idle'||state==='gameover'){ startGame(); return; }
+  const rect=c.getBoundingClientRect();
+  const lane=laneFromY(e.clientY,rect);
+  packLane(lane);
+});
+startBtn.addEventListener('click',startGame);
+window.addEventListener('keydown',(e)=>{
+  if(state==='idle'||state==='gameover'){
+    if(e.code==='Space'||e.code==='Enter'){ e.preventDefault(); startGame(); }
+    return;
+  }
+  if(e.code==='Digit1'||e.code==='Numpad1'){ e.preventDefault(); packLane(0); }
+  else if(e.code==='Digit2'||e.code==='Numpad2'){ e.preventDefault(); packLane(1); }
+  else if(e.code==='Digit3'||e.code==='Numpad3'){ e.preventDefault(); packLane(2); }
+});
+
+resetRun();
+updateHud();
+startBtn.style.display='block';
+startBtn.textContent=I18N.t('start_label','Start');
+requestAnimationFrame(loop);
+
+</script>
+</body></html>
