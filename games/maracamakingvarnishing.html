@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<!--
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at http://mozilla.org/MPL/2.0/.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Maraca Making Varnishing - Multiport Games</title>
+<meta name="description" content="Time each pass to brush an even, glossy varnish coat onto a finished maraca. A fast, free timing game.">
+<link rel="canonical" href="https://multiportgames.com/games/maracamakingvarnishing.html">
+<meta property="og:title" content="Maraca Making Varnishing - Multiport Games">
+<meta property="og:description" content="Time each pass to brush an even, glossy varnish coat onto a finished maraca. A fast, free timing game.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://multiportgames.com/games/maracamakingvarnishing.html">
+<meta property="og:image" content="../thumbs/maracamakingvarnishing.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Maraca Making Varnishing - Multiport Games">
+<meta name="twitter:description" content="Time each pass to brush an even, glossy varnish coat onto a finished maraca. A fast, free timing game.">
+<meta name="twitter:image" content="../thumbs/maracamakingvarnishing.jpg">
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<meta name="theme-color" content="#6b5a2f">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Maraca Making Varnishing","description":"Time each pass to brush an even, glossy varnish coat onto a finished maraca. A fast, free timing game.","applicationCategory":"GameApplication","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="stylesheet" href="../css/style.css">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>
+  body{background:#302510}
+  #gameCanvas{display:block;margin:0 auto;border-radius:10px;touch-action:manipulation;background:radial-gradient(circle at 50% 30%,#6b5a2f,#302510 85%)}
+  #hud{max-width:360px;margin:0 auto 6px;display:flex;justify-content:space-between;align-items:center;color:#fff;font-weight:700;font-size:0.95rem;padding:0 6px}
+  #hud span{opacity:.9}
+  #hud .hudval{color:#ffd966}
+  #bigBtn{display:block;margin:14px auto 0;padding:14px 36px;font-size:1.15rem;font-weight:800;border:none;border-radius:999px;cursor:pointer;background:linear-gradient(135deg,#6b5a2f,#302510);color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.4);letter-spacing:.02em}
+  #bigBtn:active{transform:scale(.97)}
+  #flavorText{text-align:center;min-height:1.4em;font-weight:700;margin-top:6px;font-size:1rem}
+  .flavor-hit{color:#7CFC88}
+  .flavor-miss{color:#ff6b6b}
+</style>
+</head>
+<body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">← Back</a>
+    <div class="game-title">✨ Maraca Making Varnishing</div>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-frame" style="padding:10px">
+    <div id="hud">
+      <span data-i18n="hud_round">Round <span class="hudval" id="roundVal">1</span></span>
+      <span data-i18n="hud_score">Score <span class="hudval" id="scoreVal">0</span></span>
+      <span data-i18n="hud_best">Best <span class="hudval" id="bestVal">0</span></span>
+    </div>
+    <canvas id="gameCanvas" width="360" height="460"></canvas>
+    <div id="flavorText"></div>
+    <button id="bigBtn">▶ <span data-i18n="start_btn">Start</span></button>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">Watch the marker sweep across the gauge. Press SPACE, tap, or click right as it crosses the green zone to lay a smooth, even varnish coat. Miss and your gloss evenness meter drops. Finish each round's coats to move on to a glossier, trickier batch.</div>
+</div>
+<script>
+(function(){
+  "use strict";
+  var GAME_ID = "maracamakingvarnishing";
+  var HS_KEY = GAME_ID + "_highscore";
+  var VERB = I18N.t('verb','Varnish');
+  var FLAVOR_HIT = ["Glassy finish!", "Even coat!", "Perfect sheen!", "Flawless gloss!"];
+  var FLAVOR_MISS = ["Drip mark!", "Uneven patch!", "Cloudy spot!", "Streaked!"];
+  var C1 = "#6b5a2f", C2 = "#302510";
+
+  var canvas = document.getElementById('gameCanvas');
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height;
+
+  var roundValEl = document.getElementById('roundVal');
+  var scoreValEl = document.getElementById('scoreVal');
+  var bestValEl = document.getElementById('bestVal');
+  var flavorEl = document.getElementById('flavorText');
+  var bigBtn = document.getElementById('bigBtn');
+
+  var highScore = 0;
+  try { highScore = parseInt(localStorage.getItem(HS_KEY), 10) || 0; } catch(e) { highScore = 0; }
+
+  var METER_W = 300, METER_H = 34;
+  var METER_X = (W - METER_W) / 2;
+  var METER_Y = 300;
+  var ROUND_TARGET = 5;
+  var FOCUS_MAX = 100;
+
+  var state = 'idle'; // idle | play | over
+  var score = 0, round = 1, roundHits = 0, focus = FOCUS_MAX;
+  var markerX = 0, markerDir = 1, speed = 2.4;
+  var zoneWidth = 72, zoneStart = 0;
+  var flashTimer = 0, flashKind = null;
+  var newHighFlag = false;
+
+  function randZone(){
+    zoneStart = Math.random() * (METER_W - zoneWidth);
+  }
+
+  function resetGame(){
+    score = 0; round = 1; roundHits = 0; focus = FOCUS_MAX;
+    markerX = 0; markerDir = 1; speed = 2.4;
+    zoneWidth = 72;
+    randZone();
+    newHighFlag = false;
+    flavorEl.textContent = '';
+    flavorEl.className = '';
+  }
+
+  function updateHud(){
+    roundValEl.textContent = round;
+    scoreValEl.textContent = score;
+    bestValEl.textContent = highScore;
+  }
+
+  function showFlavor(text, kind){
+    flavorEl.textContent = text;
+    flavorEl.className = kind === 'hit' ? 'flavor-hit' : 'flavor-miss';
+  }
+
+  function startGame(){
+    resetGame();
+    state = 'play';
+    bigBtn.style.display = 'none';
+    updateHud();
+  }
+
+  function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+
+  function hit(){
+    score += 10;
+    roundHits++;
+    flashTimer = 14; flashKind = 'hit';
+    showFlavor(pick(FLAVOR_HIT), 'hit');
+    SFX.coin();
+    if (roundHits >= ROUND_TARGET){
+      round++;
+      roundHits = 0;
+      focus = Math.min(FOCUS_MAX, focus + 12);
+      speed *= 1.1;
+      zoneWidth = Math.max(26, zoneWidth - 4);
+      SFX.levelup();
+    }
+    randZone();
+    updateHud();
+  }
+
+  function miss(){
+    focus -= 18;
+    flashTimer = 14; flashKind = 'miss';
+    showFlavor(pick(FLAVOR_MISS), 'miss');
+    SFX.hurt();
+    randZone();
+    if (focus <= 0){
+      focus = 0;
+      endGame();
+    }
+    updateHud();
+  }
+
+  function endGame(){
+    state = 'over';
+    if (score > highScore){
+      highScore = score;
+      newHighFlag = true;
+      try { localStorage.setItem(HS_KEY, String(highScore)); } catch(e){}
+    }
+    SFX.lose();
+    bigBtn.querySelector('span').textContent = I18N.t('retry_btn','Play Again');
+    bigBtn.style.display = 'block';
+    updateHud();
+  }
+
+  function attempt(){
+    if (state === 'idle' || state === 'over'){ startGame(); return; }
+    if (state !== 'play') return;
+    var markerAbs = markerX;
+    if (markerAbs >= zoneStart && markerAbs <= zoneStart + zoneWidth){
+      hit();
+    } else {
+      miss();
+    }
+  }
+
+  bigBtn.addEventListener('click', function(e){
+    e.preventDefault();
+    attempt();
+  });
+  canvas.addEventListener('click', function(e){
+    e.preventDefault();
+    attempt();
+  });
+  canvas.addEventListener('touchstart', function(e){
+    e.preventDefault();
+    attempt();
+  }, {passive:false});
+  document.addEventListener('keydown', function(e){
+    if (e.code === 'Space' || e.code === 'Enter'){
+      e.preventDefault();
+      attempt();
+    }
+  });
+
+  function drawScene(){
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '64px sans-serif';
+    ctx.globalAlpha = 0.95;
+    ctx.fillText("✨", W/2, 110);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText(I18N.t('scene_label','Varnishing the Maraca'), W/2, 150);
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,.75)';
+    ctx.fillText(I18N.t('scene_sub','Craft step: a protective varnish coat evenly'), W/2, 170);
+    ctx.restore();
+  }
+
+  function drawMeter(){
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    ctx.beginPath();
+    ctx.roundRect(METER_X, METER_Y, METER_W, METER_H, 8);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.4)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = flashTimer > 0 && flashKind === 'hit' ? '#9CFFA8' : '#3ddc5a';
+    ctx.beginPath();
+    ctx.roundRect(METER_X + zoneStart, METER_Y, zoneWidth, METER_H, 6);
+    ctx.fill();
+
+    var mx = METER_X + markerX;
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = C1;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(mx, METER_Y - 12);
+    ctx.lineTo(mx - 9, METER_Y - 2);
+    ctx.lineTo(mx + 9, METER_Y - 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillRect(mx - 2, METER_Y, 4, METER_H);
+    ctx.restore();
+  }
+
+  function drawFocus(){
+    var fx = METER_X, fy = METER_Y + METER_H + 22, fw = METER_W, fh = 16;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    ctx.beginPath(); ctx.roundRect(fx, fy, fw, fh, 8); ctx.fill();
+    var pct = Math.max(0, focus / FOCUS_MAX);
+    var grad = ctx.createLinearGradient(fx, 0, fx + fw, 0);
+    grad.addColorStop(0, '#ff6b6b');
+    grad.addColorStop(0.5, '#ffd166');
+    grad.addColorStop(1, '#3ddc5a');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.roundRect(fx, fy, fw * pct, fh, 8); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.4)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(fx, fy, fw, fh, 8); ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(I18N.t('focus_label','QUALITY'), fx + fw/2, fy + fh + 14);
+    ctx.restore();
+  }
+
+  function drawPrompt(){
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 14px sans-serif';
+    if (state === 'idle'){
+      ctx.fillText(I18N.t('idle_prompt','Press Start to begin'), W/2, 250);
+    } else if (state === 'play'){
+      ctx.fillText(I18N.t('play_prompt','Tap / Space when marker hits the green zone to ' + VERB.toLowerCase()), W/2, 250);
+    } else if (state === 'over'){
+      ctx.fillStyle = '#ffd966';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText(I18N.t('over_title','Batch Finished!'), W/2, 230);
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillStyle = '#fff';
+      ctx.fillText(I18N.t('over_score','Final Score: {n}').replace('{n}', score), W/2, 254);
+      if (newHighFlag){
+        ctx.fillStyle = '#7CFC88';
+        ctx.fillText(I18N.t('over_newbest','New Best!'), W/2, 274);
+      }
+    }
+    ctx.restore();
+  }
+
+  function loop(){
+    ctx.clearRect(0, 0, W, H);
+    var grad = ctx.createLinearGradient(0, 0, W, H);
+    grad.addColorStop(0, C1);
+    grad.addColorStop(1, C2);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    drawScene();
+
+    if (state === 'play'){
+      markerX += speed * markerDir;
+      if (markerX <= 0){ markerX = 0; markerDir = 1; }
+      if (markerX >= METER_W){ markerX = METER_W; markerDir = -1; }
+    }
+
+    drawMeter();
+    drawFocus();
+    drawPrompt();
+
+    if (flashTimer > 0) flashTimer--;
+
+    requestAnimationFrame(loop);
+  }
+
+  resetGame();
+  updateHud();
+  loop();
+})();
+</script>
+</body>
+</html>
