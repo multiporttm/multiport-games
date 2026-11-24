@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<!--
+This Source Code Form is subject to the terms of the Mozilla Public
+License, v. 2.0. If a copy of the MPL was not distributed with this
+file, You can obtain one at http://mozilla.org/MPL/2.0/.
+-->
+<html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Saxophone Making Play Testing - Multiport Games</title>
+<meta name="description" content="Play-test the finished saxophone across its full range, landing each note right in tune.">
+<link rel="canonical" href="https://multiportgames.com/games/saxophonemakingplaytesting.html">
+<meta property="og:title" content="Saxophone Making Play Testing - Multiport Games">
+<meta property="og:description" content="Play-test the finished saxophone across its full range, landing each note right in tune.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://multiportgames.com/games/saxophonemakingplaytesting.html">
+<meta property="og:image" content="../thumbs/saxophonemakingplaytesting.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Saxophone Making Play Testing - Multiport Games">
+<meta name="twitter:description" content="Play-test the finished saxophone across its full range, landing each note right in tune.">
+<meta name="twitter:image" content="../thumbs/saxophonemakingplaytesting.jpg">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Saxophone Making Play Testing","description":"Play-test the finished saxophone across its full range, landing each note right in tune.","applicationCategory":"GameApplication","operatingSystem":"Any"}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<meta name="theme-color" content="#2f6b4a">
+<style>
+body{background:#10301c}
+#c{background:linear-gradient(135deg,#2f6b4a,#10301c);display:block;border-radius:8px;touch-action:none;cursor:pointer;margin:0 auto;max-width:100%}
+#hud{color:#fff;font-size:1.05rem;font-weight:700;text-align:center;padding:8px;display:flex;justify-content:center;gap:16px;flex-wrap:wrap}
+#meterWrap{max-width:800px;margin:0 auto 8px;background:rgba(0,0,0,.35);border-radius:10px;padding:4px;box-sizing:border-box}
+#meterBar{height:14px;border-radius:8px;background:linear-gradient(90deg,#3ddc84,#b6ffcf);width:100%;transition:width .15s}
+#bigBtnWrap{text-align:center;margin:10px auto}
+#bigBtn{font-size:1.2rem;font-weight:800;padding:14px 32px;border-radius:12px;border:none;cursor:pointer;background:linear-gradient(135deg,#fff,#dfe8ff);color:#111;box-shadow:0 4px 14px rgba(0,0,0,.4)}
+#bigBtn:active{transform:scale(0.97)}
+</style>
+</head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../index.html" class="back-btn">&larr; Back</a>
+    <div class="game-title">🎷 Saxophone Making Play Testing</div>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-frame">
+    <div id="hud">
+      <span id="scoreLbl">Score: 0 | Hi: 0</span>
+      <span id="roundLbl">Round 1</span>
+    </div>
+    <div id="meterWrap"><div id="meterBar"></div></div>
+    <canvas id="c" width="800" height="300"></canvas>
+    <div id="bigBtnWrap"><button id="bigBtn">Start</button></div>
+  </div>
+  <div class="game-instructions" data-i18n="instructions">A pitch needle sweeps across the tuner as you play each test note. Click, tap, or press Space the instant it enters the glowing in-tune zone to confirm the note rings true. Miss and the note sounds sour, draining your player-confidence meter. Every five in-tune notes speeds up the sweep and tightens the tuning zone for the next round. Lose all your confidence and the horn fails its play test!</div>
+</div>
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<script>
+(function(){
+'use strict';
+var ID='saxophonemakingplaytesting';
+var HSKEY=ID+'_highscore';
+var c=document.getElementById('c'),ctx=c.getContext('2d');
+var W=800,H=300;
+var hi=parseInt(localStorage.getItem(HSKEY)||'0',10);
+var score=0,focus=100,round=1,totalHits=0,state='ready';
+var speed=0.0052,zoneWidth=0.24,zoneCenter=0.5;
+var markerPos=0,dir=1;
+var flashTimer=0,flashGood=true;
+var particles=[];
+var MIN_ZONE=0.085;
+var SPEEDUP_EVERY=5;
+var SPEED_MULT=1.085;
+var t=0;
+
+function setHud(){
+  document.getElementById('scoreLbl').textContent=I18N.t('score_hi_label','Score: {s} | Hi: {h}').replace('{s}',score).replace('{h}',hi);
+  document.getElementById('roundLbl').textContent=I18N.t('round_label','Round {r}').replace('{r}',round);
+  document.getElementById('meterBar').style.width=Math.max(0,focus)+'%';
+}
+
+function newZone(){
+  zoneCenter=0.14+Math.random()*0.72;
+  zoneWidth=Math.max(MIN_ZONE,0.26-round*0.0045);
+}
+
+function startGame(){
+  score=0;focus=100;round=1;totalHits=0;speed=0.0052;state='play';markerPos=0;dir=1;particles=[];
+  newZone();
+  setHud();
+  document.getElementById('bigBtn').textContent=I18N.t('btn_playing','In Progress');
+}
+
+function addParticles(good,x,y){
+  for(var i=0;i<(good?10:5);i++){
+    particles.push({
+      x:x,y:y,
+      vx:(Math.random()-0.5)*(good?5:3),
+      vy:(Math.random()-1.2)*(good?4:2.4),
+      life:28+Math.random()*12,
+      good:good
+    });
+  }
+}
+
+function lockIn(){
+  if(state==='ready'||state==='over'){ startGame(); return; }
+  if(state!=='play')return;
+  var dist=Math.abs(markerPos-zoneCenter);
+  var halfZone=zoneWidth/2;
+  var mx=markerPos*W;
+  if(dist<=halfZone){
+    var precision=1-(dist/halfZone);
+    var pts=10+Math.round(precision*20);
+    score+=pts;
+    totalHits++;
+    round++;
+    focus=Math.min(100,focus+5);
+    if(totalHits%SPEEDUP_EVERY===0){ speed*=SPEED_MULT; }
+    SFX.coin();
+    flashTimer=16;flashGood=true;
+    addParticles(true,mx,H*0.52);
+    newZone();
+    if(score>hi){hi=score;localStorage.setItem(HSKEY,hi);}
+  } else {
+    focus-=24;
+    SFX.error();
+    flashTimer=16;flashGood=false;
+    addParticles(false,mx,H*0.52);
+    if(focus<=0){
+      state='over';
+      SFX.lose();
+      document.getElementById('bigBtn').textContent=I18N.t('btn_playagain','Play Again');
+      if(score>hi){hi=score;localStorage.setItem(HSKEY,hi);}
+    }
+  }
+  setHud();
+}
+
+document.getElementById('bigBtn').addEventListener('click',lockIn);
+c.addEventListener('mousedown',function(e){e.preventDefault();lockIn();});
+c.addEventListener('touchstart',function(e){e.preventDefault();lockIn();},{passive:false});
+document.addEventListener('keydown',function(e){
+  if(e.code==='Space'||e.code==='Enter'){e.preventDefault();lockIn();}
+});
+
+
+function drawFlavorBackdrop(){
+  ctx.save();
+  ctx.strokeStyle='rgba(180,255,210,.35)';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  for(var x=0;x<=W;x+=4){
+    var y=160+Math.sin((x*0.04)+t*0.08)*22*Math.sin(t*0.01+x*0.002);
+    if(x===0)ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+
+function drawBar(){
+  var barY=H*0.52,barH=26,barX=40,barW=W-80;
+  ctx.save();
+  ctx.translate(barX,0);
+  ctx.fillStyle='rgba(0,0,0,.28)';
+  ctx.beginPath();ctx.roundRect(0,barY-barH/2,barW,barH,13);ctx.fill();
+  // sweet zone
+  var zx=(zoneCenter-zoneWidth/2)*barW;
+  var zw=zoneWidth*barW;
+  var zg=ctx.createLinearGradient(zx,0,zx+zw,0);
+  zg.addColorStop(0,'#7dffb0');
+  zg.addColorStop(1,'#e8fff2');
+  ctx.fillStyle=zg;
+  ctx.beginPath();ctx.roundRect(zx,barY-barH/2+2,zw,barH-4,10);ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.55)';ctx.lineWidth=2;ctx.stroke();
+  // marker
+  var mx=markerPos*barW;
+  ctx.save();
+  ctx.translate(mx,barY);
+  ctx.shadowBlur=12;ctx.shadowColor='#9dffc6';
+  ctx.fillStyle='#0c2316';
+  ctx.beginPath();ctx.moveTo(0,-22);ctx.lineTo(-7,20);ctx.lineTo(7,20);ctx.closePath();ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.fillStyle='#fff';
+  ctx.font='16px Arial';ctx.textAlign='center';
+  ctx.fillText('🎶',0,-26);
+  ctx.restore();
+  ctx.restore();
+}
+
+function drawParticles(){
+  for(var i=particles.length-1;i>=0;i--){
+    var p=particles[i];
+    p.x+=p.vx;p.y+=p.vy;p.vy+=0.12;p.life--;
+    if(p.life<=0){particles.splice(i,1);continue;}
+    ctx.globalAlpha=Math.max(0,p.life/30);
+    ctx.fillStyle=p.good?'#9dffc6':'#6b8f7a';
+    ctx.beginPath();ctx.arc(p.x,p.y,p.good?3:2.4,0,Math.PI*2);ctx.fill();
+    ctx.globalAlpha=1;
+  }
+}
+
+function loop(){
+  t++;
+  ctx.clearRect(0,0,W,H);
+  var bg=ctx.createLinearGradient(0,0,W,H);
+  bg.addColorStop(0,'#2f6b4a');bg.addColorStop(1,'#10301c');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+
+  drawFlavorBackdrop();
+
+  ctx.fillStyle='rgba(255,255,255,.92)';ctx.font='bold 18px Arial';ctx.textAlign='center';
+  ctx.fillText(I18N.t('header_text','PLAY-TEST EVERY NOTE IN TUNE'),W/2,28);
+
+  if(state==='play'){
+    markerPos+=dir*speed;
+    if(markerPos>=1){markerPos=1;dir=-1;}
+    if(markerPos<=0){markerPos=0;dir=1;}
+  }
+
+  drawBar();
+  drawParticles();
+
+  if(flashTimer>0){
+    flashTimer--;
+    ctx.fillStyle=flashGood?'rgba(90,230,140,0.18)':'rgba(255,70,70,0.22)';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  if(state==='ready'){
+    ctx.fillStyle='rgba(0,0,0,.42)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.font='bold 26px Arial';
+    ctx.fillText(I18N.t('ready_title','READY TO PLAY-TEST'),W/2,H/2-10);
+    ctx.font='16px Arial';
+    ctx.fillText(I18N.t('ready_hint','Tap, click or press Space to begin'),W/2,H/2+20);
+  } else if(state==='over'){
+    ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#ff6b6b';ctx.font='bold 30px Arial';
+    ctx.fillText(I18N.t('over_title','PLAY TEST FAILED'),W/2,H/2-26);
+    ctx.fillStyle='#fff';ctx.font='20px Arial';
+    ctx.fillText(I18N.t('final_score_label','Final Score: {n}').replace('{n}',score),W/2,H/2+6);
+    ctx.font='15px Arial';
+    ctx.fillText(I18N.t('retry_hint2','Tap, click or press Space to play again'),W/2,H/2+32);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+setHud();
+document.getElementById('bigBtn').textContent=I18N.t('btn_start','Start');
+loop();
+})();
+</script>
+</body></html>
