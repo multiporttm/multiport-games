@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. --><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Starfield Flight 3D - Multiport Games</title><meta name="description" content="Play Starfield Flight 3D free online — rocket through a real-time projected 3D starfield, dodge the asteroids, and survive the ever-accelerating hyperspace jump!"><link rel="canonical" href="https://games.multiportllc.com/games/starfieldflight3d"><meta property="og:title" content="Starfield Flight 3D - Multiport Games"><meta property="og:description" content="Play Starfield Flight 3D free online — rocket through a real-time projected 3D starfield, dodge the asteroids, and survive the ever-accelerating hyperspace jump!"><meta property="og:url" content="https://games.multiportllc.com/games/starfieldflight3d"><meta property="og:type" content="website"><meta property="og:image" content="../thumbs/starfieldflight3d.jpg"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Starfield Flight 3D - Multiport Games"><meta name="twitter:description" content="Play Starfield Flight 3D free online — rocket through a real-time projected 3D starfield, dodge the asteroids, and survive the ever-accelerating hyperspace jump!"><meta name="twitter:image" content="../thumbs/starfieldflight3d.jpg"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Starfield Flight 3D","description":"Play Starfield Flight 3D free online instantly. Rocket through a real-time perspective-projected 3D starfield, dodge the asteroids, and survive the ever-accelerating hyperspace jump. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/starfieldflight3d","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<meta name="theme-color" content="#060613">
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>body{background:#060613}#c{display:block;border-radius:8px;touch-action:none}</style>
+</head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Starfield Flight 3D</div>
+  <div class="game-frame"><canvas id="c" width="480" height="480"></canvas></div>
+  <div class="game-instructions" data-i18n="instructions">Move the crosshair with <b>arrow keys / WASD</b>, your mouse, or by dragging on the canvas. Weave the crosshair around the incoming asteroids as hundreds of real 3D stars rush past — one close hit and it's over. Speed climbs the longer you survive!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=480,H=480,CX=W/2,CY=H/2;
+const FOCAL=300;
+const NEAR_Z=4,FAR_Z=900;
+const WORLD_SPAN=340;
+const MAX_CAM=150;
+const SHIP_R=14;
+
+let state='idle',score=0,hi=+(localStorage.getItem('starfieldflight3d_highscore')||0);
+let lastTime=null,speed=5,timeAlive=0;
+let stars=[],rocks=[],particles=[];
+let camX=0,camY=0,vCamX=0,vCamY=0;
+let keys={};
+let dragging=false,dragX=0,dragY=0;
+let shakeT=0,shakeMag=0;
+
+function rand(a,b){return a+Math.random()*(b-a);}
+
+function spawnStar(){
+  return {x:rand(-WORLD_SPAN,WORLD_SPAN),y:rand(-WORLD_SPAN,WORLD_SPAN),z:rand(NEAR_Z,FAR_Z),prevSx:null,prevSy:null};
+}
+function spawnRock(){
+  const sides=4+Math.floor(Math.random()*3);
+  const verts=[];
+  for(let i=0;i<sides;i++){
+    const a=i/sides*Math.PI*2;
+    verts.push({a,r:rand(0.7,1.15)});
+  }
+  return {x:rand(-WORLD_SPAN*0.8,WORLD_SPAN*0.8),y:rand(-WORLD_SPAN*0.8,WORLD_SPAN*0.8),
+    z:rand(NEAR_Z*4,FAR_Z),size:rand(18,34),verts,sides,
+    hue:['#ff7a3c','#ff3864','#ffb84d','#c76bff'][Math.floor(Math.random()*4)],
+    dodged:false,judged:false};
+}
+
+function resetField(){
+  stars=Array.from({length:220},spawnStar);
+  rocks=Array.from({length:10},spawnRock);
+}
+
+function reset(){
+  score=0;speed=5;timeAlive=0;lastTime=null;
+  camX=0;camY=0;vCamX=0;vCamY=0;
+  shakeT=0;shakeMag=0;
+  particles=[];
+  resetField();
+  state='play';
+}
+
+function project(x,y,z,camx,camy){
+  const s=FOCAL/Math.max(z,0.1);
+  return {x:CX+(x-camx)*s,y:CY+(y-camy)*s,s};
+}
+
+function burst(x,y,col){
+  for(let i=0;i<26;i++){
+    const a=Math.random()*Math.PI*2,sp=1.5+Math.random()*6;
+    particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:1,col});
+  }
+}
+
+// ── Input ──────────────────────────────────────────────
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(state!=='play'){try{if(window.SFX&&SFX.getContext)SFX.getContext();}catch(err){}reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function pointerToCam(px,py){
+  const rect=c.getBoundingClientRect();
+  const lx=(px-rect.left)/rect.width*W;
+  const ly=(py-rect.top)/rect.height*H;
+  return {x:(lx-CX)*1.1,y:(ly-CY)*1.1};
+}
+c.addEventListener('pointerdown',e=>{
+  try{if(window.SFX&&SFX.getContext)SFX.getContext();}catch(err){}
+  if(state!=='play'){reset();return;}
+  dragging=true;
+  const p=pointerToCam(e.clientX,e.clientY);
+  dragX=p.x;dragY=p.y;
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const p=pointerToCam(e.clientX,e.clientY);
+  dragX=p.x;dragY=p.y;
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();},{passive:false});
+c.addEventListener('mousemove',e=>{
+  if(dragging)return;
+  const rect=c.getBoundingClientRect();
+  if(e.clientX>=rect.left&&e.clientX<=rect.right&&e.clientY>=rect.top&&e.clientY<=rect.bottom){
+    const p=pointerToCam(e.clientX,e.clientY);
+    dragX=p.x;dragY=p.y;
+  }
+});
+
+// ── Drawing ────────────────────────────────────────────
+function drawBG(){
+  const g=ctx.createLinearGradient(0,0,W,H);
+  g.addColorStop(0,'#0a0a24');g.addColorStop(1,'#01010a');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+}
+
+function drawStar(s){
+  const p=project(s.x,s.y,s.z,camX,camY);
+  if(p.x<-40||p.x>W+40||p.y<-40||p.y>H+40){s.prevSx=null;s.prevSy=null;return;}
+  const f=Math.max(0,1-s.z/FAR_Z);
+  const r=Math.max(0.5,2.6*f+0.3);
+  ctx.globalAlpha=0.25+0.75*f;
+  if(s.prevSx!=null&&f>0.4){
+    ctx.strokeStyle='rgba(180,200,255,'+(0.15+0.35*f)+')';
+    ctx.lineWidth=r*0.8;
+    ctx.beginPath();ctx.moveTo(s.prevSx,s.prevSy);ctx.lineTo(p.x,p.y);ctx.stroke();
+  }
+  ctx.fillStyle='#dfe8ff';
+  ctx.beginPath();ctx.arc(p.x,p.y,r,0,Math.PI*2);ctx.fill();
+  s.prevSx=p.x;s.prevSy=p.y;
+}
+
+function drawRock(r){
+  const p=project(r.x,r.y,r.z,camX,camY);
+  const f=Math.max(0,1-r.z/FAR_Z);
+  const scale=FOCAL/Math.max(r.z,0.1);
+  const rad=r.size*scale*0.09;
+  if(rad<0.6||p.x<-80||p.x>W+80||p.y<-80||p.y>H+80)return;
+  ctx.save();
+  ctx.globalAlpha=0.35+0.65*f;
+  ctx.shadowBlur=14*f+2;ctx.shadowColor=r.hue;
+  const grad=ctx.createRadialGradient(p.x-rad*0.3,p.y-rad*0.3,rad*0.1,p.x,p.y,rad);
+  grad.addColorStop(0,'#fff');grad.addColorStop(0.35,r.hue);grad.addColorStop(1,'#1a0a14');
+  ctx.fillStyle=grad;
+  ctx.beginPath();
+  r.verts.forEach((v,i)=>{
+    const vx=p.x+Math.cos(v.a)*rad*v.r,vy=p.y+Math.sin(v.a)*rad*v.r;
+    if(i===0)ctx.moveTo(vx,vy);else ctx.lineTo(vx,vy);
+  });
+  ctx.closePath();ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.strokeStyle='rgba(255,255,255,0.3)';ctx.lineWidth=1;ctx.stroke();
+  ctx.restore();
+  ctx.globalAlpha=1;
+}
+
+function drawCrosshair(){
+  ctx.save();
+  ctx.shadowBlur=12;ctx.shadowColor='#4de3ff';
+  ctx.strokeStyle='rgba(120,230,255,0.9)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(CX,CY,13,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(CX-22,CY);ctx.lineTo(CX-14,CY);
+  ctx.moveTo(CX+14,CY);ctx.lineTo(CX+22,CY);
+  ctx.moveTo(CX,CY-22);ctx.lineTo(CX,CY-14);
+  ctx.moveTo(CX,CY+14);ctx.lineTo(CX,CY+22);
+  ctx.stroke();
+  ctx.shadowBlur=0;
+  ctx.restore();
+}
+
+function drawParticles(){
+  particles.forEach(p=>{
+    ctx.globalAlpha=Math.max(0,p.life);
+    ctx.fillStyle=p.col;
+    ctx.beginPath();ctx.arc(p.x,p.y,4*p.life,0,Math.PI*2);ctx.fill();
+  });
+  ctx.globalAlpha=1;
+}
+
+function drawHUD(){
+  ctx.fillStyle='rgba(255,255,255,0.88)';
+  ctx.font='bold 22px Arial';ctx.textAlign='left';
+  ctx.fillText(Math.floor(score),14,32);
+  ctx.font='13px Arial';ctx.fillStyle='rgba(255,255,255,0.45)';
+  ctx.fillText(I18N.t('best_label_caps','BEST {n}').replace('{n}',Math.floor(hi)),14,50);
+  ctx.textAlign='right';
+  const pct=Math.min((speed-5)/16,1);
+  ctx.fillStyle='rgba(255,255,255,0.12)';ctx.fillRect(W-110,24,100,8);
+  const barG=ctx.createLinearGradient(W-110,0,W-10,0);
+  barG.addColorStop(0,'#4de3ff');barG.addColorStop(1,'#ff3864');
+  ctx.fillStyle=barG;ctx.fillRect(W-110,24,100*pct,8);
+  ctx.fillStyle='rgba(255,255,255,0.4)';ctx.font='10px Arial';
+  ctx.fillText(I18N.t('speed_label','SPEED'),W-10,20);
+  ctx.textAlign='left';
+}
+
+function drawOverlay(title,sub1,sub2){
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.fillRect(70,180,340,140);
+  ctx.strokeStyle='rgba(77,227,255,0.5)';ctx.lineWidth=1.5;
+  ctx.strokeRect(70,180,340,140);
+  ctx.fillStyle='#fff';ctx.font='bold 26px Arial';ctx.textAlign='center';
+  ctx.fillText(title,W/2,228);
+  ctx.font='15px Arial';ctx.fillStyle='rgba(255,255,255,0.78)';
+  ctx.fillText(sub1,W/2,260);
+  ctx.font='13px Arial';ctx.fillStyle='rgba(255,255,255,0.5)';
+  ctx.fillText(sub2,W/2,288);
+  ctx.textAlign='left';
+}
+
+// ── Main loop ───────────────────────────────────────────
+function loop(){
+  let shx=0,shy=0;
+  if(shakeT>0){
+    shx=(Math.random()*2-1)*shakeMag;shy=(Math.random()*2-1)*shakeMag;
+    shakeT-=1;shakeMag*=0.88;
+  }
+  ctx.save();ctx.translate(shx,shy);
+  drawBG();
+
+  if(state==='idle'){
+    if(!stars.length)resetField();
+    stars.forEach(drawStar);
+    rocks.forEach(drawRock);
+    drawCrosshair();
+    drawOverlay('STARFIELD FLIGHT 3D',I18N.t('dodge_rocks_hint','Dodge the asteroids as you blast through space!'),I18N.t('space_tap_start','Arrow keys / drag to start'));
+    ctx.restore();requestAnimationFrame(loop);return;
+  }
+
+  if(state==='dead'){
+    stars.forEach(drawStar);
+    rocks.forEach(drawRock);
+    drawParticles();
+    drawHUD();
+    drawOverlay(I18N.t('dead_title','DESTROYED'),I18N.t('score_best','Score: {s}   Best: {b}').replace('{s}',Math.floor(score)).replace('{b}',Math.floor(hi)),I18N.t('retry_hint','Tap or press a key to retry'));
+    ctx.restore();requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  timeAlive+=dt/60;
+  speed=Math.min(21,5+timeAlive*0.55);
+  score+=speed*0.12*dt;
+
+  // steering
+  const accel=7;
+  if(keys['arrowleft']||keys['a'])vCamX-=accel*dt;
+  if(keys['arrowright']||keys['d'])vCamX+=accel*dt;
+  if(keys['arrowup']||keys['w'])vCamY-=accel*dt;
+  if(keys['arrowdown']||keys['s'])vCamY+=accel*dt;
+  vCamX*=0.88;vCamY*=0.88;
+  camX+=vCamX*dt;camY+=vCamY*dt;
+  if(dragging){
+    camX+=(dragX-camX)*Math.min(1,0.3*dt);
+    camY+=(dragY-camY)*Math.min(1,0.3*dt);
+  }
+  camX=Math.max(-MAX_CAM,Math.min(MAX_CAM,camX));
+  camY=Math.max(-MAX_CAM,Math.min(MAX_CAM,camY));
+
+  // advance stars
+  stars.forEach(s=>{
+    s.z-=speed*dt;
+    if(s.z<=NEAR_Z){
+      s.x=rand(-WORLD_SPAN,WORLD_SPAN);s.y=rand(-WORLD_SPAN,WORLD_SPAN);s.z=FAR_Z;
+      s.prevSx=null;s.prevSy=null;
+    }
+  });
+
+  // advance rocks, judge close-range dodge
+  rocks.forEach(r=>{
+    r.z-=speed*dt;
+    if(!r.judged&&r.z<=46){
+      r.judged=true;
+      const dist=Math.hypot(r.x-camX,r.y-camY);
+      if(dist<SHIP_R+r.size*0.6){
+        state='dead';SFX.lose();
+        burst(CX,CY,r.hue);burst(CX,CY,'#4de3ff');
+        shakeT=22;shakeMag=9;
+      } else {
+        score+=8;SFX.point();
+      }
+    }
+    if(r.z<=NEAR_Z){
+      const nr=spawnRock();
+      nr.z=FAR_Z;
+      Object.assign(r,nr);
+    }
+  });
+
+  if(score>hi){hi=score;localStorage.setItem('starfieldflight3d_highscore',hi);}
+
+  particles=particles.filter(p=>{
+    p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=0.08*dt;p.life-=0.032*dt;return p.life>0;
+  });
+
+  // draw back-to-front
+  const drawList=[...rocks].sort((a,b)=>b.z-a.z);
+  stars.forEach(drawStar);
+  drawList.forEach(drawRock);
+  drawParticles();
+  drawCrosshair();
+  drawHUD();
+
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>

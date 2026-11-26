@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. --><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"><title>Tunnel Dash 3D - Multiport Games</title><meta name="description" content="Play Tunnel Dash 3D free online — fly through a twisting glowing 3D tunnel, steer through the gates, dodge the walls, and survive as the speed ramps up!"><link rel="canonical" href="https://games.multiportllc.com/games/tunneldash3d"><meta property="og:title" content="Tunnel Dash 3D - Multiport Games"><meta property="og:description" content="Play Tunnel Dash 3D free online — fly through a twisting glowing 3D tunnel, steer through the gates, dodge the walls, and survive as the speed ramps up!"><meta property="og:url" content="https://games.multiportllc.com/games/tunneldash3d"><meta property="og:type" content="website"><meta property="og:image" content="../thumbs/tunneldash3d.jpg"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Tunnel Dash 3D - Multiport Games"><meta name="twitter:description" content="Play Tunnel Dash 3D free online — fly through a twisting glowing 3D tunnel, steer through the gates, dodge the walls, and survive as the speed ramps up!"><meta name="twitter:image" content="../thumbs/tunneldash3d.jpg"><script type="application/ld+json">{"@context":"https://schema.org","@type":"VideoGame","name":"Tunnel Dash 3D","description":"Play Tunnel Dash 3D free online instantly. Fly through a twisting glowing polygonal 3D tunnel, steer through the gates, dodge the walls, and survive as the speed ramps up. No download or signup required.","genre":"Arcade","url":"https://games.multiportllc.com/games/tunneldash3d","applicationCategory":"Game","operatingSystem":"Any","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}</script>
+<link rel="apple-touch-icon" href="../icons/icon-192.png">
+<link rel="manifest" href="../manifest.json">
+<meta name="theme-color" content="#060613">
+<link rel="stylesheet" href="../css/style.css?v=8">
+<script src="../js/sound.js"></script>
+<script src="../js/i18n.js"></script>
+<style>body{background:#060613}#c{display:block;border-radius:8px;touch-action:none}</style>
+</head><body>
+<div class="game-page">
+  <div class="game-topbar">
+    <a href="../" class="back-btn">← Back</a>
+    <button class="sfx-toggle" id="sfx-toggle"></button>
+  </div>
+  <div class="game-title">Tunnel Dash 3D</div>
+  <div class="game-frame"><canvas id="c" width="480" height="480"></canvas></div>
+  <div class="game-instructions" data-i18n="instructions">Steer with <b>arrow keys / WASD</b>, or drag with mouse/finger on the canvas. Fly through the glowing gates in the twisting tunnel, grab the orbs for bonus points, and don't clip the walls — speed ramps up the longer you survive!</div>
+</div>
+<script>
+const c=document.getElementById('c'),ctx=c.getContext('2d');
+const W=480,H=480,CX=W/2,CY=H/2;
+
+// ── Tunnel geometry constants ──────────────────────────
+const SEGS=16;                 // vertices per ring polygon
+const R=84;                    // tunnel radius (world units)
+const PLAYER_R=10;
+const MAX_OFFSET=R-PLAYER_R-6;  // how far the player may stray from the tube centerline
+const SPACING=68;              // z-distance between consecutive rings
+const RING_COUNT=15;           // rings alive at once (controls draw distance)
+const NEAR_Z=46;               // z at which a ring is "judged" / passes the player
+const FOCAL=250;
+
+let state='idle',score=0,hi=+(localStorage.getItem('tunneldash3d_highscore')||0);
+let lastTime=null,speed=3.1,timeAlive=0;
+let rings=[],orbs=[],particles=[],nextPathT=0,nextOrbIn=0;
+let offX=0,offY=0,vOffX=0,vOffY=0;
+let shakeT=0,shakeMag=0;
+let keys={};
+let dragging=false,dragX=0,dragY=0;
+
+// ── Twisting tube path — smooth layered sine curve ─────
+function tubeCenterAt(t){
+  return {
+    x:Math.sin(t*0.012)*58+Math.sin(t*0.0037+1.3)*30,
+    y:Math.cos(t*0.0095)*52+Math.sin(t*0.0051+0.6)*28
+  };
+}
+
+function makeRing(pathT,isGate){
+  const c0=tubeCenterAt(pathT);
+  let hx=0,hy=0,gapR=R;
+  if(isGate){
+    const a=Math.random()*Math.PI*2;
+    const reach=Math.random()*(MAX_OFFSET*0.55);
+    hx=Math.cos(a)*reach;hy=Math.sin(a)*reach;
+    gapR=Math.max(26,40-timeAlive*0.25);
+  }
+  return {pathT,cx:c0.x,cy:c0.y,z:0,isGate:!!isGate,hx,hy,gapR,judged:false,
+    hue:isGate?'#ff3864':'#2fd3e8'};
+}
+
+function resetTunnel(){
+  rings=[];orbs=[];particles=[];
+  nextPathT=0;
+  for(let i=1;i<=RING_COUNT;i++){
+    const gate=i%4===0&&i>3;
+    const ring=makeRing(nextPathT,gate);
+    ring.z=i*SPACING;
+    rings.push(ring);
+    nextPathT+=SPACING;
+  }
+  nextOrbIn=90;
+}
+
+function reset(){
+  score=0;speed=3.1;timeAlive=0;lastTime=null;
+  offX=0;offY=0;vOffX=0;vOffY=0;
+  shakeT=0;shakeMag=0;
+  resetTunnel();
+  state='play';
+}
+
+function project(x,y,z){
+  const s=FOCAL/Math.max(z,1);
+  return {x:CX+x*s,y:CY+y*s,s};
+}
+
+function ringPoly(ring,offsetX,offsetY){
+  const pts=[];
+  for(let i=0;i<SEGS;i++){
+    const a=i/SEGS*Math.PI*2;
+    const wx=ring.cx+Math.cos(a)*R-offsetX;
+    const wy=ring.cy+Math.sin(a)*R-offsetY;
+    pts.push(project(wx,wy,ring.z));
+  }
+  return pts;
+}
+
+function holePoly(ring,offsetX,offsetY){
+  const pts=[];
+  for(let i=0;i<SEGS;i++){
+    const a=i/SEGS*Math.PI*2;
+    const wx=ring.cx+ring.hx+Math.cos(a)*ring.gapR-offsetX;
+    const wy=ring.cy+ring.hy+Math.sin(a)*ring.gapR-offsetY;
+    pts.push(project(wx,wy,ring.z));
+  }
+  return pts;
+}
+
+function burst(x,y,col){
+  for(let i=0;i<22;i++){
+    const a=Math.random()*Math.PI*2,sp=1.5+Math.random()*5;
+    particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:1,col});
+  }
+}
+
+// ── Input ───────────────────────────────────────────────
+document.addEventListener('keydown',e=>{
+  keys[e.key.toLowerCase()]=true;
+  if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();
+  if(state!=='play'){try{if(window.SFX&&SFX.getContext)SFX.getContext();}catch(err){}reset();}
+});
+document.addEventListener('keyup',e=>{keys[e.key.toLowerCase()]=false;});
+
+function pointerToOffset(px,py){
+  const rect=c.getBoundingClientRect();
+  const lx=(px-rect.left)/rect.width*W;
+  const ly=(py-rect.top)/rect.height*H;
+  return {x:(lx-CX)*0.7,y:(ly-CY)*0.7};
+}
+c.addEventListener('pointerdown',e=>{
+  try{if(window.SFX&&SFX.getContext)SFX.getContext();}catch(err){}
+  if(state!=='play'){reset();return;}
+  dragging=true;
+  const o=pointerToOffset(e.clientX,e.clientY);
+  dragX=o.x;dragY=o.y;
+});
+window.addEventListener('pointermove',e=>{
+  if(!dragging)return;
+  const o=pointerToOffset(e.clientX,e.clientY);
+  dragX=o.x;dragY=o.y;
+});
+window.addEventListener('pointerup',()=>{dragging=false;});
+c.addEventListener('touchstart',e=>{e.preventDefault();},{passive:false});
+c.addEventListener('touchmove',e=>{e.preventDefault();},{passive:false});
+
+// ── Drawing ─────────────────────────────────────────────
+function depthShade(z){
+  const f=Math.max(0,Math.min(1,1-(z-NEAR_Z)/(RING_COUNT*SPACING)));
+  return f;
+}
+
+function drawBG(){
+  const g=ctx.createRadialGradient(CX,CY,10,CX,CY,320);
+  g.addColorStop(0,'#141432');g.addColorStop(1,'#04040c');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+}
+
+function drawRing(ring){
+  const f=depthShade(ring.z);
+  if(f<=0)return;
+  const alpha=0.15+0.7*f;
+  if(ring.isGate){
+    const outer=ringPoly(ring,offX,offY);
+    const inner=holePoly(ring,offX,offY);
+    ctx.save();
+    ctx.beginPath();
+    outer.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+    ctx.closePath();
+    inner.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+    ctx.closePath();
+    ctx.globalAlpha=Math.min(0.9,alpha+0.1);
+    ctx.fillStyle='rgba(255,40,90,0.22)';
+    ctx.fill('evenodd');
+    ctx.globalAlpha=1;
+    ctx.restore();
+    // glowing hole rim
+    ctx.save();
+    ctx.shadowBlur=18*f;ctx.shadowColor='#ff3864';
+    ctx.strokeStyle=`rgba(255,56,100,${alpha})`;ctx.lineWidth=3;
+    ctx.beginPath();
+    inner.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+    ctx.closePath();ctx.stroke();
+    ctx.shadowBlur=0;
+    ctx.restore();
+  }
+  // outer tube ring itself, always drawn for the twisting-tube look
+  const outer=ringPoly(ring,offX,offY);
+  ctx.save();
+  ctx.shadowBlur=12*f;ctx.shadowColor=ring.hue;
+  ctx.strokeStyle=`rgba(47,211,232,${alpha*0.8})`;
+  if(ring.isGate)ctx.strokeStyle=`rgba(255,56,100,${alpha})`;
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  outer.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+  ctx.closePath();ctx.stroke();
+  ctx.shadowBlur=0;
+  ctx.restore();
+}
+
+function drawRungs(){
+  // connecting lines between consecutive rings along each of the SEGS spokes — gives genuine tube-wall structure
+  const sorted=[...rings].sort((a,b)=>b.z-a.z);
+  for(let s=0;s<SEGS;s+=2){
+    const a=s/SEGS*Math.PI*2;
+    ctx.beginPath();
+    let started=false;
+    sorted.forEach(ring=>{
+      const f=depthShade(ring.z);
+      if(f<=0)return;
+      const wx=ring.cx+Math.cos(a)*R-offX;
+      const wy=ring.cy+Math.sin(a)*R-offY;
+      const p=project(wx,wy,ring.z);
+      if(!started){ctx.moveTo(p.x,p.y);started=true;}
+      else ctx.lineTo(p.x,p.y);
+    });
+    ctx.strokeStyle='rgba(47,211,232,0.12)';ctx.lineWidth=1;
+    ctx.stroke();
+  }
+}
+
+function drawOrb(o){
+  const f=depthShade(o.z);
+  if(f<=0)return;
+  const wx=o.cx+o.hx-offX,wy=o.cy+o.hy-offY;
+  const p=project(wx,wy,o.z);
+  const r=Math.max(2,9*p.s/ (FOCAL/NEAR_Z));
+  ctx.save();
+  ctx.globalAlpha=0.3+0.7*f;
+  ctx.shadowBlur=16;ctx.shadowColor='#f7c948';
+  ctx.fillStyle='#f7c948';
+  ctx.beginPath();ctx.arc(p.x,p.y,Math.max(2,r*0.6+3),0,Math.PI*2);ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.globalAlpha=1;
+  ctx.restore();
+}
+
+function drawReticle(){
+  ctx.save();
+  ctx.shadowBlur=14;ctx.shadowColor='#fff';
+  ctx.strokeStyle='rgba(255,255,255,0.9)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(CX,CY,10,0,Math.PI*2);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(CX-16,CY);ctx.lineTo(CX-10,CY);ctx.moveTo(CX+10,CY);ctx.lineTo(CX+16,CY);
+  ctx.moveTo(CX,CY-16);ctx.lineTo(CX,CY-10);ctx.moveTo(CX,CY+10);ctx.lineTo(CX,CY+16);
+  ctx.stroke();
+  ctx.shadowBlur=0;
+  ctx.restore();
+}
+
+function drawParticles(){
+  particles.forEach(p=>{
+    ctx.globalAlpha=Math.max(0,p.life);
+    ctx.fillStyle=p.col;
+    ctx.beginPath();ctx.arc(p.x,p.y,4*p.life,0,Math.PI*2);ctx.fill();
+  });
+  ctx.globalAlpha=1;
+}
+
+function drawHUD(){
+  ctx.fillStyle='rgba(255,255,255,0.88)';
+  ctx.font='bold 22px Arial';ctx.textAlign='left';
+  ctx.fillText(score,14,32);
+  ctx.font='13px Arial';ctx.fillStyle='rgba(255,255,255,0.45)';
+  ctx.fillText(I18N.t('best_label_caps','BEST {n}').replace('{n}',hi),14,50);
+  ctx.textAlign='right';
+  const pct=Math.min((speed-3.1)/9,1);
+  ctx.fillStyle='rgba(255,255,255,0.12)';ctx.fillRect(W-110,24,100,8);
+  const barG=ctx.createLinearGradient(W-110,0,W-10,0);
+  barG.addColorStop(0,'#2fd3e8');barG.addColorStop(1,'#ff3864');
+  ctx.fillStyle=barG;ctx.fillRect(W-110,24,100*pct,8);
+  ctx.fillStyle='rgba(255,255,255,0.4)';ctx.font='10px Arial';
+  ctx.fillText(I18N.t('speed_label','SPEED'),W-10,20);
+  ctx.textAlign='left';
+}
+
+function drawOverlay(title,sub1,sub2){
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.fillRect(70,180,340,140);
+  ctx.strokeStyle='rgba(47,211,232,0.5)';ctx.lineWidth=1.5;
+  ctx.strokeRect(70,180,340,140);
+  ctx.fillStyle='#fff';ctx.font='bold 28px Arial';ctx.textAlign='center';
+  ctx.fillText(title,W/2,228);
+  ctx.font='15px Arial';ctx.fillStyle='rgba(255,255,255,0.78)';
+  ctx.fillText(sub1,W/2,260);
+  ctx.font='13px Arial';ctx.fillStyle='rgba(255,255,255,0.5)';
+  ctx.fillText(sub2,W/2,288);
+  ctx.textAlign='left';
+}
+
+// ── Main loop ─────────────────────────────────────────
+function loop(){
+  let shx=0,shy=0;
+  if(shakeT>0){
+    shx=(Math.random()*2-1)*shakeMag;shy=(Math.random()*2-1)*shakeMag;
+    shakeT-=1;shakeMag*=0.88;
+  }
+  ctx.save();ctx.translate(shx,shy);
+  drawBG();
+
+  if(state==='idle'){
+    rings=rings.length?rings:(resetTunnel(),rings);
+    ctx.save();
+    const sorted=[...rings].sort((a,b)=>b.z-a.z);
+    sorted.forEach(drawRing);
+    ctx.restore();
+    drawReticle();
+    drawOverlay('TUNNEL DASH 3D',I18N.t('fly_gates_hint','Fly through the gates, grab the orbs!'),I18N.t('space_tap_start','Arrow keys / drag to start'));
+    ctx.restore();requestAnimationFrame(loop);return;
+  }
+
+  if(state==='dead'){
+    drawRungs();
+    [...rings].sort((a,b)=>b.z-a.z).forEach(drawRing);
+    orbs.forEach(drawOrb);
+    drawParticles();
+    drawHUD();
+    drawOverlay(I18N.t('dead_title','CRASHED'),I18N.t('score_best','Score: {s}   Best: {b}').replace('{s}',score).replace('{b}',hi),I18N.t('retry_hint','Tap or press a key to retry'));
+    ctx.restore();requestAnimationFrame(loop);return;
+  }
+
+  const now=performance.now();
+  const dt=lastTime===null?1:Math.min((now-lastTime)/16.6667,3);
+  lastTime=now;
+  timeAlive+=dt/60;
+  speed=Math.min(12,3.1+timeAlive*0.22);
+
+  // steering
+  const accel=1.1;
+  if(keys['arrowleft']||keys['a'])vOffX-=accel*dt;
+  if(keys['arrowright']||keys['d'])vOffX+=accel*dt;
+  if(keys['arrowup']||keys['w'])vOffY-=accel*dt;
+  if(keys['arrowdown']||keys['s'])vOffY+=accel*dt;
+  vOffX*=0.88;vOffY*=0.88;
+  offX+=vOffX*dt;offY+=vOffY*dt;
+  if(dragging){
+    offX+=(dragX-offX)*Math.min(1,0.35*dt);
+    offY+=(dragY-offY)*Math.min(1,0.35*dt);
+  }
+  const mag=Math.hypot(offX,offY);
+  if(mag>MAX_OFFSET){offX*=MAX_OFFSET/mag;offY*=MAX_OFFSET/mag;vOffX*=0.4;vOffY*=0.4;}
+
+  // advance tunnel
+  rings.forEach(r=>{r.prevZ=r.z;r.z-=speed*dt;});
+  orbs.forEach(o=>{o.prevZ=o.z;o.z-=speed*dt;});
+
+  // judge rings crossing the near plane
+  rings.forEach(ring=>{
+    if(!ring.judged&&ring.prevZ>NEAR_Z&&ring.z<=NEAR_Z){
+      ring.judged=true;
+      score+=1;
+      if(ring.isGate){
+        const dist=Math.hypot(offX-ring.hx,offY-ring.hy);
+        if(dist+PLAYER_R>ring.gapR){
+          state='dead';SFX.lose();
+          burst(CX,CY,'#ff3864');burst(CX,CY,'#2fd3e8');
+          shakeT=20;shakeMag=8;
+        } else {
+          score+=4;SFX.point();
+        }
+      }
+    }
+  });
+
+  // recycle passed rings & spawn new ones at the far end
+  rings=rings.filter(r=>r.z>-SPACING*1.5);
+  while(rings.length<RING_COUNT){
+    const idx=rings.length?Math.round(nextPathT/SPACING):0;
+    const gate=idx%4===0&&idx>3;
+    const ring=makeRing(nextPathT,gate);
+    const maxZ=rings.reduce((m,r)=>Math.max(m,r.z),0);
+    ring.z=maxZ+SPACING;
+    rings.push(ring);
+    nextPathT+=SPACING;
+  }
+
+  // orbs
+  nextOrbIn-=dt;
+  if(nextOrbIn<=0&&state==='play'){
+    nextOrbIn=70+Math.random()*50;
+    const far=rings.reduce((m,r)=>Math.max(m,r.z),SPACING);
+    const a=Math.random()*Math.PI*2,reach=Math.random()*MAX_OFFSET*0.7;
+    const base=tubeCenterAt(far);
+    orbs.push({cx:base.x,cy:base.y,hx:Math.cos(a)*reach,hy:Math.sin(a)*reach,z:far,prevZ:far,judged:false});
+  }
+  orbs=orbs.filter(o=>{
+    if(o.z<=NEAR_Z&&!o.collected){
+      const wx=o.hx,wy=o.hy; // offset relative to its own tube center, compare to player offset
+      const dist=Math.hypot(offX-wx,offY-wy);
+      if(dist<PLAYER_R+14){
+        o.collected=true;
+        score+=10;SFX.coin();
+        burst(CX,CY,'#f7c948');
+      }
+    }
+    return o.z>-SPACING&&!o.collected;
+  });
+
+  if(score>hi){hi=score;localStorage.setItem('tunneldash3d_highscore',hi);}
+
+  particles=particles.filter(p=>{
+    p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=0.08*dt;p.life-=0.035*dt;return p.life>0;
+  });
+
+  // draw
+  drawRungs();
+  [...rings].sort((a,b)=>b.z-a.z).forEach(drawRing);
+  orbs.forEach(drawOrb);
+  drawParticles();
+  drawReticle();
+  drawHUD();
+
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+loop();
+</script></body></html>
